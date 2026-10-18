@@ -77,6 +77,11 @@ pub(crate) struct EventState {
     pub(crate) publish_frame: bool,
     /// Set by `publish` for an IncludeSender event whose sender is not pinned: a subscriber that asks for it is refused with this text.
     pub(crate) sender_refused: Option<String>,
+    /// Set by `finish_call` for a publisher: per argument, the global of the caller's instance a `var` argument names
+    /// (instance, global slot). `publish` hands it to `raise` and the subscribers' frames alias those globals.
+    pub(crate) var_origins: Vec<Option<(Rc<RefCell<crate::Instance>>, usize)>>,
+    /// Set just before a subscriber is called, taken by its frame: (parameter slot, instance, global slot).
+    pub(crate) next_aliases: Vec<(usize, Rc<RefCell<crate::Instance>>, usize)>,
     /// Events being raised that have no publisher routine (table, page and Global Triggers
     /// events): BC puts frames between the subscriber and its caller that are not pinned, so the
     /// live call stack is not answered while one runs.

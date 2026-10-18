@@ -266,6 +266,7 @@ al-deps        dependency apps: .alpackages, Microsoft artifact feed, cache, pac
 - `dataset.rs` (332): The dataset XML `Report.SaveAs(.., Xml, ..)` writes: header, `DataItem` rows, name and text escaping. Entry: `dataset_name` 23, `Header` 91, `Dataset` 217.
 - `dispatch.rs` (338): Event dispatch: publishers run their subscribers; EventCall; isolated events. Entry: `publish` 69, `raise` 117, `event_targets` 183, `has_listeners` 249, `subscription` 279.
 - `dotnet/mod.rs` (488): `DotNet` calls (ADR-014). Entry: `DotNetConfig` 33, `DotNetState` 58, `fit` 455.
+- `dotnet/last_error.rs` (188): The exception `GetLastErrorObject` answers and its `GetType()` (GetLastErrorObject.al). Entry: `types` 168, `exception_text` 70.
 - `dotnet/policy.rs` (269): What is refused before a `DotNet` request is sent (ADR-014 section 8). Entry: `Access` 6, `Policy` 14.
 - `dotnet/registry.rs` (113): Runtime-provided .NET classes (ADR-014 section 1). Entry: `MemberKind` 19, `Pin` 28, `MemberFn` 45, `RegistryMember` 47.
 - `errorcollect.rs` (140): ErrorBehavior::Collect scopes. Entry: `declares_collect` 44, `collect_error` 71, `close_error_scope` 86.

@@ -14,6 +14,27 @@ pub struct AlError {
     pub call_stack: String,
     /// How the error was raised, which `GetLastErrorText(true)` needs.
     pub origin: ErrorOrigin,
+    /// The .NET exception BC holds for the error, which `GetLastErrorObject` needs.
+    pub exception: ExceptionKind,
+}
+
+/// The .NET exception type behind an error, for `GetLastErrorObject`. Only the kinds the corpus pins are named
+/// (tests/al-language-onprem-dotnet/lt-dotnet-interop/GetLastErrorObject.al); an error raised any other way is
+/// `Unknown` and `GetLastErrorObject` refuses it, naming the code.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ExceptionKind {
+    #[default]
+    Unknown,
+    /// `Error('literal', args)`: NavNCLDialogException, code `Dialog` (GetLastErrorObject.al:138-230).
+    Dialog,
+    /// `Error(Text, ...)` with a text that is not a literal (a Label, a variable): assumed the same exception.
+    DialogComputed,
+    /// `Get` without a row: NavCSideRecordNotFoundException, code `DB:RecordNotFound` (GetLastErrorObject.al:232-255).
+    RecordNotFound,
+    /// A division by zero: NavALException with an inner exception, code `AL:DivideByZero` (GetLastErrorObject.al:257-280).
+    DivideByZero,
+    /// Set by `ClearLastError`: no error, as opposed to the default of a session where no error has happened yet.
+    Cleared,
 }
 
 /// How an error was raised, for the text `GetLastErrorText(true)` answers (corpus
@@ -38,15 +59,16 @@ pub const USE_ERROR_WITH_A_TEXT_CONSTANT: &str = "Use ERROR with a text constant
 /// Raises an AL error with a pinned text and code.
 pub fn raise<T>(message: impl Into<String>, code: &str) -> Result<T, Signal> {
     // A division by zero carries no customer content: the flag leaves its text (P86LastError.al:RuntimeError_Other `div_excl`).
-    let origin = if code == "AL:DivideByZero" {
-        ErrorOrigin::SameText
+    let (origin, exception) = if code == "AL:DivideByZero" {
+        (ErrorOrigin::SameText, ExceptionKind::DivideByZero)
     } else {
-        ErrorOrigin::Unknown
+        (ErrorOrigin::Unknown, ExceptionKind::Unknown)
     };
     Err(Signal::Error(Box::new(AlError {
         message: message.into(),
         code: code.into(),
         origin,
+        exception,
         ..Default::default()
     })))
 }
@@ -359,6 +381,7 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ),
     ("System.GetLastErrorCode#1", get_last_error_code),
     ("System.GetLastErrorCallStack#1", get_last_error_call_stack),
+    ("System.GetLastErrorObject#1", get_last_error_object),
     ("System.ClearLastError#1", clear_last_error),
     ("System.CodeCoverageRefresh#1", code_coverage_refresh),
     ("Dialog.Error#2", error_text),
@@ -569,7 +592,15 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     // `Null` (ADR-014). Microsoft's Azure AD Tenant Impl. and Json Impl. ask it
     // (session/TestEnvironmentUserTenantContracts.al:204-232 reaches them).
     ("System.IsNull#1", |_, _, a| {
-        Ok(Value::Boolean(matches!(a.first(), Some(Value::Null))))
+        Ok(Value::Boolean(match a.first() {
+            Some(Value::Null) => true,
+            // GetLastErrorObject without a last error (GetLastErrorObject.al:290-296).
+            Some(Value::DotNet(o)) => matches!(
+                &o.kind,
+                crate::value::DotNetKind::Internal { type_name, .. } if type_name == crate::dotnet_sigs::NULL_EXCEPTION
+            ),
+            _ => false,
+        }))
     }),
     ("System.IsNullGuid#1", |_, _, a| {
         Ok(Value::Boolean(matches!(a[0], Value::Guid(g) if g == [0; 16])))
@@ -1088,6 +1119,58 @@ fn get_last_error_code(ctx: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]
     Ok(Value::Text(e.code.into()))
 }
 
+/// Slots of the state of a last-error exception object (`DotNetKind::Internal`): the message, the AL call stack
+/// text (`GetLastErrorCallStack` form without the trailing backslashes, `\n` between frames; may be empty).
+pub const EXC_MESSAGE: usize = 0;
+pub const EXC_CALL_STACK: usize = 1;
+
+/// `GetLastErrorObject()`: the last error as the .NET exception BC holds, or null when there is none.
+/// Pinned by tests/al-language-onprem-dotnet/lt-dotnet-interop/GetLastErrorObject.al for `Error('literal', args)`
+/// (:138-230), `Get` without a row (:232-255) and a division by zero (:257-280); null after `ClearLastError`
+/// (:283-301). Any other error is refused, naming its code.
+fn get_last_error_object(ctx: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
+    use crate::dotnet_sigs::{AL_EXCEPTION, NCL_DIALOG_EXCEPTION, RECORD_NOT_FOUND_EXCEPTION};
+    let e = ctx.last_error();
+    if e.message.is_empty() && e.code.is_empty() {
+        if e.exception != ExceptionKind::Cleared {
+            return unsupported(
+                "GetLastErrorObject before any error happened in the session (what BC answers is not pinned; only the answer after ClearLastError is)",
+            );
+        }
+        return Ok(Value::DotNet(Rc::new(crate::value::DotNetObject::new(
+            crate::value::DotNetKind::Internal {
+                type_name: crate::dotnet_sigs::NULL_EXCEPTION.into(),
+                state: std::cell::RefCell::new(Vec::new()),
+            },
+        ))));
+    }
+    let type_name = match e.exception {
+        ExceptionKind::Dialog => NCL_DIALOG_EXCEPTION,
+        ExceptionKind::DialogComputed => {
+            crate::assumptions::assume(crate::assumptions::Assumption::LastErrorObjectOfComputedErrorText);
+            NCL_DIALOG_EXCEPTION
+        }
+        ExceptionKind::RecordNotFound => RECORD_NOT_FOUND_EXCEPTION,
+        ExceptionKind::DivideByZero => AL_EXCEPTION,
+        ExceptionKind::Unknown | ExceptionKind::Cleared => {
+            return unsupported(&format!(
+                "GetLastErrorObject after an error of code '{}' (the .NET exception BC holds for it is not pinned; only Error() with a text, Get without a row and a division by zero are)",
+                if e.code == UNPINNED_ERROR {
+                    "unpinned"
+                } else {
+                    e.code.as_str()
+                }
+            ));
+        }
+    };
+    Ok(Value::DotNet(Rc::new(crate::value::DotNetObject::new(
+        crate::value::DotNetKind::Internal {
+            type_name: type_name.into(),
+            state: std::cell::RefCell::new(vec![Value::Text(e.message.into()), Value::Text(e.call_stack.into())]),
+        },
+    ))))
+}
+
 fn get_last_error_call_stack(ctx: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
     let e = ctx.last_error();
     if e.call_stack.is_empty() && !(e.message.is_empty() && e.code.is_empty()) {
@@ -1122,7 +1205,10 @@ fn code_coverage_refresh(ctx: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Valu
 }
 
 fn clear_last_error(ctx: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
-    ctx.set_last_error(AlError::default());
+    ctx.set_last_error(AlError {
+        exception: ExceptionKind::Cleared,
+        ..Default::default()
+    });
     Ok(Value::Null)
 }
 
@@ -1248,15 +1334,19 @@ fn error_text_not_literal(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [
 fn error_text_with(ctx: &mut dyn Ctx, args: &mut [Value], literal: bool) -> Result<Value, Signal> {
     let template = text_arg(args, 0)?;
     let message = substitute(&template, &args[1..], ctx)?;
-    let origin = if literal {
-        ErrorOrigin::Redacted(USE_ERROR_WITH_A_TEXT_CONSTANT.into())
+    let (origin, exception) = if literal {
+        (
+            ErrorOrigin::Redacted(USE_ERROR_WITH_A_TEXT_CONSTANT.into()),
+            ExceptionKind::Dialog,
+        )
     } else {
-        ErrorOrigin::Unknown
+        (ErrorOrigin::Unknown, ExceptionKind::DialogComputed)
     };
     Err(Signal::Error(Box::new(AlError {
         message,
         code: "Dialog".into(),
         origin,
+        exception,
         ..Default::default()
     })))
 }
@@ -2274,7 +2364,8 @@ pub(crate) mod tests {
         let code = lookup("System.GetLastErrorCode#1").unwrap();
         assert!(matches!(code(&mut ctx, None, &mut []), Ok(Value::Text(ref s)) if s == "Dialog"));
         lookup("System.ClearLastError#1").unwrap()(&mut ctx, None, &mut []).unwrap();
-        assert_eq!(ctx.last_error(), AlError::default());
+        assert_eq!(ctx.last_error().message, "");
+        assert_eq!(ctx.last_error().exception, ExceptionKind::Cleared);
     }
 
     #[test]

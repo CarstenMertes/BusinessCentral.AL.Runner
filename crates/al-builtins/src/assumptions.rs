@@ -163,18 +163,6 @@ registry! {
         tests: "Library - Error Message.LoadErrorMessages (Evaluate(TempErrorMessage.\"Record ID\", ErrorMessages.Source.Value, 9)); 36 Tests-Misc tests (Check Dimensions On Posting: Default Dimension, Sales Header, Dimension Value keys).",
         probe: "Evaluate(Rid, Format(Rid)) and Format(Rid, 0, 9) for a table with a Code+Code key, an Enum+Code key (Sales Header), an Integer+Code+Code key (Default Dimension), a Date key part and a Code value holding a comma; the result and Rid; and too few and too many values.",
     },
-    TempRecordByValueToPersistentParameter => {
-        id: "temp-record-by-value-to-persistent-parameter",
-        assumed: "A temporary record passed by value to a parameter that is not declared temporary gives the callee a record of the stored table holding the current row (the copy is no longer temporary); a parameter declared temporary gets an independent empty buffer (pinned).",
-        tests: "To-do.InsertTask / InsertTaskAndRelatedData (Task2: Record \"To-do\" receives the temporary Rec of CreateTaskFromTask, Task2.Insert(true), then Task2.Get); Tests-Marketing Marketing Matrix Management TaskWith* (10 tests).",
-        probe: "A temporary record with a row, passed by value to a procedure with a parameter of the same table not declared temporary: the callee's IsTemporary, Insert then Count of the stored table, and whether the caller's temporary rows change.",
-    },
-    EventVarAliasThroughSender => {
-        id: "event-var-alias-through-sender",
-        assumed: "A `var` parameter of an event is a reference to the publisher's variable: when a subscriber changes that variable through the sender (Sender.Proc()) and leaves its own parameter as it was sent, the change stays after the event (a scalar parameter is not written back over it). Records, lists and other shared values already alias.",
-        tests: "Create Inventory Pick/Movement.AutoCreatePickOrMove passes its globals LineCreated and CurrWarehouseActivityHeader to OnAutoCreatePickOrMoveFromWhseRequest; the manufacturing subscriber fills them through sender.CreatePickOrMoveLine. Tests-SCM SCM Extend Warehouse (35 tests).",
-        probe: "A codeunit with global Boolean, Integer and Text variables passed as var arguments to an IncludeSender event; a subscriber with `var Sender` that calls a procedure setting the globals and does not assign its own parameters: the globals after the event; the same when the subscriber also assigns one of the parameters.",
-    },
     TestPageAssertEqualsIntegerOnTextControl => {
         id: "testpage-assertequals-integer-on-text-control",
         assumed: "TestPageField.AssertEquals(<Integer>) on a control over a Text or Code value compares the plain digits of the integer with the control's text, instead of raising TypeConversion; another number or an Enum there stays refused.",
@@ -186,18 +174,6 @@ registry! {
         assumed: "TestPageField.SetValue of the first (blank) option member on a control whose OptionCaption starts with a blank caption (' ,Not Started,...') is accepted and selects that member; the client reads the caption ' ' as blank.",
         tests: "Tests-Marketing Marketing Matrix Management.TaskWithStatus* (Tasks.StatusFilter.SetValue(StatusFilter::\" \") resets the filter); 7 tests.",
         probe: "A page with an Option variable control with OptionCaption ' ,A,B': TestPage SetValue(Var::\" \") after SetValue(A), then Value; and SetValue('') as text; the same for an option field of a table.",
-    },
-    TypedHandlerKeepsRecAfterSetTableView => {
-        id: "typed-handler-keeps-rec-after-settableview",
-        assumed: "A Page-typed modal handler of a page variable that was given only SetTableView (no SetRecord) sees the Rec the page's own code assigned before (`Rec := X` in a procedure the test called), not a blank record.",
-        tests: "Contact Profile Answers.SetRunFromForm (Rec := ProfileQuestionnaireLine) then RunModal, handler calls UpdateProfileAnswer: Tests-Marketing Marketing Profiling CreateContactProfileManually, ContactToSegmentUsingProfile.",
-        probe: "A page variable: SetTableView(T) then a page procedure that does Rec := T (a row), then RunModal with a Page-typed handler reading Rec.Id through another page procedure and GetRecord.",
-    },
-    TypedHandlerLookupOkHandsBackRec => {
-        id: "typed-handler-lookupok-hands-back-rec",
-        assumed: "When a Page-typed ModalPageHandler answers LookupOK, the record the code passed to Page.RunModal(Id, Rec) takes the page's record as the handler left it (SetRecord), as a TestPage handler's selected row does.",
-        tests: "Segment Header.ReuseCriteria (PAGE.RunModal(PAGE::\"Saved Segment Criteria List\", SavedSegCriteria) answered by ModalFrmHandleSavedSegCriteria); Tests-Marketing SegmentSaveCriteriaAndReuse, ReuseSegmentCriteria, ContactToSegmentUsingProfile.",
-        probe: "Page.RunModal(Page::P, Rec) with Rec on row 1 and a Page-typed handler that does Row.Get(3); P.SetRecord(Row); Response := LookupOK: Rec afterwards; the same with Cancel and with no SetRecord.",
     },
     EvaluateTimeDigitForms => {
         id: "evaluate-time-digit-forms",
@@ -576,6 +552,18 @@ registry! {
         assumed: "GetDotNetType of a DotNet variable that holds nothing and is declared as System.String, System.Char, System.Byte or System.Int32 answers the declared type (such a variable reads as its default value); the pinned unassigned case, System.Object, raises DotNetVariableNotCreated.",
         tests: "DotNet Array.StringArray, CharArray, ByteArray and Int32Array (GetDotNetType(DotNetString) and the like on a variable nothing was assigned to), reached through Web Request Helper and the Cryptography Management wrappers.",
         probe: "An unassigned DotNet String, Char, Byte and Int32 variable: GetDotNetType(X).FullName, and the same for an unassigned DotNet StringBuilder and Type.",
+    },
+    LastErrorObjectOfComputedErrorText => {
+        id: "last-error-object-of-computed-error-text",
+        assumed: "GetLastErrorObject after Error(Text) whose text is a Label or a variable (not a string literal) is the same NavNCLDialogException as after Error('literal', args), which the corpus pins.",
+        tests: "Microsoft tests that read the exception of a failed codeunit run (DotNet Exception Handler.Collect and the 1,999 tests that reach it) after an Error(Label).",
+        probe: "Error(MyLabel) and Error(TextVariable) caught by Codeunit.Run, then GetLastErrorObject().GetType().FullName and Message.",
+    },
+    ExceptionToStringStackFrames => {
+        id: "exception-tostring-stack-frames",
+        assumed: "ToString and Format of the exception GetLastErrorObject answers: the lines after the first are the AL frames of the error (or one line saying they are not tracked); BC writes .NET server frames. Only the first line `<class>: <message>` and the `   at ` marker are pinned.",
+        tests: "Microsoft tests that read ToString or Format of a last-error exception.",
+        probe: "Format(GetLastErrorObject()) after Error('x') in a codeunit run from a test: every line,.",
     },
 }
 

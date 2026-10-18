@@ -1428,16 +1428,12 @@ impl Session {
                 let rec = self.page_rec(st);
                 // The record of a SetTableView alone is a view: it carries no position, so it does not replace the Rec the
                 // page's own code set (Contact Profile Answers.SetRunFromForm does `Rec := ProfileQuestionnaireLine` after the test's
-                // SetTableView; its handler then reads Rec."Line No."). Not pinned: Microsoft's Tests-Marketing Marketing Profiling.
-                // Assumption typed-handler-keeps-rec-after-settableview.
+                // SetTableView; its handler then reads Rec."Line No."). Pinned for a row inside and outside the view:
+                // pages/lt-modal-handler-typed-page/PageTypedHandlerRec.al:SettableView_ThenAssignRecInsideView, :SettableView_ThenAssignRecOutsideView.
                 let table = r.borrow().table as usize;
                 let blank = self.initial_fields(table);
                 let view_only = st.borrow().set_view && Value::all_identical(&r.borrow().fields, &blank);
-                if view_only {
-                    al_builtins::assumptions::assume(
-                        al_builtins::assumptions::Assumption::TypedHandlerKeepsRecAfterSetTableView,
-                    );
-                } else {
+                if !view_only {
                     rec.borrow_mut().fields = r.borrow().fields.clone();
                 }
             }
@@ -1474,8 +1470,9 @@ impl Session {
         match finals.get(1) {
             Some(v @ Value::Option(..)) => {
                 // LookupOK hands the page's record back to the record RunModal was given, as the TestPage handlers do (hand_back_selection).
-                // Not pinned for a Page-typed handler (Saved Segment Criteria List: the handler calls SetRecord, then ReuseCriteria reads
-                // the record it passed). Assumption typed-handler-lookupok-hands-back-rec.
+                // Pinned for a Page-typed handler that calls SetRecord (Saved Segment Criteria List: ReuseCriteria reads the record it passed):
+                // pages/lt-modal-handler-typed-page/PageTypedHandlerRec.al:RunModalWithRecord_HandlerSetRecord_LookupOK, with Cancel and with no
+                // SetRecord as the contrast (:RunModalWithRecord_HandlerSetRecord_Cancel, :RunModalWithRecord_NoSetRecord_LookupOK).
                 let lookup_ok = matches!(v, Value::Option(n, m) if m.get(*n as usize).is_some_and(|a| a == "LookupOK"));
                 if let (true, Some(r), true) = (lookup_ok, &record, self.has_source(st)) {
                     let page_rec = self.page_rec(st);
@@ -1484,9 +1481,6 @@ impl Session {
                     {
                         let fields = page_rec.borrow().fields.clone();
                         if !Value::all_identical(&fields, &r.borrow().fields) {
-                            al_builtins::assumptions::assume(
-                                al_builtins::assumptions::Assumption::TypedHandlerLookupOkHandsBackRec,
-                            );
                             r.borrow_mut().fields = fields;
                         }
                     }

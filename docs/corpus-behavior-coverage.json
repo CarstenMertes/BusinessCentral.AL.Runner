@@ -13588,7 +13588,7 @@
         "code": "DateInvalid",
         "file": "crates/al-builtins/src/datefns.rs",
         "generic": false,
-        "line": 101,
+        "line": 102,
         "pinned": true,
         "site": "errors/lt-ms-refusals-131/P131EvalScalars.al:376",
         "template": "The date is not valid."
@@ -13597,7 +13597,7 @@
         "code": "DateInvalid",
         "file": "crates/al-builtins/src/datefns.rs",
         "generic": false,
-        "line": 113,
+        "line": 114,
         "pinned": true,
         "site": "errors/lt-ms-refusals-131/P131EvalScalars.al:376",
         "template": "The date is not valid."
@@ -13606,7 +13606,7 @@
         "code": "DateInvalid",
         "file": "crates/al-builtins/src/datefns.rs",
         "generic": false,
-        "line": 183,
+        "line": 184,
         "pinned": true,
         "site": "errors/lt-ms-refusals-131/P131EvalScalars.al:376",
         "template": "The date is not valid."
@@ -13615,7 +13615,7 @@
         "code": "DateInvalid",
         "file": "crates/al-builtins/src/datefns.rs",
         "generic": false,
-        "line": 266,
+        "line": 267,
         "pinned": true,
         "site": "errors/lt-ms-refusals-131/P131EvalScalars.al:376",
         "template": "The date is not valid."
@@ -13624,7 +13624,16 @@
         "code": "DateInvalid",
         "file": "crates/al-builtins/src/datefns.rs",
         "generic": false,
-        "line": 300,
+        "line": 341,
+        "pinned": true,
+        "site": "errors/lt-ms-refusals-131/P131EvalScalars.al:376",
+        "template": "The date is not valid."
+      },
+      {
+        "code": "DateInvalid",
+        "file": "crates/al-builtins/src/datefns.rs",
+        "generic": false,
+        "line": 360,
         "pinned": true,
         "site": "errors/lt-ms-refusals-131/P131EvalScalars.al:376",
         "template": "The date is not valid."
@@ -14197,8 +14206,8 @@
         "template": "Invalid expression of type: table view.%%"
       }
     ],
-    "pinned": 68,
-    "sites": 68
+    "pinned": 69,
+    "sites": 69
   },
   "language": {
     "bc": "27-29",

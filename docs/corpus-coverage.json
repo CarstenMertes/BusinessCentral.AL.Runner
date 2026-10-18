@@ -2,7 +2,7 @@
   "corpus_commit": "4b6435bafae0b4d1096e8ae882445b6926f0a5df",
   "language": {
     "bc": "27-29",
-    "implemented": 1492,
+    "implemented": 1493,
     "methods": [
       {
         "bc": [
@@ -18033,7 +18033,7 @@
         "scope": "",
         "sig": "(Integer, [Integer], [Integer])",
         "site": "types/lt-datetime/DateFuncs.al:315",
-        "state": "refused",
+        "state": "implemented",
         "type": "System"
       },
       {
@@ -27947,7 +27947,7 @@
     ],
     "overloads": 1750,
     "pinned": 1510,
-    "refused": 229,
+    "refused": 228,
     "runtime_only": [
       "ErrorInfo.Create#3",
       "FieldRef.FieldError#2",

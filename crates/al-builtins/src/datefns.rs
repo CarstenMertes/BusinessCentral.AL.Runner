@@ -337,7 +337,7 @@ fn dwy2date(ctx: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
         let thursday = day + (4 - weekday(day));
         civil_from_day(thursday).0 == year
     };
-    if day < 1 || day > LAST_DAY || !in_week_year {
+    if !(1..=LAST_DAY).contains(&day) || !in_week_year {
         return raise("The date is not valid.", "DateInvalid");
     }
     // 0001-01-01 is BC's blank date (`w1 1` formats as '', DateFuncs.al:326 and :341), the one day this can reach below week 1 of year 2.

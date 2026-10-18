@@ -307,3 +307,25 @@ Planned, per step:
   `--impact all` on the same apps (no selection miss).
 - Step 5: the dynamic-vs-static cross-check over a Microsoft bucket in CI: every dynamically selected test is
   statically selected or "cannot rule out".
+
+## Step 1 as built (impact-1, 2026-10-18)
+
+`alrunner test APPS --impact-of APP --impact all` (`crates/alrunner-cli/src/impact.rs`). The "without" side runs the
+test codeunits of the APPs; the "with" side gives the extensions as further APPs, counts their statements per test
+(`--coverage` machinery), and runs the same test codeunits (the extensions' own test codeunits are not selected).
+Disabled tests are skipped when `--disabled-tests` is given. Tests: `crates/alrunner-cli/tests/impact.rs` (fixture
+apps in `tests/fixtures/impact`, including the selection-independence test).
+
+### Decided without owner review (2026-10-18)
+
+1. `--impact` must be given as `all`; without it the run stops (exit 2) and says that `dynamic` and `static` are not
+   built yet. `--no-compile-cache` is refused (both sides must compile the dependencies completely, condition 1).
+2. A ninth class, "same, not reached", counts unchanged tests that entered no extension code. Step 1 knows only the
+   extension code a test entered, not passive impact points; "same, reached" means "extension code ran". Unchanged
+   unreached tests are counted, not listed; "same, reached" lists 30 unless `--verbose`.
+3. Exit code: 1 when a test is newly failing, fails differently or is newly refused; otherwise 0, or the code of a
+   side that selected nothing or stopped. `--junit`, `--output-json`, `--coverage*` and `--explain` are refused with
+   `--impact-of` until step 3.
+4. "Calls" of a routine are the runs of its first statement; a routine with no statement (empty body) is not seen.
+5. A failure the runner does not trust (an earlier test of the codeunit did not run) is "newly refused"; the report
+   prints the failure text under it.

@@ -350,6 +350,16 @@ impl Lowerer<'_> {
         (arms, runtime, meta)
     }
 
+    /// The runtime type of a field. An enum named by a field that a table extension of another app adds is
+    /// resolved from the extension's file: the table's own app cannot see it.
+    fn field_rt(&self, oi: usize, f: &crate::members::FieldInfo) -> RtType {
+        let file = self.ws.objects[f.declared_in.unwrap_or(oi)].file;
+        if let Some(r) = super::shared::scalar_rt(self.ws, file, &f.ty) {
+            return r.unwrap_or(RtType::Variant);
+        }
+        self.rt(&f.ty).unwrap_or(RtType::Variant)
+    }
+
     pub(crate) fn table_schema(
         &self,
         oi: usize,
@@ -379,7 +389,7 @@ impl Lowerer<'_> {
                 ir::Field {
                     id: f.id,
                     name: f.name.clone(),
-                    ty: self.rt(&f.ty).unwrap_or(RtType::Variant),
+                    ty: self.field_rt(oi, f),
                     stored: f.class == crate::members::FieldClass::Normal,
                     init: f.init_value.as_ref().and_then(|v| {
                         init_const(v, &f.ty).or_else(|| match f.ty {

@@ -48,6 +48,20 @@ pub struct Layout {
     pub run_reasons: Vec<String>,
 }
 
+/// `Table.Field` at the first dot outside quotes: a table name may hold a dot (`"Data Exch. Def".Code`).
+fn split_source_at_dot(source: &str) -> Option<(&str, &str)> {
+    let mut quote: Option<char> = None;
+    for (i, c) in source.char_indices() {
+        match (quote, c) {
+            (None, '"' | '\'') => quote = Some(c),
+            (Some(q), c) if c == q => quote = None,
+            (None, '.') => return Some((&source[..i], &source[i + 1..])),
+            _ => {}
+        }
+    }
+    None
+}
+
 fn bool_prop(value: &str) -> Option<bool> {
     match value.trim().to_ascii_lowercase().as_str() {
         "true" | "yes" => Some(true),
@@ -209,6 +223,11 @@ fn visit(section: &ast::Section, parent: Option<usize>, out: &mut Layout) {
                 out.run_reasons
                     .push(format!("trigger {tn} of {section_name} {name} is not supported yet"));
             }
+        }
+        if kind == K::Field && s.sections().next().is_some() {
+            out.run_reasons.push(format!(
+                "child nodes of the field element {name} are not supported (not pinned)"
+            ));
         }
         let mut args = args;
         if kind == K::Table {
@@ -417,7 +436,7 @@ pub fn build(cx: &Context, mut reasons: Vec<String>) -> ir::XmlPort {
             }
             ir::XmlNodeKind::Field | ir::XmlNodeKind::FieldAttr => {
                 let source = raw.args.get(1).cloned().unwrap_or_default();
-                let (table_name, field_name) = match source.split_once('.') {
+                let (table_name, field_name) = match split_source_at_dot(&source) {
                     Some((t, f)) => (crate::scan::unquote_xmlport(t), crate::scan::unquote_xmlport(f)),
                     None => (String::new(), crate::scan::unquote_xmlport(&source)),
                 };
@@ -742,6 +761,27 @@ xmlport 50010 X
             );
         }
         assert_eq!(reasons_of(SRC.to_string()), "");
+    }
+
+    #[test]
+    fn a_quoted_table_name_with_a_dot_binds_its_field() {
+        // Base Application's xmlport 1225 binds `"Data Exch. Def".Code`: the dot inside the quotes is part of the name.
+        let src = SRC
+            .replace("tableelement(P; Parent)", "tableelement(\"P. Q\"; Parent)")
+            .replace("fieldelement(Number; P.No)", "fieldelement(Number; \"P. Q\".No)")
+            .replace("LinkTable = P;", "LinkTable = \"P. Q\";");
+        assert_eq!(reasons_of(src), "");
+    }
+
+    #[test]
+    fn a_field_element_with_child_nodes_refuses_the_run() {
+        // No corpus test puts an attribute inside a field element, and the nodes below one are not
+        // visited, so the port would run without them: refused when it runs (hard rule 4).
+        let why = run_reasons_of(SRC.replace(
+            "fieldelement(Number; P.No) { }",
+            "fieldelement(Number; P.No) { textattribute(Utc) { } }",
+        ));
+        assert!(why.contains("child nodes of the field element Number"), "{why}");
     }
 
     #[test]

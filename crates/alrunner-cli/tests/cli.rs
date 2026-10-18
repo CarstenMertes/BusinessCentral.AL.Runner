@@ -479,6 +479,54 @@ fn a_source_archive_runs_with_its_dependency_given_by_dep() {
 }
 
 #[test]
+fn a_dependency_app_reads_its_own_packaged_resources() {
+    // session/W5NavAppResources.al:GetResourceAsText_NameMatching: the name is matched exactly, relative to the
+    // resource folder. The library's own code asks; the folder comes from the `resourceFolders` of its app.json.
+    let d = tempfile::tempdir().unwrap();
+    let lib_id = "22222222-0000-0000-0000-000000000011";
+    let lib = d.path().join("Res.Source.zip");
+    std::fs::write(
+        &lib,
+        zip(&[
+            (
+                "app.json",
+                &format!(
+                    r#"{{"id":"{lib_id}","name":"Res","publisher":"Test","version":"1.0.0.0","dependencies":[],"resourceFolders":[".resources"]}}"#
+                ),
+            ),
+            (
+                "src/Helper.Codeunit.al",
+                "codeunit 50310 \"Res Helper\" { procedure Greeting(): Text begin exit(NavApp.GetResourceAsText('sub/hello.txt')); end; }",
+            ),
+            (".resources/sub/hello.txt", "Hello from a dependency"),
+        ]),
+    )
+    .unwrap();
+    let app = d.path().join("Tests-Res.Source.zip");
+    std::fs::write(
+        &app,
+        zip(&[
+            ("app.json", &app_json("22222222-0000-0000-0000-000000000012", "Tests-Res", &[(lib_id, "Res")])),
+            (
+                "T.Codeunit.al",
+                "codeunit 50311 \"Res Tests\" { Subtype = Test; [Test] procedure ReadsIt() var H: Codeunit \"Res Helper\"; begin if H.Greeting() <> 'Hello from a dependency' then Error('got %1', H.Greeting()); end; }",
+            ),
+        ]),
+    )
+    .unwrap();
+    let o = alrunner(&[
+        "test",
+        app.to_str().unwrap(),
+        "--dep",
+        lib.to_str().unwrap(),
+        "--no-download",
+    ]);
+    let t = text(&o);
+    assert_eq!(code(&o), 0, "{t}");
+    assert!(t.contains("Tests: 1 total, 1 passed"), "{t}");
+}
+
+#[test]
 fn a_missing_dependency_refuses_the_tests_that_need_it_instead_of_failing_the_run() {
     let d = tempfile::tempdir().unwrap();
     let (app, _lib) = archives(d.path());

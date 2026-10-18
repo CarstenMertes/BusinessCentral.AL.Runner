@@ -3,6 +3,7 @@
 //! too.
 
 pub mod compression;
+mod drawing;
 mod gettype;
 mod last_error;
 pub mod policy;

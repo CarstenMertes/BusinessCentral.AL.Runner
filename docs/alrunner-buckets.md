@@ -301,3 +301,125 @@ Tests-SMB: 3.4 GB peak, 8 s) and read the `parse:` lines; a normal run prints th
 - **Tests-Cost Accounting 17.6 s -> 1.5 s** (run phase 17.1 s -> 0.8 s). One test (`GLTransferWithAmountZero`, refused after its setup) took 17 s alone: every step of a loop over a table (`FindSet`/`Next`) looked at all rows of the table, and each comparison of two integers went through a `Decimal`. `MemStore::next` now steps through the table in primary key order, integer, decimal and text keys compare directly, and the other keys compare without building the key of each row. A walk over 30,000 rows in primary key order: seconds, where it took minutes (`cargo test --release -p al-data -- --ignored`: two walks 442 s -> 49 s, the rest being the secondary key walk, which is still one pass over the table per step).
 - **Tests-SCM-Service stays at about 105 s**, of which 102 to 112 s are codeunit 136106 `Service Response Time`: five tests stopped by the 20 s per-test CPU limit (`ResponseTimeInSameWorkingDay`, `ResponseTimeSameWorkingDayFull`, `ResponseTimeTwoSimulWorkingDay`, `ResponseTimeWorkingNonWorking`, `ResponseTimeValidOnHolidays`). `Library - Service.GetFirstWorkingDay` loops over days until a day has a Service Hour row; the restored CRONUS company has none, so the loop runs to the year 9999 (about 2.7 million days). Real BC does the same on this database and would need hours. Not a runtime loop bug: missing demo data. The rest of the bucket takes 3 s.
 - Tests-Workflow printed no `Tests:` or `Time:` line to a `grep -I` / ugrep (the shell function in the agent shells) because one failure text holds a NUL (`Expected:<asdf\0>`), which made the whole output a binary file to those tools. Not a crash or an out-of-memory kill: ten reruns finished with exit 1 and all lines. A control character in a failure text is shown as `\x00` now.
+
+## Package mode (`--company-data package`) measured
+
+Tests-ERM (BC 27.5.46862.48827), same binary, backup company against package company:
+
+| Company | Rows read | Reader refusals | Passed | Failed | Not run |
+|---|---|---|---|---|---|
+| backup | 38904 in 283 tables | 0 | 6980 | 124 | 2229 |
+| package, before | 12627 in 300 tables | 2 (`To-do.Duration`, `Send Reminders Setup.MinimumTimeBetweenSending`: XML durations such as `P1DT0H0M0.0S` were read as whole numbers) | 6974 | 161 | 2198 |
+| package, after | 12687 in 302 tables | 0 | 6974 | 161 | 2198 |
+
+The package has fewer rows than the backup (it is the DemoTool's Extended data, not the sandbox company), so some tests
+that pass on the backup fail on it and the other way round; that is the Legacy lane's data, which is what Microsoft's
+Legacy buckets run on. The two tables the reader used to refuse are now read, and no test of this bucket touches them,
+so the counts did not change. The largest package-only failure is `The Country/Region does not exist ... Code=''` (40
+tests, first: ERM Report Amount in FCY, `AmountInFCYOnDocumentEntriesReport`). Explained (2026-10-18, rerun of the
+bucket: still 40, same text): it is not a gap of the package reader. `ERMFinancialReportsIII.Codeunit.al:1966`
+(`UpdateIntrastatCountryCode`) does `CompanyInformation.Get()` and then `CountryRegion.Get(CompanyInformation."Country/Region Code")`.
+The package (`NAV27.5.W1.ENU.EXTENDED.rapidstart`) holds 68 Country/Region rows but no Company Information table at all, so
+the Company Information row is the one `Company-Initialize` writes, with a blank country. The backup company has the
+demo tool's Company Information row (a country set), which is why the same tests pass there. A company built from this
+package therefore fails these 40 tests on any host that builds it the same way. Whether Microsoft's Legacy lane has a
+Company Information country from some other step is not known here; it needs a probe on real BC (build a company
+from the package and read Company Information."Country/Region Code"). Until then these 40 stay as package-only failures.
+
+## Microsoft's recipe: `--recipe microsoft` (2026-10-18, branch `ms-recipe-3`)
+
+`alrunner test <Tests-*.Source.zip> ... --recipe microsoft` runs the buckets the way BCApps' CI does.
+
+1. The BCApps files come from `releases/<major>.<minor>` of github.com/microsoft/BCApps (MIT), fetched with `git`
+   (shallow, no file contents, only `src/DisabledTests`, `build/projects`, `build/scripts`) into
+   `<cache dir>/bcapps/<major>.<minor>/` once. The release is `--bc-version` (major.minor), else the build of the tests.
+   `--bcapps DIR` names a checkout instead. `--no-download` reads only the cache. `ALRUNNER_BCAPPS_URL` replaces the
+   GitHub address (a mirror).
+   Measured 2026-10-18: `releases/27.x` and `releases/28.x` do not have the BaseApp test recipe at all (no `Test Apps W1`
+   project, no `TestConfiguration.json`, no `src/DisabledTests`); `releases/29.0` is the first that does. A release
+   without it uses `releases/29.0`, and the run prints that. Disabled tests are matched by codeunit id and method
+   name, so entries for tests a 27.5 artifact lacks do nothing.
+2. The lane of a test codeunit: a test app in `TestConfiguration.json` (`LegacyTests-Bucket1`, `-Bucket2`) is Legacy,
+   whatever the codeunit says. For any other app the AL property `TestType` of the codeunit decides:
+   `UnitTest`, `IntegrationTest`, none or `Uncategorized`; `AITest` is in no build mode and is left out.
+3. Company per lane: Legacy runs `--company-data package` (company name from the settings, CRONUS International Ltd.);
+   UnitTest runs without demo data (Company-Initialize and the installs only). IntegrationTest and Uncategorized need
+   Microsoft's Contoso Demo Tool (`CreateSetupDemoData`, `CreateAllDemoData`, then the tenant data codeunit 5691, which also
+   creates the Web Service rows). The runner does not run it yet, so those lanes print `NOT RUN` with the reason and the
+   exit code is 7.
+4. Microsoft's disabled tests are skipped (`--parity`) and counted per lane. Each lane has its own summary and, with
+   `--junit FILE`, its own `FILE.<lane>.xml`.
+
+Company name per lane (2026-10-18, `ms-recipe-4`): a lane without a restored company sets the run's company name
+(`TestArgs.company_name`, `al_testrun::host::set_company_name`), so `CompanyName()` answers `Empty Company` in the UnitTest lane
+(and `My Company` once the Contoso lanes run). The name is part of the baseline cache key. Legacy answers the company of
+the package.
+
+### Contoso lanes: spike result (2026-10-18)
+
+The Contoso Coffee Demo Dataset app (`Microsoft_Contoso Coffee Demo Dataset_<build>.app`, source zip in the artifact)
+resolves as a dependency of an ordinary test app, and its code compiles without a static refusal. A scratch test app with
+one test per module and level (16 modules x Setup/Master/Transactional/Historical, calling each module codeunit's
+`Create<Level>Data`) shows where the run stops. Ranked:
+
+1. `DotNet new System.Drawing.Bitmap` (refused by policy: needs the Windows drawing stack), reached from `Foundation Module`
+   `CreateSetupData` -> `Create Company Information`.CreateSetupCompany (CreateCompanyInformation.Codeunit.al:76) ->
+   Base App `O365 Brand Color`.CreateDefaultBrandColors/MakePicture (O365BrandColor.Table.al:124). This is the first step of
+   `CreateSetupDemoData`, so it blocks both lanes and hides what follows (13 further tests fail only because the Foundation
+   data is missing).
+2. `builtin System.DWY2Date#1 is not implemented`: 7 tests (for example `Bank Module` `CreateHistoricalData`). Implemented
+   on 2026-10-18 as pinned by types/lt-datetime/DateFuncs.al:311-399; the spike no longer shows it.
+3. `DotNet new System.Net.Mail.MailAddress` (refused by policy: touches the network): `CRM Module` `CreateMasterData`.
+
+Behind the Bitmap refusal (2026-10-18, scratch run with the `MakePicture` body cut out of the Base App source, not committed;
+ADR-044 is the proposal for Bitmap itself). 64 tests: 52 pass, 7 fail, 5 not run. In order:
+
+1. `NavApp.GetResource` of the Contoso app finds nothing: 5 tests (`PostingExchangeDefinitions/OCRCREDITMEMO.xml`, `CRONUS.jpg`,
+   `Images/Item/1896-S.jpg`, `Images/Person/*.jpg`, `IncomingDocuments/*.PDF`). The `.app` holds them under `resources/` with
+   percent-encoded names (`%20`); resources of dependency apps are only loaded for corpus apps (`app.resources` is set in
+   `al-testrun/src/runtime/corpus.rs`). A runtime task: load and decode `resources/` of dependency packages.
+2. `platform table 'License Permission' (2000000043) has no provider`: `Sales Module` `CreateHistoricalData`.
+3. `DotNet new System.Net.Mail.MailAddress` (policy, network): `HR Module` `CreateMasterData`. Needs an owner decision.
+4. `Unhandled UI: Message Shipment Date 03/29/26 is before work date 10/18/26`: `Sales Module` `CreateTransactionalData`. The
+   demo data dates are relative to a work date; check what the recipe sets as WorkDate before treating it as a bug.
+5. `Vendor Item No. already exists` (`Inventory` transactional), `Status must not be Certified` (`Manufacturing`) and
+   `Opportunity Entry already exists` (`CRM`): may follow from the earlier failures in the same codeunit; unverified.
+
+After ADR-044 option 3 (2026-10-18, branch bitmap-noop): the `System.Drawing.Bitmap` refusal is gone. `MakePicture` runs, the
+picture is not drawn, and a read of it is refused. The same spike (64 tests, BC 27.5) gives 52 passed (5 flagged by the
+assumption `bitmap-picture-not-drawn`), 7 failed, 5 not run, the numbers of the scratch run above. The first refusals now are
+`platform table 'License Permission' (2000000043) has no provider` and `DotNet new System.Net.Mail.MailAddress`, then the
+`NavApp.GetResource` of the Contoso app.
+
+More refusals may sit behind the first one. Each is a runtime task (a corpus pin is needed first for DWY2Date; the two
+DotNet types need an owner decision on the policy or a native replacement). The two lanes stay refused with the first
+reason in their line. The company-setup roots in `baseline.rs` were not added: they would run a refused step on every run.
+
+### Contoso lanes: second spike (2026-10-18, `contoso-2`)
+
+Changed since the first spike: `NavApp.GetResource` of a dependency app now finds its packaged resources (a compiled `.app` holds
+them under `resources/` with `%20` names, decoded once like the `.al` entry names; a source archive uses the `resourceFolders`
+of its `app.json`); an xmlport field bound as `"Data Exch. Def".Code` (a dot inside the quoted table name) now binds; platform
+table `License Permission` answers its two pinned rows.
+
+WorkDate: the recipe does not set one. BCApps `Invoke-ContosoDemoTool` runs Company-Initialize (codeunit 2), then
+`CreateSetupDemoData` / `CreateAllDemoData` (codeunit 5193) and the tenant data (5691) through OData, so WorkDate is today, as in
+`alrunner` (session/TestSessionFunctions.al:53-65). The demo dates are relative to the Starting Year (today's year minus one), so
+a sales shipment dated in the past gives the message "Shipment Date ... is before work date ..." on real BC as well. The OData
+call ignores the message; a test method does not. The `Unhandled UI` failure of the first spike was a spike artifact: a
+`[MessageHandler]` on the test makes `SalesTransactional` pass. The lanes need a message handler (or UI off) around the roots.
+
+The first spike ran on the CRONUS company (the default). That is the wrong base: CRONUS already holds item attributes, vendors and
+item references, so `Color already exists` and `Vendor Item No. already exists` are collisions with CRONUS data, not runtime bugs.
+The Contoso lanes run on an empty company (`--no-test-data`, as BCApps does). Run that way, with the scratch cuts listed below,
+the real order (all Setup, then Master, Transactional, Historical) stops at, in order:
+
+1. `Windows Language`: the Contoso language setup filters the table by "Abbreviated Name"; only 1031, 1033 and 2057 are pinned.
+   Needs a probe that lists the whole table on real BC.
+2. XmlPort `Imp / Exp Data Exch Def & Map` (1225), imported for 7 data exchange definitions from the Contoso resources:
+   `Encoding = UTF8` (export is pinned by xmlport/W7XmlPortTests.al:345-364, import is not), `MinOccurs` on a `tableelement`,
+   `Occurrence = Optional` on 53 field attributes (no corpus test uses `Occurrence`), `FieldValidate`, `SourceTableView`, and an
+   empty `requestpage` section (refused even when empty). Without the definitions the Bank module fails on a missing
+   `SEPA CAMT` row.
+3. `License Permission` `Codeunit` 410 (above), `Language Selection` (2000000050; PtCloudTables.al pins it, no provider yet),
+   `Media Resources` (2000000182, tenant data), `System.Net.Mail.MailAddress` (policy).

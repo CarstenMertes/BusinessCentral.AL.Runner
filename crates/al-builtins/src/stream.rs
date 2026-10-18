@@ -61,6 +61,10 @@ thread_local! {
 
 /// The refusal for a look at the output of a report that was run for its effects only (ADR-040).
 pub fn render_pending_error(report: &str) -> Signal {
+    // ADR-044 uses the same mark for the picture a `System.Drawing.Bitmap` was asked to save: the name is the .NET type.
+    if report.starts_with("System.Drawing.") {
+        return Signal::Unsupported(format!("picture drawn by {report} is not produced"));
+    }
     Signal::Unsupported(format!("rendered output of report {report} is not produced"))
 }
 
@@ -364,6 +368,21 @@ impl InState {
             pos: 0,
             enc,
             hit_end: false,
+        }
+    }
+
+    /// Marks the buffer a live stream reads as holding output that was never produced (ADR-040, ADR-044) and clears
+    /// it of bytes. Answers false for a stream that does not read a live buffer.
+    pub fn mark_render_pending(&self, what: std::sync::Arc<str>) -> bool {
+        match &self.source {
+            Source::Live(b) => {
+                let mut buf = b.borrow_mut();
+                buf.bytes.clear();
+                buf.loaded = true;
+                buf.render_pending = Some(what);
+                true
+            }
+            Source::Snapshot(_) => false,
         }
     }
 

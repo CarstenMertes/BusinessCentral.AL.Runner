@@ -73,9 +73,7 @@
 61269 P110_OutStreamThenInStream
 61270 P110_CreateTempFile_Encoding
 61270 P110_CreateTempFile_ReuseVar
-61270 P110_IsPathTemporary
 61275 Erase_EmptyName_FullErrorText
-61275 IsPathTemporary_Paths
 61276 Exists_Folder_And_Blank_Names
 61289 PSuperUser_DisableLastSuper
 61289 PSuperUser_RemoveLastSuperAssignment

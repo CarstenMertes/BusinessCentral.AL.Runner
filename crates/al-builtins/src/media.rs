@@ -29,6 +29,9 @@ pub struct MediaObject {
     /// Width and height of a PNG picture; 0 for content that is no PNG (not pinned).
     pub width: i32,
     pub height: i32,
+    /// ADR-044: the stream this media was imported from held a picture that was never produced (a
+    /// `System.Drawing.Bitmap` saved into it): the object has a value but no bytes. Any look at its content is refused.
+    pub pending: Option<std::sync::Arc<str>>,
 }
 
 /// The size a PNG header gives (`IHDR` at byte 16: width and height, big endian).
@@ -88,12 +91,28 @@ fn drain(v: &Value) -> Result<Vec<u8>, Signal> {
     }
 }
 
+/// The picture a stream holds when it was never produced (ADR-044).
+fn pending_of(v: Option<&Value>) -> Option<std::sync::Arc<str>> {
+    match v {
+        Some(Value::Library(_, h)) => match &*h.borrow() {
+            LibraryValue::InStream(s) => s.render_pending(),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 fn import_object(c: &mut dyn Ctx, a: &[Value]) -> Result<Id, Signal> {
     // ImportStream(Stream, Description[, MimeType[, FileName]]).
-    let bytes = drain(
-        a.first()
-            .ok_or_else(|| Signal::Unsupported("ImportStream without a stream".into()))?,
-    )?;
+    let pending = pending_of(a.first());
+    let bytes = if pending.is_some() {
+        Vec::new()
+    } else {
+        drain(
+            a.first()
+                .ok_or_else(|| Signal::Unsupported("ImportStream without a stream".into()))?,
+        )?
+    };
     let description = text_arg(a, 1)?;
     let mime = match a.get(2) {
         None | Some(Value::Null) => String::new(),
@@ -122,6 +141,7 @@ fn import_object(c: &mut dyn Ctx, a: &[Value]) -> Result<Id, Signal> {
             file_name,
             width,
             height,
+            pending,
         },
     );
     Ok(id)
@@ -144,8 +164,9 @@ fn media_import(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out 
     id_of(&r)?;
     // An empty stream imports no media: the field holds none afterwards (streams/StTMedia.al:MediaImportEmptyStream, `HasValue` No).
     // What the call answers is not pinned; the null Guid is assumed.
-    if matches!(a.first(), Some(Value::Library(_, h))
-        if matches!(&*h.borrow(), LibraryValue::InStream(s) if s.rest().is_empty()))
+    if pending_of(a.first()).is_none()
+        && matches!(a.first(), Some(Value::Library(_, h))
+            if matches!(&*h.borrow(), LibraryValue::InStream(s) if s.rest().is_empty()))
     {
         if let Some(slot) = r {
             *slot = Value::Guid([0; 16]);
@@ -182,6 +203,9 @@ fn media_export(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out 
     let Some(obj) = store(c)?.objects.borrow().get(&id).cloned() else {
         return unsupported("Media.ExportStream of a media the session does not hold");
     };
+    if let Some(report) = &obj.pending {
+        return Err(crate::stream::render_pending_error(report));
+    }
     let Some(Value::Library(_, h)) = a.first() else {
         return unsupported("Media.ExportStream without an OutStream");
     };

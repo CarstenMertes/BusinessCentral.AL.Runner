@@ -10,7 +10,7 @@ The catalog of each area is what the AL language server offers in probe files (`
 
 | Area | Items | Pinned | Pinned % | Implemented | Implemented % | Refused | Unknown | MS-used unpinned |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| attributes | 42 | 24 | 57.1% | 26 | 61.9% | 0 | 16 | 5 |
+| attributes | 42 | 25 | 59.5% | 26 | 61.9% | 0 | 16 | 5 |
 | events | 23 | 16 | 69.6% | 22 | 95.7% | 0 | 1 | 0 |
 | properties | 720 | 406 | 56.4% | 518 | 71.9% | 39 | 163 | 80 |
 | syntax | 16 | 16 | 100.0% | 16 | 100.0% | 0 | 0 | 0 |
@@ -22,11 +22,11 @@ Left out: 293 presentation-only properties (Caption, ToolTip, ApplicationArea, .
 
 | Owner | Items | Pinned | Pinned % | Implemented | Implemented % | Refused | Unknown | MS-used unpinned |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| (code) | 42 | 24 | 57.1% | 26 | 61.9% | 0 | 16 | 5 |
+| (code) | 42 | 25 | 59.5% | 26 | 61.9% | 0 | 16 | 5 |
 
 #### attributes: unpinned items by owner
 
-- **(code)** (18 of 42): `Caption` implemented; `HttpClientHandler` implemented; `InDataSet` unknown; `InherentPermissions` implemented, MS 100; `Native` unknown, MS 25; `None` implemented; `Obsolete` unknown, MS 1525; `ReportHandler` unknown; `RequiredPending` unknown, BC 29; `RequiredPermissions` unknown; `RunOnClient` unknown; `Scope` implemented, MS 1985; `SecurityFiltering` implemented; `ServiceEnabled` unknown, MS 1; `SuppressDispose` unknown; `TestDataSource` unknown, BC 29; `TestPermissions` implemented; `WithEvents` unknown
+- **(code)** (17 of 42): `Caption` implemented; `InDataSet` unknown; `InherentPermissions` implemented, MS 100; `Native` unknown, MS 25; `None` implemented; `Obsolete` unknown, MS 1525; `ReportHandler` unknown; `RequiredPending` unknown, BC 29; `RequiredPermissions` unknown; `RunOnClient` unknown; `Scope` implemented, MS 1985; `SecurityFiltering` implemented; `ServiceEnabled` unknown, MS 1; `SuppressDispose` unknown; `TestDataSource` unknown, BC 29; `TestPermissions` implemented; `WithEvents` unknown
 
 ### events per owner
 
@@ -214,8 +214,8 @@ An item is **pinned** when it occurs in a corpus file in a routine that static r
 | Object properties per object kind | 1154 | 499 | 1074 | 655 | 538 |
 | Platform and system events | 123 | 37 | 17 | 0 | 0 |
 | Statements and expressions | 64 | 60 | 58 | 0 | 0 |
-| Method attributes | 29 | 24 | 13 | 5 | 3 |
-| Runtime error sites (text pinned) | 68 | 63 | - | 5 | - |
+| Method attributes | 30 | 25 | 13 | 5 | 3 |
+| Runtime error sites (text pinned) | 69 | 69 | - | 0 | - |
 
 Presentation-only properties (Caption, ToolTip, ApplicationArea, ... ) are left out of the property catalog.
 
@@ -607,12 +607,7 @@ Presentation-only properties (Caption, ToolTip, ApplicationArea, ... ) are left 
 | procedure | `Native` | 25 | no | 0 |
 | procedure | `ServiceEnabled` | 1 | no | 0 |
 
-## Runtime error sites without a corpus test (5 of 68; 0 have too little fixed text to match)
+## Runtime error sites without a corpus test (0 of 69; 0 have too little fixed text to match)
 
 A site is pinned when a corpus string literal holds the message text. Codes are not matched. Sites with a computed message are not listed.
 
-- crates/al-builtins/src/file.rs:117 `File name was not specified.` code `MissingFileName`
-- crates/al-builtins/src/file.rs:305 `The value cannot be an empty string. (Parameter 'path')` code `InvalidPath`
-- crates/al-builtins/src/media.rs:245 `The specified path is invalid.` code `InvalidPath`
-- crates/al-builtins/src/media.rs:248 `Could not find a part of the path '%'.` code `InvalidPath`
-- crates/al-vm/src/usertable.rs:374 `There should be at least one enabled 'SUPER' user.` code `Dialog`

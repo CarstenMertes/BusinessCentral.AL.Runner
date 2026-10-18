@@ -340,31 +340,22 @@ fn rename(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
     Ok(Value::Boolean(true))
 }
 
-/// The paths the corpus pins as temporary, all answering Yes (al-language-onprem/lt-file-type/FileTemp.al:140-146, P110_IsPathTemporary):
-/// a name under `TemporaryPath()` (`\TEMP\`, also with `../` in it), the temporary folder itself, the empty text, a name with no
-/// separator (`relative.txt`), `/` and `/etc/passwd`, and the forms of FileEraseAndTempPath.al. Any other path is refused: whether it is temporary is not pinned.
+/// Yes only where real BC on Windows and the Linux container agree (Windows runs 39125184978 BC 27.5 and 39125190236 BC 29.0 of
+/// the corpus repo): a name under `TemporaryPath()` (`\TEMP\`, without `..`), the empty and blank text, and a relative path with
+/// or without a subfolder (al-language-onprem/lt-file-type/FileTemp.al:140-146, FileEraseAndTempPath.al:IsPathTemporary_Paths).
+/// Windows answers No for drive-letter paths, UNC paths and `/`, while the Linux container answers Yes for them: that Yes is a
+/// Linux artifact, not BC behavior, so those forms (and every other absolute path) are refused.
 fn is_path_temporary(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
     let p = path(a, 0)?;
     let pinned = p.starts_with(TEMP_DIR)
-        || p.starts_with("\\TEMP\\")
-        || p.is_empty()
-        || !p.contains(['/', '\\'])
-        || p == "/"
-        || p == "/etc/passwd"
-        // FileEraseAndTempPath.al:IsPathTemporary_Paths: a relative path with a subfolder, a blank text, a drive-letter path with
-        // either separator and a UNC path all answer Yes.
-        || (!p.starts_with(['/', '\\']) && !p.contains(':'))
+        || (p.starts_with("\\TEMP\\") && !p.contains(".."))
         || p.trim().is_empty()
-        || (p.len() > 2
-            && p.as_bytes()[0].is_ascii_alphabetic()
-            && p.as_bytes()[1] == b':'
-            && matches!(p.as_bytes()[2], b'/' | b'\\'))
-        || p.starts_with("\\\\");
+        || (!p.starts_with(['/', '\\']) && !p.contains(':'));
     if pinned {
         Ok(Value::Boolean(true))
     } else {
         unsupported(format!(
-            "File.IsPathTemporary of `{p}` (only the forms of FileTemp.al are pinned)"
+            "File.IsPathTemporary of `{p}` (Windows and Linux BC differ for absolute, drive-letter and UNC paths)"
         ))
     }
 }

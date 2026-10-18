@@ -132,13 +132,19 @@ fn disabled_line(
     d: &al_testrun::disabled::DisabledTests,
     results: &[&TestResult],
     found: &[Found],
+    selection: &Selection,
     parity: bool,
 ) -> String {
     let list = format!("{} entries of {} files", d.entries(), d.files());
     if parity {
         let skipped: usize = found
             .iter()
-            .map(|f| f.tests.iter().filter(|t| d.is_disabled(f.id, t)).count())
+            .map(|f| {
+                f.tests
+                    .iter()
+                    .filter(|t| selection.picks(f.id, t) && d.is_disabled(f.id, t))
+                    .count()
+            })
             .sum();
         return format!("Disabled by Microsoft: {skipped} tests not run (--parity; {list})");
     }
@@ -446,7 +452,25 @@ fn test_timeout_secs(a: &TestArgs) -> Result<u64, String> {
 }
 
 pub fn test(a: &TestArgs) -> Result<u8, String> {
+    if !a.impact_of.is_empty() {
+        return crate::impact::run(a);
+    }
     test_with(a, None)
+}
+
+/// What one side of an impact run (ADR-043) keeps of its run.
+#[derive(Default)]
+pub struct Collected {
+    /// The selected tests, in the order of the report.
+    pub results: Vec<TestResult>,
+    /// With coverage: every statement of the workspace's apps.
+    pub statements: Vec<al_testrun::coverage::CoverageStatement>,
+}
+
+/// A run whose selected tests and coverage statements are handed back in `into` (one side of an impact run).
+/// Prints the summary line of the run but no verdict.
+pub fn test_collect(a: &TestArgs, into: &mut Collected) -> Result<u8, String> {
+    test_inner(a, None, Some(into))
 }
 
 /// What the server hears for each test as it finishes: the event, and its capture as JSON.
@@ -520,7 +544,11 @@ fn warm_key(
     format!("{:016x}", h.finish())
 }
 
-pub fn test_with(a: &TestArgs, mut warm: Option<&mut WarmCtx>) -> Result<u8, String> {
+pub fn test_with(a: &TestArgs, warm: Option<&mut WarmCtx>) -> Result<u8, String> {
+    test_inner(a, warm, None)
+}
+
+fn test_inner(a: &TestArgs, mut warm: Option<&mut WarmCtx>, collect: Option<&mut Collected>) -> Result<u8, String> {
     let started = Instant::now();
     REPORT_TO_STDERR.store(
         matches!(a.output_json, Some(None)) || warm.is_some(),
@@ -571,6 +599,7 @@ pub fn test_with(a: &TestArgs, mut warm: Option<&mut WarmCtx>) -> Result<u8, Str
     };
     let server_url_set = server_url.is_some();
     al_testrun::host::set_server_url(server_url);
+    al_testrun::host::set_company_name(a.company_name.clone());
     if let Some(dir) = &a.files_dir {
         al_testrun::host::set_files_dir(dir.clone());
     }
@@ -600,6 +629,10 @@ pub fn test_with(a: &TestArgs, mut warm: Option<&mut WarmCtx>) -> Result<u8, Str
     // Which test codeunits there are, and which of them this run is about.
     let mut found: Vec<Found> = Vec::new();
     for (i, app) in inputs.iter().enumerate() {
+        // An impact run's "with" side: the extensions' own test codeunits are not part of the run.
+        if a.test_apps.is_some_and(|n| i >= n) {
+            continue;
+        }
         for (_, text) in &app.source.files {
             for (id, tests) in discover::test_codeunits(text) {
                 found.push(Found { app: i, id, tests });
@@ -908,7 +941,8 @@ pub fn test_with(a: &TestArgs, mut warm: Option<&mut WarmCtx>) -> Result<u8, Str
     let sidecar_host = host.clone();
     // ADR-038: the closed set of pure framework members is answered in process; ALRUNNER_NO_INPROC=1 sends all to the sidecar.
     let host = al_host::inproc::wrap(host);
-    let opts_only = (selection.active() && !a.execute).then(|| {
+    // An impact run names the test codeunits on both sides, so that the extensions' own are not compiled as tests.
+    let opts_only = ((selection.active() || a.test_apps.is_some()) && !a.execute).then(|| {
         let mut v: Vec<(usize, u32)> = chosen_units.iter().map(|f| (f.app, f.id)).collect();
         v.sort_unstable();
         v.dedup();
@@ -1056,6 +1090,7 @@ pub fn test_with(a: &TestArgs, mut warm: Option<&mut WarmCtx>) -> Result<u8, Str
         .results()
         .iter()
         .filter(|r| a.execute || selection.picks(r.codeunit, &r.test))
+        .filter(|r| a.test_apps.is_none_or(|n| r.app < n))
         .collect();
     results.sort_by_key(|r| (r.app, r.codeunit));
     let counts = Counts::of(results.iter().copied());
@@ -1327,7 +1362,8 @@ pub fn test_with(a: &TestArgs, mut warm: Option<&mut WarmCtx>) -> Result<u8, Str
     }
 
     let mut coverage_doc: Option<String> = None;
-    if a.coverage {
+    // An impact run counts statements for its own report and writes no coverage file.
+    if a.coverage && collect.is_none() {
         let cwd = std::env::current_dir().unwrap_or_default();
         let labels = |app: usize, file: &str| coverage::label(&inputs[app].path, file, &cwd);
         let names: Vec<String> = inputs.iter().map(|i| i.json.name.clone()).collect();
@@ -1403,7 +1439,19 @@ pub fn test_with(a: &TestArgs, mut warm: Option<&mut WarmCtx>) -> Result<u8, Str
         }
     }
     if let Some(d) = &disabled {
-        say!("{}", disabled_line(d, &results, &found, a.parity));
+        say!(
+            "{}",
+            disabled_line(
+                d,
+                &results,
+                &found,
+                &Selection {
+                    parity: None,
+                    ..selection.clone()
+                },
+                a.parity
+            )
+        );
     }
     if let Some(w) = &dotnet_warning {
         say!("{w}");
@@ -1432,6 +1480,12 @@ pub fn test_with(a: &TestArgs, mut warm: Option<&mut WarmCtx>) -> Result<u8, Str
         8 => "DOTNET UNAVAILABLE",
         _ => "ERROR",
     };
+    if let Some(into) = collect {
+        // One side of an impact run: its caller prints the verdict.
+        into.results = results.iter().map(|r| (*r).clone()).collect();
+        into.statements = rt.coverage_statements().to_vec();
+        return Ok(code);
+    }
     let result = format!("Result: {verdict} (exit {code})");
     say!(
         "{}",
@@ -1588,5 +1642,35 @@ mod country_tests {
             assert!(!should_choose_test_data(&args(country, false), false, false));
             assert!(!should_choose_test_data(&args(country, false), true, true));
         }
+    }
+}
+
+#[cfg(test)]
+mod disabled_line_tests {
+    use super::*;
+
+    #[test]
+    fn the_parity_count_covers_only_the_selected_codeunits() {
+        let mut d = al_testrun::disabled::DisabledTests::default();
+        d.add_file(r#"[{"codeunitId":1,"method":"*"},{"codeunitId":2,"method":"*"}]"#)
+            .unwrap();
+        let found = vec![
+            Found {
+                app: 0,
+                id: 1,
+                tests: vec!["A".into(), "B".into()],
+            },
+            Found {
+                app: 0,
+                id: 2,
+                tests: vec!["C".into()],
+            },
+        ];
+        let sel = Selection {
+            codeunits: vec![1],
+            ..Selection::default()
+        };
+        let line = disabled_line(&d, &[], &found, &sel, true);
+        assert!(line.starts_with("Disabled by Microsoft: 2 tests not run"), "{line}");
     }
 }

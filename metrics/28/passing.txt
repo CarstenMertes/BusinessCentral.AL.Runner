@@ -3821,6 +3821,7 @@
 67046 SpacedName_SubscriberError_Propagates
 67046 SpacedName_Unbound_DoesNotFire
 67046 TablePublishedSpacedName_ReachesItsSubscriber
+67048 ErrorInfo_DeclaredNeverCreated_Properties
 67049 Recall_HandlerAnswersFalse
 67049 Recall_Twice_HandlerAnswersTrue
 67049 Recall_Twice_NoRecallHandler
@@ -10070,9 +10071,12 @@
 73025 Relation_Values
 73025 SetFilter_Forms
 73025 SetRange_Forms
+73026 Create_Defaults
+73026 Create_FullOverload
 73026 Create_WithMessage
 73026 Properties_CustomDimensions
 73026 Properties_Message_Edge
+73026 Properties_RecordId_SystemId
 73026 Properties_SetGet
 73026 Properties_Verbosity_AllValues
 73028 AddAction_Invalid
@@ -10973,6 +10977,8 @@
 73800 Quarters
 73800 WeekdayNames
 73800 Years
+73801 DWY2Date_Invalid
+73801 DWY2Date_Valid
 73801 Date2DWY_Invalid
 73802 DateTime_Comparisons
 73802 Date_Arithmetic_Errors

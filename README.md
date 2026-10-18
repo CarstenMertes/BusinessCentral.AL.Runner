@@ -73,6 +73,13 @@ artifact's RapidStart package, instead of restoring the backup (opt-in; see the 
 for the rest of Microsoft's recipe). For a parity report, `--disabled-tests DIR` reads Microsoft's
 `src/DisabledTests` folder from BCApps. A normal run still runs those tests and marks them in
 the summary and the JUnit file. `--parity` also skips them.
+`--recipe microsoft` does all of this the way Microsoft's CI does: BCApps' own settings decide the
+company of each test codeunit (the Legacy test apps get the package company, a codeunit with
+`TestType = UnitTest` an empty one), the disabled tests are skipped, and each lane has its own
+summary and JUnit file. The BCApps files (MIT) are fetched sparsely with `git` into the cache once;
+`--bcapps DIR` names a checkout, `--no-download` uses the cache only. The two Contoso lanes
+(IntegrationTest and the codeunits with no TestType) are not run yet: the runner does not build the
+Contoso company, and says so.
 `--server-url URL` (default `http://localhost:8080/BC`) sets the address `GetUrl(ClientType::Web)` answers with; a company built from the package needs it for Company-Initialize.
 
 **6. .NET is optional.** Nothing in the core needs .NET. AL code that uses the `DotNet` type

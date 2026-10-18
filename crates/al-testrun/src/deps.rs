@@ -158,7 +158,7 @@ pub fn load_project_with(
     let mut manifests = Vec::new();
     let mut lazy = Vec::new();
     let application_aggregate = loaded.application_aggregate.clone();
-    for d in loaded.apps {
+    for mut d in loaded.apps {
         let files = d.app.files.len();
         log.push(format!(
             "dependency: {} {} ({files} files) from {}",
@@ -169,7 +169,7 @@ pub fn load_project_with(
         manifests.push(crate::runtime::Manifest {
             publisher: d.publisher.clone(),
             version: d.version.to_string(),
-            resources: Vec::new(),
+            resources: std::mem::take(&mut d.resources),
             include_source: false,
             layout_files: Vec::new(),
             symbols: d.preprocessor_symbols.clone(),

@@ -1340,7 +1340,8 @@ fn the_declared_result_types_match_the_registry() {
             assert!(
                 matches!(&m.pin, Pin::AlRunner(s) if s.starts_with("AL Runner v2 ") && s.contains("AlRunner/"))
                     || matches!(&m.pin, Pin::Probe(s) if s.contains("probe tests/al-language") && s.contains(".al"))
-                    || matches!(&m.pin, Pin::Corpus(s) if s.contains(".al:")),
+                    || matches!(&m.pin, Pin::Corpus(s) if s.contains(".al:"))
+                    || matches!(&m.pin, Pin::Microsoft(s) if s.contains("O365BrandColorTests.Codeunit.al:")),
                 "{}.{}: {:?}",
                 t.clr_name,
                 m.name,
@@ -1357,6 +1358,8 @@ fn the_declared_result_types_match_the_registry() {
             "GetEffectivePermissionForObject" => continue, // needs a Guid; the AL test above runs it
             // Need streams; tests/gzip.rs runs them.
             "GZipStream" | "CopyTo" | "Dispose" => continue,
+            // Need other runtime objects; tests/host/bitmap.rs runs them.
+            "Bitmap" | "Save" | "FromImage" | "FillEllipse" | "FromHtml" | "SolidBrush" => continue,
             // Need an exception object; tests/host/last_error_object.rs runs them.
             "Message" | "InnerException" | "GetType" | "ToString" | "FullName" | "GetBaseException" | "Equals" => {
                 continue;

@@ -48,7 +48,7 @@
         "pinned": true,
         "scope": "",
         "sig": "(Text, [Integer])",
-        "site": "session/TestSystemExtended.al:339",
+        "site": "lt-file-type/FileWriteTypes.al:174",
         "state": "implemented",
         "type": "BigText"
       },
@@ -727,10 +727,10 @@
         "id": "Database.CheckLicenseFile#1",
         "ms_uses": 0,
         "name": "CheckLicenseFile",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
         "sig": "(Integer)",
-        "site": null,
+        "site": "lt-system-database-onprem/PCheckLicenseFile.al:17",
         "state": "refused",
         "type": "Database"
       },
@@ -807,10 +807,10 @@
         "id": "Database.DataFileInformation#1",
         "ms_uses": 0,
         "name": "DataFileInformation",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
         "sig": "(Boolean, var Text, var Text, var Boolean, var Boolean, var Boolean, var Text, var DateTime, var Table)",
-        "site": null,
+        "site": "lt-system-database-onprem/PDataFileInfo.al:19",
         "state": "refused",
         "type": "Database"
       },
@@ -1095,10 +1095,10 @@
         "id": "Database.SID#1",
         "ms_uses": 5,
         "name": "SID",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
         "sig": "([Text])",
-        "site": null,
+        "site": "lt-system-database-onprem/PSid.al:25",
         "state": "implemented",
         "type": "Database"
       },
@@ -1335,10 +1335,10 @@
         "id": "Debugger.Attach#1",
         "ms_uses": 0,
         "name": "Attach",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
         "sig": "(Integer)",
-        "site": null,
+        "site": "lt-debugger-type/P111_Attach.al:14",
         "state": "refused",
         "type": "Debugger"
       },
@@ -1351,10 +1351,10 @@
         "id": "Debugger.Break#1",
         "ms_uses": 0,
         "name": "Break",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
         "sig": "()",
-        "site": null,
+        "site": "lt-debugger-type/P111_Break.al:14",
         "state": "refused",
         "type": "Debugger"
       },
@@ -1367,10 +1367,10 @@
         "id": "Debugger.BreakOnError#1",
         "ms_uses": 0,
         "name": "BreakOnError",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
         "sig": "(Boolean)",
-        "site": null,
+        "site": "lt-debugger-type/P111_BreakOnError.al:14",
         "state": "refused",
         "type": "Debugger"
       },
@@ -1383,10 +1383,10 @@
         "id": "Debugger.BreakOnRecordChanges#1",
         "ms_uses": 0,
         "name": "BreakOnRecordChanges",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
         "sig": "(Boolean)",
-        "site": null,
+        "site": "lt-debugger-type/P111_BreakOnRecordChanges.al:14",
         "state": "refused",
         "type": "Debugger"
       },
@@ -1399,10 +1399,10 @@
         "id": "Debugger.Continue#1",
         "ms_uses": 0,
         "name": "Continue",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
         "sig": "()",
-        "site": null,
+        "site": "lt-debugger-type/P111_Continue.al:14",
         "state": "refused",
         "type": "Debugger"
       },
@@ -1415,10 +1415,10 @@
         "id": "Debugger.Deactivate#1",
         "ms_uses": 0,
         "name": "Deactivate",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
         "sig": "()",
-        "site": null,
+        "site": "lt-debugger-type/P111_Deactivate.al:14",
         "state": "refused",
         "type": "Debugger"
       },
@@ -1431,10 +1431,10 @@
         "id": "Debugger.DebuggedSessionID#1",
         "ms_uses": 0,
         "name": "DebuggedSessionID",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
         "sig": "()",
-        "site": null,
+        "site": "lt-debugger-type/P111_SessionIds.al:14",
         "state": "refused",
         "type": "Debugger"
       },
@@ -1447,10 +1447,10 @@
         "id": "Debugger.DebuggingSessionID#1",
         "ms_uses": 0,
         "name": "DebuggingSessionID",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
         "sig": "()",
-        "site": null,
+        "site": "lt-debugger-type/P111_SessionIds.al:20",
         "state": "refused",
         "type": "Debugger"
       },
@@ -1463,10 +1463,10 @@
         "id": "Debugger.EnableSqlTrace#1",
         "ms_uses": 0,
         "name": "EnableSqlTrace",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
         "sig": "(Integer, [Boolean])",
-        "site": null,
+        "site": "lt-debugger-type/P111_EnableSqlTrace.al:14",
         "state": "refused",
         "type": "Debugger"
       },
@@ -1479,10 +1479,10 @@
         "id": "Debugger.GetLastErrorText#1",
         "ms_uses": 0,
         "name": "GetLastErrorText",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
         "sig": "()",
-        "site": null,
+        "site": "lt-debugger-type/P111_GetLastErrorText.al:14",
         "state": "refused",
         "type": "Debugger"
       },
@@ -1495,10 +1495,10 @@
         "id": "Debugger.IsActive#1",
         "ms_uses": 0,
         "name": "IsActive",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
         "sig": "()",
-        "site": null,
+        "site": "lt-debugger-type/P111_IsActive.al:14",
         "state": "refused",
         "type": "Debugger"
       },
@@ -1511,10 +1511,10 @@
         "id": "Debugger.IsAttached#1",
         "ms_uses": 0,
         "name": "IsAttached",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
         "sig": "()",
-        "site": null,
+        "site": "lt-debugger-type/P111_IsAttached.al:14",
         "state": "refused",
         "type": "Debugger"
       },
@@ -1527,10 +1527,10 @@
         "id": "Debugger.IsBreakpointHit#1",
         "ms_uses": 0,
         "name": "IsBreakpointHit",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
         "sig": "()",
-        "site": null,
+        "site": "lt-debugger-type/P111_IsBreakpointHit.al:14",
         "state": "refused",
         "type": "Debugger"
       },
@@ -1543,10 +1543,10 @@
         "id": "Debugger.SkipSystemTriggers#1",
         "ms_uses": 0,
         "name": "SkipSystemTriggers",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
         "sig": "(Boolean)",
-        "site": null,
+        "site": "lt-debugger-type/P111_SkipSystemTriggers.al:14",
         "state": "refused",
         "type": "Debugger"
       },
@@ -1559,10 +1559,10 @@
         "id": "Debugger.StepInto#1",
         "ms_uses": 0,
         "name": "StepInto",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
         "sig": "()",
-        "site": null,
+        "site": "lt-debugger-type/P111_StepInto.al:14",
         "state": "refused",
         "type": "Debugger"
       },
@@ -1575,10 +1575,10 @@
         "id": "Debugger.StepOut#1",
         "ms_uses": 0,
         "name": "StepOut",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
         "sig": "()",
-        "site": null,
+        "site": "lt-debugger-type/P111_StepOut.al:14",
         "state": "refused",
         "type": "Debugger"
       },
@@ -1591,10 +1591,10 @@
         "id": "Debugger.StepOver#1",
         "ms_uses": 0,
         "name": "StepOver",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
         "sig": "()",
-        "site": null,
+        "site": "lt-debugger-type/P111_StepOver.al:14",
         "state": "refused",
         "type": "Debugger"
       },
@@ -1607,10 +1607,10 @@
         "id": "Debugger.Stop#1",
         "ms_uses": 0,
         "name": "Stop",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
         "sig": "()",
-        "site": null,
+        "site": "lt-debugger-type/P111_Stop.al:14",
         "state": "refused",
         "type": "Debugger"
       },
@@ -1735,10 +1735,10 @@
         "id": "Dialog.LogInternalError#1",
         "ms_uses": 0,
         "name": "LogInternalError",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
         "sig": "(Text, DataClassification, Verbosity)",
-        "site": null,
+        "site": "lt-system-database-onprem/PLogInternalError1.al:17",
         "state": "refused",
         "type": "Dialog"
       },
@@ -1751,10 +1751,10 @@
         "id": "Dialog.LogInternalError#2",
         "ms_uses": 0,
         "name": "LogInternalError",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
         "sig": "(Text, Text, DataClassification, Verbosity)",
-        "site": null,
+        "site": "lt-system-database-onprem/PLogInternalError2.al:17",
         "state": "refused",
         "type": "Dialog"
       },
@@ -3511,10 +3511,10 @@
         "id": "File.Close#1",
         "ms_uses": 28,
         "name": "Close",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
         "sig": "()",
-        "site": null,
+        "site": "handlers/TestRequestPageSaveAsXmlContracts.al:187",
         "state": "implemented",
         "type": "File"
       },
@@ -3527,10 +3527,10 @@
         "id": "File.Copy#1",
         "ms_uses": 1,
         "name": "Copy",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
         "sig": "(Text, Text)",
-        "site": null,
+        "site": "lt-file-type/FileErrors.al:169",
         "state": "implemented",
         "type": "File"
       },
@@ -3543,10 +3543,10 @@
         "id": "File.Create#1",
         "ms_uses": 14,
         "name": "Create",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
         "sig": "(Text, [TextEncoding])",
-        "site": null,
+        "site": "lt-file-type/FileBasics.al:43",
         "state": "implemented",
         "type": "File"
       },
@@ -3559,10 +3559,10 @@
         "id": "File.CreateInStream#1",
         "ms_uses": 14,
         "name": "CreateInStream",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
         "sig": "(InStream)",
-        "site": null,
+        "site": "handlers/TestRequestPageSaveAsXmlContracts.al:184",
         "state": "implemented",
         "type": "File"
       },
@@ -3575,10 +3575,10 @@
         "id": "File.CreateOutStream#1",
         "ms_uses": 11,
         "name": "CreateOutStream",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
         "sig": "(OutStream)",
-        "site": null,
+        "site": "lt-file-type/FileStreams.al:51",
         "state": "implemented",
         "type": "File"
       },
@@ -3591,10 +3591,10 @@
         "id": "File.CreateTempFile#1",
         "ms_uses": 2,
         "name": "CreateTempFile",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
         "sig": "([TextEncoding])",
-        "site": null,
+        "site": "lt-file-type/FileTemp.al:46",
         "state": "implemented",
         "type": "File"
       },
@@ -3639,10 +3639,10 @@
         "id": "File.Erase#1",
         "ms_uses": 10,
         "name": "Erase",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
         "sig": "(Text)",
-        "site": null,
+        "site": "handlers/TestRequestPageSaveAsXmlContracts.al:169",
         "state": "implemented",
         "type": "File"
       },
@@ -3655,10 +3655,10 @@
         "id": "File.Exists#1",
         "ms_uses": 18,
         "name": "Exists",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
         "sig": "(Text)",
-        "site": null,
+        "site": "handlers/TestRequestPageSaveAsXmlContracts.al:168",
         "state": "implemented",
         "type": "File"
       },
@@ -3671,10 +3671,10 @@
         "id": "File.GetStamp#1",
         "ms_uses": 0,
         "name": "GetStamp",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
         "sig": "(Text, var Date, [var Time])",
-        "site": null,
+        "site": "lt-file-type/FileErrors.al:175",
         "state": "refused",
         "type": "File"
       },
@@ -3687,10 +3687,10 @@
         "id": "File.IsPathTemporary#1",
         "ms_uses": 1,
         "name": "IsPathTemporary",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
         "sig": "(Text)",
-        "site": null,
+        "site": "lt-file-type/FileEraseAndTempPath.al:19",
         "state": "implemented",
         "type": "File"
       },
@@ -3703,10 +3703,10 @@
         "id": "File.Len#1",
         "ms_uses": 2,
         "name": "Len",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
         "sig": "()",
-        "site": null,
+        "site": "lt-file-type/FileBasics.al:45",
         "state": "implemented",
         "type": "File"
       },
@@ -3719,10 +3719,10 @@
         "id": "File.Name#1",
         "ms_uses": 4,
         "name": "Name",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
         "sig": "()",
-        "site": null,
+        "site": "lt-file-type/FileBasics.al:25",
         "state": "implemented",
         "type": "File"
       },
@@ -3735,10 +3735,10 @@
         "id": "File.Open#1",
         "ms_uses": 16,
         "name": "Open",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
         "sig": "(Text, [TextEncoding])",
-        "site": null,
+        "site": "handlers/TestRequestPageSaveAsXmlContracts.al:183",
         "state": "implemented",
         "type": "File"
       },
@@ -3751,10 +3751,10 @@
         "id": "File.Pos#1",
         "ms_uses": 0,
         "name": "Pos",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
         "sig": "()",
-        "site": null,
+        "site": "lt-file-type/FileBasics.al:46",
         "state": "refused",
         "type": "File"
       },
@@ -3767,10 +3767,10 @@
         "id": "File.Read#1",
         "ms_uses": 0,
         "name": "Read",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
         "sig": "(var Joker)",
-        "site": null,
+        "site": "lt-file-type/FileErrors.al:103",
         "state": "refused",
         "type": "File"
       },
@@ -3783,10 +3783,10 @@
         "id": "File.Rename#1",
         "ms_uses": 0,
         "name": "Rename",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
         "sig": "(Text, Text)",
-        "site": null,
+        "site": "lt-file-type/FileErrors.al:163",
         "state": "implemented",
         "type": "File"
       },
@@ -3799,10 +3799,10 @@
         "id": "File.Seek#1",
         "ms_uses": 0,
         "name": "Seek",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
         "sig": "(Integer)",
-        "site": null,
+        "site": "lt-file-type/FileErrors.al:139",
         "state": "refused",
         "type": "File"
       },
@@ -3815,10 +3815,10 @@
         "id": "File.SetStamp#1",
         "ms_uses": 0,
         "name": "SetStamp",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
         "sig": "(Text, Date, [Time])",
-        "site": null,
+        "site": "lt-file-type/FileErrors.al:181",
         "state": "refused",
         "type": "File"
       },
@@ -3831,10 +3831,10 @@
         "id": "File.TextMode#1",
         "ms_uses": 7,
         "name": "TextMode",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
         "sig": "([Boolean])",
-        "site": null,
+        "site": "lt-file-type/FileErrors.al:15",
         "state": "implemented",
         "type": "File"
       },
@@ -3847,10 +3847,10 @@
         "id": "File.Trunc#1",
         "ms_uses": 0,
         "name": "Trunc",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
         "sig": "()",
-        "site": null,
+        "site": "lt-file-type/FileErrors.al:145",
         "state": "refused",
         "type": "File"
       },
@@ -3863,10 +3863,10 @@
         "id": "File.Upload#1",
         "ms_uses": 4,
         "name": "Upload",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
         "sig": "(Text, Text, Text, Text, var Text)",
-        "site": null,
+        "site": "lt-file-type/FileUpload.al:38",
         "state": "implemented",
         "type": "File"
       },
@@ -3879,10 +3879,10 @@
         "id": "File.UploadIntoStream#1",
         "ms_uses": 10,
         "name": "UploadIntoStream",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
         "sig": "(Text, Text, Text, var Text, var InStream)",
-        "site": null,
+        "site": "lt-file-type/FileUploadIntoStream1.al:38",
         "state": "implemented",
         "type": "File"
       },
@@ -3895,10 +3895,10 @@
         "id": "File.UploadIntoStream#2",
         "ms_uses": 0,
         "name": "UploadIntoStream",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
         "sig": "(Text, var InStream)",
-        "site": null,
+        "site": "lt-file-type/FileUploadIntoStream2.al:38",
         "state": "implemented",
         "type": "File"
       },
@@ -3911,10 +3911,10 @@
         "id": "File.View#1",
         "ms_uses": 0,
         "name": "View",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
         "sig": "(Text, [Boolean])",
-        "site": null,
+        "site": "lt-file-type/FileView.al:38",
         "state": "implemented",
         "type": "File"
       },
@@ -3927,10 +3927,10 @@
         "id": "File.ViewFromStream#1",
         "ms_uses": 2,
         "name": "ViewFromStream",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
         "sig": "(InStream, Text, [Boolean])",
-        "site": null,
+        "site": "lt-file-type/FileViewFromStream.al:38",
         "state": "implemented",
         "type": "File"
       },
@@ -4151,10 +4151,10 @@
         "id": "File.Write#1",
         "ms_uses": 8,
         "name": "Write",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
         "sig": "(Joker)",
-        "site": null,
+        "site": "lt-file-type/FileBasics.al:76",
         "state": "implemented",
         "type": "File"
       },
@@ -4263,10 +4263,10 @@
         "id": "File.WriteMode#1",
         "ms_uses": 9,
         "name": "WriteMode",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
         "sig": "([Boolean])",
-        "site": null,
+        "site": "lt-file-type/FileErrors.al:24",
         "state": "implemented",
         "type": "File"
       },
@@ -5546,7 +5546,7 @@
         "pinned": true,
         "scope": "",
         "sig": "()",
-        "site": "errors/lt-ms-refusals-130/P130DatasetHelper.al:32",
+        "site": "TestDotNetValueKindsContracts.al:365",
         "state": "implemented",
         "type": "InStream"
       },
@@ -5706,7 +5706,7 @@
         "pinned": true,
         "scope": "",
         "sig": "(var Joker, [Integer])",
-        "site": "errors/lt-ms-refusals-132/P132OutStreamUnicode.al:23",
+        "site": "TestDotNetValueKindsContracts.al:386",
         "state": "implemented",
         "type": "InStream"
       },
@@ -5738,7 +5738,7 @@
         "pinned": true,
         "scope": "",
         "sig": "(var Text, [Integer])",
-        "site": "errors/lt-ms-refusals-130/P130DatasetHelper.al:33",
+        "site": "TestDotNetValueKindsContracts.al:337",
         "state": "implemented",
         "type": "InStream"
       },
@@ -10380,10 +10380,10 @@
         "id": "Media.ImportFile#1",
         "ms_uses": 8,
         "name": "ImportFile",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
         "sig": "(Text, Text, [Text])",
-        "site": null,
+        "site": "session/PZMediaImportFile.al:31",
         "state": "implemented",
         "type": "Media"
       },
@@ -10492,10 +10492,10 @@
         "id": "MediaSet.ImportFile#1",
         "ms_uses": 1,
         "name": "ImportFile",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
         "sig": "(Text, Text, [Text])",
-        "site": null,
+        "site": "session/PZMediaImportFile.al:37",
         "state": "implemented",
         "type": "MediaSet"
       },
@@ -10786,7 +10786,7 @@
           29
         ],
         "id": "ModuleInfo.Publisher#1",
-        "ms_uses": 24,
+        "ms_uses": 25,
         "name": "Publisher",
         "pinned": true,
         "scope": "",
@@ -10866,7 +10866,7 @@
           29
         ],
         "id": "NavApp.GetCallerModuleInfo#1",
-        "ms_uses": 119,
+        "ms_uses": 120,
         "name": "GetCallerModuleInfo",
         "pinned": true,
         "scope": "",
@@ -11773,7 +11773,7 @@
         "pinned": true,
         "scope": "",
         "sig": "([Text], [Integer])",
-        "site": "codeunit/TestWriteTxTestBoundary.al:302",
+        "site": "TestDotNetValueKindsContracts.al:358",
         "state": "implemented",
         "type": "OutStream"
       },
@@ -13701,7 +13701,7 @@
         "pinned": true,
         "scope": "",
         "sig": "()",
-        "site": "codeunit/TestCodeunitRunContracts.al:99",
+        "site": "access-control/TestUserDeleteCascadeOrder.al:75",
         "state": "implemented",
         "type": "Record"
       },
@@ -16445,10 +16445,10 @@
         "id": "Report.SaveAsPdf#2",
         "ms_uses": 0,
         "name": "SaveAsPdf",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
         "sig": "(Integer, Text, [var Table])",
-        "site": null,
+        "site": "session/PXSaveAsPdf.al:17",
         "state": "implemented",
         "type": "Report"
       },
@@ -17037,10 +17037,10 @@
         "id": "Session.EnableVerboseTelemetry#1",
         "ms_uses": 0,
         "name": "EnableVerboseTelemetry",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
         "sig": "(Boolean, Duration)",
-        "site": null,
+        "site": "lt-system-database-onprem/PVerboseTelemetry.al:20",
         "state": "refused",
         "type": "Session"
       },
@@ -17117,10 +17117,10 @@
         "id": "Session.LogAuditMessage#1",
         "ms_uses": 29,
         "name": "LogAuditMessage",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
         "sig": "(Text, SecurityOperationResult, AuditCategory, Integer, Integer, [Dictionary of [Text, Text]])",
-        "site": null,
+        "site": "lt-system-database-onprem/PLogAuditMessage.al:17",
         "state": "implemented",
         "type": "Session"
       },
@@ -17181,10 +17181,10 @@
         "id": "Session.SendTraceTag#1",
         "ms_uses": 0,
         "name": "SendTraceTag",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
         "sig": "(Text, Text, Verbosity, Text, [DataClassification])",
-        "site": null,
+        "site": "lt-system-database-onprem/PSendTraceTag.al:17",
         "state": "refused",
         "type": "Session"
       },
@@ -17197,10 +17197,10 @@
         "id": "Session.SetDocumentServiceToken#1",
         "ms_uses": 0,
         "name": "SetDocumentServiceToken",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
         "sig": "(Text)",
-        "site": null,
+        "site": "lt-system-database-onprem/PDocServiceToken.al:17",
         "state": "refused",
         "type": "Session"
       },
@@ -17280,7 +17280,7 @@
         "pinned": true,
         "scope": "",
         "sig": "(Codeunit)",
-        "site": "codeunit/TestCodeunitRunNestedTestCodeunit.al:40",
+        "site": "access-control/TestUserAuthEmailTriggerOrder.al:39",
         "state": "implemented",
         "type": "Session"
       },
@@ -17517,10 +17517,10 @@
         "id": "System.ApplicationPath#1",
         "ms_uses": 0,
         "name": "ApplicationPath",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
         "sig": "()",
-        "site": null,
+        "site": "lt-system-database-onprem/PApplicationPath.al:17",
         "state": "refused",
         "type": "System"
       },
@@ -17824,7 +17824,7 @@
         "pinned": true,
         "scope": "",
         "sig": "(OutStream, InStream, [Integer])",
-        "site": "report/lt-report-layout-merger/ReportMergerFixtures.al:230",
+        "site": "TestDotNetValueKindsContracts.al:362",
         "state": "implemented",
         "type": "System"
       },
@@ -17872,7 +17872,7 @@
         "pinned": true,
         "scope": "",
         "sig": "()",
-        "site": "codeunit/EBEPublisher.Codeunit.al:19",
+        "site": "access-control/TestUserAuthEmailTrigger.al:97",
         "state": "implemented",
         "type": "System"
       },
@@ -18125,10 +18125,10 @@
         "id": "System.ExportObjects#1",
         "ms_uses": 0,
         "name": "ExportObjects",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
         "sig": "(Text, var Table, [Integer])",
-        "site": null,
+        "site": "lt-system-database-onprem/PExportObjects.al:26",
         "state": "refused",
         "type": "System"
       },
@@ -18160,7 +18160,7 @@
         "pinned": true,
         "scope": "",
         "sig": "(Joker, [Integer], [Integer])",
-        "site": "_fixtures/Assert.al:494",
+        "site": "TestDotNetValueKindsContracts.al:117",
         "state": "implemented",
         "type": "System"
       },
@@ -18189,10 +18189,10 @@
         "id": "System.GetDocumentUrl#1",
         "ms_uses": 0,
         "name": "GetDocumentUrl",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
         "sig": "(Guid)",
-        "site": null,
+        "site": "lt-system-database-onprem/PGetDocumentUrl.al:17",
         "state": "refused",
         "type": "System"
       },
@@ -18205,10 +18205,10 @@
         "id": "System.GetDotNetType#1",
         "ms_uses": 8,
         "name": "GetDotNetType",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
         "sig": "(Joker)",
-        "site": null,
+        "site": "lt-dotnet-interop/DotNetTypeEquality.al:31",
         "state": "implemented",
         "type": "System"
       },
@@ -18240,7 +18240,7 @@
         "pinned": true,
         "scope": "",
         "sig": "()",
-        "site": "_fixtures/Assert.al:222",
+        "site": "TestDotNetValueKindsContracts.al:303",
         "state": "implemented",
         "type": "System"
       },
@@ -18253,10 +18253,10 @@
         "id": "System.GetLastErrorObject#1",
         "ms_uses": 3,
         "name": "GetLastErrorObject",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
         "sig": "()",
-        "site": null,
+        "site": "lt-dotnet-interop/GetLastErrorObject.al:73",
         "state": "implemented",
         "type": "System"
       },
@@ -18272,7 +18272,7 @@
         "pinned": true,
         "scope": "",
         "sig": "()",
-        "site": "_fixtures/Assert.al:186",
+        "site": "TestDotNetValueKindsContracts.al:302",
         "state": "implemented",
         "type": "System"
       },
@@ -18336,7 +18336,7 @@
         "pinned": true,
         "scope": "",
         "sig": "(ClientType, [Text], [ObjectType], [Integer], [Table], [Boolean])",
-        "site": "platform/lt-system-database-members/GetUrlBookmarkFilter.al:69",
+        "site": "lt-system-database-onprem/PGetUrl.al:42",
         "state": "implemented",
         "type": "System"
       },
@@ -18352,7 +18352,7 @@
         "pinned": true,
         "scope": "",
         "sig": "(ClientType, [Text], [ObjectType], [Integer], [Table], [Boolean], [Text])",
-        "site": "platform/lt-system-database-members/GetUrlRecordLayout.al:72",
+        "site": "lt-system-database-onprem/PGetUrl.al:134",
         "state": "implemented",
         "type": "System"
       },
@@ -18445,10 +18445,10 @@
         "id": "System.ImportObjects#1",
         "ms_uses": 0,
         "name": "ImportObjects",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
         "sig": "(Text, [Integer])",
-        "site": null,
+        "site": "lt-system-database-onprem/PImportObjects.al:18",
         "state": "refused",
         "type": "System"
       },
@@ -18491,12 +18491,12 @@
           29
         ],
         "id": "System.IsNull#1",
-        "ms_uses": 122,
+        "ms_uses": 123,
         "name": "IsNull",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
         "sig": "(DotNet)",
-        "site": null,
+        "site": "TestDotNetValueKindsContracts.al:213",
         "state": "implemented",
         "type": "System"
       },
@@ -18512,7 +18512,7 @@
         "pinned": true,
         "scope": "",
         "sig": "(Guid)",
-        "site": "errorinfo/lt-errnotif/EnTErrorInfoProps.al:42",
+        "site": "access-control/TestUserPropertyPageInsert.al:43",
         "state": "implemented",
         "type": "System"
       },
@@ -18653,10 +18653,10 @@
         "id": "System.TemporaryPath#1",
         "ms_uses": 14,
         "name": "TemporaryPath",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
         "sig": "()",
-        "site": null,
+        "site": "handlers/TestRequestPageSaveAsXmlContracts.al:165",
         "state": "implemented",
         "type": "System"
       },
@@ -19232,7 +19232,7 @@
         "pinned": true,
         "scope": "",
         "sig": "(Joker)",
-        "site": "appareas/W2AppAreas.al:546",
+        "site": "access-control/TestUserPropertyPageInsert.al:39",
         "state": "implemented",
         "type": "TestField"
       },
@@ -19521,10 +19521,10 @@
         "id": "TestHttpRequestMessage.RequestType#1",
         "ms_uses": 0,
         "name": "RequestType",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
         "sig": "()",
-        "site": null,
+        "site": "session/PZHttpHandler.al:38",
         "state": "implemented",
         "type": "TestHttpRequestMessage"
       },
@@ -19668,7 +19668,7 @@
         "pinned": true,
         "scope": "",
         "sig": "()",
-        "site": "appareas/W2AppAreas.al:188",
+        "site": "access-control/TestUserPropertyPageInsert.al:56",
         "state": "implemented",
         "type": "TestPage"
       },
@@ -19972,7 +19972,7 @@
         "pinned": true,
         "scope": "",
         "sig": "()",
-        "site": "autoformat/TestAutoFormatExpressionTiming.al:558",
+        "site": "access-control/TestUserPropertyPageInsert.al:38",
         "state": "implemented",
         "type": "TestPage"
       },
@@ -20785,10 +20785,10 @@
         "id": "TestRequestPage.SaveAsXml#1",
         "ms_uses": 0,
         "name": "SaveAsXml",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
         "sig": "(Text, Text)",
-        "site": null,
+        "site": "handlers/TestRequestPageSaveAsXmlContracts.al:204",
         "state": "implemented",
         "type": "TestRequestPage"
       },
@@ -20884,7 +20884,7 @@
         "pinned": true,
         "scope": "",
         "sig": "(Text, [Text], [Text])",
-        "site": "errors/lt-ms-refusals-136/P136Text.al:16",
+        "site": "access-control/TestUserAuthEmailTrigger.al:374",
         "state": "implemented",
         "type": "Text"
       },
@@ -21044,7 +21044,7 @@
         "pinned": true,
         "scope": "",
         "sig": "(Text)",
-        "site": "errors/lt-ms-refusals-137/P137TableConn.al:112",
+        "site": "access-control/TestUserAuthEmailTrigger.al:379",
         "state": "implemented",
         "type": "Text"
       },
@@ -21268,7 +21268,7 @@
         "pinned": true,
         "scope": "",
         "sig": "(Text)",
-        "site": "_fixtures/Assert.al:407",
+        "site": "TestDotNetValueKindsContracts.al:185",
         "state": "implemented",
         "type": "Text"
       },
@@ -21828,7 +21828,7 @@
         "pinned": true,
         "scope": "",
         "sig": "()",
-        "site": "_fixtures/Assert.al:395",
+        "site": "TestDotNetValueKindsContracts.al:73",
         "state": "implemented",
         "type": "Variant"
       },
@@ -21860,7 +21860,7 @@
         "pinned": true,
         "scope": "",
         "sig": "()",
-        "site": "_fixtures/Assert.al:383",
+        "site": "TestDotNetValueKindsContracts.al:79",
         "state": "implemented",
         "type": "Variant"
       },
@@ -21876,7 +21876,7 @@
         "pinned": true,
         "scope": "",
         "sig": "()",
-        "site": "_fixtures/Assert.al:429",
+        "site": "TestDotNetValueKindsContracts.al:89",
         "state": "implemented",
         "type": "Variant"
       },
@@ -21892,7 +21892,7 @@
         "pinned": true,
         "scope": "",
         "sig": "()",
-        "site": "_fixtures/Assert.al:396",
+        "site": "TestDotNetValueKindsContracts.al:87",
         "state": "implemented",
         "type": "Variant"
       },
@@ -22020,7 +22020,7 @@
         "pinned": true,
         "scope": "",
         "sig": "()",
-        "site": "_fixtures/Assert.al:390",
+        "site": "TestDotNetValueKindsContracts.al:81",
         "state": "implemented",
         "type": "Variant"
       },
@@ -22036,7 +22036,7 @@
         "pinned": true,
         "scope": "",
         "sig": "()",
-        "site": "_fixtures/Assert.al:386",
+        "site": "TestDotNetValueKindsContracts.al:75",
         "state": "implemented",
         "type": "Variant"
       },
@@ -22084,7 +22084,7 @@
         "pinned": true,
         "scope": "",
         "sig": "()",
-        "site": "_fixtures/Assert.al:493",
+        "site": "TestDotNetValueKindsContracts.al:91",
         "state": "implemented",
         "type": "Variant"
       },
@@ -22100,7 +22100,7 @@
         "pinned": true,
         "scope": "",
         "sig": "()",
-        "site": "_fixtures/Assert.al:393",
+        "site": "TestDotNetValueKindsContracts.al:83",
         "state": "implemented",
         "type": "Variant"
       },
@@ -22180,7 +22180,7 @@
         "pinned": true,
         "scope": "",
         "sig": "()",
-        "site": "_fixtures/Assert.al:392",
+        "site": "TestDotNetValueKindsContracts.al:85",
         "state": "implemented",
         "type": "Variant"
       },
@@ -22212,7 +22212,7 @@
         "pinned": true,
         "scope": "",
         "sig": "()",
-        "site": "_fixtures/Assert.al:385",
+        "site": "TestDotNetValueKindsContracts.al:71",
         "state": "implemented",
         "type": "Variant"
       },
@@ -22500,7 +22500,7 @@
         "pinned": true,
         "scope": "",
         "sig": "()",
-        "site": "_fixtures/Assert.al:387",
+        "site": "TestDotNetValueKindsContracts.al:77",
         "state": "implemented",
         "type": "Variant"
       },
@@ -27946,7 +27946,7 @@
       }
     ],
     "overloads": 1750,
-    "pinned": 1443,
+    "pinned": 1510,
     "refused": 230,
     "runtime_only": [
       "ErrorInfo.Create#3",
@@ -27983,7 +27983,7 @@
     "unknown": 29
   },
   "overloads": 1731,
-  "pinned": 1428,
+  "pinned": 1495,
   "types": [
     {
       "methods": [
@@ -28010,7 +28010,7 @@
           "id": "BigText.AddText#2",
           "pinned": true,
           "signature": "BigText.AddText inst (String: Text, ?Position: Integer)",
-          "site": "session/TestSystemExtended.al:339"
+          "site": "lt-file-type/FileWriteTypes.al:174"
         },
         {
           "id": "BigText.GetSubText#1",
@@ -28310,9 +28310,9 @@
         },
         {
           "id": "Database.CheckLicenseFile#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Database.CheckLicenseFile static (KeyNumber: Integer)",
-          "site": null
+          "site": "lt-system-database-onprem/PCheckLicenseFile.al:17"
         },
         {
           "id": "Database.Commit#1",
@@ -28340,9 +28340,9 @@
         },
         {
           "id": "Database.DataFileInformation#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Database.DataFileInformation static (ShowDialog: Boolean, var FileName: Text, var Description: Text, var HasApplication: Boolean, var HasApplicationData: Boolean, var HasGlobalData: Boolean, var tenantId: Text, var exportDate: DateTime, var CompanyRecord: Record) -> Boolean?",
-          "site": null
+          "site": "lt-system-database-onprem/PDataFileInfo.al:19"
         },
         {
           "id": "Database.ExportData#1",
@@ -28406,9 +28406,9 @@
         },
         {
           "id": "Database.SID#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Database.SID static (?UserAccount: Text) -> Text",
-          "site": null
+          "site": "lt-system-database-onprem/PSid.al:25"
         },
         {
           "id": "Database.SelectLatestVersion#1",
@@ -28478,7 +28478,7 @@
         }
       ],
       "overloads": 30,
-      "pinned": 21,
+      "pinned": 24,
       "type": "Database"
     },
     {
@@ -28559,115 +28559,115 @@
         },
         {
           "id": "Debugger.Attach#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Debugger.Attach static (SessionID: Integer) -> Boolean?",
-          "site": null
+          "site": "lt-debugger-type/P111_Attach.al:14"
         },
         {
           "id": "Debugger.Break#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Debugger.Break static () -> Boolean?",
-          "site": null
+          "site": "lt-debugger-type/P111_Break.al:14"
         },
         {
           "id": "Debugger.BreakOnError#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Debugger.BreakOnError static (Ok: Boolean) -> Boolean?",
-          "site": null
+          "site": "lt-debugger-type/P111_BreakOnError.al:14"
         },
         {
           "id": "Debugger.BreakOnRecordChanges#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Debugger.BreakOnRecordChanges static (Ok: Boolean) -> Boolean?",
-          "site": null
+          "site": "lt-debugger-type/P111_BreakOnRecordChanges.al:14"
         },
         {
           "id": "Debugger.Continue#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Debugger.Continue static () -> Boolean?",
-          "site": null
+          "site": "lt-debugger-type/P111_Continue.al:14"
         },
         {
           "id": "Debugger.Deactivate#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Debugger.Deactivate static () -> Boolean?",
-          "site": null
+          "site": "lt-debugger-type/P111_Deactivate.al:14"
         },
         {
           "id": "Debugger.DebuggedSessionID#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Debugger.DebuggedSessionID static () -> Integer",
-          "site": null
+          "site": "lt-debugger-type/P111_SessionIds.al:14"
         },
         {
           "id": "Debugger.DebuggingSessionID#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Debugger.DebuggingSessionID static () -> Integer",
-          "site": null
+          "site": "lt-debugger-type/P111_SessionIds.al:20"
         },
         {
           "id": "Debugger.EnableSqlTrace#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Debugger.EnableSqlTrace static (SessionID: Integer, ?NewIsEnabled: Boolean) -> Boolean?",
-          "site": null
+          "site": "lt-debugger-type/P111_EnableSqlTrace.al:14"
         },
         {
           "id": "Debugger.GetLastErrorText#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Debugger.GetLastErrorText static () -> Text",
-          "site": null
+          "site": "lt-debugger-type/P111_GetLastErrorText.al:14"
         },
         {
           "id": "Debugger.IsActive#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Debugger.IsActive static () -> Boolean",
-          "site": null
+          "site": "lt-debugger-type/P111_IsActive.al:14"
         },
         {
           "id": "Debugger.IsAttached#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Debugger.IsAttached static () -> Boolean",
-          "site": null
+          "site": "lt-debugger-type/P111_IsAttached.al:14"
         },
         {
           "id": "Debugger.IsBreakpointHit#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Debugger.IsBreakpointHit static () -> Boolean",
-          "site": null
+          "site": "lt-debugger-type/P111_IsBreakpointHit.al:14"
         },
         {
           "id": "Debugger.SkipSystemTriggers#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Debugger.SkipSystemTriggers static (Ok: Boolean) -> Boolean?",
-          "site": null
+          "site": "lt-debugger-type/P111_SkipSystemTriggers.al:14"
         },
         {
           "id": "Debugger.StepInto#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Debugger.StepInto static () -> Boolean?",
-          "site": null
+          "site": "lt-debugger-type/P111_StepInto.al:14"
         },
         {
           "id": "Debugger.StepOut#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Debugger.StepOut static () -> Boolean?",
-          "site": null
+          "site": "lt-debugger-type/P111_StepOut.al:14"
         },
         {
           "id": "Debugger.StepOver#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Debugger.StepOver static () -> Boolean?",
-          "site": null
+          "site": "lt-debugger-type/P111_StepOver.al:14"
         },
         {
           "id": "Debugger.Stop#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Debugger.Stop static () -> Boolean?",
-          "site": null
+          "site": "lt-debugger-type/P111_Stop.al:14"
         }
       ],
       "overloads": 19,
-      "pinned": 0,
+      "pinned": 18,
       "type": "Debugger"
     },
     {
@@ -28723,15 +28723,15 @@
         },
         {
           "id": "Dialog.LogInternalError#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Dialog.LogInternalError static (Message: Text, DataClassificationInstance: DataClassification, VerbosityInstance: Verbosity)",
-          "site": null
+          "site": "lt-system-database-onprem/PLogInternalError1.al:17"
         },
         {
           "id": "Dialog.LogInternalError#2",
-          "pinned": false,
+          "pinned": true,
           "signature": "Dialog.LogInternalError static (Message: Text, SubstitutionString: Text, DataClassificationInstance: DataClassification, VerbosityInstance: Verbosity)",
-          "site": null
+          "site": "lt-system-database-onprem/PLogInternalError2.al:17"
         },
         {
           "id": "Dialog.Message#1",
@@ -28759,7 +28759,7 @@
         }
       ],
       "overloads": 11,
-      "pinned": 9,
+      "pinned": 11,
       "type": "Dialog"
     },
     {
@@ -29431,39 +29431,39 @@
       "methods": [
         {
           "id": "File.Close#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "File.Close inst ()",
-          "site": null
+          "site": "handlers/TestRequestPageSaveAsXmlContracts.al:187"
         },
         {
           "id": "File.Copy#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "File.Copy static (FromName: Text, ToName: Text) -> Boolean?",
-          "site": null
+          "site": "lt-file-type/FileErrors.al:169"
         },
         {
           "id": "File.Create#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "File.Create inst (Name: Text, ?Encoding: TextEncoding) -> Boolean?",
-          "site": null
+          "site": "lt-file-type/FileBasics.al:43"
         },
         {
           "id": "File.CreateInStream#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "File.CreateInStream inst (InStream: InStream)",
-          "site": null
+          "site": "handlers/TestRequestPageSaveAsXmlContracts.al:184"
         },
         {
           "id": "File.CreateOutStream#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "File.CreateOutStream inst (OutStream: OutStream)",
-          "site": null
+          "site": "lt-file-type/FileStreams.al:51"
         },
         {
           "id": "File.CreateTempFile#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "File.CreateTempFile inst (?Encoding: TextEncoding) -> Boolean?",
-          "site": null
+          "site": "lt-file-type/FileTemp.al:46"
         },
         {
           "id": "File.Download#1",
@@ -29479,123 +29479,123 @@
         },
         {
           "id": "File.Erase#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "File.Erase static (Name: Text) -> Boolean?",
-          "site": null
+          "site": "handlers/TestRequestPageSaveAsXmlContracts.al:169"
         },
         {
           "id": "File.Exists#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "File.Exists static (Name: Text) -> Boolean?",
-          "site": null
+          "site": "handlers/TestRequestPageSaveAsXmlContracts.al:168"
         },
         {
           "id": "File.GetStamp#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "File.GetStamp static (Name: Text, var Date: Date, ?var Time: Time) -> Boolean?",
-          "site": null
+          "site": "lt-file-type/FileErrors.al:175"
         },
         {
           "id": "File.IsPathTemporary#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "File.IsPathTemporary static (Name: Text) -> Boolean?",
-          "site": null
+          "site": "lt-file-type/FileEraseAndTempPath.al:19"
         },
         {
           "id": "File.Len#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "File.Len inst () -> Integer",
-          "site": null
+          "site": "lt-file-type/FileBasics.al:45"
         },
         {
           "id": "File.Name#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "File.Name inst () -> Text",
-          "site": null
+          "site": "lt-file-type/FileBasics.al:25"
         },
         {
           "id": "File.Open#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "File.Open inst (Name: Text, ?Encoding: TextEncoding) -> Boolean?",
-          "site": null
+          "site": "handlers/TestRequestPageSaveAsXmlContracts.al:183"
         },
         {
           "id": "File.Pos#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "File.Pos inst () -> Integer",
-          "site": null
+          "site": "lt-file-type/FileBasics.al:46"
         },
         {
           "id": "File.Read#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "File.Read inst (var Read: Any) -> Integer?",
-          "site": null
+          "site": "lt-file-type/FileErrors.al:103"
         },
         {
           "id": "File.Rename#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "File.Rename static (OldName: Text, NewName: Text) -> Boolean?",
-          "site": null
+          "site": "lt-file-type/FileErrors.al:163"
         },
         {
           "id": "File.Seek#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "File.Seek inst (Position: Integer)",
-          "site": null
+          "site": "lt-file-type/FileErrors.al:139"
         },
         {
           "id": "File.SetStamp#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "File.SetStamp static (Name: Text, Date: Date, ?Time: Time) -> Boolean?",
-          "site": null
+          "site": "lt-file-type/FileErrors.al:181"
         },
         {
           "id": "File.TextMode#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "File.TextMode inst (?Mode: Boolean) -> Boolean?",
-          "site": null
+          "site": "lt-file-type/FileErrors.al:15"
         },
         {
           "id": "File.Trunc#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "File.Trunc inst ()",
-          "site": null
+          "site": "lt-file-type/FileErrors.al:145"
         },
         {
           "id": "File.Upload#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "File.Upload static (DialogTitle: Text, FromFolder: Text, FromFilter: Text, FromFile: Text, var ToFile: Text) -> Boolean?",
-          "site": null
+          "site": "lt-file-type/FileUpload.al:38"
         },
         {
           "id": "File.UploadIntoStream#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "File.UploadIntoStream static (DialogTitle: Text, FromFolder: Text, FromFilter: Text, var FromFile: Text, var InStream: InStream) -> Boolean?",
-          "site": null
+          "site": "lt-file-type/FileUploadIntoStream1.al:38"
         },
         {
           "id": "File.UploadIntoStream#2",
-          "pinned": false,
+          "pinned": true,
           "signature": "File.UploadIntoStream static (FromFilter: Text, var InStream: InStream) -> Boolean?",
-          "site": null
+          "site": "lt-file-type/FileUploadIntoStream2.al:38"
         },
         {
           "id": "File.View#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "File.View static (FromFile: Text, ?AllowDownloadAndPrint: Boolean) -> Boolean?",
-          "site": null
+          "site": "lt-file-type/FileView.al:38"
         },
         {
           "id": "File.ViewFromStream#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "File.ViewFromStream static (InStream: InStream, FileName: Text, ?AllowDownloadAndPrint: Boolean) -> Boolean?",
-          "site": null
+          "site": "lt-file-type/FileViewFromStream.al:38"
         },
         {
           "id": "File.Write#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "File.Write inst (Value: Any)",
-          "site": null
+          "site": "lt-file-type/FileBasics.al:76"
         },
         {
           "id": "File.Write#2",
@@ -29713,13 +29713,13 @@
         },
         {
           "id": "File.WriteMode#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "File.WriteMode inst (?Mode: Boolean) -> Boolean?",
-          "site": null
+          "site": "lt-file-type/FileErrors.al:24"
         }
       ],
       "overloads": 48,
-      "pinned": 0,
+      "pinned": 27,
       "type": "File"
     },
     {
@@ -30264,7 +30264,7 @@
           "id": "InStream.EOS#1",
           "pinned": true,
           "signature": "InStream.EOS inst () -> Boolean",
-          "site": "errors/lt-ms-refusals-130/P130DatasetHelper.al:32"
+          "site": "TestDotNetValueKindsContracts.al:365"
         },
         {
           "id": "InStream.Length#1",
@@ -30282,7 +30282,7 @@
           "id": "InStream.Read#1",
           "pinned": true,
           "signature": "InStream.Read inst (var Variable: Any, ?Length: Integer) -> Integer?",
-          "site": "errors/lt-ms-refusals-132/P132OutStreamUnicode.al:23"
+          "site": "TestDotNetValueKindsContracts.al:386"
         },
         {
           "id": "InStream.Read#2",
@@ -30336,7 +30336,7 @@
           "id": "InStream.ReadText#1",
           "pinned": true,
           "signature": "InStream.ReadText inst (var Variable: Text, ?Length: Integer) -> Integer?",
-          "site": "errors/lt-ms-refusals-130/P130DatasetHelper.al:33"
+          "site": "TestDotNetValueKindsContracts.al:337"
         },
         {
           "id": "InStream.ResetPosition#1",
@@ -32006,9 +32006,9 @@
         },
         {
           "id": "Media.ImportFile#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Media.ImportFile inst (Filename: Text, Description: Text, ?MimeType: Text) -> Guid?",
-          "site": null
+          "site": "session/PZMediaImportFile.al:31"
         },
         {
           "id": "Media.ImportStream#1",
@@ -32030,7 +32030,7 @@
         }
       ],
       "overloads": 8,
-      "pinned": 5,
+      "pinned": 6,
       "type": "Media"
     },
     {
@@ -32055,9 +32055,9 @@
         },
         {
           "id": "MediaSet.ImportFile#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "MediaSet.ImportFile inst (Filename: Text, Description: Text, ?MimeType: Text) -> Guid?",
-          "site": null
+          "site": "session/PZMediaImportFile.al:37"
         },
         {
           "id": "MediaSet.ImportStream#1",
@@ -32091,7 +32091,7 @@
         }
       ],
       "overloads": 9,
-      "pinned": 7,
+      "pinned": 8,
       "type": "MediaSet"
     },
     {
@@ -32537,7 +32537,7 @@
           "id": "OutStream.WriteText#1",
           "pinned": true,
           "signature": "OutStream.WriteText inst (?Text: Text, ?Length: Integer) -> Integer?",
-          "site": "codeunit/TestWriteTxTestBoundary.al:302"
+          "site": "TestDotNetValueKindsContracts.al:358"
         }
       ],
       "overloads": 23,
@@ -33297,7 +33297,7 @@
           "id": "Record.Reset#1",
           "pinned": true,
           "signature": "Record.Reset inst ()",
-          "site": "codeunit/TestCodeunitRunContracts.al:99"
+          "site": "access-control/TestUserDeleteCascadeOrder.al:75"
         },
         {
           "id": "Record.SecurityFiltering#1",
@@ -34354,9 +34354,9 @@
         },
         {
           "id": "Report.SaveAsPdf#2",
-          "pinned": false,
+          "pinned": true,
           "signature": "Report.SaveAsPdf static (Number: Integer, FileName: Text, ?var Record: Record) -> Boolean?",
-          "site": null
+          "site": "session/PXSaveAsPdf.al:17"
         },
         {
           "id": "Report.SaveAsWord#1",
@@ -34462,7 +34462,7 @@
         }
       ],
       "overloads": 59,
-      "pinned": 44,
+      "pinned": 45,
       "type": "Report"
     },
     {
@@ -34591,9 +34591,9 @@
         },
         {
           "id": "Session.EnableVerboseTelemetry#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Session.EnableVerboseTelemetry static (EnableFullALFunctionTracing: Boolean, Duration: Duration)",
-          "site": null
+          "site": "lt-system-database-onprem/PVerboseTelemetry.al:20"
         },
         {
           "id": "Session.GetCurrentModuleExecutionContext#1",
@@ -34621,9 +34621,9 @@
         },
         {
           "id": "Session.LogAuditMessage#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Session.LogAuditMessage static (SecurityAuditDescription: Text, SecurityAuditOperationResult: SecurityOperationResult, SecurityAuditCategory: AuditCategory, AuditMessageOperation: Integer, AuditMessageOperationResult: Integer, ?CustomDimensions: Dictionary of [Text, Text])",
-          "site": null
+          "site": "lt-system-database-onprem/PLogAuditMessage.al:17"
         },
         {
           "id": "Session.LogMessage#1",
@@ -34645,15 +34645,15 @@
         },
         {
           "id": "Session.SendTraceTag#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Session.SendTraceTag static (Tag: Text, Category: Text, Verbosity: Verbosity, Message: Text, ?DataClassification: DataClassification)",
-          "site": null
+          "site": "lt-system-database-onprem/PSendTraceTag.al:17"
         },
         {
           "id": "Session.SetDocumentServiceToken#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Session.SetDocumentServiceToken static (Token: Text)",
-          "site": null
+          "site": "lt-system-database-onprem/PDocServiceToken.al:17"
         },
         {
           "id": "Session.StartSession#1",
@@ -34683,11 +34683,11 @@
           "id": "Session.UnbindSubscription#1",
           "pinned": true,
           "signature": "Session.UnbindSubscription static (Codeunit: Codeunit) -> Boolean?",
-          "site": "codeunit/TestCodeunitRunNestedTestCodeunit.al:40"
+          "site": "access-control/TestUserAuthEmailTriggerOrder.al:39"
         }
       ],
       "overloads": 22,
-      "pinned": 17,
+      "pinned": 21,
       "type": "Session"
     },
     {
@@ -34792,9 +34792,9 @@
         },
         {
           "id": "System.ApplicationPath#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "System.ApplicationPath static () -> Text",
-          "site": null
+          "site": "lt-system-database-onprem/PApplicationPath.al:17"
         },
         {
           "id": "System.ArrayLen#1",
@@ -34908,7 +34908,7 @@
           "id": "System.CopyStream#1",
           "pinned": true,
           "signature": "System.CopyStream static (OutStream: OutStream, InStream: InStream, ?BytesToRead: Integer) -> Boolean?",
-          "site": "report/lt-report-layout-merger/ReportMergerFixtures.al:230"
+          "site": "TestDotNetValueKindsContracts.al:362"
         },
         {
           "id": "System.CreateDateTime#1",
@@ -34926,7 +34926,7 @@
           "id": "System.CreateGuid#1",
           "pinned": true,
           "signature": "System.CreateGuid static () -> Guid",
-          "site": "codeunit/EBEPublisher.Codeunit.al:19"
+          "site": "access-control/TestUserAuthEmailTrigger.al:97"
         },
         {
           "id": "System.CurrentDateTime#1",
@@ -35020,15 +35020,15 @@
         },
         {
           "id": "System.ExportObjects#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "System.ExportObjects static (FileName: Text, var ObjectRecord: Record, ?Format: Integer)",
-          "site": null
+          "site": "lt-system-database-onprem/PExportObjects.al:26"
         },
         {
           "id": "System.Format#1",
           "pinned": true,
           "signature": "System.Format static (Value: Any, ?Length: Integer, ?FormatNumber: Integer) -> Text",
-          "site": "_fixtures/Assert.al:494"
+          "site": "TestDotNetValueKindsContracts.al:117"
         },
         {
           "id": "System.Format#2",
@@ -35044,15 +35044,15 @@
         },
         {
           "id": "System.GetDocumentUrl#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "System.GetDocumentUrl static (ID: Guid) -> Text",
-          "site": null
+          "site": "lt-system-database-onprem/PGetDocumentUrl.al:17"
         },
         {
           "id": "System.GetDotNetType#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "System.GetDotNetType static (Expression: Any) -> DotNet",
-          "site": null
+          "site": "lt-dotnet-interop/DotNetTypeEquality.al:31"
         },
         {
           "id": "System.GetLastErrorCallStack#1",
@@ -35064,19 +35064,19 @@
           "id": "System.GetLastErrorCode#1",
           "pinned": true,
           "signature": "System.GetLastErrorCode static () -> Text",
-          "site": "_fixtures/Assert.al:222"
+          "site": "TestDotNetValueKindsContracts.al:303"
         },
         {
           "id": "System.GetLastErrorObject#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "System.GetLastErrorObject static () -> DotNet",
-          "site": null
+          "site": "lt-dotnet-interop/GetLastErrorObject.al:73"
         },
         {
           "id": "System.GetLastErrorText#1",
           "pinned": true,
           "signature": "System.GetLastErrorText static () -> Text",
-          "site": "_fixtures/Assert.al:186"
+          "site": "TestDotNetValueKindsContracts.al:302"
         },
         {
           "id": "System.GetLastErrorText#2",
@@ -35088,13 +35088,13 @@
           "id": "System.GetUrl#1",
           "pinned": true,
           "signature": "System.GetUrl static (ClientType: ClientType, ?Company: Text, ?ObjectType: ObjectType, ?ObjectId: Integer, ?Record: Record, ?UseFilters: Boolean) -> Text",
-          "site": "platform/lt-system-database-members/GetUrlBookmarkFilter.al:69"
+          "site": "lt-system-database-onprem/PGetUrl.al:42"
         },
         {
           "id": "System.GetUrl#2",
           "pinned": true,
           "signature": "System.GetUrl static (ClientType: ClientType, ?Company: Text, ?ObjectType: ObjectType, ?ObjectId: Integer, ?Record: Record, ?UseFilters: Boolean, ?Layout: Text) -> Text",
-          "site": "platform/lt-system-database-members/GetUrlRecordLayout.al:72"
+          "site": "lt-system-database-onprem/PGetUrl.al:134"
         },
         {
           "id": "System.GetUrl#3",
@@ -35140,9 +35140,9 @@
         },
         {
           "id": "System.ImportObjects#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "System.ImportObjects static (FileName: Text, ?Format: Integer)",
-          "site": null
+          "site": "lt-system-database-onprem/PImportObjects.al:18"
         },
         {
           "id": "System.ImportStreamWithUrlAccess#1",
@@ -35158,15 +35158,15 @@
         },
         {
           "id": "System.IsNull#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "System.IsNull static (DotNet: DotNet) -> Boolean",
-          "site": null
+          "site": "TestDotNetValueKindsContracts.al:213"
         },
         {
           "id": "System.IsNullGuid#1",
           "pinned": true,
           "signature": "System.IsNullGuid static (Guid: Guid) -> Boolean",
-          "site": "errorinfo/lt-errnotif/EnTErrorInfoProps.al:42"
+          "site": "access-control/TestUserPropertyPageInsert.al:43"
         },
         {
           "id": "System.IsServiceTier#1",
@@ -35218,9 +35218,9 @@
         },
         {
           "id": "System.TemporaryPath#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "System.TemporaryPath static () -> Text",
-          "site": null
+          "site": "handlers/TestRequestPageSaveAsXmlContracts.al:165"
         },
         {
           "id": "System.Time#1",
@@ -35260,7 +35260,7 @@
         }
       ],
       "overloads": 79,
-      "pinned": 63,
+      "pinned": 71,
       "type": "System"
     },
     {
@@ -35457,7 +35457,7 @@
           "id": "TestField.SetValue#1",
           "pinned": true,
           "signature": "TestField.SetValue inst (Value: Any)",
-          "site": "appareas/W2AppAreas.al:546"
+          "site": "access-control/TestUserPropertyPageInsert.al:39"
         },
         {
           "id": "TestField.ShowMandatory#1",
@@ -35547,13 +35547,13 @@
         },
         {
           "id": "TestHttpRequestMessage.RequestType#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "TestHttpRequestMessage.RequestType inst () -> HttpRequestType",
-          "site": null
+          "site": "session/PZHttpHandler.al:38"
         }
       ],
       "overloads": 4,
-      "pinned": 3,
+      "pinned": 4,
       "type": "TestHttpRequestMessage"
     },
     {
@@ -35617,7 +35617,7 @@
           "id": "TestPage.Close#1",
           "pinned": true,
           "signature": "TestPage.Close inst ()",
-          "site": "appareas/W2AppAreas.al:188"
+          "site": "access-control/TestUserPropertyPageInsert.al:56"
         },
         {
           "id": "TestPage.Edit#1",
@@ -35737,7 +35737,7 @@
           "id": "TestPage.OpenNew#1",
           "pinned": true,
           "signature": "TestPage.OpenNew inst ()",
-          "site": "autoformat/TestAutoFormatExpressionTiming.al:558"
+          "site": "access-control/TestUserPropertyPageInsert.al:38"
         },
         {
           "id": "TestPage.OpenView#1",
@@ -36061,9 +36061,9 @@
         },
         {
           "id": "TestRequestPage.SaveAsXml#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "TestRequestPage.SaveAsXml inst (ParameterFileName: Text, DataSetFileName: Text)",
-          "site": null
+          "site": "handlers/TestRequestPageSaveAsXmlContracts.al:204"
         },
         {
           "id": "TestRequestPage.Schedule#1",
@@ -36079,7 +36079,7 @@
         }
       ],
       "overloads": 25,
-      "pinned": 21,
+      "pinned": 22,
       "type": "TestRequestPage"
     },
     {
@@ -36106,7 +36106,7 @@
           "id": "Text.DelChr#1",
           "pinned": true,
           "signature": "Text.DelChr static (String: Text, ?Where: Text, ?Which: Text) -> Text",
-          "site": "errors/lt-ms-refusals-136/P136Text.al:16"
+          "site": "access-control/TestUserAuthEmailTrigger.al:374"
         },
         {
           "id": "Text.DelStr#1",
@@ -36166,7 +36166,7 @@
           "id": "Text.LowerCase#1",
           "pinned": true,
           "signature": "Text.LowerCase static (String: Text) -> Text",
-          "site": "errors/lt-ms-refusals-137/P137TableConn.al:112"
+          "site": "access-control/TestUserAuthEmailTrigger.al:379"
         },
         {
           "id": "Text.MaxStrLen#1",
@@ -36250,7 +36250,7 @@
           "id": "Text.StrLen#1",
           "pinned": true,
           "signature": "Text.StrLen static (String: Text) -> Integer",
-          "site": "_fixtures/Assert.al:407"
+          "site": "TestDotNetValueKindsContracts.al:185"
         },
         {
           "id": "Text.StrPos#1",
@@ -36578,7 +36578,7 @@
           "id": "Variant.IsBigInteger#1",
           "pinned": true,
           "signature": "Variant.IsBigInteger inst () -> Boolean",
-          "site": "_fixtures/Assert.al:395"
+          "site": "TestDotNetValueKindsContracts.al:73"
         },
         {
           "id": "Variant.IsBinary#1",
@@ -36590,19 +36590,19 @@
           "id": "Variant.IsBoolean#1",
           "pinned": true,
           "signature": "Variant.IsBoolean inst () -> Boolean",
-          "site": "_fixtures/Assert.al:383"
+          "site": "TestDotNetValueKindsContracts.al:79"
         },
         {
           "id": "Variant.IsByte#1",
           "pinned": true,
           "signature": "Variant.IsByte inst () -> Boolean",
-          "site": "_fixtures/Assert.al:429"
+          "site": "TestDotNetValueKindsContracts.al:89"
         },
         {
           "id": "Variant.IsChar#1",
           "pinned": true,
           "signature": "Variant.IsChar inst () -> Boolean",
-          "site": "_fixtures/Assert.al:396"
+          "site": "TestDotNetValueKindsContracts.al:87"
         },
         {
           "id": "Variant.IsClientType#1",
@@ -36650,13 +36650,13 @@
           "id": "Variant.IsDateTime#1",
           "pinned": true,
           "signature": "Variant.IsDateTime inst () -> Boolean",
-          "site": "_fixtures/Assert.al:390"
+          "site": "TestDotNetValueKindsContracts.al:81"
         },
         {
           "id": "Variant.IsDecimal#1",
           "pinned": true,
           "signature": "Variant.IsDecimal inst () -> Boolean",
-          "site": "_fixtures/Assert.al:386"
+          "site": "TestDotNetValueKindsContracts.al:75"
         },
         {
           "id": "Variant.IsDefaultLayout#1",
@@ -36674,13 +36674,13 @@
           "id": "Variant.IsDotNet#1",
           "pinned": true,
           "signature": "Variant.IsDotNet inst () -> Boolean",
-          "site": "_fixtures/Assert.al:493"
+          "site": "TestDotNetValueKindsContracts.al:91"
         },
         {
           "id": "Variant.IsDuration#1",
           "pinned": true,
           "signature": "Variant.IsDuration inst () -> Boolean",
-          "site": "_fixtures/Assert.al:393"
+          "site": "TestDotNetValueKindsContracts.al:83"
         },
         {
           "id": "Variant.IsExecutionMode#1",
@@ -36710,7 +36710,7 @@
           "id": "Variant.IsGuid#1",
           "pinned": true,
           "signature": "Variant.IsGuid inst () -> Boolean",
-          "site": "_fixtures/Assert.al:392"
+          "site": "TestDotNetValueKindsContracts.al:85"
         },
         {
           "id": "Variant.IsInStream#1",
@@ -36722,7 +36722,7 @@
           "id": "Variant.IsInteger#1",
           "pinned": true,
           "signature": "Variant.IsInteger inst () -> Boolean",
-          "site": "_fixtures/Assert.al:385"
+          "site": "TestDotNetValueKindsContracts.al:71"
         },
         {
           "id": "Variant.IsJsonArray#1",
@@ -36830,7 +36830,7 @@
           "id": "Variant.IsText#1",
           "pinned": true,
           "signature": "Variant.IsText inst () -> Boolean",
-          "site": "_fixtures/Assert.al:387"
+          "site": "TestDotNetValueKindsContracts.al:77"
         },
         {
           "id": "Variant.IsTextBuilder#1",

@@ -175,6 +175,26 @@ fn decimal(text: &str, number: i64) -> Result<Parsed, Signal> {
         // `1 3` (types/lt-evaluate-decimal-text via the oracle, P129Evaluate.al).
         return Ok(Parsed::Rejected);
     }
+    // A trailing minus sign and parentheses mark a negative number: `100-` and `(100)` read as -100
+    // (types/lt-evaluate-decimal/EvaluateDecimal.al:Evaluate_SignsBlanksAndGarbage `trailing_minus`, `parentheses`).
+    // Pinned for a plain number (digits, commas, a point) with format number 0 only; other forms are refused.
+    let plain = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit() || b == b',' || b == b'.');
+    let trailing = t.strip_suffix('-').filter(|b| plain(b));
+    let wrapped = t
+        .strip_prefix('(')
+        .and_then(|r| r.strip_suffix(')'))
+        .filter(|b| plain(b));
+    if let Some(body) = trailing.or(wrapped) {
+        if number != 0 {
+            return unsupported(format!(
+                "Evaluate of `{text}` into Decimal with a trailing minus sign or parentheses and format number {number} (not pinned)"
+            ));
+        }
+        return match decimal(body, number)? {
+            Parsed::Value(Value::Decimal(d)) => Ok(Parsed::Value(Value::Decimal(-d))),
+            other => Ok(other),
+        };
+    }
     let (currency, t) = match t.strip_prefix('$') {
         Some(rest) if number == 0 => (true, rest),
         _ => (false, t),
@@ -1433,5 +1453,21 @@ mod tests {
         assert_eq!(day("T", 9), None);
         assert_eq!(day("01/15/2024", 9), None);
         assert_eq!(day("20240115", 0), None);
+    }
+
+    // types/lt-evaluate-decimal/EvaluateDecimal.al:Evaluate_SignsBlanksAndGarbage `trailing_minus`, `parentheses`
+    #[test]
+    fn decimals_read_a_trailing_minus_and_parentheses_as_negative() {
+        let dec = |s: &str, n: i64| match decimal(s, n) {
+            Ok(Parsed::Value(Value::Decimal(d))) => Some(d.to_string()),
+            _ => None,
+        };
+        assert_eq!(dec("100-", 0).as_deref(), Some("-100"));
+        assert_eq!(dec("(100)", 0).as_deref(), Some("-100"));
+        assert_eq!(dec("  1,000.5- ", 0).as_deref(), Some("-1000.5"));
+        // Other combinations are not pinned: refused, not guessed.
+        assert!(decimal("(100)", 9).is_err());
+        assert!(decimal("(100", 0).is_err());
+        assert!(matches!(decimal("abc-", 0), Ok(Parsed::Rejected)));
     }
 }

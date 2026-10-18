@@ -74,7 +74,7 @@ fn a_notification_takes_its_id_from_a_text() {
 }
 
 // Library - Variable Storage.DequeueDecimal hands back what a test page handler enqueued as the control's text.
-// Assumed, text-to-decimal-from-variant.
+// Pinned by types/lt-variant-time-enum/VariantTextTimeEnumFilter.al:Variant_Text_ToDecimal.
 #[test]
 fn a_text_variant_converts_into_a_decimal() {
     passes(

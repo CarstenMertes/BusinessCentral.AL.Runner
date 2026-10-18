@@ -60,6 +60,12 @@ pub enum Gate {
     /// "Header Part Name" and "Theme Part Name" (Text[300]); before, it ends at "App ID"
     /// (platform/lt-platform-tables/PtCloudTables.al, corpus bump 22). Not consumed yet.
     ReportLayoutSelectionPartNamesFrom29,
+    /// The `decimalformatter` attribute of a decimal column in the `Report.SaveAs` dataset XML is `#,##0.00###` from BC 28
+    /// and `#,##0.00` before (report/lt-y-report-props/YReportPropsTests.al, corpus bump 25). Not consumed yet.
+    ReportXmlDecimalFormatterFrom28,
+    /// The report metadata properties `DefaultHeaderFooterPartName` and `DefaultThemePartName` exist from BC 29 (runtime 18.0,
+    /// empty by default); before they are absent (report/lt-y-report-props/YReportPropsTests.al, corpus bump 25). Not consumed yet.
+    ReportPartNamePropertiesFrom29,
     /// `Get` with a Text argument for an Integer key: the Evaluate error `The value "..." can't be evaluated into type Integer.`
     /// (code `Evaluate:Format`) from BC 28; before, `The type NavInteger is unknown.` (record/lt-get-text-argument/GetWithTextArgument.al,
     /// corpus bump 22). Not consumed yet.
@@ -124,6 +130,8 @@ impl Gate {
         Gate::PartLineBeforeHostKeyFrom28,
         Gate::RecordRefIsDirtyFrom28,
         Gate::ReportLayoutSelectionPartNamesFrom29,
+        Gate::ReportXmlDecimalFormatterFrom28,
+        Gate::ReportPartNamePropertiesFrom29,
         Gate::GetTextArgumentEvaluateErrorFrom28,
         Gate::BigIntegerToEnumVariableFrom29,
         Gate::FromBase64InvalidTextRaises,
@@ -150,6 +158,7 @@ impl Gate {
             | Gate::PermissionObjectNameLongerFrom29
             | Gate::QueryAggregateOverBigInteger
             | Gate::ReportLayoutSelectionPartNamesFrom29
+            | Gate::ReportPartNamePropertiesFrom29
             | Gate::BigIntegerToEnumVariableFrom29
             | Gate::MediaExportKeepsTheImportedBytes
             | Gate::PlatformMetadataColumnsFrom29
@@ -166,6 +175,7 @@ impl Gate {
             | Gate::FileDownloadWithoutClientFrom28
             | Gate::GetTextArgumentEvaluateErrorFrom28
             | Gate::RecordRefIsDirtyFrom28
+            | Gate::ReportXmlDecimalFormatterFrom28
             | Gate::PartLineBeforeHostKeyFrom28 => 28,
         }
     }
@@ -235,6 +245,28 @@ impl Gate {
                 file: "recordref/lt-recordref-isdirty-edges/RecordRefIsDirtyEdges.al",
                 lines: "12",
             }],
+            Gate::ReportXmlDecimalFormatterFrom28 => &[Evidence {
+                file: "report/lt-y-report-props/YReportPropsTests.al",
+                lines: "39,58,77,96,115,134",
+            }],
+            Gate::ReportPartNamePropertiesFrom29 => &[
+                Evidence {
+                    file: "report/lt-y-report-props/YReportPropsTests.al",
+                    lines: "44,63,82,101,120,139,154,170,188,206,256",
+                },
+                Evidence {
+                    file: "report/lt-y-request-page/YRequestPageTests.al",
+                    lines: "398",
+                },
+                Evidence {
+                    file: "report/lt-y-report-props/YReportExt.al",
+                    lines: "176,195,216",
+                },
+                Evidence {
+                    file: "report/lt-y-report-props/YReportParts.al",
+                    lines: "11",
+                },
+            ],
             Gate::PartLineBeforeHostKeyFrom28 => &[Evidence {
                 file: "pages/lt-part-line-before-host-key/PartLineBeforeHostKey.al",
                 lines: "322",

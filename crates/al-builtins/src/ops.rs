@@ -518,7 +518,7 @@ fn convert_rare(v: Value, t: &RtType) -> Result<Value, Signal> {
         // `100,5` (commas drop out), ` 7 ` (blanks around) read; an empty text, letters only and `1e3` raise
         // (types/lt-variant-time-enum/VariantTextTimeEnumFilter.al:Variant_Text_ToDecimal, types/lt-evaluate-decimal/
         // EvaluateDecimal.al:Variant_HoldingText_ConvertsToDecimal and _HoldingCode_). Other forms are refused.
-        (Value::Text(s) | Value::Code(s), RtType::Decimal) => match variant_text_decimal(&s) {
+        (Value::Text(s) | Value::Code(s), RtType::Decimal) => match variant_text_decimal(s) {
             Some(Ok(d)) => Ok(Value::Decimal(d)),
             Some(Err(())) => raise(
                 "The expression Variant cannot be type-converted to a Decimal value.".to_string(),

@@ -1391,6 +1391,7 @@ fn lookup_over_rows_that_agree_returns_their_value() {
 // CalcSums only takes stored number fields; both a stored non-number and a FlowField are refused.
 #[test]
 fn calcsums_refuses_stored_non_numbers_and_flow_fields() {
+    #[allow(clippy::single_element_loop)]
     for field in ["Txt"] {
         let r = run_ffx(&format!(
             "procedure F(): Text

@@ -69,15 +69,9 @@ pub struct Info {
 registry! {
     PageFieldFollowsSourceFieldEditableFalse => {
         id: "page-field-follows-source-field-editable-false",
-        assumed: "A page field over a source table field that declares Editable = false, with no Editable of its own on the control, reads Editable() No on a TestPage.",
+        assumed: "A page field over a source table field that is a FlowField and declares Editable = false, with no Editable of its own on the control, reads Editable() No on a TestPage. A stored field is pinned.",
         tests: "Payment Export Mgt Unit Test.FilterByHasPaymentExportError (Gen. Journal Line.\"Has Payment Export Error\", a FlowField with Editable = false, on the Payment Journal).",
-        probe: "A table field with Editable = false (stored, and a FlowField) and one without; a page with a plain field control over each and one that sets Editable = true itself: Editable() of each control on an open TestPage, and whether SetValue on the first is refused.",
-    },
-    ListPlusBlankRecordOnEmptyView => {
-        id: "listplus-blank-record-on-empty-view",
-        assumed: "A ListPlus page without a repeater, opened for edit over an empty view, stands on a blank record: OnNewRecord and OnAfterGetCurrRecord run after OnOpenPage. A Card or Document over an empty view is not covered.",
-        tests: "Suggest Price Lines UT.T212_CopyLinesEnabledOnPurchPriceListPageIfFixedUpgradeCompleted (Purchase Price List sets PriceListIsEditable in OnAfterGetCurrRecord).",
-        probe: "A ListPlus, a Card and a Document page over an empty table, each with OnOpenPage, OnNewRecord, OnAfterGetRecord and OnAfterGetCurrRecord logging, opened with OpenEdit and OpenView: the trigger sequence and the field values.",
+        probe: "A FlowField with Editable = false and a page with a plain field control over it, and one that sets Editable = true itself: Editable() of each control on an open TestPage, and whether SetValue on the first is refused.",
     },
     UpperLimitOfASingleValue => {
         id: "upperlimit-of-a-single-value",
@@ -157,23 +151,17 @@ registry! {
         tests: "Temp Blob Impl.FromFieldRef (FieldRef.CalcField on each Blob it reads); 14 Tests-SCM-Manufacturing tests (Demand Forecast Card).",
         probe: "A FieldRef on a Blob field of a stored row read without CalcFields: CalcField() then Value and HasValue; the same on a Code field (the error text) and on a FlowField.",
     },
-    EvaluateRecordIdCompositeKey => {
-        id: "evaluate-recordid-composite-key",
-        assumed: "Evaluate into a RecordId of a table whose primary key has several fields reads `Table: v1,v2,...` as Format writes it (a value that is empty or holds a comma is in double quotes): one value per key field, each read as Evaluate reads that field's type (a Code as written, an Integer or an Enum by its name or ordinal); a count of values other than the key's field count is rejected. A rejected text leaves a RecordId that is not blank as it was and answers false (any key).",
-        tests: "Library - Error Message.LoadErrorMessages (Evaluate(TempErrorMessage.\"Record ID\", ErrorMessages.Source.Value, 9)); 36 Tests-Misc tests (Check Dimensions On Posting: Default Dimension, Sales Header, Dimension Value keys).",
-        probe: "Evaluate(Rid, Format(Rid)) and Format(Rid, 0, 9) for a table with a Code+Code key, an Enum+Code key (Sales Header), an Integer+Code+Code key (Default Dimension), a Date key part and a Code value holding a comma; the result and Rid; and too few and too many values.",
-    },
     TestPageAssertEqualsIntegerOnTextControl => {
         id: "testpage-assertequals-integer-on-text-control",
-        assumed: "TestPageField.AssertEquals(<Integer>) on a control over a Text or Code value compares the plain digits of the integer with the control's text, instead of raising TypeConversion; another number or an Enum there stays refused.",
+        assumed: "TestPageField.AssertEquals(<number>) on a control over a Text or Code value compares the number spelled in plain digits (a Decimal without trailing zeros) with the control's text, for an Integer, BigInteger or Decimal outside 0 to 9.99 (a larger, a negative or a many-digit value: no group separator is assumed). The single-digit cases 0, 5, 6 and 5.5 are pinned. An Enum there stays refused.",
         tests: "Tests-Marketing Marketing Matrix Management.TasksMatrixHandlerWithValue (Field1.AssertEquals(1) on the Text[1024] cells of Tasks Matrix); the 10 TaskWith* tests.",
-        probe: "A page with a field over a Text[30] variable holding '1': TestPage Field.AssertEquals(1) and AssertEquals(2), also with a Decimal and a BigInteger expected value, and a Code[10] control.",
+        probe: "A page with a field over a Text[30] variable holding '1000', '-5' and '1234.5': TestPage Field.AssertEquals(1000), AssertEquals(-5), AssertEquals(1234.5) with an Integer, a BigInteger and a Decimal expected value, and a Code[10] control.",
     },
     TestPageSetValueBlankOptionMember => {
         id: "testpage-setvalue-blank-option-member",
-        assumed: "TestPageField.SetValue of the first (blank) option member on a control whose OptionCaption starts with a blank caption (' ,Not Started,...') is accepted and selects that member; the client reads the caption ' ' as blank.",
+        assumed: "TestPageField.SetValue of a blank text on an Option control whose first member has no OptionCaption (the member name is blank) selects that member. A control with an OptionCaption starting with ' ' is pinned.",
         tests: "Tests-Marketing Marketing Matrix Management.TaskWithStatus* (Tasks.StatusFilter.SetValue(StatusFilter::\" \") resets the filter); 7 tests.",
-        probe: "A page with an Option variable control with OptionCaption ' ,A,B': TestPage SetValue(Var::\" \") after SetValue(A), then Value; and SetValue('') as text; the same for an option field of a table.",
+        probe: "A page with an Option variable control without OptionCaption whose first member is \" \": TestPage SetValue(' ') after SetValue(A), then Value.",
     },
     EvaluateTimeDigitForms => {
         id: "evaluate-time-digit-forms",
@@ -192,12 +180,6 @@ registry! {
         assumed: "Record.Next(Decimal) with a whole number steps like the Integer; a fraction is refused.",
         tests: "Phys. Invt. Count.-Management.CalcPeriod (Calendar.Next(12 / CountFrequency)).",
         probe: "R.Next(1.5) and R.Next(-1.5).",
-    },
-    NotificationByValueShares => {
-        id: "notification-by-value-shares",
-        assumed: "A Notification passed by value to a procedure is the caller's own notification: SetData, Message and Scope set in the callee are seen by the caller. An assignment copies (pinned).",
-        tests: "Check Credit Limit.PopulateDataOnNotification(CreditLimitNotification: Notification) sets the data the Tests-ERM SendNotificationHandler reads: 8 tests of ERM Sales Documents II.",
-        probe: "A procedure P(N: Notification) that calls N.SetData('k','v') and N.Message('m'); the caller reads HasData('k') and Message() after the call; the same with a var parameter.",
     },
     TableRelationQuotes => {
         id: "table-relation-quotes",

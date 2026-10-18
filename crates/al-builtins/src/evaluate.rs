@@ -596,11 +596,11 @@ pub fn evaluate_bounded(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value])
         return unsupported("Evaluate into a bounded text without its length");
     };
     let max = u32::try_from(max).ok();
-    evaluate_with_max(c, &mut a[..3], false, max)
+    evaluate_with_max(c, &mut a[..3], false, max, false)
 }
 
 fn evaluate_with(c: &mut dyn Ctx, a: &mut [Value], variable_option: bool) -> Result<Value, Signal> {
-    evaluate_with_max(c, a, variable_option, None)
+    evaluate_with_max(c, a, variable_option, None, false)
 }
 
 /// `Evaluate` into a Text or a Code (corpus errors/lt-ms-refusals-128/P128EvalBasic.al:P128_Evaluate_IntoText,
@@ -659,71 +659,80 @@ pub fn evaluate_typed(
         Value::Integer(number as i32),
     ];
     // The caller says the result is used: a rejected text is `false`, not an error.
-    Ok(match evaluate_with_max(c, &mut tmp, false, max)? {
+    Ok(match evaluate_with_max(c, &mut tmp, false, max, false)? {
         Value::Boolean(true) => Some(tmp.swap_remove(0)),
         _ => None,
     })
 }
 
-/// `Evaluate(RecordId, Text)` (corpus errors/lt-ms-refusals-128/P128EvalRecordId.al): a table name and the primary key
-/// after a colon, or only the table name; the empty text gives the blank RecordId; a text that names no table, or a key that
-/// is no value of the key's type, gives `false`. The RecordId an evaluation fails on or empties is not pinned for a
-/// RecordId that is not blank: the test starts from a blank one.
+/// `Evaluate(RecordId, Text)`: a table name and the primary key after a colon, or only the table name; the empty text gives the
+/// blank RecordId, also for one that is not blank (types/lt-evaluate-recordid/EvaluateRecordIdComposite.al:Evaluate_IntoSetRecordId
+/// `emptyResult`, `emptyUnusedResult`). A text that names no table, has more key values than the key has fields or holds a value that
+/// is none of its field's type is rejected: with the result used the answer is false, the RecordId stays as it was and the error is the
+/// last error; with the result unused the error is raised (`garbageResult`, `garbageUnusedErr`, Evaluate_WrongNumberOfValues). The
+/// errors are `The value "<text>" can't be evaluated into type RecordID.` (code Evaluate) and the error of the value that failed.
 fn into_record_id(c: &mut dyn Ctx, a: &mut [Value], text: &str, number: i64) -> Result<Value, Signal> {
-    let Value::Library(_, cell) = &a[0] else {
+    if !matches!(&a[0], Value::Library(..)) {
         return unsupported("Evaluate into a RecordId that is no RecordId");
-    };
-    let cell = cell.clone();
-    let blank = matches!(&*cell.borrow(), crate::value::LibraryValue::Empty);
-    let new = if text.is_empty() {
-        if !blank {
-            return unsupported("Evaluate of the empty text into a RecordId that is not blank (not pinned)");
+    }
+    let rejected = |c: &mut dyn Ctx, error: Signal| -> Result<Value, Signal> {
+        match error {
+            Signal::Error(e) if c.ret_used() => {
+                c.set_last_error(*e);
+                Ok(Value::Boolean(false))
+            }
+            other => Err(other),
         }
-        Some(crate::value::LibraryValue::Empty)
+    };
+    let new = if text.is_empty() {
+        crate::value::LibraryValue::Empty
     } else {
         match c.evaluate_record_id(text, number) {
-            Some(r) => r?,
+            Some(Ok(Some(v))) => v,
+            Some(Ok(None)) => {
+                let Err(e) = crate::native::raise::<()>(
+                    format!("The value \"{text}\" can't be evaluated into type RecordID."),
+                    "Evaluate",
+                ) else {
+                    unreachable!()
+                };
+                return rejected(c, e);
+            }
+            Some(Err(e)) => return rejected(c, e),
             None => return unsupported("Evaluate into a RecordId without a program"),
         }
     };
-    match new {
-        Some(v) => {
-            *cell.borrow_mut() = v;
-            Ok(Value::Boolean(true))
-        }
-        // Not pinned for a RecordId that is not blank: the failed text leaves it as it was
-        // (assumption evaluate-recordid-composite-key).
-        None if !blank && c.ret_used() => {
-            crate::assumptions::assume(crate::assumptions::Assumption::EvaluateRecordIdCompositeKey);
-            Ok(Value::Boolean(false))
-        }
-        None if !blank => {
-            unsupported("a failed Evaluate into a RecordId that is not blank with the result unused (not pinned)")
-        }
-        None if c.ret_used() => Ok(Value::Boolean(false)),
-        None => unsupported("Evaluate into a RecordId failing with the result unused (error text not pinned yet)"),
-    }
+    // The variable gets a RecordId of its own: another variable assigned from it keeps its value
+    // (types/lt-evaluate-recordid/EvaluateRecordIdComposite.al:Evaluate_IntoSetRecordId, `Rid := Start` then Evaluate(Rid, ...)).
+    a[0] = Value::Library(
+        crate::library_kind::LibraryKind::RecordId,
+        std::rc::Rc::new(std::cell::RefCell::new(new)),
+    );
+    Ok(Value::Boolean(true))
 }
 
 /// `Evaluate(FieldRef, Text)`: the field takes the value the text reads as for the field's type, a Text or Code that is too
 /// long for it, or a text that is no value, gives `false` and leaves the field (corpus errors/lt-ms-refusals-128/
 /// P128EvalFieldRef.al: a Text, Code, Integer, Decimal, Boolean, Date and Option field, with the result used). A failure
-/// with the result unused, and an Option field with an OptionCaption, are not pinned and stay refused.
+/// with the result unused is pinned for an Integer field only (it raises the error of the type), and an Option field with an
+/// OptionCaption is not pinned and stays refused.
 fn into_field_ref(c: &mut dyn Ctx, a: &mut [Value], number: i64) -> Result<Value, Signal> {
     let target = match c.evaluate_field_target(&a[0]) {
         Some(t) => t?,
         None => return unsupported("Evaluate into a FieldRef that is not assigned (not pinned)"),
     };
     let current = target.rec.borrow().fields[target.pos].clone();
-    if !c.ret_used() {
-        return unsupported("Evaluate into a FieldRef with the result unused (not pinned)");
+    // With the result unused a text that is no value raises the error of the type and leaves the field (types/lt-evaluate-recordid/
+    // EvaluateRecordIdComposite.al:Evaluate_IntoFieldRef `invalidUnusedErr`, an Integer field); the other types are not pinned.
+    if !c.ret_used() && !matches!(target.ty, crate::value::RtType::Integer) {
+        return unsupported("Evaluate into a FieldRef with the result unused (pinned for an Integer field only)");
     }
     let max = match &target.ty {
         crate::value::RtType::Text(m) | crate::value::RtType::Code(m) => *m,
         _ => None,
     };
     let mut tmp = vec![current, a[1].clone(), Value::Integer(number as i32)];
-    let ok = evaluate_with_max(c, &mut tmp, !target.option_caption, max)?;
+    let ok = evaluate_with_max(c, &mut tmp, !target.option_caption, max, false)?;
     if matches!(ok, Value::Boolean(true)) {
         let v = crate::ops::convert(tmp.swap_remove(0), &target.ty)?;
         target.rec.borrow_mut().fields[target.pos] = v;
@@ -731,11 +740,35 @@ fn into_field_ref(c: &mut dyn Ctx, a: &mut [Value], number: i64) -> Result<Value
     Ok(ok)
 }
 
+/// One value of the key text of `Evaluate(RecordId, Text)`: read as `Evaluate` reads a variable of type `ty`, and a text that is
+/// no value raises the error of that type (a Date says so for any text), whether the caller uses the result or not; the caller
+/// turns the error into the last error when it does (corpus types/lt-evaluate-recordid/EvaluateRecordIdComposite.al:
+/// Evaluate_WrongNumberOfValues `badInteger`, `badEnum`, `badDate`, `codeTooLong`). The caller sets the context to "result unused".
+pub fn evaluate_key_part(c: &mut dyn Ctx, ty: &crate::value::RtType, text: &str, number: i64) -> Result<Value, Signal> {
+    let max = match ty {
+        crate::value::RtType::Text(m) | crate::value::RtType::Code(m) => *m,
+        _ => None,
+    };
+    let mut tmp = vec![
+        Value::default_for(ty),
+        Value::Text(text.to_string().into()),
+        Value::Integer(number as i32),
+    ];
+    match evaluate_with_max(c, &mut tmp, false, max, true)? {
+        Value::Boolean(true) => Ok(tmp.swap_remove(0)),
+        _ => unsupported(format!(
+            "Evaluate of the key part `{text}` into {} (not pinned)",
+            ty.describe()
+        )),
+    }
+}
+
 fn evaluate_with_max(
     c: &mut dyn Ctx,
     a: &mut [Value],
     variable_option: bool,
     max: Option<u32>,
+    any_date_text: bool,
 ) -> Result<Value, Signal> {
     let Some(text) = crate::native::text_of(&a[1]) else {
         return unsupported("Evaluate of a source that is not text");
@@ -958,9 +991,10 @@ fn evaluate_with_max(
         // text as a date filter gives, SetFilter on a Date).
         Parsed::Rejected
             if matches!(a[0], Value::Date(..))
-                && text
-                    .bytes()
-                    .all(|b| b.is_ascii_digit() || matches!(b, b'-' | b'.' | b'/')) =>
+                && (any_date_text
+                    || text
+                        .bytes()
+                        .all(|b| b.is_ascii_digit() || matches!(b, b'-' | b'.' | b'/'))) =>
         {
             crate::native::raise(
                 format!(

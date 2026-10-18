@@ -634,7 +634,12 @@ impl Session {
                     // table that has rows is not pinned.
                     // A page that never ran hands back the record SetRecord gave it (pages/lt-part-never-ran/NeverRanSetRecord.al:
                     // P182b_HostNeverRan_PartSetRecord, `id=7 name=seven`).
-                    let given = st.borrow().set_record.clone().filter(|_| !st.borrow().ran);
+                    // Only a part is pinned: a Page variable's SetRecord before a typed handler ran it is not (PageVariable_LookupMode_HandlerSetRecord_Cancel).
+                    let given = st
+                        .borrow()
+                        .set_record
+                        .clone()
+                        .filter(|_| !st.borrow().ran && st.borrow().host.is_some());
                     if let Some(given) = given.filter(|g| g.borrow().table == dst.borrow().table) {
                         let fields = given.borrow().fields.clone();
                         dst.borrow_mut().fields = fields;

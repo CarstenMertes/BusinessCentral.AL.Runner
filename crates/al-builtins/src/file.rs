@@ -99,10 +99,31 @@ fn open_file_needed(s: &FileState, what: &str) -> Result<(), Signal> {
     }
 }
 
+/// `Create` and `Open` with no file name raise `MissingFileName`, and on a variable whose file is still open `FileAlreadyOpened`
+/// (al-language-onprem/lt-file-type/FileErrors.al:P110_InvalidPaths `create_empty_name`, `open_empty_name`, `open_in_missing_dir`;
+/// P110_CreateTwiceWithoutClose). Which of the two wins when both apply is not pinned: the open file is checked first.
+fn already_open_or_nameless(r: Option<&Value>, name: &str) -> Result<(), Signal> {
+    if let Some(Value::Library(_, cell)) = r {
+        if let LibraryValue::File(s) = &*cell.borrow() {
+            if s.open {
+                return crate::native::raise(
+                    "The operation cannot be performed while the file is open.",
+                    "FileAlreadyOpened",
+                );
+            }
+        }
+    }
+    if name.is_empty() {
+        return crate::native::raise("File name was not specified.", "MissingFileName");
+    }
+    Ok(())
+}
+
 /// `Create(Name [, Encoding])`: a new empty file, or an existing one emptied; open for writing.
 fn create(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
     let name = path(a, 0)?;
     let enc = Encoding::from_arg(a)?;
+    already_open_or_nameless(r.as_deref(), &name)?;
     if let Err(e) = c.fs_write(&name, &[]) {
         return fs_failure(c, &format!("File.Create({name}): {e}"));
     }
@@ -122,6 +143,7 @@ fn create(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
 fn open(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
     let name = path(a, 0)?;
     let enc = Encoding::from_arg(a)?;
+    already_open_or_nameless(r.as_deref(), &name)?;
     let Some(bytes) = c.fs_read(&name)? else {
         return fs_failure(c, &format!("File.Open of the missing file {name}"));
     };
@@ -277,6 +299,11 @@ fn exists(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
 
 fn erase(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
     let name = path(a, 0)?;
+    // Only the text up to and including `(Parameter ` is pinned (the test cuts the text at the quote), so only that is raised (al-language-onprem/lt-file-type/FileErrors.al:P110_InvalidPaths `erase_empty_name`);
+    // the rest of the text is not pinned (docs/probes-needed.md).
+    if name.is_empty() {
+        return crate::native::raise("The value cannot be an empty string. (Parameter ", "InvalidPath");
+    }
     if c.fs_remove(&name)? {
         Ok(Value::Boolean(true))
     } else {
@@ -313,8 +340,24 @@ fn rename(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
     Ok(Value::Boolean(true))
 }
 
+/// The paths the corpus pins as temporary, all answering Yes (al-language-onprem/lt-file-type/FileTemp.al:140-146, P110_IsPathTemporary):
+/// a name under `TemporaryPath()` (`\TEMP\`, also with `../` in it), the temporary folder itself, the empty text, a name with no
+/// separator (`relative.txt`), `/` and `/etc/passwd`. Any other path is refused: whether it is temporary is not pinned.
 fn is_path_temporary(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
-    Ok(Value::Boolean(path(a, 0)?.starts_with(TEMP_DIR)))
+    let p = path(a, 0)?;
+    let pinned = p.starts_with(TEMP_DIR)
+        || p.starts_with("\\TEMP\\")
+        || p.is_empty()
+        || !p.contains(['/', '\\'])
+        || p == "/"
+        || p == "/etc/passwd";
+    if pinned {
+        Ok(Value::Boolean(true))
+    } else {
+        unsupported(format!(
+            "File.IsPathTemporary of `{p}` (only the forms of FileTemp.al are pinned)"
+        ))
+    }
 }
 
 /// `Download(FromFile, ...)` and `View(FromFile, ...)` send a file from the server to the client: the file is read

@@ -111,9 +111,10 @@ impl Session {
             ids::SYSTEM_ISSERVICETIER_1 => Ok(Value::Boolean(self.host.identity.is_service_tier())),
             // The folder AL code writes scratch files to. BC's answer ends with `TEMP\` on the Linux tier
             // too (al-language-onprem/handlers/TestRequestPageSaveAsXmlContracts.al:TemporaryPath_EndsWithTheTempFolderAndABackslash);
-            // the part before it is not pinned, so the path is the relative `TEMP\`, which the files
-            // directory (or the in-memory files) keeps inside the run (docs/owner-review.md).
-            ids::SYSTEM_TEMPORARYPATH_1 => Ok(Value::Text("TEMP\\".into())),
+            // the path starts with a separator, has no drive colon and ends with a separator
+            // (al-language-onprem/lt-system-database-onprem/PTemporaryPath.al:P109_TemporaryPath_Shape), so it is `\TEMP\`; the files
+            // directory (or the in-memory files) keeps it inside the run, a leading backslash being dropped there (docs/owner-review.md).
+            ids::SYSTEM_TEMPORARYPATH_1 => Ok(Value::Text("\\TEMP\\".into())),
             ids::SYSTEM_WINDOWSLANGUAGE_1 => Ok(Value::Integer(self.host.identity.windows_language())),
             ids::SYSTEM_GLOBALLANGUAGE_1 => match args.first() {
                 None => Ok(Value::Integer(self.global_language)),

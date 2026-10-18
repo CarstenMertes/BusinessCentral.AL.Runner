@@ -515,6 +515,30 @@ impl Session {
                     if table_empty {
                         return self.record_op(RecordOp::SetRecFilter, dst, &mut []);
                     }
+                    // A TestPage whose own filter shows no row of a table that has rows hands the record that filter
+                    // (pages/lt-selection-filter-no-row/SelectionFilterNoRow.al:TestPage_FilteredToNothing: the page filter
+                    // `Id: 99` on key field Id, `Count` 0, `Id: 99`). Only that shape (one range of one value on the first key
+                    // field, a record without filters or marks) is pinned.
+                    let t = self.table(dst)?;
+                    let page_filters = src.borrow().filters.clone();
+                    let single_key_value = page_filters.len() == 1
+                        && page_filters[0].field == t.keys[0][0]
+                        && match &page_filters[0].expr {
+                            al_builtins::filter::FilterExpr::Eq(_) => true,
+                            al_builtins::filter::FilterExpr::Range(Some(a), Some(b)) => {
+                                al_builtins::ops::compare(a, b).ok() == Some(std::cmp::Ordering::Equal)
+                            }
+                            _ => false,
+                        };
+                    if single_key_value
+                        && st.borrow().open
+                        && dst.borrow().filters.is_empty()
+                        && dst.borrow().marks.is_empty()
+                        && !dst.borrow().marked_only
+                    {
+                        dst.borrow_mut().filters = page_filters;
+                        return Ok(Value::Null);
+                    }
                     return unsupported(
                         "Page.SetSelectionFilter of a page on no row of a table that has rows (not pinned)",
                     );
@@ -533,14 +557,29 @@ impl Session {
                 };
                 let marked = !dst.borrow().marks.is_empty();
                 let marked_only = dst.borrow().marked_only;
-                if marked != marked_only
-                    || (marked
-                        && dst.borrow().marks.iter().any(|m| {
-                            m.len() == selected_key.len()
-                                && m.iter().zip(&selected_key).all(|(a, b)| {
-                                    al_builtins::ops::compare(a, b).ok() == Some(std::cmp::Ordering::Equal)
-                                })
-                        }))
+                // The page's record is the blank one (the page stands on no stored row, as in a handler that opened it): the record
+                // takes the filter on the blank key and keeps its marks and MarkedOnly as they were, with no mark added
+                // (pages/lt-selection-filter-no-row/SelectionFilterNoRow.al:Marks_WithoutMarkedOnly, MarkedOnly_WithoutMarks,
+                // Mark_OnSelectedRow, MarkedOnly_MarkOnOtherRow: `Id: 0`, `Marked: Yes, Id: 0`, count 0).
+                let table_index = src.borrow().table as usize;
+                let initial = self.initial_fields(table_index);
+                let blank_row = {
+                    let s = src.borrow();
+                    s.fields.len() == initial.len()
+                        && s.fields
+                            .iter()
+                            .zip(&initial)
+                            .all(|(a, b)| al_builtins::ops::compare(a, b).ok() == Some(std::cmp::Ordering::Equal))
+                };
+                if !blank_row
+                    && (marked != marked_only
+                        || (marked
+                            && dst.borrow().marks.iter().any(|m| {
+                                m.len() == selected_key.len()
+                                    && m.iter().zip(&selected_key).all(|(a, b)| {
+                                        al_builtins::ops::compare(a, b).ok() == Some(std::cmp::Ordering::Equal)
+                                    })
+                            })))
                 {
                     return unsupported(
                         "Page.SetSelectionFilter into a record with marks (only MarkedOnly with a mark outside the selected row is pinned)",
@@ -564,7 +603,7 @@ impl Session {
                     });
                 }
                 drop(d);
-                if marked {
+                if marked && !blank_row {
                     dst.borrow_mut().marks.push(selected_key);
                 }
                 Ok(Value::Null)
@@ -589,7 +628,39 @@ impl Session {
                     return unsupported("Page.GetRecord into a record of another table (not pinned)");
                 }
                 if st.borrow().cursor != Cursor::Row {
-                    return unsupported("Page.GetRecord of a page that closed on no row (not pinned)");
+                    // A page that ran over a table with no row at all hands back the blank record, whatever the record held
+                    // (errors/lt-ms-refusals-129/P129PageMisc.al:P129_GetRecord_AfterRunModalCancelledOnEmptyTable,
+                    // _AfterRunModalOkOnEmptyTable, _PageTypedHandlerOnEmptyTable: `id=0|grp=|qty=0`). A page on no row of a
+                    // table that has rows is not pinned.
+                    // A page that never ran hands back the record SetRecord gave it (pages/lt-part-never-ran/NeverRanSetRecord.al:
+                    // P182b_HostNeverRan_PartSetRecord, `id=7 name=seven`).
+                    // Only a part is pinned: a Page variable's SetRecord before a typed handler ran it is not (PageVariable_LookupMode_HandlerSetRecord_Cancel).
+                    let given = st
+                        .borrow()
+                        .set_record
+                        .clone()
+                        .filter(|_| !st.borrow().ran && st.borrow().host.is_some());
+                    if let Some(given) = given.filter(|g| g.borrow().table == dst.borrow().table) {
+                        let fields = given.borrow().fields.clone();
+                        dst.borrow_mut().fields = fields;
+                        return Ok(Value::Null);
+                    }
+                    let initial = self.initial_fields(dst.borrow().table as usize);
+                    let src_blank = {
+                        let s = src.borrow();
+                        s.fields.len() == initial.len()
+                            && s.fields
+                                .iter()
+                                .zip(&initial)
+                                .all(|(a, b)| al_builtins::ops::compare(a, b).ok() == Some(std::cmp::Ordering::Equal))
+                    };
+                    if !src_blank {
+                        return unsupported(
+                            "Page.GetRecord of a page that closed on no row of a table that has rows (not pinned)",
+                        );
+                    }
+                    dst.borrow_mut().fields = initial;
+                    return Ok(Value::Null);
                 }
                 let fields = src.borrow().fields.clone();
                 dst.borrow_mut().fields = fields;

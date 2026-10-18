@@ -794,6 +794,16 @@ impl Session {
                 && matches!(self.read(p, f), Ok(Value::Record(d)) if d.borrow().table != src.borrow().table);
             if !matches!(p, ir::Place::Field(..)) && !replaces_variant {
                 if let Ok(Value::Record(dst)) = self.read(p, f) {
+                    // A record variable takes no record of another table; that only happens through a Variant
+                    // (types/lt-variant-record-reassign/VariantRecordReassign.al:130 Variant_Reassign_ReadBack).
+                    if dst.borrow().table != src.borrow().table && !matches!(self.place_type(p, f), RtType::Variant) {
+                        return Err(Signal::Error(Box::new(AlError {
+                            message: "The requested operation is not supported.".into(),
+                            code: "NotSupportedOperation".into(),
+                            call_stack: String::new(),
+                            ..Default::default()
+                        })));
+                    }
                     if !Rc::ptr_eq(src, &dst) {
                         // A copied record holds copies of its Blobs (value semantics). The corpus
                         // does not tell a copy from a shared Blob (record/TestFormatRecordContracts.al
@@ -1006,7 +1016,7 @@ impl Session {
     /// value parameter, and for a `var` parameter it is written back into the row when the call returns (corpus
     /// errors/lt-ms-refusals-128/P128ArrayRow.al:P128_ArrayRow_ByValue, P128_ArrayRow_ByVar, P128_ArrayRow_TextRowByVar). What
     /// BC does with a row assigned or cleared is not pinned here.
-    fn row_range(
+    pub(crate) fn row_range(
         &mut self,
         base: &ir::Place,
         idx: &[ir::Expr],
@@ -1015,20 +1025,25 @@ impl Session {
         let RtType::Array(dims, _) = self.place_type(base, f) else {
             return Ok(None);
         };
-        let ([rows, cols], [e]) = (dims.as_slice(), idx) else {
+        // A row is what is left of the array after fixing its first indexes: one of two (`A[2]` of `array[3, 4]`), or one or two of
+        // three (collections/lt-array-rows/ArrayRows.al:ThreeDim_Rows, ThreeDim_RowToShorterParameter). More dimensions are not pinned.
+        if dims.len() < 2 || dims.len() > 3 || idx.is_empty() || idx.len() >= dims.len() {
             return Ok(None);
-        };
-        let i = int(&Self::index_value(e, f)?)?;
-        if i < 1 || i > i64::from(*rows) {
-            return Err(Signal::Unsupported(
-                "array index out of bounds (error text not pinned yet)".into(),
-            ));
         }
+        let mut start = 0usize;
+        for (k, e) in idx.iter().enumerate() {
+            let i = int(&Self::index_value(e, f)?)?;
+            if i < 1 || i > i64::from(dims[k]) {
+                return al_builtins::native::raise("Index out of bounds.", "IndexOutOfBounds");
+            }
+            let below: usize = dims[k + 1..].iter().map(|d| *d as usize).product();
+            start += (i as usize - 1) * below;
+        }
+        let len: usize = dims[idx.len()..].iter().map(|d| *d as usize).product();
         let arr = match self.read(base, f)? {
             Value::Array(a) => a,
             other => return Err(Signal::Unsupported(format!("indexing {}", other.describe()))),
         };
-        let (start, len) = ((i as usize - 1) * *cols as usize, *cols as usize);
         if start + len > arr.borrow().len() {
             return Err(Signal::Unsupported(
                 "a row of an array that has fewer cells than it declares (not pinned)".into(),
@@ -1090,16 +1105,24 @@ impl Session {
         let mut flat = 0usize;
         for (d, e) in dims.iter().zip(idx) {
             let i = int(&Self::index_value(e, f)?)?;
-            if i < 1 || i > i64::from(*d) {
-                return Err(Signal::Unsupported(
-                    "array index out of bounds (error text not pinned yet)".into(),
-                ));
+            // A one-dimensional array is measured by the array the variable holds: a parameter declared `array[3]` takes the caller's
+            // array of any length and indexes within it (types/W7VarArray.al; Tests-Bank, Tests-Cash Flow and Tests-SCM-Manufacturing
+            // index a parameter within the argument's length), so the check against the length follows below.
+            if i < 1 || (dims.len() > 1 && i > i64::from(*d)) {
+                // Index out of bounds.: collections/lt-array-rows/ArrayRows.al, errors/lt-error-handling/ErTRuntimeErrors.al:179-184
+                // (zero, negative and too high), errors/lt-ms-refusals-129/P129ArrayIndex.al.
+                return al_builtins::native::raise("Index out of bounds.", "IndexOutOfBounds");
             }
             flat = flat * (*d as usize) + (i as usize - 1);
         }
         // A parameter declared with more elements than the argument has (Tests-ERM codeunit 134831 passes
         // an `array[2]` to `var DimensionValue: array[9]`): the stored cells are the argument's. What BC does
         // is not pinned by the corpus, so it is refused rather than indexed out of range.
+        // A one-dimensional array passed to a parameter declared with more elements: reading or writing past the argument's
+        // elements is an index error (misc/lt-probes-needed-5/PnE01Arrays.al:SmallerArray_VarParameter, SmallerArray_ByValue).
+        if flat >= arr.borrow().len() && dims.len() == 1 {
+            return al_builtins::native::raise("Index out of bounds.", "IndexOutOfBounds");
+        }
         if flat >= arr.borrow().len() {
             return Err(Signal::Unsupported(format!(
                 "array element {} of an argument that has {} elements, passed to a parameter declared with {}; not pinned (docs/probes-needed.md)",

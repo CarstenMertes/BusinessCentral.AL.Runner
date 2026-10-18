@@ -645,7 +645,37 @@ impl Session {
     /// text that looks like encrypted data this session did not make is refused.
     fn encryption_op(&mut self, id: al_ir::BuiltinId, args: &mut [Value]) -> Option<Result<Value, Signal>> {
         Some(match id {
-            ids::SYSTEM_ENCRYPTIONENABLED_1 | ids::SYSTEM_ENCRYPTIONKEYEXISTS_1 => Ok(Value::Boolean(true)),
+            ids::SYSTEM_ENCRYPTIONENABLED_1 => match self.encryption_key {
+                crate::EncryptionKey::Present => Ok(Value::Boolean(true)),
+                crate::EncryptionKey::Deleted => Ok(Value::Boolean(false)),
+                crate::EncryptionKey::Recreated => {
+                    unsupported("EncryptionEnabled after CreateEncryptionKey (not pinned)")
+                }
+            },
+            ids::SYSTEM_ENCRYPTIONKEYEXISTS_1 => {
+                Ok(Value::Boolean(self.encryption_key != crate::EncryptionKey::Deleted))
+            }
+            // Pinned: a key exists at the start; DeleteEncryptionKey with a key leaves none and EncryptionEnabled No, a second one
+            // with no key runs without error; CreateEncryptionKey with no key makes one (session/lt-encryption-key-delete/
+            // EncryptionKeyDelete.al:Delete_WithKey_ThenWithout_ThenRestore). Creating while a key exists is not pinned.
+            ids::SYSTEM_DELETEENCRYPTIONKEY_1 => {
+                self.encryption_key = crate::EncryptionKey::Deleted;
+                self.encrypted.clear();
+                Ok(Value::Null)
+            }
+            ids::SYSTEM_CREATEENCRYPTIONKEY_1 => {
+                if self.encryption_key != crate::EncryptionKey::Deleted {
+                    return Some(unsupported("CreateEncryptionKey while a key exists (not pinned)"));
+                }
+                if self.ret_used {
+                    return Some(unsupported("the result of CreateEncryptionKey (not pinned)"));
+                }
+                self.encryption_key = crate::EncryptionKey::Recreated;
+                Ok(Value::Null)
+            }
+            ids::SYSTEM_ENCRYPT_1 | ids::SYSTEM_DECRYPT_1 if self.encryption_key != crate::EncryptionKey::Present => {
+                unsupported("Encrypt or Decrypt after the encryption key was deleted (not pinned)")
+            }
             ids::SYSTEM_ENCRYPT_1 => {
                 let Some(plain) = args.first().and_then(al_builtins::native::text_of) else {
                     return Some(unsupported("Encrypt of something that is not text"));

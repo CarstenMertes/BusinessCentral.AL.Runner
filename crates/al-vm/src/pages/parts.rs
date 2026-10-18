@@ -184,7 +184,9 @@ impl Session {
                 .iter()
                 .find(|(i, _)| *i == control)
                 .map(|(_, c)| c.clone())
-                .filter(|_| runtime || !self.control_eliminated(st, control))
+                // A part the session's application areas removed is not on the test page either (types/lt-conversions-hidden-parts-doctype/
+                // P142HiddenPartArea.al:P142_ServiceAreaPartRemoved: `The part with ID = n was not found on the page.`).
+                .filter(|_| runtime || !(self.control_eliminated(st, control) || self.area_removed(st, control)))
         });
         // A part the control tree dropped (Visible = false, or an ApplicationArea the session does not enable) is
         // still there for the page's own code: Base Application's Sales Credit Memo calls

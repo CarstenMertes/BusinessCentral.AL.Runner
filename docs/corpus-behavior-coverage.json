@@ -13308,6 +13308,24 @@
         "template": "The date is not valid."
       },
       {
+        "code": "MissingFileName",
+        "file": "crates/al-builtins/src/file.rs",
+        "generic": false,
+        "line": 117,
+        "pinned": false,
+        "site": null,
+        "template": "File name was not specified."
+      },
+      {
+        "code": "InvalidPath",
+        "file": "crates/al-builtins/src/file.rs",
+        "generic": false,
+        "line": 305,
+        "pinned": true,
+        "site": "text/lt-text-instance/Edit1.Codeunit.al:180",
+        "template": "The value cannot be an empty string. (Parameter "
+      },
+      {
         "code": "AL:Format",
         "file": "crates/al-builtins/src/http.rs",
         "generic": false,
@@ -13623,10 +13641,46 @@
         "template": "Enum does not contain value %."
       },
       {
+        "code": "NotSupportedOperation",
+        "file": "crates/al-vm/src/interp.rs",
+        "generic": false,
+        "line": 801,
+        "pinned": true,
+        "site": "recordref/lt-recordref-variant-record/RecordRefVariantToRecord.al:147",
+        "template": "The requested operation is not supported."
+      },
+      {
+        "code": "IndexOutOfBounds",
+        "file": "crates/al-vm/src/interp.rs",
+        "generic": false,
+        "line": 1037,
+        "pinned": true,
+        "site": "collections/lt-array-rows/ArrayRows.al:185",
+        "template": "Index out of bounds."
+      },
+      {
+        "code": "IndexOutOfBounds",
+        "file": "crates/al-vm/src/interp.rs",
+        "generic": false,
+        "line": 1114,
+        "pinned": true,
+        "site": "collections/lt-array-rows/ArrayRows.al:185",
+        "template": "Index out of bounds."
+      },
+      {
+        "code": "IndexOutOfBounds",
+        "file": "crates/al-vm/src/interp.rs",
+        "generic": false,
+        "line": 1124,
+        "pinned": true,
+        "site": "collections/lt-array-rows/ArrayRows.al:185",
+        "template": "Index out of bounds."
+      },
+      {
         "code": "StackOverflow",
         "file": "crates/al-vm/src/lib.rs",
         "generic": false,
-        "line": 923,
+        "line": 936,
         "pinned": true,
         "site": "record/TestCalcFieldsTruncateUniqueContracts.al:179",
         "template": "There is insufficient memory to execute this function. This can be caused by recursive function calls. Contact your system administrator."
@@ -13671,16 +13725,16 @@
         "code": "DB:Ok",
         "file": "crates/al-vm/src/records.rs",
         "generic": false,
-        "line": 1593,
+        "line": 55,
         "pinned": true,
         "site": "record/TestPlatformTablesWritableContracts.al:107",
-        "template": "It is not possible to delete any record in the Tenant License State table."
+        "template": "It is not possible to % any record in the Tenant License State table."
       },
       {
         "code": "RenameArgument",
         "file": "crates/al-vm/src/records.rs",
         "generic": false,
-        "line": 2247,
+        "line": 2255,
         "pinned": true,
         "site": "recordref/lt-refs/RfTWrite.al:223",
         "template": "The number of field arguments does not match the primary key size."
@@ -13803,7 +13857,7 @@
         "template": "Invalid expression of type: table view.%%"
       }
     ],
-    "pinned": 57,
-    "sites": 60
+    "pinned": 62,
+    "sites": 66
   }
 }

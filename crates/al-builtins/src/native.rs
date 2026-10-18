@@ -399,7 +399,7 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("Session.LogMessage#1", log_message),
     ("Session.LogMessage#2", log_message),
     ("Session.LogSecurityAudit#1", log_message),
-    ("Session.LogAuditMessage#1", log_message),
+    ("Session.LogAuditMessage#1", log_audit_message),
     ("System.Hyperlink#1", hyperlink),
     ("System.Variant2Date#1", variant_2_date),
     ("System.Variant2Time#1", variant_2_time),
@@ -1468,6 +1468,23 @@ fn log_message(_: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]) -> Resul
     Ok(Value::Null)
 }
 
+/// `Session.LogAuditMessage(Description, Result, Category, Operation, OperationResult [, Dimensions])`: the audit log has no effect AL
+/// code can see, but an Operation outside the members of AuditMessageOperation (0 to 7, as the error text lists them) raises
+/// (al-language-onprem/lt-system-database-onprem/PLogAuditMessage.al:P109_LogAuditMessage_Overload1 `negative`, `large`).
+fn log_audit_message(c: &mut dyn Ctx, r: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
+    if let Some(Value::Integer(op)) = args.get(3) {
+        if !(0..=7).contains(op) {
+            return raise(
+                format!(
+                    "The AuditMessageOperation value '{op}' is invalid. Please use one the following values: 0 = AdministeredEnvironment, 1 = ConfiguredExtension, 2 = AdministeredUser, 3 = AdministeredCompany, 4 = ConfiguredIntegration, 5 = ConfiguredCopilot, 6 = ConfiguredCloudMigration, 7 = AdministeredReport."
+                ),
+                "InvalidValue",
+            );
+        }
+    }
+    log_message(c, r, args)
+}
+
 /// `Hyperlink(Url)` asks the client to open a page. A test has no handler for it, so the platform raises
 /// `Unhandled UI: Hyperlink <url>` (record/ProbeClearAllSetKeyHyperlink.al:322-338, BC 27.5); a routine
 /// that only mentions the call still runs.
@@ -1658,6 +1675,19 @@ fn lowercase(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Resu
 /// parameter takes the caller's array whatever size it was declared with (types/W7VarArray.al: a parameter declared
 /// `array[3]` called with `array[2]` and `array[5]` sees 2 and 5, BC 27.5 and 29.0).
 fn array_len(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
+    match args {
+        // The lowering passes the dimension asked for and the number of dimensions when the dimension is outside the array.
+        [Value::Integer(dim), Value::Integer(n)] => raise(
+            format!(
+                "The value of ARRAYLEN parameter 2 is outside of the permitted range. The current value is: {dim}. The permitted range is: from 1 to {n}."
+            ),
+            "OutsidePermittedRange",
+        ),
+        _ => array_len_of(args),
+    }
+}
+
+fn array_len_of(args: &[Value]) -> Result<Value, Signal> {
     match args.first() {
         Some(Value::Array(a)) => Ok(Value::Integer(a.borrow().len() as i32)),
         other => Err(Signal::Unsupported(format!("ArrayLen of {}", other.describe()))),

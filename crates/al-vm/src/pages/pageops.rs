@@ -778,16 +778,17 @@ impl Session {
                 self.require_open(st)?;
                 let i = match args.first() {
                     Some(Value::Integer(i)) => *i,
-                    // No index: the first error of the page, or an empty text while there is none. Microsoft's tests
-                    // call it that way (Job Journal and Purchase Order pages); no corpus test does.
+                    // No index: the page's errors joined by CR LF (pages/lt-f3-pages/F3ValidationAddinFilter.al:GetValidationError_TwoErrors
+                    // line 238, two errors; one error and none at :225 and :272). Three or more are not pinned.
                     None => {
-                        al_builtins::assumptions::assume(
-                            al_builtins::assumptions::Assumption::PageGetValidationErrorNoIndex,
-                        );
                         let s = st.borrow();
-                        return Ok(Value::Text(
-                            s.errors.first().map(|(_, t)| t.clone()).unwrap_or_default().into(),
-                        ));
+                        if s.errors.len() > 2 {
+                            return unsupported(
+                                "GetValidationError without an index with three or more errors (not pinned)",
+                            );
+                        }
+                        let all: Vec<&str> = s.errors.iter().map(|(_, t)| t.as_str()).collect();
+                        return Ok(Value::Text(all.join("\r\n").into()));
                     }
                     _ => return unsupported("GetValidationError with a non-integer index"),
                 };

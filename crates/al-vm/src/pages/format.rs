@@ -361,26 +361,32 @@ impl Session {
                             "AssertEquals of an Enum on a text control (how BC writes it is not pinned)",
                         );
                     }
-                    // A number on a Text or Code control is spelled in plain digits (a Decimal without trailing zeros) and compared
-                    // with the control's text (pages/lt-testpage-assertequals-option/TestPageAssertEqualsOption.al:
-                    // AssertEquals_TextControl_NumbersAndText, AssertEquals_CodeControl_NumbersAndText: Integer 0, 5, 6, BigInteger 5,
-                    // Decimal 5.5 and 5.0 against '5.5', '5', '05'). A value outside 0 to 9.99 is not pinned. A Boolean goes through
-                    // ops::convert (pinned in the same tests).
+                    // A number on a Text or Code control is spelled and compared with the control's text: an Integer in plain digits
+                    // (handlers/N582TestPageEdges.al:195-247: 10, 1234567, -5, -1234; '1,234,567' differs), a Decimal as Format shows it, with
+                    // group separators from 1000 on and no trailing zeros (same file :250-330: 1,000, 1,234.5, -1,234.5, 999.99, 1.5, 0), and
+                    // 0, 5, 6, BigInteger 5, Decimal 5.5 and 5.0 against '5.5', '5', '05' (pages/lt-testpage-assertequals-option/
+                    // TestPageAssertEqualsOption.al:AssertEquals_TextControl_NumbersAndText, AssertEquals_CodeControl_NumbersAndText). A BigInteger
+                    // outside 0 to 9 is not pinned. A Boolean goes through ops::convert (pinned in the same tests).
                     Some(RtType::Text(_) | RtType::Code(_))
                         if matches!(other, Value::Integer(_) | Value::BigInteger(_) | Value::Decimal(_)) =>
                     {
-                        let d = match other {
-                            Value::Integer(n) => rust_decimal::Decimal::from(*n),
-                            Value::BigInteger(n) => rust_decimal::Decimal::from(*n),
-                            Value::Decimal(d) => *d,
+                        match other {
+                            Value::Integer(n) => Value::Text(n.to_string().into()),
+                            Value::BigInteger(n) => {
+                                if !(0..10).contains(n) {
+                                    al_builtins::assumptions::assume(
+                                        al_builtins::assumptions::Assumption::TestPageAssertEqualsIntegerOnTextControl,
+                                    );
+                                }
+                                Value::Text(n.to_string().into())
+                            }
+                            Value::Decimal(d) => Value::Text(
+                                al_builtins::format::try_format(&Value::Decimal(d.normalize()), 0, 0, self)
+                                    .map_err(Signal::Unsupported)?
+                                    .into(),
+                            ),
                             _ => unreachable!(),
-                        };
-                        if d < rust_decimal::Decimal::ZERO || d >= rust_decimal::Decimal::TEN {
-                            al_builtins::assumptions::assume(
-                                al_builtins::assumptions::Assumption::TestPageAssertEqualsIntegerOnTextControl,
-                            );
                         }
-                        Value::Text(d.normalize().to_string().into())
                     }
                     Some(rt) => ops::convert(other.clone(), &rt)?,
                     None => other.clone(),

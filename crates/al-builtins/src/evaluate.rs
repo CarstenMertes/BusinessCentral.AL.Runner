@@ -281,6 +281,13 @@ fn decimal(text: &str, number: i64) -> Result<Parsed, Signal> {
         }
         frac = &frac[..(18 - int_digits as usize).min(frac.len())];
     }
+    // With an integer part of zero, the digits past the 18th fractional one are dropped, not rounded: `0.1234567890123456789`
+    // and the 28 and 29 digit forms read as 0.123456789012345678 (types/lt-evaluate-decimal/EvaluateDecimal.al:37 and :50,
+    // types/lt-decimal-digits/DecimalDigits.al:P163_Decimal_Operands_RoundTrip, AddSubtract_KeepsDigits). Pinned with a first
+    // fractional digit other than zero and no exponent only; other forms keep every digit as before.
+    if int_digits <= 0 && frac.len() > 18 && exp == 0 && !frac.starts_with('0') {
+        frac = &frac[..18];
+    }
     let sign = if negative { "-" } else { "" };
     let mantissa = match (int.is_empty(), frac.is_empty()) {
         (_, true) => format!("{sign}{int}"),

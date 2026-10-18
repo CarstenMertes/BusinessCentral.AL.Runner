@@ -141,6 +141,8 @@ pub(crate) struct Header {
     /// BC 29 adds `ReportCaption` and the company information block
     /// (`al_version::Gate::ReportSaveAsXmlHeaderHasCompanyBlock`).
     pub company_block: bool,
+    /// The first company address line: the name of the Company Information record.
+    pub company_line1: String,
 }
 
 /// The language and format region of the session. Only en-US is pinned.
@@ -213,7 +215,12 @@ impl Header {
             element(out, 6, "CompanyName", &self.company_name)?;
             element(out, 6, "CompanyDisplayName", &self.company_name)?;
             for n in 1..=8 {
-                element(out, 6, &format!("CompanyAddressLine{n}"), "")?;
+                element(
+                    out,
+                    6,
+                    &format!("CompanyAddressLine{n}"),
+                    if n == 1 { &self.company_line1 } else { "" },
+                )?;
             }
             for (name, caption) in [
                 ("CompanyPhone", true),

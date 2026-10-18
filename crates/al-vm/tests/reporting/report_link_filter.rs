@@ -1,8 +1,6 @@
-//! A data item whose own filter (DataItemTableView) is on a field its DataItemLink joins: the link takes the place of the
-//! view's filter on that field, on an assumption (report-item-filter-on-link-field-replaced). Microsoft's Assembly Header item
-//! of Get Source Documents has `where("Document Type" = const(Order))` and a link on "Document Type". The corpus pins
-//! filters a trigger sets on a link field (misc/lt-probes-needed-8/PnH3Link.al:Link_ChildSetsOwnFilters_InPreDataItem:
-//! they are kept next to the link and both apply), not a view.
+//! A data item whose own filter (DataItemTableView) is on a field its DataItemLink joins: both apply, the child shows the rows that
+//! satisfy the view and the link (report/lt-f3-reports/F3ReportTests.al:68 LinkFilter_InItemView, :116 LinkFilter_CallerViewOverItemView).
+//! Microsoft's Assembly Header item of Get Source Documents has `where("Document Type" = const(Order))` and a link on "Document Type".
 
 use al_testkit::text;
 
@@ -47,6 +45,7 @@ codeunit 69974 C
 "#;
 
 #[test]
-fn the_link_replaces_a_view_filter_on_the_field_it_joins() {
-    assert_eq!(text(al_testkit::run_in(SRC, "C", "F")), "p1c10;p2c11;p3c12;");
+fn the_link_and_a_view_filter_on_the_field_it_joins_both_apply() {
+    // The view admits G 1 and 2: parent 3 finds no child.
+    assert_eq!(text(al_testkit::run_in(SRC, "C", "F")), "p1c10;p2c11;");
 }

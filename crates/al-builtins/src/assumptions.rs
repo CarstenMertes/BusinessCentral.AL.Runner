@@ -141,9 +141,9 @@ registry! {
     },
     TestPageAssertEqualsIntegerOnTextControl => {
         id: "testpage-assertequals-integer-on-text-control",
-        assumed: "TestPageField.AssertEquals(<number>) on a control over a Text or Code value compares the number spelled in plain digits (a Decimal without trailing zeros) with the control's text, for an Integer, BigInteger or Decimal outside 0 to 9.99 (a larger, a negative or a many-digit value: no group separator is assumed). The single-digit cases 0, 5, 6 and 5.5 are pinned. An Enum there stays refused.",
+        assumed: "TestPageField.AssertEquals(<BigInteger>) on a control over a Text or Code value compares the number spelled in plain digits with the control's text, for a BigInteger outside 0 to 9 (an Integer and a Decimal are pinned). An Enum there stays refused.",
         tests: "Tests-Marketing Marketing Matrix Management.TasksMatrixHandlerWithValue (Field1.AssertEquals(1) on the Text[1024] cells of Tasks Matrix); the 10 TaskWith* tests.",
-        probe: "A page with a field over a Text[30] variable holding '1000', '-5' and '1234.5': TestPage Field.AssertEquals(1000), AssertEquals(-5), AssertEquals(1234.5) with an Integer, a BigInteger and a Decimal expected value, and a Code[10] control.",
+        probe: "A page with a field over a Text[30] variable holding '1000' and '-5': TestPage Field.AssertEquals(1000), AssertEquals(-5) with a BigInteger expected value.",
     },
     TestPageSetValueBlankOptionMember => {
         id: "testpage-setvalue-blank-option-member",
@@ -303,7 +303,7 @@ registry! {
     },
     TrappedPageLeftOpenIsReplaced => {
         id: "trapped-testpage-left-open-is-replaced",
-        assumed: "A TestPage variable that trapped a page and was left open (never closed) can trap the next Page.Run or RunObject of its page: the new page replaces the open one, whose close triggers do not run.",
+        assumed: "A TestPage variable that trapped a page and was left open (never closed) can trap the next RunObject action of its page: the new page replaces the open one, whose close triggers do not run. (Page.Run closes the open page first, with its close triggers: pinned by pages/lt-f3-pages/F3TrappedAndModal.al:36.)",
         tests: "Library - Error Message keeps one TestPage \"Error Messages\" in a codeunit variable, traps it in every VerifyDimErrors and never closes it; Tests-Misc Check Dimensions On Posting (35 tests) trap it again in the next test of the codeunit.",
         probe: "A codeunit with a TestPage variable that Trap()s and runs a page in test one and leaves it open; test two Trap()s the same variable and runs the page again: does it open, and do OnQueryClosePage and OnClosePage of the first page run?",
     },
@@ -433,35 +433,17 @@ registry! {
         tests: "Create Pick's CalcQtyInWhseEntries (OrderBy Block_Movement, ten grouping columns): SCM Extend Warehouse CheckItemAvailabilityWhenCreatingPickAndExistReservedQtyForProdOrder and the tests that create a pick for a directed put-away location; about 77 Tests-SCM tests.",
         probe: "An aggregated query with an OrderBy on a column most groups share and several grouping columns, rows inserted in non-key order: the order of the tied groups on Read.",
     },
-    PageGetValidationErrorNoIndex => {
-        id: "page-getvalidationerror-no-index",
-        assumed: "TestPage.GetValidationError() without an index answers the first validation error of the page, and an empty text while the page has none.",
-        tests: "SCM Item Tracking III (Job Journal, Purchase Order and Prod. Order Components pages: Assert.AreEqual('', Page.GetValidationError(), ...) and StrPos(Page.GetValidationError(), ItemTrackingExistErr) > 0); about 28 Tests-SCM tests.",
-        probe: "A TestPage with no error: GetValidationError(); after one refused SetValue and after two refused SetValues on different controls: GetValidationError() next to GetValidationError(1) and (2).",
-    },
     ReportItemCalcFieldsNestedOrList => {
         id: "report-dataitem-calcfields-nested-or-list",
         assumed: "The CalcFields property of a report data item that is nested under another item, or that lists several fields, calculates every listed FlowField of each row before the row's triggers, as for a top-level item with one field (pinned by misc/lt-probes-needed-8/PnH3Link.al).",
         tests: "Get Inbound Source Documents (CalcFields = \"Put-away Qty.\", \"Put-away Qty. (Base)\" on Posted Whse. Receipt Line): about 32 Tests-SCM tests.",
         probe: "A report with a nested item that has CalcFields = A, B (two FlowFields), and a reportextension-added item with CalcFields: the values in OnAfterGetRecord; one name that is not a FlowField.",
     },
-    ReportItemFilterOnLinkFieldReplaced => {
-        id: "report-item-filter-on-link-field-replaced",
-        assumed: "A filter that is on a field of a report data item's DataItemLink before the run starts (the item's DataItemTableView, or a SetTableView of the caller) is in the report's filter group, where the link's range on that field takes its place for each parent row.",
-        tests: "Get Source Documents and Whse.-Source - Create Document (the Assembly Header item: DataItemTableView where(\"Document Type\" = const(Order)) and a link on \"Document Type\"), and the Value Entry, Item Journal Line and Item Ledger Entry items of the cost reports; about 37 Tests-SCM tests.",
-        probe: "A nested item with DataItemTableView = where(G = filter(1|2)) and DataItemLink = G = field(G) over parents with G 1 to 3: which children each parent shows; the same with the filter set by SetTableView.",
-    },
     TableRelationSeveralWhereNonKey => {
         id: "table-relation-several-where-non-key",
         assumed: "A TableRelation check that fails, with several where() conditions none of which is on a primary key field of the related table, raises DB:NothingInsideFilter, as one condition on a non-key field does. (A mix with key fields stays refused.)",
         tests: "Item Blocked Test and Item Variant Blocked Test (Item where(Blocked = const(false), \"Service Blocked\" = const(false)) and the sales and purchase variants), SCM Dedicated Bins; about 26 Tests-SCM tests. They compare the message only.",
         probe: "A relation with two non-key where() conditions and a value that fails one of them, and one that is missing: GetLastErrorCode; the same with one key and one non-key condition.",
-    },
-    ForeachIntegerIntoEnum => {
-        id: "foreach-integer-into-enum",
-        assumed: "A foreach over a List of Integer whose loop variable is an Enum gives the variable the enum value of each ordinal (an ordinal the enum does not declare is kept).",
-        tests: "Email Account Impl.GetAllAccounts (`foreach Connector in Connector.Ordinals do`), which Job Planning Lines.OnInit reaches through Email Account.IsAnyAccountRegistered: SCM Fulfillment and other tests that open the Job Planning Lines page; 6 Tests-SCM tests.",
-        probe: "foreach E in E.Ordinals with E an Enum variable: Format(E) and E.AsInteger() in the body; the same with a List of Integer that holds an ordinal the enum lacks.",
     },
     TestFilterSetFilterEmptyClears => {
         id: "testfilter-setfilter-empty-clears",

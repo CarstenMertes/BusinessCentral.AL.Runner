@@ -277,6 +277,21 @@ impl Session {
         if is_test && self.in_test_codeunit {
             return Err(nested_test_codeunit(obj.id.unwrap_or(0), &obj.name));
         }
+        // Codeunit.Run of a codeunit with Subtype = Upgrade fails before it runs, with or without upgrade triggers
+        // (events/lt-trigger-pins/PUpgradeTriggers.al:PUpgrade_RunWithTriggers line 121, PUpgrade_RunWithoutTriggers line 134; both by id).
+        if obj
+            .properties
+            .iter()
+            .any(|(k, v)| k.eq_ignore_ascii_case("Subtype") && v.trim().eq_ignore_ascii_case("Upgrade"))
+        {
+            return Err(al_error_code(
+                &format!(
+                    "Upgrade codeunit '{}' cannot be invoked outside the schema synchronization process.",
+                    obj.id.unwrap_or(0)
+                ),
+                "UpgradeCodeunitOnRunCall",
+            ));
+        }
         // A record passed to a codeunit without TableNo is not touched
         // (codeunit/TestCodeunitRunContracts.al:Codeunit_Run_WithRecord_PassesRecord).
         //

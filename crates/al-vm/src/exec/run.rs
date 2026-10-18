@@ -576,15 +576,17 @@ impl Session {
             _ => None,
         };
         let Some(item) = item else { return Ok(false) };
-        // An Integer item into a loop variable that is an Enum (`foreach Connector in Connector.Ordinals do`) is the enum
-        // value of that ordinal. Not pinned by a corpus test; Base Application's Email Account Impl.GetAllAccounts does it.
+        // An Integer item into an Enum loop variable is the enum value of that ordinal, an undeclared ordinal kept
+        // (corpus enum/lt-enum-foreach-integer/EnumForeachInteger.al:15, `7/7`); an Enum item into an Integer variable
+        // is its ordinal (same file :32).
         let item = match item {
             Value::Integer(n) => match self.read(&site.var, f) {
-                Ok(Value::Enum(id, _)) => {
-                    al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::ForeachIntegerIntoEnum);
-                    Value::Enum(id, n)
-                }
+                Ok(Value::Enum(id, _)) => Value::Enum(id, n),
                 _ => Value::Integer(n),
+            },
+            Value::Enum(id, n) => match self.read(&site.var, f) {
+                Ok(Value::Integer(_)) => Value::Integer(n),
+                _ => Value::Enum(id, n),
             },
             other => other,
         };

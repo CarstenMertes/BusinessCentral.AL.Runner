@@ -248,12 +248,12 @@ impl Session {
                 return Err(
                     // An Enum control raises TestValidation on a card with a row too (pages/lt-page-enum-control/
                     // PageEnumControlCaptionless.al:P161_EnumControl_SetValueSpellings_Captionless `spaceOrdinal`).
-                    // The empty text on an Option control is refused with TestValidation (pages/lt-testpage-assertequals-option/
-                    // TestPageAssertEqualsOption.al:SetValue_BlankOption_AsEmptyText); another refused option text is not pinned.
+                    // A refused text on an Option control is a TestValidation error on a card with a row: the empty text (pages/lt-testpage-assertequals-option/
+                    // TestPageAssertEqualsOption.al:SetValue_BlankOption_AsEmptyText) and `Nope`, `5`, `2`, `Tw` (handlers/N582TestPageEdges.al:156-186).
                     if rec_bound
                         && !no_row
                         && !matches!(ty, RtType::DateTime | RtType::Enum(_))
-                        && !(matches!(ty, RtType::Option(_)) && text.is_empty())
+                        && !matches!(ty, RtType::Option(_))
                         && !self.is_list(st)
                     {
                         refuse(self, msg)
@@ -445,6 +445,9 @@ impl Session {
         })();
         match result {
             Ok(()) => {
+                // A SetValue that goes through clears the control's refused entries (pages/lt-f3-pages/F3ValidationAddinFilter.al:
+                // GetValidationError_ErrorThenCorrected, line 272: the page answers an empty text afterwards).
+                st.borrow_mut().errors.retain(|(i, _)| *i != idx);
                 self.run_refresh(st)?;
                 Ok(Value::Null)
             }

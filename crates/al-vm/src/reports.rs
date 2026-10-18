@@ -62,6 +62,11 @@ pub(crate) enum TrigKind {
 /// child's triggers and after the parent). Group 4 is where a part's `SubPageLink` lives.
 const LINK_GROUP: i32 = 4;
 
+/// The group of the filters a `DataItemTableView` gives its item. They stay in force next to the link filter (group `LINK_GROUP`),
+/// on the link field too: the child shows the rows that satisfy both (report/lt-f3-reports/F3ReportTests.al:68 `LinkFilter_InItemView`
+/// and :116 `LinkFilter_CallerViewOverItemView`). Not pinned: which group number BC gives them (nothing reads it).
+const ITEM_VIEW_GROUP: i32 = 5;
+
 /// Which method started the run: they differ in whether the request page can open.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Entry {
@@ -1008,7 +1013,7 @@ impl Session {
             let sorts = view.to_ascii_lowercase().contains("sorting");
             // The filters of a DataItemTableView are the report's, not the record's: GetFilters does not show them, in
             // OnPostReport either (report/TestProbeReportContracts.al:TriggerOrder_NestedAndSecondItem).
-            self.set_view_in(&rec, &t, &view, Some(LINK_GROUP), false, false)?;
+            self.set_view_in(&rec, &t, &view, Some(ITEM_VIEW_GROUP), false, false)?;
             if !sorts {
                 let mut r = rec.borrow_mut();
                 (r.key, r.adhoc, r.ascending, r.field_descending) = kept_order;
@@ -1016,7 +1021,13 @@ impl Session {
             if let Some(mut filters) = kept {
                 // A view that filters adds its own filters to the ones a SetTableView gave the item.
                 if filtering {
-                    filters.extend(rec.borrow().filters.iter().filter(|f| f.group == LINK_GROUP).cloned());
+                    filters.extend(
+                        rec.borrow()
+                            .filters
+                            .iter()
+                            .filter(|f| f.group == ITEM_VIEW_GROUP)
+                            .cloned(),
+                    );
                 }
                 rec.borrow_mut().filters = filters;
             }
@@ -1147,27 +1158,6 @@ impl Session {
                 "report \"{}\" renders output, which the runtime does not produce: {why}",
                 schema.name()
             ));
-        }
-        // How a filter on a field a DataItemLink joins combines with the link is not pinned.
-        for r in run.all_items() {
-            let item = run.item(r);
-            if item.link.is_empty() {
-                continue;
-            }
-            let rec = self.report_item_record(run, r)?;
-            if rec
-                .borrow()
-                .filters
-                .iter()
-                .any(|f| item.link.iter().any(|&(own, _)| f.field == own))
-            {
-                // The corpus pins filters a trigger sets on a link field (misc/lt-probes-needed-8/PnH3Link.al:
-                // Link_ChildSetsOwnFilters_InPreDataItem: both apply). One the view or the caller sets before the run is in
-                // the report's filter group, where the link replaces the filter on its field: an assumption.
-                al_builtins::assumptions::assume(
-                    al_builtins::assumptions::Assumption::ReportItemFilterOnLinkFieldReplaced,
-                );
-            }
         }
         // A filter an item gets in OnPreReport is discarded: OnPreDataItem sees the view the item
         // had before it (handlers/TestReportRuntimeContracts.al:371-390).
@@ -2354,7 +2344,7 @@ impl Session {
     }
 
     /// The header of the dataset: what the report, its app, the session and the clock say.
-    fn dataset_header(&self, schema: &Schema) -> Result<dataset::Header, Signal> {
+    fn dataset_header(&mut self, schema: &Schema) -> Result<dataset::Header, Signal> {
         let engine = &schema.engine;
         let object = &engine.program.objects[schema.object];
         let report = schema.report();
@@ -2375,7 +2365,28 @@ impl Session {
                 &h[20..32]
             )
         };
+        // BC 29 and later: the first company address line of the header is the Name of the Company Information record, empty while
+        // the table has no row (report/W3ReportDataset.al:174 Header_CompanyInformation_NameAndAddress). The other lines are not
+        // pinned and stay empty (docs/probes-needed.md).
+        let mut company_line1 = String::new();
+        if self.has(al_version::Gate::ReportSaveAsXmlHeaderHasCompanyBlock) {
+            if let Some(obj) = self.compiled_table(79) {
+                let t = self.engine.tables[obj].clone().expect("a compiled table has a schema");
+                if let Some(p) = t.fields.iter().position(|f| f.id == 2) {
+                    if let Value::Record(rec) =
+                        self.default_value(&al_builtins::value::RtType::Record(obj as u32, false))
+                    {
+                        if al_builtins::ops::truthy(&self.record_op(RecordOp::FindFirst, &rec, &mut [])?)? {
+                            if let Some(n) = al_builtins::native::text_of(&rec.borrow().fields[p]) {
+                                company_line1 = n.to_string();
+                            }
+                        }
+                    }
+                }
+            }
+        }
         Ok(dataset::Header {
+            company_line1,
             extension_id: app.map(|a| a.id.clone()).unwrap_or_default(),
             extension_name: app.map(|a| a.name.clone()).unwrap_or_default(),
             extension_publisher: app.map(|a| a.publisher.clone()).unwrap_or_default(),

@@ -1576,5 +1576,8 @@ table 60012 "ALT TFB"
         end;",
         "F",
     );
-    assert_eq!(text(r), "ok|Data must have a value in ALT TFB: Id=1. It cannot be zero or empty.");
+    assert_eq!(
+        text(r),
+        "ok|Data must have a value in ALT TFB: Id=1. It cannot be zero or empty."
+    );
 }

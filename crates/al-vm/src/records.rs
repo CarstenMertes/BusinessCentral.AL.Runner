@@ -1936,7 +1936,10 @@ impl Session {
                         {
                             let id = self.identification(&t, &rec.borrow().fields.clone())?;
                             let message = if which == "=" {
-                                format!("The {} does not exist. Identification fields and values: {id}", self.caption(&t))
+                                format!(
+                                    "The {} does not exist. Identification fields and values: {id}",
+                                    self.caption(&t)
+                                )
                             } else {
                                 format!(
                                     "The {} does not exist. {which}{BR}{BR}Identification fields and values:{BR}{BR}{id}",

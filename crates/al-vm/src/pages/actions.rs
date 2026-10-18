@@ -460,7 +460,10 @@ impl Session {
                 ir::RunKind::Codeunit => (true, true),
                 _ => (false, false),
             };
-            for (ev, pinned) in [("onbeforeactionevent", before_pinned), ("onafteractionevent", after_pinned)] {
+            for (ev, pinned) in [
+                ("onbeforeactionevent", before_pinned),
+                ("onafteractionevent", after_pinned),
+            ] {
                 if !pinned && listens(ev) {
                     return unsupported(format!(
                         "page event {ev} of the RunObject action {element}: the order around this kind of RunObject is not pinned"
@@ -469,7 +472,9 @@ impl Session {
             }
             let run = self.run_object_action(st, idx);
             let run = match (run, ro.kind) {
-                (Ok(v), ir::RunKind::Codeunit) => self.page_action_event(st, "onafteractionevent", &element).map(|()| v),
+                (Ok(v), ir::RunKind::Codeunit) => {
+                    self.page_action_event(st, "onafteractionevent", &element).map(|()| v)
+                }
                 (other, _) => other,
             };
             return match run {

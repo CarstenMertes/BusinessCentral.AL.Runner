@@ -632,11 +632,8 @@ impl Session {
         for &p in positions {
             let f = &fields[p];
             if !f.stored
-                || !matches!(
-                    f.ty,
-                    RtType::Decimal | RtType::Integer | RtType::BigInteger
-                )
-                && !(duration && f.ty == RtType::Duration)
+                || !matches!(f.ty, RtType::Decimal | RtType::Integer | RtType::BigInteger)
+                    && !(duration && f.ty == RtType::Duration)
             {
                 return unsupported(format!(
                     "CalcSums on {} (only stored number fields are implemented)",

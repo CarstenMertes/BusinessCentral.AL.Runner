@@ -128,9 +128,34 @@ pub fn system_host() -> Host {
 
 /// [`system_host`] whose clock stands still at `start` (Unix milliseconds), or reads the system clock when `None`.
 pub fn host_at(start: Option<i64>) -> Host {
+    host_in_company(start, company_name().as_deref())
+}
+
+/// The company name the run answers `CompanyName()` with when the run has no restored company (a lane of Microsoft's
+/// recipe names one, for example `Empty Company`). `None` keeps AL Runner's identity.
+static COMPANY_NAME: std::sync::RwLock<Option<String>> = std::sync::RwLock::new(None);
+
+/// Sets the company name of the run; `None` is the default of [`AlRunnerIdentity`].
+pub fn set_company_name(name: Option<String>) {
+    if let Ok(mut w) = COMPANY_NAME.write() {
+        *w = name;
+    }
+}
+
+/// The company name set by [`set_company_name`].
+pub fn company_name() -> Option<String> {
+    COMPANY_NAME.read().ok().and_then(|r| r.clone())
+}
+
+/// [`host_at`] with the company name given instead of read from the run setting.
+pub fn host_in_company(start: Option<i64>, company: Option<&str>) -> Host {
     let host = match start {
         Some(ms) => Host::new(FixedClock(ms), AlRunnerIdentity),
         None => Host::new(SystemClock, AlRunnerIdentity),
+    };
+    let host = match company {
+        Some(c) => host.in_company(c),
+        None => host,
     };
     let host = host.in_environment(ENVIRONMENT.get().copied().unwrap_or_default());
     let host = host.with_server_url(&server_url().0);
@@ -192,6 +217,15 @@ impl FileSystem for DirFileSystem {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_named_company_is_what_company_name_answers() {
+        assert_eq!(host_in_company(None, None).identity.company_name(), "CRONUS International Ltd.");
+        assert_eq!(
+            host_in_company(None, Some("Empty Company")).identity.company_name(),
+            "Empty Company"
+        );
+    }
 
     #[test]
     fn the_directory_file_system_keeps_files_under_its_root_only() {

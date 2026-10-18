@@ -593,6 +593,7 @@ fn test_inner(a: &TestArgs, mut warm: Option<&mut WarmCtx>, collect: Option<&mut
     };
     let server_url_set = server_url.is_some();
     al_testrun::host::set_server_url(server_url);
+    al_testrun::host::set_company_name(a.company_name.clone());
     if let Some(dir) = &a.files_dir {
         al_testrun::host::set_files_dir(dir.clone());
     }

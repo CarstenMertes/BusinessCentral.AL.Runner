@@ -70,8 +70,11 @@ pub fn lane_args(base: &TestArgs, lane: Lane, company: &str, codeunits: &[u32], 
             a.test_data_company = Some(company.to_string());
         }
         // An empty company: Company-Initialize and the installs only, no demo data.
-        Lane::UnitTest => a.no_test_data = true,
-        Lane::Integration | Lane::Uncategorized => {}
+        Lane::UnitTest => {
+            a.no_test_data = true;
+            a.company_name = Some(company.to_string());
+        }
+        Lane::Integration | Lane::Uncategorized => a.company_name = Some(company.to_string()),
     }
     a.junit = base.junit.as_deref().map(|p| lane_file(p, lane));
     a.output_json = match &base.output_json {
@@ -286,6 +289,7 @@ mod tests {
     fn the_unit_test_lane_runs_without_demo_data() {
         let a = lane_args(&base(), Lane::UnitTest, "Empty Company", &[7], &recipe());
         assert!(a.no_test_data && !a.company_package);
+        assert_eq!(a.company_name.as_deref(), Some("Empty Company"));
         assert_eq!(a.junit, Some(PathBuf::from("out/r.unittest.xml")));
     }
 

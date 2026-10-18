@@ -102,6 +102,8 @@ pub struct TestArgs {
     pub environment: Option<al_host::Environment>,
     /// `--server-url URL` (else `$ALRUNNER_SERVER_URL`): the base address `GetUrl` answers with (ADR-042).
     pub server_url: Option<String>,
+    /// Not a command line option: the name `CompanyName()` answers when no company is restored (a lane of the recipe).
+    pub company_name: Option<String>,
     /// `--test-data [PATH]`: restore a CRONUS company from a BC backup (ADR-020).
     pub test_data: bool,
     /// `--no-test-data`: run without company data. Test data is on by default (ADR-020, owner

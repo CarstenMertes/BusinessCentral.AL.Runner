@@ -350,5 +350,26 @@ from the package and read Company Information."Country/Region Code"). Until then
 4. Microsoft's disabled tests are skipped (`--parity`) and counted per lane. Each lane has its own summary and, with
    `--junit FILE`, its own `FILE.<lane>.xml`.
 
-Not done: the company name of a lane other than CRONUS (`Empty Company`, `My Company`) is not applied; `CompanyName()` answers
-CRONUS International Ltd. in every lane.
+Company name per lane (2026-10-18, `ms-recipe-4`): a lane without a restored company sets the run's company name
+(`TestArgs.company_name`, `al_testrun::host::set_company_name`), so `CompanyName()` answers `Empty Company` in the UnitTest lane
+(and `My Company` once the Contoso lanes run). The name is part of the baseline cache key. Legacy answers the company of
+the package.
+
+### Contoso lanes: spike result (2026-10-18)
+
+The Contoso Coffee Demo Dataset app (`Microsoft_Contoso Coffee Demo Dataset_<build>.app`, source zip in the artifact)
+resolves as a dependency of an ordinary test app, and its code compiles without a static refusal. A scratch test app with
+one test per module and level (16 modules x Setup/Master/Transactional/Historical, calling each module codeunit's
+`Create<Level>Data`) shows where the run stops. Ranked:
+
+1. `DotNet new System.Drawing.Bitmap` (refused by policy: needs the Windows drawing stack), reached from `Foundation Module`
+   `CreateSetupData` -> `Create Company Information`.CreateSetupCompany (CreateCompanyInformation.Codeunit.al:76) ->
+   Base App `O365 Brand Color`.CreateDefaultBrandColors/MakePicture (O365BrandColor.Table.al:124). This is the first step of
+   `CreateSetupDemoData`, so it blocks both lanes and hides what follows (13 further tests fail only because the Foundation
+   data is missing).
+2. `builtin System.DWY2Date#1 is not implemented`: 7 tests (for example `Bank Module` `CreateHistoricalData`).
+3. `DotNet new System.Net.Mail.MailAddress` (refused by policy: touches the network): `CRM Module` `CreateMasterData`.
+
+More refusals may sit behind the first one. Each is a runtime task (a corpus pin is needed first for DWY2Date; the two
+DotNet types need an owner decision on the policy or a native replacement). The two lanes stay refused with the first
+reason in their line. The company-setup roots in `baseline.rs` were not added: they would run a refused step on every run.

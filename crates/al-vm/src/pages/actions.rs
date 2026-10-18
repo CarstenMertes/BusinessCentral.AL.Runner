@@ -435,12 +435,16 @@ impl Session {
             }
         }
         // RunObject wins over OnAction when an action declares both (handlers/TestPageRunObjectContracts.al:371-390).
-        if page_of(&engine, st).controls[idx].run_object.is_some() {
-            // The events around a RunObject action are not pinned: a subscriber to them makes the action refused.
-            for ev in ["onbeforeactionevent", "onafteractionevent"] {
-                let element = page_of(&engine, st).controls[idx].name.clone();
-                let object = st.borrow().object as usize;
-                let listens = engine.events.is_subscribed(object, ev)
+        if let Some(ro) = page_of(&engine, st).controls[idx].run_object.clone() {
+            // RunObject = Page raises neither event; RunObject = Codeunit raises only OnAfterActionEvent, after the codeunit ran,
+            // and an error in it reaches Invoke (events/lt-page-action-subscriber-errors/PageActionSubscriberErrors.al:
+            // RunPage_EventOrder, RunPage_AfterSubscriberConfiguredToRaise, RunCodeunit_EventOrder,
+            // RunCodeunit_BeforeSubscriberConfiguredToRaise, RunCodeunit_AfterSubscriberRaises). The events around the other kinds
+            // are not pinned: a subscriber to them makes the action refused.
+            let element = page_of(&engine, st).controls[idx].name.clone();
+            let object = st.borrow().object as usize;
+            let listens = |ev: &str| {
+                engine.events.is_subscribed(object, ev)
                     && engine
                         .events
                         .subscribers
@@ -448,14 +452,33 @@ impl Session {
                         .is_some_and(|v| {
                             v.iter()
                                 .any(|s| s.element.is_empty() || s.element.eq_ignore_ascii_case(&element))
-                        });
-                if listens || engine.events.missing_for(object, ev, Some(&element)).is_some() {
+                        })
+                    || engine.events.missing_for(object, ev, Some(&element)).is_some()
+            };
+            let (before_pinned, after_pinned) = match ro.kind {
+                ir::RunKind::Page => (true, true),
+                ir::RunKind::Codeunit => (true, true),
+                _ => (false, false),
+            };
+            for (ev, pinned) in [("onbeforeactionevent", before_pinned), ("onafteractionevent", after_pinned)] {
+                if !pinned && listens(ev) {
                     return unsupported(format!(
-                        "page event {ev} of the RunObject action {element}: the order around RunObject is not pinned"
+                        "page event {ev} of the RunObject action {element}: the order around this kind of RunObject is not pinned"
                     ));
                 }
             }
-            return self.run_object_action(st, idx);
+            let run = self.run_object_action(st, idx);
+            let run = match (run, ro.kind) {
+                (Ok(v), ir::RunKind::Codeunit) => self.page_action_event(st, "onafteractionevent", &element).map(|()| v),
+                (other, _) => other,
+            };
+            return match run {
+                Err(Signal::Error(mut e)) if e.code.as_str() == "Dialog" && ro.kind == ir::RunKind::Codeunit => {
+                    e.code = "TestWrapped:Dialog".into();
+                    Err(Signal::Error(e))
+                }
+                other => other,
+            };
         } else if let Some(r) = page_of(&engine, st).controls[idx].trigger("onaction") {
             let before = (self.has_source(st) && st.borrow().cursor == Cursor::Row && !st.borrow().draft)
                 .then(|| self.page_rec(st).borrow().fields.clone());
@@ -467,8 +490,10 @@ impl Session {
             // page saves, because `before` was taken first), after it when it did not fail
             // (events/lt-global-triggers-statements/P114PageActionEvents.al).
             let element = page_of(&engine, st).controls[idx].name.clone();
-            self.page_action_event(st, "onbeforeactionevent", &element)?;
-            let r = self.control_routine(st, idx, r);
+            let r = match self.page_action_event(st, "onbeforeactionevent", &element) {
+                Ok(()) => self.control_routine(st, idx, r),
+                err => err.map(|()| Value::Null),
+            };
             let r = match r {
                 Ok(v) => self.page_action_event(st, "onafteractionevent", &element).map(|()| v),
                 err => err,

@@ -2106,7 +2106,21 @@ impl Session {
     /// after `OnAfterGetRecord` and before the nested items.
     fn dataset_begin(&mut self, run: &Run, r: ItemRef, rec: &Rec) -> Result<(), Signal> {
         let item = run.item(r);
-        let name = dataset::dataset_name(&item.name)?;
+        let mut name = dataset::dataset_name(&item.name)?;
+        // Items of one parent whose names give the same element get a number in dataset order: X_Y, X_Y1, X_Y2
+        // (ReportDatasetNames.al:SaveAsXml_Names_MappingToTheSameElement).
+        if let ItemRef::Base(i) = r {
+            let items = &run.report().items;
+            let earlier = (0..i)
+                .filter(|&j| {
+                    items[j].parent == items[i].parent
+                        && dataset::dataset_name(&items[j].name).is_ok_and(|n| n == name)
+                })
+                .count();
+            if earlier > 0 {
+                name = format!("{name}{earlier}");
+            }
+        }
         let (owner, object) = run.owner(r);
         let owner = owner.clone();
         let table = rec.borrow().table as usize;

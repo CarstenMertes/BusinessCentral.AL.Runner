@@ -24,13 +24,13 @@ fn unpinned<T>(why: &str) -> Result<T, Signal> {
 }
 
 impl Session {
-    /// One `MakeDateFilter` call: the text the subscribers leave in `DateFilterText`.
-    fn make_date_filter(&mut self, text: &str) -> Result<String, Signal> {
-        let names = ["DateFilterText".to_string()];
+    /// One call of the event `event` (`makedatefilter`, ...): the text the subscribers leave in `param`.
+    fn make_filter_event(&mut self, event: &'static str, param: &str, text: &str) -> Result<String, Signal> {
+        let names = [param.to_string()];
         let mut args = [Value::Text(text.to_string().into())];
         let call = crate::dispatch::EventCall {
             object: crate::events::FILTER_HELPER_TRIGGERS,
-            event: "makedatefilter",
+            event,
             element: None,
             isolated: false,
             names: &names,
@@ -41,7 +41,7 @@ impl Session {
         if let Some(subs) = engine
             .events
             .subscribers
-            .get(&(crate::events::FILTER_HELPER_TRIGGERS, "makedatefilter".to_string()))
+            .get(&(crate::events::FILTER_HELPER_TRIGGERS, event.to_string()))
         {
             for s in subs {
                 let o = &engine.program.objects[s.object];
@@ -66,10 +66,16 @@ impl Session {
     }
 
     /// Asks the subscribers about `piece` until it reads or a call leaves it alone. `Ok(None)`: it does not read.
-    fn repair_date_piece(&mut self, piece: &str, reads: &dyn Fn(&str) -> bool) -> Result<Option<String>, Signal> {
+    fn repair_piece(
+        &mut self,
+        event: &'static str,
+        param: &str,
+        piece: &str,
+        reads: &dyn Fn(&str) -> bool,
+    ) -> Result<Option<String>, Signal> {
         let mut current = piece.to_string();
         for round in 0..3 {
-            let next = self.make_date_filter(&current)?;
+            let next = self.make_filter_event(event, param, &current)?;
             if next == current {
                 return Ok(None);
             }
@@ -120,7 +126,7 @@ impl Session {
             if failed > 1 {
                 return unpinned("two unreadable pieces in one Date text");
             }
-            if let Some(new) = self.repair_date_piece(p, reads)? {
+            if let Some(new) = self.repair_piece("makedatefilter", "DateFilterText", p, reads)? {
                 fixed[i] = new;
             }
         }
@@ -130,8 +136,26 @@ impl Session {
         }
         if pieces.len() > 1 {
             // The whole text is asked about as well (Filter_Date m1, m2).
-            return self.repair_date_piece(t, reads);
+            return self.repair_piece("makedatefilter", "DateFilterText", t, reads);
         }
         Ok(None)
+    }
+
+    /// `MakeIntFilter` and `MakeTimeFilter`: a filter text of one word of letters (`abc`) that does not read is asked about as
+    /// `MakeDateFilter` asks about a piece: once (m1), again with a changed text that does not read (m2), and the text a
+    /// subscriber repairs is parsed instead (m3) (events/lt-platform-triggers/PtObserve.al:Bad_Int, Bad_Time). Another text does
+    /// not raise the event, as `MakeDateFilter` does not for a shape it does not pin (docs/probes-needed.md).
+    pub(crate) fn repair_word_filter_text(
+        &mut self,
+        event: &'static str,
+        param: &str,
+        text: &str,
+        reads: &dyn Fn(&str) -> bool,
+    ) -> Result<Option<String>, Signal> {
+        let t = text.trim();
+        if !al_builtins::filter::letters_only(t) {
+            return Ok(None);
+        }
+        self.repair_piece(event, param, t, reads)
     }
 }

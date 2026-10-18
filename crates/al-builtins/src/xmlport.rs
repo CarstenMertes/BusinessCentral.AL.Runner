@@ -279,7 +279,13 @@ mod tests {
     #[test]
     fn malformed_and_namespaced_documents_are_told_apart() {
         assert!(matches!(parse("<a><b></a>"), Err(ReadFailure::Malformed(Some(_)))));
-        assert!(matches!(parse("<a xmlns=\"u\"/>"), Err(ReadFailure::Unsupported(_))));
+        // An element that inherits a default namespace is not carried over; the element that declares it keeps the declaration
+        // as its `xmlns` attribute (the port names or skips it, YXmlPortProps.al:UseLax_Import_AcceptsUnknownElements).
+        assert!(matches!(
+            parse("<a xmlns=\"u\"><b/></a>"),
+            Err(ReadFailure::Unsupported(_))
+        ));
+        assert!(matches!(parse("<a xmlns=\"u\"/>"), Ok(e) if e.attr("xmlns") == Some("u")));
     }
 
     #[test]

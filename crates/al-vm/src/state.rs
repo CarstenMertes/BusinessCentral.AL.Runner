@@ -121,6 +121,8 @@ pub(crate) struct ReportState {
     pub(crate) curr_report_language: Option<i32>,
     /// `CurrReport.FormatRegion` of the report started by `Run` or `RunModal` (empty text until a trigger sets it).
     pub(crate) format_region: Option<String>,
+    /// The running SaveAs writes a report whose `FormatRegion` property is set: `CurrReport.FormatRegion` is not pinned there.
+    pub(crate) region_property: bool,
     /// The call depth of the `OnInitReport` trigger being run, and whether it called
     /// `CurrReport.Quit` (al-vm reports.rs).
     pub(crate) report_init_depth: Option<usize>,

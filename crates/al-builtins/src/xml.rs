@@ -4125,8 +4125,16 @@ pub(crate) fn read_tree(text: &str) -> Result<Result<crate::xmlport::Elem, Optio
             _ => unreachable!("callers pass elements"),
         });
         // A prefixed element keeps its prefix in its name (`p:Name`); the port checks the prefix against its own
-        // `Namespaces`. A default namespace is not carried over.
-        if prefix.is_empty() != ns.is_empty() {
+        // `Namespaces`. A default namespace is carried over only on the element that declares it, as its `xmlns` attribute
+        // (the port names or skips that element: YXmlPortProps.al:UseLax_Import_AcceptsUnknownElements); an element that
+        // inherits one is not.
+        let declares_default = attrs.iter().any(|a| {
+            with(
+                a,
+                |d| matches!(d, XData::Attribute { prefix, local, .. } if prefix.is_empty() && local == "xmlns"),
+            )
+        });
+        if prefix.is_empty() != ns.is_empty() && !(prefix.is_empty() && declares_default) {
             return Err("namespaces in an XmlPort document".into());
         }
         let mut out = Elem::new(&if prefix.is_empty() {
@@ -4149,7 +4157,11 @@ pub(crate) fn read_tree(text: &str) -> Result<Result<crate::xmlport::Elem, Optio
                 out.attrs.push((format!("xmlns:{l}"), v));
                 continue;
             }
-            if !p.is_empty() || !n.is_empty() || l == "xmlns" {
+            if p.is_empty() && l == "xmlns" {
+                out.attrs.push((l, v));
+                continue;
+            }
+            if !p.is_empty() || !n.is_empty() {
                 return Err("namespace declarations in an XmlPort document".into());
             }
             out.attrs.push((l, v));

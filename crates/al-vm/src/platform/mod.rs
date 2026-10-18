@@ -52,6 +52,8 @@ pub(crate) struct EventStats {
     pub calls: RefCell<HashMap<(usize, usize), i64>>,
     /// Subscriber object to the number of bound instances.
     pub active: RefCell<HashMap<usize, i64>>,
+    /// The session's `GlobalLanguage` when it is not 1033 (0: 1033). The Report Layout List's Description follows it.
+    pub language: std::cell::Cell<i32>,
 }
 
 /// What the host says about the session, read once when the session starts.
@@ -235,6 +237,14 @@ impl Providers {
 
     /// An Event Subscription row with "Number of Calls" (8) and "Active Manual Instances" (13) as
     /// the session has them now.
+    /// The session's `GlobalLanguage`.
+    pub(super) fn language(&self) -> i32 {
+        match self.events.language.get() {
+            0 => 1033,
+            n => n,
+        }
+    }
+
     fn with_event_stats(&self, t: &TableDef, row: Option<Row>) -> Option<Row> {
         let mut row = row?;
         if self.events.calls.borrow().is_empty() && self.events.active.borrow().is_empty() {
@@ -380,6 +390,13 @@ impl Providers {
 
     /// The rows of a table that is listed in full.
     fn listed(&self, t: &TableDef, kind: Virtual) -> Result<Listed, StoreError> {
+        // In another language than 1033 the layouts' descriptions are that language's: listed per read, not kept.
+        if kind == Virtual::ReportLayoutList && self.language() != 1033 {
+            return Ok(Listed::Own(Rc::new(mat::Mat::new(
+                t,
+                reports::layout_list_rows(self, t),
+            ))));
+        }
         if let Some(m) = self.listed.borrow().get(&kind) {
             return Ok(m.clone());
         }

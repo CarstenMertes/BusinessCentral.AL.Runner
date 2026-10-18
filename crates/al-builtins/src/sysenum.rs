@@ -112,8 +112,10 @@ pub fn members(name: &str) -> Option<&'static [&'static str]> {
         ]),
         // The report's default layout and a test codeunit's TestPermissions, in the documentation's order. The corpus only
         // formats and tests the type of them (types/lt-variant-is-text-streams/LTP89IsEnumsA.al, LTP89IsEnumsB.al); the
-        // ordinals are not pinned and nothing may print them.
-        "defaultlayout" => Some(&["RDLC", "Word"]),
+        // ordinals are not pinned and nothing may print them. Report.DefaultLayout(Number) formats RDLC, Word, Excel and None
+        // (metadata/lt-report-metadata-columns/ReportMetadata.al:272, report/lt-y-report-props/YReportPropsTests.al:236); Custom
+        // is the fourth member of the Report Metadata column.
+        "defaultlayout" => Some(&["RDLC", "Word", "Excel", "Custom", "None"]),
         "testpermissions" => Some(&["Disabled", "Restrictive", "NonRestrictive", "InheritFromTestCodeunit"]),
         "datascope" => Some(&["Module", "Company", "User", "CompanyAndUser"]),
         // Normal and Install are pinned (install/TestInstallEnvVisible_Tests.al:90-127).

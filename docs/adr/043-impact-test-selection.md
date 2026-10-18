@@ -325,7 +325,7 @@ apps in `tests/fixtures/impact`, including the selection-independence test).
    unreached tests are counted, not listed; "same, reached" lists 30 unless `--verbose`.
 3. Exit code: 1 when a test is newly failing, fails differently or is newly refused; otherwise 0, or the code of a
    side that selected nothing or stopped. `--junit`, `--output-json`, `--coverage*` and `--explain` are refused with
-   `--impact-of` until step 3.
+   `--impact-of` until step 3. (Step 3 lifted this for `--junit` and `--output-json FILE`.)
 4. "Calls" of a routine are the runs of its first statement; a routine with no statement (empty body) is not seen.
 5. A failure the runner does not trust (an earlier test of the codeunit did not run) is "newly refused"; the report
    prints the failure text under it. **Changed (untrusted-failure-2, 2026-10-18):** the runner now distrusts a failure
@@ -381,6 +381,42 @@ apps in `tests/fixtures/impact`, including the selection-independence test).
    finer keys of section 2.2 (operation, validated field) are recorded for events only.
 5. Selection miss: a changed test is not a miss when an earlier test of its codeunit reached an impact point (the
    codeunit's tests share state, section 2.1).
+
+## Step 3 as built (impact-3, 2026-10-18)
+
+- **JSON diff** (`--impact-json FILE`, `impact::json`): `format` 1, `mode` (`all`, `dynamic` or `static`), `extensions`,
+  `testApps`, `counts` per class, `accepted`, `notSelected` (dynamic selection only), `exitCode`, and per test
+  `codeunit`, `codeunitName`, `test`, `class`, `accepted`, `without` and `with` (`outcome` pass, fail, not run or
+  missing; `flagged`; `message`), `reached` (impact points) and `ran` (extension routines with calls). On the "with"
+  side a failure the runner does not trust counts as a failure, as in the text report.
+- **Accept file** (`--impact-accept FILE`, `impact::Accepts`): the shape of the JSON diff. Every entry whose class is a
+  change is an accepted change; entries of an unchanged class are skipped, so the diff of an earlier run works as it
+  is, and a partner deletes the tests whose change they do not accept. A changed test is accepted when its codeunit,
+  name (without case), outcome with the extension and message equal an entry. It is listed under its class, marked
+  `(accepted)`, the class heading counts it, and it does not fail the run. Entries that matched no change are listed
+  below the report ("accept file: N accepted changes no longer match"). A file that cannot be read stops the run
+  (exit 2) before it starts.
+- **Exit codes**: 1 when a test is newly failing, fails differently, newly refused or a selection miss and not
+  accepted; else 0; 2 for bad options or an unreadable accept file; the code of a side that stopped (6: no test
+  selected). Not-run tests give no 7 or 8: they are the class "not verified". Listed in `alrunner --help`.
+- **JUnit** (`--junit FILE`): the run with the extension (in dynamic selection only the selected codeunits), each test
+  with the properties `impact_class`, `impact_without` (its outcome without the extension) and, when accepted,
+  `impact_accepted`. `al_testrun::junit::Case` gained a `properties` list (additive; written in the Runner dialect
+  only, also for a test that was not run).
+- `--output-json FILE` writes the run with the extension in AL Runner v2's shape, with the impact run's exit code.
+  `--output-json` without a file stays refused (the report is on stdout); `--coverage*`, `--explain` and scratch runs
+  stay refused with `--impact-of`.
+
+### Decided without owner review (2026-10-18, impact-3)
+
+1. The accept file is the JSON diff's own shape, not a separate format; tests are matched by codeunit id and name,
+   not by app (Microsoft's test codeunit ids are unique across its test apps; a path to an app differs per machine).
+2. The match needs the whole message, not a pattern. A change whose error text moves is reported again as new; that
+   is the point of the file ("later runs report only new differences").
+3. Any changed class can be accepted, including selection miss (section 3 lists it among the classes an accept file
+   covers); acceptance changes the exit code only for the four classes that fail the run.
+4. `--output-json` with an impact run needs a FILE, and its document holds the "with" run only; the diff itself is
+   `--impact-json`.
 
 ## Step 5 as built (impact-5, 2026-10-18)
 

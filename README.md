@@ -115,8 +115,9 @@ are removed.
 When several apply, the order is 2, 6, 1, 8, 7. `--allow-not-run` makes 7 and 8 return 0.
 
 **9. "Not run" and how to see why.** "Not run" means `alrunner` refused the test and gave a
-reason, usually a feature that is missing. The test neither passed nor failed. The runtime
-never guesses.
+reason, usually a feature that is missing. The test neither passed nor failed. Missing
+features are refused, not guessed. See "Can I trust the results?" below for what a pass,
+a failure and "not run" each mean.
 
 - The default output has the version line, failures, the top refusals, the `Tests:` line, the totals
   table, one time line (total, compile, run, tests per second) and the `Result:` line. A warning that changes how to read the result is one line, only when it applies
@@ -175,6 +176,78 @@ Business Central is the most useful report. Open a GitHub issue with the "Alpha 
 template. Include `alrunner --version`, the BC version, the test name, what you expected, and the
 output of `--explain TEST`.
 
+## Can I trust the results?
+
+A pass or a failure here is meant to match real Business Central. When the runtime cannot be
+sure, it reports the test as "not run" and says why. Some false results are still possible.
+The known causes are listed under "Known risks" below. For Microsoft's own tests, nobody has
+measured yet how often the result here matches real BC.
+
+**A pass** means the test ran to its end without an error. The project rule is that every
+behavior the runtime implements is measured on real BC by a test in the
+[AL language test corpus](https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests),
+per BC version. There is one exception. A behavior that Microsoft's own tests need on real BC
+may be built before a corpus test measures it. Each such behavior is registered in the runtime
+code as an unprobed assumption (`crates/al-builtins/src/assumptions.rs`; the list is also in
+`docs/probes-needed.md`). A pass that ran through one is a **flagged pass**, counted apart:
+
+- The `Tests:` line reads `N passed (M flagged: rely on unprobed assumptions)`.
+- `--verbose` marks each such test `(flagged)`.
+- `--explain TEST` lists each assumption and the probe that would settle it.
+- `--junit FILE` lists the assumption ids in an `assumptions` property of the test case.
+- `--top-assumptions` ranks the assumptions of a run. `alrunner --list-assumptions` describes all of them.
+
+**"Not run"** means the runtime refused the test and gave a reason. There are three kinds:
+
+1. A feature is missing.
+2. A behavior is not measured on real BC yet.
+3. The test failed, but its failure is not trusted. An earlier test in the same codeunit did
+   not run to its end, and it could have changed what this test sees: a table this test
+   reads, the codeunit's shared state, or the sequence of random numbers. The reason says
+   "this failure is not trusted" and keeps the original error. A test stopped by the time
+   limit counts as such an earlier test.
+
+**A failure** means the test ran and raised an error or failed an assertion, and no earlier
+refused test can explain it. Without test data (`--no-test-data`), Microsoft's tests fail mostly
+on missing setup data. The `Tests:` line says so.
+
+**How results are checked against real BC**
+
+- The corpus runs on real BC 27.5, 28.5 and 29.0. The JUnit result of each run is the oracle
+  for that version (`oracle/`). A corpus test counts as passing only when it passes here and
+  passed on real BC.
+- `metrics/<major>/passing.txt` lists the corpus tests that must keep passing. CI runs all
+  three versions on every pull request and fails when one of them stops passing.
+- Must-not-compile cases: 272 small AL files the real AL compiler rejects. The runtime must
+  reject each one with the same diagnostic codes, on each version. The cases not matched yet
+  are listed as known gaps; any other mismatch fails the tests.
+- The corpus CI runs BC in a Linux container, which Microsoft does not support. Results that
+  look like a container difference are run on Microsoft's Windows container first. Where the
+  two differ, the runtime refuses that case (`docs/probes-needed.md`, "Linux artifacts checked
+  on Windows").
+
+**Known risks**
+
+1. Code written before the measurement rule. Some behavior has no corpus test yet. Corpus tests
+   are being added for it. Recent examples: a Duration divided by a number raised an error
+   where BC returns a Decimal (fixed); `IsPathTemporary` gave the Linux container's answer for
+   paths where Windows BC answers differently (now refused); the test clock did not move
+   between reads (fix in review).
+2. A flagged pass depends on its assumption. When a corpus test measures the behavior and
+   disagrees, the runtime is changed to match BC.
+3. The Linux container can differ from BC on Windows. Only results someone suspects are run on
+   Windows.
+4. Microsoft's own tests are not compared with real BC test by test. Their pass rate is the
+   result of this runtime, not a measured match with BC.
+5. Permissions are not enforced: every access is granted (ADR-027). A test that expects a
+   permission error fails here. Code that BC would stop for a missing permission runs here.
+6. The "not trusted" rule covers failures only. A test that passes after a refused test stays
+   a pass, even if the refused test would have changed its data on BC.
+
+**Report a suspected false result.** Open an issue on this repository with the "Alpha
+feedback" template. Give the test name, the BC version, the result here, the result on real
+BC, `alrunner --version` and the output of `--explain TEST`.
+
 ## Why it is built on the language, not on BC's internals
 
 AL Runner v3 reproduces what AL code can observe: values, errors, data, and the order of
@@ -218,9 +291,9 @@ Each major has its own oracle and its own baseline of cases that must keep passi
 A test counts as passing only when it passes here and passed on real BC. "Failing" is a case
 where real BC passed and the runtime gave a different result or an error. None of the failing
 cases is in the baseline, and the baseline check exits 0. "Not run" means the runtime refused
-the test, with a stated reason, because a feature is missing. It never guesses. About 320
-passes on each version run through an unprobed assumption (counted as "flagged" in the
-summary). Per-area numbers and the roadmap are in `docs/status.md`, which is older than these
+the test, with a stated reason: a feature is missing, a behavior is not pinned yet, or a
+failure is not trusted. About 320 passes on each version run through an unprobed assumption
+(counted as "flagged" in the summary). See "Can I trust the results?". Per-area numbers and the roadmap are in `docs/status.md`, which is older than these
 numbers. The corpus also has a smaller OnPrem test app (66 of 189 on 27.5, 66 of 190 on 28.5,
 70 of 193 on 29.0) and two isolation probes, reported separately.
 
@@ -307,8 +380,9 @@ load it.
   Microsoft's apps. The first run downloads about 520 MB. `--no-test-data`
   turns it off.
 - **"Not run"** means `alrunner` refused the test and said why, for example a
-  feature it does not support yet. It never guesses. The test did not pass and
-  did not fail. `--verbose` lists the reason for each test.
+  feature it does not support yet. Missing features are refused, not guessed. The
+  test did not pass and did not fail. `--verbose` lists the reason for each test.
+  See "Can I trust the results?".
 - **Exit codes**: see "Getting started with your own project" above.
 
 **Known limits**
@@ -329,7 +403,9 @@ behaves differently on real Business Central.
 ## What AL Runner v3 does not do
 
 Some AL features are refused on purpose. A test that reaches one is reported as
-"not run", with the reason. It is never guessed.
+"not run", with the reason. A few are not refused but are limited: for example, every
+permission is granted, so a test that expects a permission error fails here. The table
+says which.
 
 | Area | What v3 does | What to do instead |
 |---|---|---|

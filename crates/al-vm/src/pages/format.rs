@@ -627,10 +627,7 @@ impl Session {
         if matches!(page_of(&engine, st).controls[idx].binding, ir::Binding::Field(_))
             && st.borrow().cursor == Cursor::Row
             && !st.borrow().draft
-            && engine.program.objects[st.borrow().object as usize]
-                .properties
-                .iter()
-                .any(|(k, v)| k.eq_ignore_ascii_case("ModifyAllowed") && v.trim().eq_ignore_ascii_case("false"))
+            && flag_denied(&engine, st.borrow().object as usize, "ModifyAllowed")?
         {
             return Ok(false);
         }

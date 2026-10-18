@@ -28,6 +28,7 @@ mod interfaces;
 mod last_error_origin;
 mod moved_fields;
 mod notification_by_value;
+mod np_blockers_6;
 mod pageworks_probes;
 mod partner_gaps_1;
 mod private_use_chars;

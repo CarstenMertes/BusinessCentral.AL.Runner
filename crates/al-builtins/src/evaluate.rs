@@ -338,6 +338,105 @@ fn guid(text: &str) -> Result<Parsed, Signal> {
 /// `yyyy-mm-dd`, `m/d/yyyy`, `m/d/yy` and `T`; it rejects `15.01.2024`, `150124`, `15012024`, `20240115`,
 /// `2024-01-15T00:00:00Z`, `0D` and `15-01-2024`. Number 9 reads `yyyy-mm-dd` with spaces around it and the empty text
 /// (which leaves the date empty) and rejects everything else, `T` and the slash forms included.
+/// The month-first forms of a Date in the session's language (en-US): digits only, as `MMDD` followed by a year of 0 to 4 digits
+/// (`1010` is that day of this year, `10101` is 2001-10-10, `101010` is 2010-10-10, `1010101` is 0101-10-10, `10162026`), and three numbers
+/// split by one `/`, `.` or `-` (`1/2/3`, `10.16.26`, `10-16-2026`), month first. A year of one or two digits is 20xx below 50 and 19xx
+/// from 50. A month or day that does not exist rejects (`161026`, `311299`, `16/10/26`, `16.10.2026`). `16 Oct 2026` reads, while
+/// `Oct 16, 2026`, `16 10 26` and `16/10` do not (errors/lt-ms-refusals-130/P130EvaluateDate.al: Default_SixAndEightDigits,
+/// Default_SlashAndDotForms; types/lt-datetime/Evaluate.al: Date_Other_Formats, Date_Default_Evaluate `formatted 4`). `None` for
+/// every other shape, which the caller handles; a shape the corpus does not pin is refused.
+fn date_month_first(text: &str, today: Option<i32>) -> Option<Result<Parsed, Signal>> {
+    let ymd = |y: i32, m: u32, d: u32| -> Result<Parsed, Signal> {
+        if !(1..=12).contains(&m) || d < 1 {
+            return Ok(Parsed::Rejected);
+        }
+        let first = day_from_civil(y, m, 1);
+        let next = if m == 12 { day_from_civil(y + 1, 1, 1) } else { day_from_civil(y, m + 1, 1) };
+        if (d as i32) > next - first {
+            return Ok(Parsed::Rejected);
+        }
+        Ok(Parsed::Value(Value::Date(day_from_civil(y, m, d), false)))
+    };
+    let year_of = |ys: &str| -> Result<Option<i32>, Signal> {
+        let n: i32 = ys.parse().unwrap_or(0);
+        match ys.len() {
+            1 | 2 => Ok(Some(if n < 50 { 2000 + n } else { 1900 + n })),
+            3 | 4 if n >= 1 => Ok(Some(n)),
+            _ => unsupported(format!("Evaluate into a Date of a year written `{ys}` (not pinned)")),
+        }
+    };
+    let all_digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+    // `0` and `16/10` are no dates (P130_EvaluateDate_Default_SixAndEightDigits `0`, Default_SlashAndDotForms `16/10`); other
+    // texts of one to three digits, and two numbers with another separator, are not pinned.
+    if text == "0" {
+        return Some(Ok(Parsed::Rejected));
+    }
+    if let Some((a, b)) = text.split_once('/') {
+        if all_digits(a) && all_digits(b) && a.len() <= 2 && b.len() <= 2 {
+            return Some(Ok(Parsed::Rejected));
+        }
+    }
+    if all_digits(text) && (4..=8).contains(&text.len()) {
+        let (m, d): (u32, u32) = (text[0..2].parse().ok()?, text[2..4].parse().ok()?);
+        let ys = &text[4..];
+        let y = if ys.is_empty() {
+            match today {
+                Some(t) => crate::format::civil_from_day(t).0,
+                None => return Some(unsupported("Evaluate of a month and day into a Date without a clock")),
+            }
+        } else {
+            match year_of(ys) {
+                Ok(Some(y)) => y,
+                Ok(None) => return Some(Ok(Parsed::Rejected)),
+                Err(e) => return Some(Err(e)),
+            }
+        };
+        return Some(ymd(y, m, d));
+    }
+    for sep in ['/', '.', '-'] {
+        let parts: Vec<&str> = text.split(sep).collect();
+        if parts.len() == 3 && parts.iter().all(|p| all_digits(p) && p.len() <= 4) {
+            if parts[0].len() > 2 || parts[1].len() > 2 {
+                // Year first (`2024-1-5`) or a longer number: not a month-first form.
+                return None;
+            }
+            let (m, d): (u32, u32) = (parts[0].parse().ok()?, parts[1].parse().ok()?);
+            return Some(match year_of(parts[2]) {
+                Ok(Some(y)) => ymd(y, m, d),
+                Ok(None) => Ok(Parsed::Rejected),
+                Err(e) => Err(e),
+            });
+        }
+    }
+    let words: Vec<&str> = text.split(' ').collect();
+    if words.len() == 3 && all_digits(words[0]) && all_digits(words[1]) && all_digits(words[2]) {
+        return Some(Ok(Parsed::Rejected));
+    }
+    if words.len() == 3
+        && all_digits(words[0])
+        && words[0].len() <= 2
+        && words[1].len() == 3
+        && words[1].bytes().all(|b| b.is_ascii_alphabetic())
+        && words[2].len() == 4
+        && all_digits(words[2])
+    {
+        const MONTHS: [&str; 12] = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+        let m = MONTHS.iter().position(|n| n.eq_ignore_ascii_case(words[1]))? as u32 + 1;
+        return Some(ymd(words[2].parse().ok()?, m, words[0].parse().ok()?));
+    }
+    // `Oct 16, 2026` and `March 5, 2024`: a month name, a day with a comma and a year.
+    if words.len() == 3
+        && words[0].bytes().all(|b| b.is_ascii_alphabetic())
+        && words[0].len() >= 3
+        && words[1].ends_with(',')
+        && all_digits(&words[1][..words[1].len() - 1])
+        && all_digits(words[2])
+    {
+        return Some(Ok(Parsed::Rejected));
+    }
+    None
+}
+
 fn date(text: &str, number: i64, today: Option<i32>, work: Option<i32>) -> Result<Parsed, Signal> {
     if number == 9 {
         let t = text.trim_matches(' ');
@@ -389,6 +488,10 @@ fn date(text: &str, number: i64, today: Option<i32>, work: Option<i32>) -> Resul
         .strip_prefix(['C', 'c'])
         .filter(|r| r.starts_with(|c: char| c.is_ascii_digit()))
     {
+        // The ISO form after the C is no closing date (types/lt-datetime/Evaluate.al:Date_Default_Evaluate `closing`: No).
+        if rest.len() == 10 && rest.as_bytes()[4] == b'-' {
+            return Ok(Parsed::Rejected);
+        }
         return Ok(match date(rest, 0, today, work)? {
             Parsed::Value(Value::Date(d, false)) => Parsed::Value(Value::Date(d, true)),
             _ => Parsed::Rejected,
@@ -400,6 +503,9 @@ fn date(text: &str, number: i64, today: Option<i32>, work: Option<i32>) -> Resul
             Some(d) => Ok(Parsed::Value(Value::Date(d, false))),
             None => Ok(Parsed::Rejected),
         };
+    }
+    if let Some(r) = date_month_first(text, today) {
+        return r;
     }
     let parts: Vec<&str> = text.split('/').collect();
     let digits = |s: &str, lens: std::ops::RangeInclusive<usize>| {
@@ -888,6 +994,7 @@ fn evaluate_with_max(
         && number != 9
         && !(number == 2 && matches!(a[0], Value::DateFormula(_)))
         && !(matches!(number, 1 | 2) && matches!(a[0], Value::Text(_) | Value::Code(_)))
+        && !matches!(a[0], Value::Date(..))
     {
         return unsupported(format!(
             "Evaluate with format number {number} (not pinned by the corpus)"
@@ -906,7 +1013,9 @@ fn evaluate_with_max(
         Value::Decimal(_) => decimal(&text, number)?,
         Value::Boolean(_) => boolean(&text, number)?,
         Value::Guid(_) => guid(&text)?,
-        Value::Date(..) => date(&text, number, c.today_day(), c.work_date_day())?,
+        // Every number but 9 reads a Date as the default does (types/lt-datetime/Evaluate.al:Date_Other_Formats `fmt 1` to `fmt 8`,
+        // `fmt 10`, `fmt -1`; errors/lt-ms-refusals-130/P130EvaluateDate.al:P130_EvaluateDate_EveryFormat_*).
+        Value::Date(..) => date(&text, if number == 9 { 9 } else { 0 }, c.today_day(), c.work_date_day())?,
         Value::Time(_) => time(&text, number)?,
         Value::DateTime(_) => datetime(&text, number)?,
         // The text is kept as written once it is a form the runtime can calculate with

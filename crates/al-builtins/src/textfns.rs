@@ -930,7 +930,7 @@ fn bt_read(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
     Ok(Value::Boolean(true))
 }
 
-/// `Write(OutStream)`: only ASCII text on a fresh stream is pinned (see `stream::write_bigtext`).
+/// `Write(OutStream)`: appends the text in the stream's encoding (see `stream::write_bigtext`).
 fn bt_write(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
     let h = string_of(r)?;
     let text = with_string(&h, |s| s.clone());

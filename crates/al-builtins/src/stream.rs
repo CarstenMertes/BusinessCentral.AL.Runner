@@ -200,8 +200,8 @@ const CP437_HIGH: [char; 128] = [
 
 /// What the Windows tier reads for the code page 437 bytes whose character code page 1252 does not have (corpus
 /// streams/StTEncodings.al:CrossEncodingUtf8ToOthers and CrossEncodingWindowsToOthers, streams/W7StreamRead.al:
-/// ReadTextWithLength_Utf8Sequences, types/PEOptionEnumBigText.al): and al-language-onprem/handlers/TestRequestPageSaveAsXmlContracts.al:FileText (EF BB BF): and streams/StTEncodings.al:RoundTripSameEncoding (B1 is the euro sign): XmlPort byte order mark FF FE (xmlport/lt-xmlport-query-datatransfer, misc/lt-probes-needed-3/PnC19XmlPort.al): only these fourteen bytes are pinned.
-const CP437_AS_READ: [(u8, char); 14] = [
+/// ReadTextWithLength_Utf8Sequences, types/PEOptionEnumBigText.al): and al-language-onprem/handlers/TestRequestPageSaveAsXmlContracts.al:FileText (EF BB BF): and streams/StTEncodings.al:RoundTripSameEncoding (B1 is the euro sign): XmlPort byte order mark FF FE (xmlport/lt-xmlport-query-datatransfer, misc/lt-probes-needed-3/PnC19XmlPort.al): only these fifteen bytes are pinned.
+const CP437_AS_READ: [(u8, char); 15] = [
     (0xFE, '\u{FE}'),
     (0xB1, '\u{20AC}'),
     (0xBB, '\u{2039}'),
@@ -216,6 +216,8 @@ const CP437_AS_READ: [(u8, char); 14] = [
     (0xE4, '\u{CD}'),
     (0xE9, '\u{D2}'),
     (0xFC, '\u{FD}'),
+    // streams/lt-bigtext-write/BigTextWriteEdges.al:Write_NonAscii_Utf8Stream (D0 reads as 168).
+    (0xD0, '\u{A8}'),
 ];
 
 /// Unicode of cp1252 bytes 0x80..=0x9F (the undefined ones map to themselves, as .NET does).
@@ -548,6 +550,9 @@ pub(crate) fn read_all_text(stream: &mut Value) -> Result<String, Signal> {
         let body: &[u8] = match enc {
             Encoding::Utf8 if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) => &bytes[3..],
             Encoding::Utf16 if bytes.starts_with(&[0xFF, 0xFE]) => &bytes[2..],
+            // The text of a stream created without an encoding ends at the first NUL byte: the UTF-16 bytes `E4 00 AC 20 16 04`
+            // read as one character (streams/lt-bigtext-write/BigTextWriteEdges.al:Write_NonAscii_ExplicitEncodings, utf16.readlen).
+            Encoding::MsDos => bytes.split(|b| *b == 0).next().unwrap_or(&[]),
             _ => &bytes[..],
         };
         match enc {
@@ -922,16 +927,9 @@ fn in_read(c: &mut dyn Ctx, mut r: Option<&mut Value>, a: &mut [Value]) -> NResu
     Ok(Value::Integer(width as i32))
 }
 
-/// `write_pos` of a buffer that `BigText.Write` filled: where the stream stands afterwards is not pinned, so any further
-/// write through an OutStream on it is refused until `CreateOutStream` sets the position to 0 again.
-const BIGTEXT_SEALED: usize = usize::MAX;
-
 fn out_buf(r: Option<&mut Value>) -> Result<(BlobRef, Encoding), Signal> {
     match r {
         Some(Value::Library(_, h)) => match &*h.borrow() {
-            LibraryValue::OutStream(b, _) if b.borrow().write_pos == BIGTEXT_SEALED => {
-                unsupported("a write after BigText.Write on the same stream (position not pinned)")
-            }
             LibraryValue::OutStream(b, e) => Ok((b.clone(), *e)),
             _ => unsupported("use of an OutStream that was never created"),
         },
@@ -959,20 +957,27 @@ pub(crate) fn write_serialised_text(stream: &mut Value, text: &str) -> Result<()
     Ok(())
 }
 
-/// `BigText.Write(OutStream)`: the text as one byte per character into a stream nothing was written to
-/// (corpus streams/StTBigText.al:WriteToStreamAndRead, :WriteReadLargeText; the blob holds 16 bytes for 16 characters and
-/// 100000 for 100000). Only ASCII text is pinned: the probe's three non-ASCII characters (WriteNonAscii) give 3 bytes, which
-/// no encoding explains. A stream that was written to is not pinned either, nor where the stream stands afterwards.
+/// `BigText.Write(OutStream)`: the text in the stream's encoding, appended at the stream's position like `WriteText`, so a stream
+/// written to before takes the text after it and a later `WriteText` or `Write` goes after it
+/// (streams/lt-bigtext-write/BigTextWriteEdges.al:Write_AfterWriteText_SameStream, WriteText_AfterBigTextWrite_SameStream;
+/// corpus streams/StTBigText.al:WriteToStreamAndRead, :WriteReadLargeText). Pinned bytes: ASCII; for a default or MS-DOS stream
+/// `84 B1 3F` for a-umlaut, euro sign and the Cyrillic zhe, for Windows `E4 80 3F`, for UTF-8 and UTF-16 the plain encoding of
+/// the same three (BigTextWriteEdges.al:Write_NonAscii_*). A character beyond those and the characters the other stream writes
+/// pin (`Encoding::encode_pinned`) is refused.
 pub(crate) fn write_bigtext(stream: &mut Value, text: &str) -> Result<(), Signal> {
-    if !text.is_ascii() {
-        return unsupported("BigText.Write of text beyond ASCII (the bytes written are not pinned)");
+    let (b, enc) = out_buf(Some(stream))?;
+    let pinned = |c: char| {
+        c.is_ascii()
+            || c == '\u{416}'
+            || match enc {
+                Encoding::Utf8 | Encoding::Utf16 => (c as u32) <= 0xFFFF,
+                _ => enc.encode_pinned(c.encode_utf8(&mut [0; 4])),
+            }
+    };
+    if !text.chars().all(pinned) {
+        return unsupported("BigText.Write of a character whose bytes in this encoding are not pinned");
     }
-    let (b, _) = out_buf(Some(stream))?;
-    if b.borrow().write_pos != 0 {
-        return unsupported("BigText.Write to a stream that was written to (not pinned)");
-    }
-    write_bytes(&b, text.as_bytes());
-    b.borrow_mut().write_pos = BIGTEXT_SEALED;
+    write_bytes(&b, &enc.encode(text));
     Ok(())
 }
 

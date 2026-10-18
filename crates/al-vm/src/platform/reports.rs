@@ -70,7 +70,13 @@ pub(super) fn layout_list_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
     out
 }
 
-fn layout_row(c: &Catalog, o: &Object, l: &al_ir::LayoutDecl, t: &TableDef, r: &mut al_data::Row) -> Result<(), String> {
+fn layout_row(
+    c: &Catalog,
+    o: &Object,
+    l: &al_ir::LayoutDecl,
+    t: &TableDef,
+    r: &mut al_data::Row,
+) -> Result<(), String> {
     let what = || format!("layout '{}' of report '{}'", l.name, o.name);
     // BC 29: "Layout Subtype" (19), HeaderFooterPart (20), ThemePart (21)
     // (report/lt-y-report-props/YReportParts.al:75). The enum is Default 0, HeaderFooter 1, Theme 2, Body 3. A layout that
@@ -92,7 +98,10 @@ fn layout_row(c: &Catalog, o: &Object, l: &al_ir::LayoutDecl, t: &TableDef, r: &
             let part = ident(v);
             // The value is the id of the declaring app, `::` and the layout's name; only a layout of the same object is pinned.
             if !o.layouts.iter().any(|x| x.name.eq_ignore_ascii_case(&part)) {
-                return Err(format!("{}: {name} `{part}` is not a layout of the same object (not pinned)", what()));
+                return Err(format!(
+                    "{}: {name} `{part}` is not a layout of the same object (not pinned)",
+                    what()
+                ));
             }
             let app = c
                 .apps
@@ -313,7 +322,12 @@ pub(super) fn report_data_item_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
     let engine = p.engine();
     let c = Catalog::new(&engine);
     let mut out = Vec::new();
-    for (oi, o) in c.objects.iter().enumerate().filter(|(_, o)| o.kind == al_ir::ObjKind::Report) {
+    for (oi, o) in c
+        .objects
+        .iter()
+        .enumerate()
+        .filter(|(_, o)| o.kind == al_ir::ObjKind::Report)
+    {
         let Some(id) = o.id else { continue };
         let Some(rep) = &o.report else {
             let mut k = blank(t);

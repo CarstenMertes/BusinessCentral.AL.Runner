@@ -68,3 +68,9 @@
 61484 Rethrow_AfterEvaluateWithoutReturnValue
 61484 Rethrow_AfterFailingTestField
 61484 Rethrow_AfterModifyOfMissingRow
+99050 AF_MailAddress_Invalid_Empty
+99050 AF_MailAddress_Invalid_NoAt
+99050 AF_MailAddress_Invalid_TwoAt
+99050 AF_MailAddress_TwoArguments
+99050 AF_MailAddress_Valid
+99050 AF_MailAddress_WithDisplayName

@@ -130,10 +130,23 @@ mod tests {
     #[test]
     fn mail_address_is_allowed_and_only_it_under_system_net() {
         let p = p();
-        assert!(p.check(Some("System"), "System.Net.Mail.MailAddress", Access::Construct(1)).is_ok());
-        assert!(p.check(None, "System.Net.Mail.MailAddress", Access::Member("User")).is_ok());
-        for ty in ["System.Net.Mail.SmtpClient", "System.Net.Mail.MailMessage", "System.Net.Mail.MailAddressCollection"] {
-            refused(p.check(Some("System"), ty, Access::Construct(0)), &["refused by policy", ty]);
+        assert!(
+            p.check(Some("System"), "System.Net.Mail.MailAddress", Access::Construct(1))
+                .is_ok()
+        );
+        assert!(
+            p.check(None, "System.Net.Mail.MailAddress", Access::Member("User"))
+                .is_ok()
+        );
+        for ty in [
+            "System.Net.Mail.SmtpClient",
+            "System.Net.Mail.MailMessage",
+            "System.Net.Mail.MailAddressCollection",
+        ] {
+            refused(
+                p.check(Some("System"), ty, Access::Construct(0)),
+                &["refused by policy", ty],
+            );
         }
     }
 

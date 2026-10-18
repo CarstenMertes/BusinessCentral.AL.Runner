@@ -1381,7 +1381,10 @@ pub fn uncompiled_subscriber_sites(ws: &Workspace, active: &dyn Fn(usize) -> boo
         }
     }
     for (so, si) in ws.filter_helper_triggers_subscribers() {
-        if ws.objects[so].subscribers[si].event.eq_ignore_ascii_case("MakeDateFilter") {
+        if ws.objects[so].subscribers[si]
+            .event
+            .eq_ignore_ascii_case("MakeDateFilter")
+        {
             add(None, ir::PlatformPublisher::FilterHelperTriggers, so, si);
         }
     }

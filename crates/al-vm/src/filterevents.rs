@@ -73,10 +73,7 @@ impl Session {
         reads: &dyn Fn(&str) -> bool,
     ) -> Result<Option<String>, Signal> {
         let t = text.trim();
-        if t.contains("...")
-            || t.chars().any(|c| "|&<>=@*?'\"()%".contains(c))
-            || t.matches("..").count() > 1
-        {
+        if t.contains("...") || t.chars().any(|c| "|&<>=@*?'\"()%".contains(c)) || t.matches("..").count() > 1 {
             // Not the pinned shape: the event is not raised for it (as before this change).
             return Ok(None);
         }
@@ -92,9 +89,8 @@ impl Session {
             if failed > 1 {
                 return unpinned("two unreadable pieces in one Date text");
             }
-            match self.repair_date_piece(p, reads)? {
-                Some(new) => fixed[i] = new,
-                None => {}
+            if let Some(new) = self.repair_date_piece(p, reads)? {
+                fixed[i] = new;
             }
         }
         let rebuilt = fixed.join("..");

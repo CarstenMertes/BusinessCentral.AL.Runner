@@ -440,7 +440,12 @@ fn event_subscriptions(ws: &Workspace, out: &mut Vec<Diagnostic>) {
 }
 
 /// AL0124. The property `AutoCalcField` on a table element of an xmlport (corpus 0826; it belongs to report and query columns).
-fn xmlport_elements(ws: &Workspace, file: usize, sections: impl Iterator<Item = ast::Section>, out: &mut Vec<Diagnostic>) {
+fn xmlport_elements(
+    ws: &Workspace,
+    file: usize,
+    sections: impl Iterator<Item = ast::Section>,
+    out: &mut Vec<Diagnostic>,
+) {
     for s in sections {
         if s.name().eq_ignore_ascii_case("tableelement") {
             if let Some(p) = s.properties().find(|p| p.name().eq_ignore_ascii_case("AutoCalcField")) {
@@ -462,7 +467,9 @@ fn xmlport_elements(ws: &Workspace, file: usize, sections: impl Iterator<Item = 
 /// `modify` (corpus 0865); it has no access to the page's variables. Other properties are not judged.
 fn page_customization_variables(ws: &Workspace, oi: usize, obj: &ast::Object, out: &mut Vec<Diagnostic>) {
     let Some(parts) = obj.customizes_parts() else { return };
-    let Some(page) = ws.lookup(Some(ws.objects[oi].app), ObjKind::Page, &parts.join(".")) else { return };
+    let Some(page) = ws.lookup(Some(ws.objects[oi].app), ObjKind::Page, &parts.join(".")) else {
+        return;
+    };
     let page_ast = ws.object_ast(page);
     fn walk(
         ws: &Workspace,
@@ -742,7 +749,8 @@ pub fn check_context(ws: &Workspace, app: usize, ctx: &AppContext) -> Vec<Diagno
             }
             let obj = ws.object_ast(oi);
             if let Some(p) = obj.properties().find(|p| {
-                p.name().eq_ignore_ascii_case("EnableExternalAssemblies") && p.value_text().trim().eq_ignore_ascii_case("true")
+                p.name().eq_ignore_ascii_case("EnableExternalAssemblies")
+                    && p.value_text().trim().eq_ignore_ascii_case("true")
             }) {
                 push(
                     &mut out,

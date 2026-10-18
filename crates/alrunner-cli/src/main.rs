@@ -5,6 +5,7 @@ mod args;
 mod bcapps;
 mod capture;
 mod coverage;
+mod impact;
 mod output;
 mod recipe;
 mod recipe_run;

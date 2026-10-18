@@ -315,8 +315,8 @@ pub const PINNED_COLUMNS: &[(u32, &[u32])] = &[
     (2_000_000_280, &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]),
     // Query Metadata: query/TestQueryMetadataVirtualTable.al. Category (9) is not read.
     (2_000_000_142, &[1, 2, 3, 4, 5, 6, 7, 8, 10]),
-    // Event Subscription: record/TestEventSubscriptionVirtualTable.al. "Number of Calls" (8), "Error Information" (9), "Subscriber Instance" (12) and "Active Manual Instances" (13): record/TestEventSubscriptionColumnsReportLayoutListContracts.al. The package and app name are not read.
-    (2_000_000_140, &[1, 2, 3, 4, 5, 6, 7, 8, 9, 12, 13]),
+    // Event Subscription: record/TestEventSubscriptionVirtualTable.al. "Number of Calls" (8), "Error Information" (9), "Subscriber Instance" (12) and "Active Manual Instances" (13): record/TestEventSubscriptionColumnsReportLayoutListContracts.al. "Originating App Name" (11): events/lt-event-subscription-trigger-rows/EventSubscriptionTriggerRows.al. The package id (10) is only read masked.
+    (2_000_000_140, &[1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12, 13]),
     // Page Action: record/TestPageActionVirtualTable.al. Captions, tool tips, Promoted and the Run* columns but RunObjectID are not read.
     (2_000_000_143, &[1, 2, 3, 4, 5, 6, 8, 16]),
     // Table Relations Metadata: record/TestTableRelationsMetadataVirtualTable.al. The condition type, value and the two flags: record/TestTableRelationsSequenceMetadataContracts.al. The names are not read.

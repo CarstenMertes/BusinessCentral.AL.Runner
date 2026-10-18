@@ -191,7 +191,16 @@ fn subscription_row(
     // TestEventSubscriptionColumnsReportLayoutListContracts.al:98-107). "Number of Calls" and
     // "Active Manual Instances" are the session's, added when a row is read.
     r[pos(t, 12)] = Value::Text(if manual { "Manual" } else { "Static-Automatic" }.into());
-    let mut known = vec![12u32];
+    // "Originating App Name" is the name of the app that declares the subscriber (events/lt-event-subscription-trigger-rows/
+    // EventSubscriptionTriggerRows.al:187-190 and the rows after it, `AL Language Coverage Tests`).
+    r[pos(t, 11)] = Value::Text(
+        truncate(
+            &c.apps.get(o.app as usize).map(|x| x.name.clone()).unwrap_or_default(),
+            250,
+        )
+        .into(),
+    );
+    let mut known = vec![11u32, 12u32];
     let args = crate::events::split_args(&a.text);
     if args.len() < 3 {
         return Err((

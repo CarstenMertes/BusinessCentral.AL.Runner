@@ -191,8 +191,7 @@ fn add_load_fields_on_a_full_load_does_nothing_and_answers_false() {
 
 #[test]
 fn unpinned_cases_are_refused() {
-    // A primary key field under a secondary current key, a record that was written but never
-    // fetched, and SetBaseLoadFields are not pinned.
+    // A primary key field under a secondary current key, and SetBaseLoadFields are not pinned.
     let r = text(
         "",
         &format!(
@@ -200,11 +199,16 @@ fn unpinned_cases_are_refused() {
         ),
     );
     assert!(matches!(r, Err(Signal::Unsupported(_))), "{r:?}");
-    let r = text(
-        "",
-        "Rec.\"Entry No.\" := 9; exit(Format(Rec.AreFieldsLoaded(Rec.\"Entry No.\")));",
+    // A record filled by assignment and never fetched reports its fields loaded
+    // (record/lt-are-fields-loaded-unfetched/AreFieldsLoadedUnfetched.al:42-68).
+    assert_eq!(
+        text(
+            "",
+            "Rec.\"Entry No.\" := 9; exit(Format(Rec.AreFieldsLoaded(Rec.\"Entry No.\")));"
+        )
+        .unwrap(),
+        "Yes"
     );
-    assert!(matches!(r, Err(Signal::Unsupported(_))), "{r:?}");
     let r = text(
         "",
         &format!("{SEED} Rec.SetLoadFields(Rec.Name); exit(Format(Rec.SetBaseLoadFields()));"),

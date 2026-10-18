@@ -288,7 +288,12 @@ impl Session {
             if self.declares(st, "onnextrecord") {
                 self.nav_next(st, -1)?;
             }
-            if self.declares(st, "onfindrecord") {
+            // The closing OnFindRecord(`=`) and its read belong to the OnAfterGetCurrRecord that follows; a
+            // list without that trigger ends after OnNextRecord(-1) (pages/lt-f3-pages/F3ListTests.al:24
+            // Nav_TwelveRows_OpenLastPreviousFirstNext `open`, a list of 12 rows with OnFindRecord, OnNextRecord and
+            // OnAfterGetRecord).
+            let with_current = self.declares(st, "onaftergetcurrrecord");
+            if with_current && self.declares(st, "onfindrecord") {
                 self.nav_find(st, "=")?;
             }
             if let Some(row) = keys.first() {
@@ -296,7 +301,9 @@ impl Session {
                 self.set_xrec_fields(st, row.stored.clone());
             }
             st.borrow_mut().window = keys;
-            self.page_trigger(st, "onaftergetrecord", vec![])?;
+            if with_current {
+                self.page_trigger(st, "onaftergetrecord", vec![])?;
+            }
             return Ok(());
         }
         // Back on the row the cursor is on. A page that serves its rows from triggers steps back
@@ -597,6 +604,17 @@ impl Session {
         let Some(at) = window.iter().position(|w| Self::same_key(&w.key, &key)) else {
             return Ok(None);
         };
+        // After a refresh that read the view to its end, Next on the last row answers false without asking the page (pages/lt-f3-pages/
+        // F3ListTests.al:72 Nav_ActionChangesViewThenUpdate `after_walk` is empty). Not pinned after an open, which stays a real
+        // OnNextRecord call.
+        if how == PageMethod::Next
+            && at + 1 == window.len()
+            && st.borrow().window_eof
+            && window.len() < Self::WINDOW
+            && !self.declares(st, "onaftergetcurrrecord")
+        {
+            return Ok(Some(false));
+        }
         let target = match how {
             PageMethod::First => 0,
             PageMethod::Last => window.len() - 1,
@@ -681,10 +699,9 @@ impl Session {
         rec.borrow_mut().fields = stored;
         // A list with OnAfterGetRecord alone reads nothing when the cursor moves onto a row the client holds (pages/lt-testpage-list-rows/
         // ListRowsOpenAG.al:OpenView_OnlyRec5Rows_ReadsAtOpen `after-next-total = 0`).
-        if !self.declares(st, "onaftergetcurrrecord")
-            && !self.declares(st, "onfindrecord")
-            && !self.declares(st, "onnextrecord")
-        {
+        // The same holds with OnFindRecord and OnNextRecord declared: pages/lt-f3-pages/F3ListTests.al:24
+        // Nav_TwelveRows_OpenLastPreviousFirstNext (`after_last`, `after_previous3`, `after_first`, `after_next2` all empty).
+        if !self.declares(st, "onaftergetcurrrecord") && self.declares(st, "onaftergetrecord") {
             let shown = st.borrow().window[target].shown.clone();
             rec.borrow_mut().fields = shown;
             self.set_xrec(st);

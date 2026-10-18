@@ -1152,7 +1152,8 @@ impl Session {
                 "Report {} does not have a valid layout. Valid layout types are: Word, RDLC, Excel, and Custom.",
                 self.object_id_of(schema.object as u32)
             ),
-            code: "Dialog".into(),
+            // The code is ReportNoLayout (pages/lt-obsolete-layout-parts/P117NoLayout.al:57, misc/lt-probes-needed-8/PnH6SaveAs.al:254, :389).
+            code: "ReportNoLayout".into(),
             call_stack: String::new(),
             ..Default::default()
         }))

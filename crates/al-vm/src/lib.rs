@@ -40,6 +40,7 @@ mod geturl;
 mod globaltriggers;
 mod hostvalues;
 mod http;
+pub mod impact;
 mod interfaces;
 mod pages;
 mod partial;
@@ -634,6 +635,8 @@ impl Session {
                 code_coverage: false,
                 coverage_counts: None,
                 recorder: Default::default(),
+                impact: Default::default(),
+                impact_on: false,
             },
             report: ReportState {
                 rebind_after_run: false,

@@ -127,6 +127,7 @@ pub fn decode(bytes: &[u8]) -> Option<(BaselineRun, i64)> {
             ran,
             total,
             restored,
+            trace: None,
         },
         started_at,
     ))
@@ -199,6 +200,7 @@ mod tests {
             ran: 17,
             total: 18,
             restored: Vec::new(),
+            trace: None,
         }
     }
 

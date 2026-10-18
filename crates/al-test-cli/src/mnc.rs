@@ -197,16 +197,17 @@ pub fn run_case(case: &Case, bc_major: u16) -> Outcome {
     out.got = got.clone();
     let mut want = case.expect.clone();
     want.sort();
-    // A code we cannot decide makes the whole case "not checked", even when another code of it
-    // is found: the verdict is about all of the expected diagnostics.
-    for (code, _) in &want {
-        if let Some(why) = alcodes::not_checked_reason(code) {
-            out.verdict = Verdict::NotChecked(format!("{code}: {why}"));
-            return out;
-        }
-    }
     let codes = |v: &[(String, String)]| v.iter().map(|(c, _)| c.clone()).collect::<Vec<_>>();
     if codes(&got) != codes(&want) {
+        // A code we cannot decide in general (AL0175 is reported only for Char - Text) makes the case "not
+        // checked" when it was not found, even when another code of it is found: the verdict is about all of
+        // the expected diagnostics.
+        for (code, _) in &want {
+            if let Some(why) = alcodes::not_checked_reason(code) {
+                out.verdict = Verdict::NotChecked(format!("{code}: {why}"));
+                return out;
+            }
+        }
         let list = |v: &[(String, String)]| v.iter().map(|(c, _)| c.as_str()).collect::<Vec<_>>().join(", ");
         out.verdict = Verdict::Mismatch(format!("expected [{}], got [{}]", list(&want), list(&got)));
         return out;

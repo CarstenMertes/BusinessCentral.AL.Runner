@@ -78,6 +78,7 @@ impl Session {
         let origins = std::mem::take(&mut self.events.var_origins);
         let engine = self.engine.clone();
         let p = &engine.events.publishers[&(object, routine)];
+        self.note_event(p.object, &p.event, None);
         let r = &engine.program.objects[object].routines[routine];
         let mut values = Vec::with_capacity(r.params);
         for (i, a) in args.into_iter().enumerate().take(r.params) {

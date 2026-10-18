@@ -138,6 +138,58 @@ impl Shared {
     }
 }
 
+/// The default probe folder (ADR-014 section 3, step 2): the service-tier folder of the platform
+/// artifact in `sandbox` (`~/.bcartifacts.cache/sandbox`) for the BC `major` in use.
+/// `build` (the chosen build, when known) is tried first; else the newest build of that major.
+/// The folder is `<build>/platform/ServiceTier/PFiles64/Microsoft Dynamics NAV/<NNN>/Service`,
+/// where `<NNN>` is derived from what is on disk (270, 280, 290), never fixed. `None` when the
+/// artifact is not extracted locally. Only the top level is searched, as BC does.
+pub fn default_probe_dir(sandbox: &Path, build: Option<&str>, major: u32) -> Option<PathBuf> {
+    let service_of = |build_dir: &Path| -> Option<PathBuf> {
+        let nav = build_dir.join("platform/ServiceTier/PFiles64/Microsoft Dynamics NAV");
+        let mut found: Vec<(u32, PathBuf)> = std::fs::read_dir(nav)
+            .ok()?
+            .filter_map(|e| e.ok())
+            .filter_map(|e| {
+                let n: u32 = e.file_name().to_string_lossy().parse().ok()?;
+                let svc = e.path().join("Service");
+                svc.is_dir().then_some((n, svc))
+            })
+            .collect();
+        found.sort();
+        found.pop().map(|(_, p)| p)
+    };
+    if let Some(dir) = build
+        .filter(|b| !b.contains(['/', '\\']))
+        .and_then(|b| service_of(&sandbox.join(b)))
+    {
+        return Some(dir);
+    }
+    let mut builds: Vec<(Vec<u64>, PathBuf)> = std::fs::read_dir(sandbox)
+        .ok()?
+        .filter_map(|e| e.ok())
+        .filter_map(|e| {
+            let name = e.file_name().to_string_lossy().into_owned();
+            let parts: Vec<u64> = name.split('.').map(|p| p.parse().ok()).collect::<Option<_>>()?;
+            (parts.first().copied() == Some(u64::from(major))).then_some((parts, e.path()))
+        })
+        .collect();
+    builds.sort();
+    builds.iter().rev().find_map(|(_, p)| service_of(p))
+}
+
+/// The probe folders of a run: the user's `--dotnet-assembly-dir` folders first, then the default
+/// service-tier folder (see [`default_probe_dir`]) unless it is already listed.
+pub fn probe_dirs(user: &[PathBuf], sandbox: Option<&Path>, build: Option<&str>, major: u32) -> Vec<PathBuf> {
+    let mut dirs = user.to_vec();
+    if let Some(d) = sandbox.and_then(|s| default_probe_dir(s, build, major)) {
+        if !dirs.contains(&d) {
+            dirs.push(d);
+        }
+    }
+    dirs
+}
+
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
 }
@@ -1134,6 +1186,51 @@ pub fn unbase64(text: &str) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn fake_artifact(root: &Path, build: &str, nav: &str) -> PathBuf {
+        let svc = root
+            .join(build)
+            .join("platform/ServiceTier/PFiles64/Microsoft Dynamics NAV")
+            .join(nav)
+            .join("Service");
+        std::fs::create_dir_all(&svc).unwrap();
+        svc
+    }
+
+    #[test]
+    fn probe_dirs_put_the_default_after_the_users_folders() {
+        let t = tempfile::tempdir().unwrap();
+        let svc = fake_artifact(t.path(), "27.5.1.1", "270");
+        let mine = PathBuf::from("/my/dlls");
+        assert_eq!(
+            probe_dirs(std::slice::from_ref(&mine), Some(t.path()), Some("27.5.1.1"), 27),
+            vec![mine.clone(), svc.clone()]
+        );
+        assert_eq!(
+            probe_dirs(std::slice::from_ref(&svc), Some(t.path()), None, 27),
+            vec![svc]
+        );
+        assert_eq!(probe_dirs(std::slice::from_ref(&mine), None, None, 27), vec![mine]);
+    }
+
+    #[test]
+    fn default_probe_dir_derives_the_service_folder_from_the_major() {
+        let t = tempfile::tempdir().unwrap();
+        let s27 = fake_artifact(t.path(), "27.5.46862.48827", "270");
+        let s28 = fake_artifact(t.path(), "28.1.49838.50621", "280");
+        let _old = fake_artifact(t.path(), "28.0.1.1", "280");
+        assert_eq!(default_probe_dir(t.path(), None, 27), Some(s27.clone()));
+        // The newest build of the major wins when no build is named.
+        assert_eq!(default_probe_dir(t.path(), None, 28), Some(s28));
+        // A named build wins over the newest one.
+        let old = t
+            .path()
+            .join("28.0.1.1/platform/ServiceTier/PFiles64/Microsoft Dynamics NAV/280/Service");
+        assert_eq!(default_probe_dir(t.path(), Some("28.0.1.1"), 28), Some(old));
+        assert_eq!(default_probe_dir(t.path(), None, 29), None);
+        assert_eq!(default_probe_dir(&t.path().join("none"), None, 27), None);
+        assert_eq!(default_probe_dir(t.path(), Some("../x"), 27), Some(s27));
+    }
 
     fn sidecar_dir() -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tools/dotnet-sidecar")

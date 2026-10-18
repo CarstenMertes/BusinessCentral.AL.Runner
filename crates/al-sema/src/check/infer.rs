@@ -117,6 +117,30 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// AL0175 for the two shapes must-not-compile 0500 pins (corpus tests/must-not-compile/cases/
+    /// 0500-char-minus-text.al:1-2): `Char - Text` and `Text - Char`, both operands variables, the Text one
+    /// unbounded. A text literal with a Char compiles (an Integer), and Text[N], Code and other operands are
+    /// not pinned, so they are not judged. Reported for the workspace only.
+    fn al_char_minus_text(&mut self, sc: &Scope, node: &SyntaxNode, kids: &[SyntaxNode], l: &Ty, r: &Ty) {
+        if op_token(node) != "-" || self.ws.is_dependency(sc.oi) || kids.len() != 2 {
+            return;
+        }
+        if !kids.iter().all(|k| k.kind() == SyntaxKind::NameRef) {
+            return;
+        }
+        let (a, b) = match (l, r) {
+            (Ty::Char, Ty::Text(None)) => ("Char", "Text"),
+            (Ty::Text(None), Ty::Char) => ("Text", "Char"),
+            _ => return,
+        };
+        self.diag(
+            sc,
+            node,
+            "AL0175",
+            format!("Operator '-' cannot be applied to operands of type '{a}' and '{b}'"),
+        );
+    }
+
     /// Infers `node` as a value, calling a parameterless callable.
     pub(crate) fn ty(&mut self, sc: &mut Scope, node: &SyntaxNode) -> Ty {
         let e = self.infer(sc, node);
@@ -351,6 +375,7 @@ impl<'a> Checker<'a> {
             BinExpr => {
                 let l = kids.first().map(|k| self.ty(sc, k)).unwrap_or(Ty::Unknown);
                 let r = kids.get(1).map(|k| self.ty(sc, k)).unwrap_or(Ty::Unknown);
+                self.al_char_minus_text(sc, node, kids.as_slice(), &l, &r);
                 E::Val(binary_ty(&op_token(node), &l, &r))
             }
             TernaryExpr => {

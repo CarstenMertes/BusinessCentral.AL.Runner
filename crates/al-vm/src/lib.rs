@@ -296,6 +296,15 @@ fn plain_default(t: &RtType) -> bool {
     )
 }
 
+/// The session's encryption key.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum EncryptionKey {
+    Present,
+    Deleted,
+    /// Created after a delete; whether `EncryptionEnabled` answers Yes again is not pinned.
+    Recreated,
+}
+
 pub struct Session {
     pub engine: Arc<Engine>,
     pub last_error: AlError,
@@ -406,6 +415,9 @@ pub struct Session {
     pub(crate) waited_ms: i64,
     /// Text this session encrypted: ciphertext to plain text (`Encrypt`, `Decrypt`).
     pub(crate) encrypted: std::collections::HashMap<String, String>,
+    /// Where the session's encryption key stands: a key exists at the start (misc: session/lt-encryption-key-delete/EncryptionKeyDelete.al
+    /// State_AtStart), `DeleteEncryptionKey` removes it and `CreateEncryptionKey` makes a new one.
+    pub(crate) encryption_key: EncryptionKey,
     /// Temporary files created so far (`File.CreateTempFile` names them in order).
     pub(crate) temp_files: u32,
     /// ADR-040: the files a report on the allow-list was saved to in a rendered format, and for which nothing was
@@ -509,6 +521,7 @@ impl Session {
             host,
             waited_ms: 0,
             encrypted: Default::default(),
+            encryption_key: EncryptionKey::Present,
             temp_files: 0,
             render_pending_files: std::collections::HashMap::new(),
             last_stamp: i64::MIN / 2,

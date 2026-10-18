@@ -252,7 +252,9 @@ impl Engine {
             .iter()
             .enumerate()
             .filter(|(_, o)| {
-                o.kind == ir::ObjKind::Table && o.id.is_some_and(|id| al_builtins::platform::UNSEEDED_ROWS.contains(&id))
+                o.kind == ir::ObjKind::Table
+                    && o.id
+                        .is_some_and(|id| al_builtins::platform::UNSEEDED_ROWS.contains(&id))
             })
             .map(|(i, _)| i)
             .collect();

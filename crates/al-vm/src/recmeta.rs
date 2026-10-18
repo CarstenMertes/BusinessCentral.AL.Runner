@@ -1220,12 +1220,10 @@ impl Session {
             }
             // As for Get (records.rs `fail`): a miss on a table whose seeded rows could not be
             // created is not BC's answer (ADR-013 decision 5).
-            None if self.is_unseeded(t.object) && !rec.borrow().temporary => {
-                unsupported(format!(
-                    "{} row not found by GetBySystemId: the rows a dependency app's install and Company-Initialize create could not be created (ADR-013 decision 5)",
-                    t.name
-                ))
-            }
+            None if self.is_unseeded(t.object) && !rec.borrow().temporary => unsupported(format!(
+                "{} row not found by GetBySystemId: the rows a dependency app's install and Company-Initialize create could not be created (ADR-013 decision 5)",
+                t.name
+            )),
             None if self.ret_used => Ok(Value::Boolean(false)),
             // "The PX Row does not exist. Identification fields and values: {x}" / DB:RecordNotFound
             // (PXEnumRecordRef.al:264-267; the probe masks what stands between the braces, here

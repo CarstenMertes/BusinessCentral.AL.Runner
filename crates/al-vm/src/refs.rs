@@ -680,7 +680,11 @@ impl Session {
                         None => return Err(Signal::Error(Box::new(al_builtins::native::unpinned_error()))),
                     }
                 }
-                self.flow_op(RecordOp::SetAutoCalcFields, &rec, &positions.iter().map(|&p| Value::Integer(p as i32)).collect::<Vec<_>>())
+                self.flow_op(
+                    RecordOp::SetAutoCalcFields,
+                    &rec,
+                    &positions.iter().map(|&p| Value::Integer(p as i32)).collect::<Vec<_>>(),
+                )
             }
             // Doc (RecordRef.Duplicate): a new ref with the same table, buffer and filters, independent of the original.
             "RecordId" => Ok(self.record_id(&rec, &t)),

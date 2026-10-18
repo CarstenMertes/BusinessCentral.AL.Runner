@@ -34,12 +34,16 @@ pub enum Pin {
     /// AL Runner v2, as `file:line`, until a probe on real BC pins the value (owner decision
     /// 2026-10-14, ADR-014). Replaced by a `Probe` when the probe batch reports.
     AlRunner(String),
+    /// A test of Microsoft's own apps that passes on real BC and needs exactly this behavior (hard rule 3,
+    /// exception of 2026-10-15), as `file:line`. The member is also registered as an assumption in
+    /// `al_builtins::assumptions`, and a probe row waits in `docs/probes-needed.md`.
+    Microsoft(String),
 }
 
 impl Pin {
     fn is_empty(&self) -> bool {
         match self {
-            Pin::Corpus(s) | Pin::Probe(s) | Pin::AlRunner(s) => s.trim().is_empty(),
+            Pin::Corpus(s) | Pin::Probe(s) | Pin::AlRunner(s) | Pin::Microsoft(s) => s.trim().is_empty(),
         }
     }
 }

@@ -385,6 +385,12 @@ ADR-044 is the proposal for Bitmap itself). 64 tests: 52 pass, 7 fail, 5 not run
 5. `Vendor Item No. already exists` (`Inventory` transactional), `Status must not be Certified` (`Manufacturing`) and
    `Opportunity Entry already exists` (`CRM`): may follow from the earlier failures in the same codeunit; unverified.
 
+After ADR-044 option 3 (2026-10-18, branch bitmap-noop): the `System.Drawing.Bitmap` refusal is gone. `MakePicture` runs, the
+picture is not drawn, and a read of it is refused. The same spike (64 tests, BC 27.5) gives 52 passed (5 flagged by the
+assumption `bitmap-picture-not-drawn`), 7 failed, 5 not run, the numbers of the scratch run above. The first refusals now are
+`platform table 'License Permission' (2000000043) has no provider` and `DotNet new System.Net.Mail.MailAddress`, then the
+`NavApp.GetResource` of the Contoso app.
+
 More refusals may sit behind the first one. Each is a runtime task (a corpus pin is needed first for DWY2Date; the two
 DotNet types need an owner decision on the policy or a native replacement). The two lanes stay refused with the first
 reason in their line. The company-setup roots in `baseline.rs` were not added: they would run a refused step on every run.

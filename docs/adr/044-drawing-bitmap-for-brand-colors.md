@@ -1,6 +1,6 @@
 # ADR-044: `System.Drawing.Bitmap` for Microsoft's brand colors
 
-- Status: Proposed
+- Status: Accepted (owner, 2026-10-18, option 3)
 - Date: 2026-10-18
 - Related: ADR-027 (scope, row 14), ADR-014 (policy, section 8), ADR-024, ADR-039, ADR-040 (same pattern), ADR-009
 
@@ -68,7 +68,33 @@ if the owner wants pictures that can be exported.
 
 ## Decision
 
-Pending. Not decided by the implementation agent: it changes the DotNet policy (policy.txt:61) and ADR-027 row 14.
+Option 3, accepted by the owner on 2026-10-18.
+
+### Owner decision (2026-10-18): option 3
+
+Accept the eight `System.Drawing` members `MakePicture` uses. They draw nothing. The picture the stream and the
+Media field hold has a value. Any read of the picture content is refused.
+
+What the implementation does (`crates/al-vm/src/dotnet/drawing.rs`, tests in `crates/al-vm/tests/host/bitmap.rs`):
+
+- Served by the registry (ADR-014 section 1), so a run needs no .NET host: `new Bitmap(Integer, Integer)` (both positive),
+  `Graphics.FromImage(Bitmap)`, `ColorTranslator.FromHtml('#RRGGBB')`, `new SolidBrush(Color)`,
+  `Graphics.FillEllipse(SolidBrush, Integer x4)`, `Graphics.Dispose()`, `Bitmap.Save(InStream, ImageFormat.Png)`,
+  `Bitmap.Dispose()`, and the static `ImageFormat.Png`.
+- Every other member of these types is refused ("a member the runtime does not implement"). So is every other argument
+  kind: a name or short form for `FromHtml`, a size of zero, `Save` to an OutStream or with another format.
+  `policy.txt:61` (`deny-type System.Drawing.`) stays, so every other `System.Drawing` type is still refused.
+- `Save` sets the ADR-040 mark (`BlobBuf::render_pending`) on the buffer its InStream reads. Stream reads, `Length`,
+  `HasValue` of that Blob and every other ADR-040 observation path are refused with
+  `picture drawn by System.Drawing.Bitmap is not produced`.
+- `Media.ImportStream` of such a stream does not read it. It stores a media object with no bytes and the same mark. The
+  field then has a value (`HasValue` true). `Media.ExportStream` and the `Tenant Media` row of that media (content, size,
+  MIME type) are refused with the same text. `MediaId` is only a Guid and is not refused.
+- Assumption `bitmap-picture-not-drawn` (hard rule 3 exception of 2026-10-15), marked on `new Bitmap` and on `Save`. Its
+  evidence is Microsoft's O365BrandColorTests.Codeunit.al:74 and :158. The probes of the section above are its row in
+  `docs/probes-needed.md`. When they land, the probe wins.
+- ADR-027 row 14 ("v3 will not substitute an imaging library") still holds: no imaging library is added and no pixel is
+  drawn.
 
 ## Consequences
 
@@ -77,4 +103,4 @@ picture bytes is refused with a reason naming the media field.
 
 ## Conformance
 
-None yet. Option 3 adds a unit test per accepted member and a test that an export of the placeholder is refused.
+`crates/al-vm/tests/host/bitmap.rs`: MakePicture runs and the Media has a value (also after Insert and Get), a stream read, `Length` and `ExportStream` are refused, members and argument kinds outside the eight are refused. `the_declared_result_types_match_the_registry` keeps `dotnet_sigs.rs` in step with the registry.

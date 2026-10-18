@@ -1923,9 +1923,7 @@ fn enum_from_integer(ctx: &mut dyn Ctx, r: Option<&mut Value>, args: &mut [Value
         // A fraction or a text that is not a whole number is not pinned.
         Some(Value::Enum(_, o)) => Some(*o),
         Some(Value::Decimal(d)) if d.fract().is_zero() => i32::try_from(d.trunc()).ok(),
-        Some(Value::Text(t))
-            if !t.is_empty() && t.trim_start_matches('-').chars().all(|c| c.is_ascii_digit()) =>
-        {
+        Some(Value::Text(t)) if !t.is_empty() && t.trim_start_matches('-').chars().all(|c| c.is_ascii_digit()) => {
             t.parse::<i32>().ok()
         }
         _ => int_arg(args, 0).and_then(|n| i32::try_from(n).ok()),

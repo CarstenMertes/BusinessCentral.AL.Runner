@@ -922,9 +922,16 @@ fn in_read(c: &mut dyn Ctx, mut r: Option<&mut Value>, a: &mut [Value]) -> NResu
     Ok(Value::Integer(width as i32))
 }
 
+/// `write_pos` of a buffer that `BigText.Write` filled: where the stream stands afterwards is not pinned, so any further
+/// write through an OutStream on it is refused until `CreateOutStream` sets the position to 0 again.
+const BIGTEXT_SEALED: usize = usize::MAX;
+
 fn out_buf(r: Option<&mut Value>) -> Result<(BlobRef, Encoding), Signal> {
     match r {
         Some(Value::Library(_, h)) => match &*h.borrow() {
+            LibraryValue::OutStream(b, _) if b.borrow().write_pos == BIGTEXT_SEALED => {
+                unsupported("a write after BigText.Write on the same stream (position not pinned)")
+            }
             LibraryValue::OutStream(b, e) => Ok((b.clone(), *e)),
             _ => unsupported("use of an OutStream that was never created"),
         },
@@ -949,6 +956,23 @@ pub(crate) fn write_serialised_text(stream: &mut Value, text: &str) -> Result<()
     }
     write_bytes(&b, text.as_bytes());
     b.borrow_mut().write_pos = 0;
+    Ok(())
+}
+
+/// `BigText.Write(OutStream)`: the text as one byte per character into a stream nothing was written to
+/// (corpus streams/StTBigText.al:WriteToStreamAndRead, :WriteReadLargeText; the blob holds 16 bytes for 16 characters and
+/// 100000 for 100000). Only ASCII text is pinned: the probe's three non-ASCII characters (WriteNonAscii) give 3 bytes, which
+/// no encoding explains. A stream that was written to is not pinned either, nor where the stream stands afterwards.
+pub(crate) fn write_bigtext(stream: &mut Value, text: &str) -> Result<(), Signal> {
+    if !text.is_ascii() {
+        return unsupported("BigText.Write of text beyond ASCII (the bytes written are not pinned)");
+    }
+    let (b, _) = out_buf(Some(stream))?;
+    if b.borrow().write_pos != 0 {
+        return unsupported("BigText.Write to a stream that was written to (not pinned)");
+    }
+    write_bytes(&b, text.as_bytes());
+    b.borrow_mut().write_pos = BIGTEXT_SEALED;
     Ok(())
 }
 

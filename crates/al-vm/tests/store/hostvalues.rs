@@ -105,7 +105,36 @@ fn sleep_moves_the_clock_by_the_time_waited() {
     assert_eq!(
         text(
             "A: DateTime; B: DateTime;",
-            "A := CurrentDateTime(); Sleep(200); B := CurrentDateTime(); exit(Format(B - A = 200));"
+            "A := CurrentDateTime(); Sleep(200); B := CurrentDateTime(); exit(Format(B - A = 201));"
+        ),
+        "Yes"
+    );
+}
+
+#[test]
+fn every_read_of_the_clock_is_one_millisecond_later_than_the_last() {
+    // ADR-045: a read moves the clock on by one step. W5SessionFacts.al:37-40 and
+    // TestProbeSessionMiscContracts.al:784-786 only rely on "later".
+    assert_eq!(
+        text(
+            "A: DateTime; B: DateTime;",
+            "A := CurrentDateTime(); B := CurrentDateTime(); exit(Format(B - A = 1));"
+        ),
+        "Yes"
+    );
+    // Time() and CurrentDateTime() read the same clock: the read in between counts.
+    assert_eq!(
+        text(
+            "A: DateTime; T: Time; B: DateTime;",
+            "A := CurrentDateTime(); T := Time(); B := CurrentDateTime(); exit(Format(B - A = 2));"
+        ),
+        "Yes"
+    );
+    // Sleep(0) moves nothing; the reads around it are one step apart.
+    assert_eq!(
+        text(
+            "A: DateTime; B: DateTime;",
+            "A := CurrentDateTime(); Sleep(0); B := CurrentDateTime(); exit(Format(B - A = 1));"
         ),
         "Yes"
     );
@@ -356,7 +385,7 @@ fn sleep_of_zero_is_allowed_and_a_negative_wait_is_refused() {
     assert_eq!(
         text(
             "A: DateTime;",
-            "A := CurrentDateTime(); Sleep(0); exit(Format(CurrentDateTime() = A));"
+            "A := CurrentDateTime(); Sleep(0); exit(Format(CurrentDateTime() - A = 1));"
         ),
         "Yes"
     );

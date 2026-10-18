@@ -900,7 +900,7 @@ AL Runner v2. Decision 9 above is unchanged except for the `SessionId()` row, wh
    AL Runner moved to positive ids for the same reason (`EnvironmentPatches.cs`,
    `SessionPatches.cs`, its changelog entry for 5144). The Session table row (`Connection ID`)
    follows `SessionId()` when the table exists.
-2. **The clock is a capability, frozen by default.** `al-host` has a `Clock` trait. The
+2. **The clock is a capability, frozen by default** (amended by ADR-045: each read now moves it on by 1 ms). `al-host` has a `Clock` trait. The
    deterministic host (`Session::new`, all unit tests) answers 2024-01-15T12:00:00Z every time;
    the command line injects the system clock. AL Runner always uses the real clock. Options:
    real clock everywhere (matches AL Runner, makes library tests flaky near midnight); frozen

@@ -102,7 +102,7 @@ pub fn company_refusal(lane: Lane) -> Option<String> {
     match lane {
         Lane::Legacy | Lane::UnitTest => None,
         Lane::Integration | Lane::Uncategorized => Some(format!(
-            "the {} company is built by Microsoft's Contoso Demo Tool ({}); the runner cannot run it yet (the first module stops at DotNet System.Drawing.Bitmap in O365 Brand Color; see docs/alrunner-buckets.md), so these tests are not run rather than run against a different company",
+            "the {} company is built by Microsoft's Contoso Demo Tool ({}); the runner cannot run it yet (the Contoso steps stop at later refusals; see docs/alrunner-buckets.md), so these tests are not run rather than run against a different company",
             lane.test_type(),
             if lane == Lane::Integration {
                 "setup data"

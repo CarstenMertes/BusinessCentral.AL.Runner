@@ -249,6 +249,8 @@ pub struct DependencyApp {
     /// The `preprocessorSymbols` of the app's own `app.json` (none for a compiled package). The
     /// app's sources are preprocessed with these and not with the project's.
     pub preprocessor_symbols: Vec<String>,
+    /// The packaged resources (`resources/` of a compiled package): name relative to the folder, content.
+    pub resources: Resources,
 }
 
 #[derive(Debug, Default)]
@@ -427,6 +429,18 @@ pub fn plan_dependencies(req: &Request<'_>, scans: &mut ScanCache) -> Result<Pla
     })
 }
 
+/// Packaged resources: name relative to the resource folder, content.
+pub type Resources = Vec<(String, Vec<u8>)>;
+
+/// The packaged resources of the package at `path`. A folder has none; a package file is read a second time here.
+fn read_resources_at(path: &Path, hint: Option<&str>) -> Result<Resources, String> {
+    if !path.is_file() {
+        return Ok(Vec::new());
+    }
+    let bytes = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    crate::package::read_resources(&bytes, &vars_for(path, hint)).map_err(|e| format!("{}: {e}", path.display()))
+}
+
 /// Reads the sources of the packages a plan chose, side by side.
 pub fn read_planned(planned: Planned, req: &Request<'_>) -> Result<Loaded, String> {
     use rayon::prelude::*;
@@ -459,6 +473,11 @@ pub fn read_planned(planned: Planned, req: &Request<'_>) -> Result<Loaded, Strin
             read_package_at_with(path, req.source_build).map(|(m, s)| Read::Eager(Box::new(m), s))
         })
         .collect();
+    // The resources of the same packages (`NavApp.GetResource` of a dependency app reads its own).
+    let mut resources: std::collections::VecDeque<Result<Resources, String>> = to_read
+        .par_iter()
+        .map(|path| read_resources_at(path, req.source_build))
+        .collect();
     let mut loaded = Loaded {
         application_aggregate,
         ..Default::default()
@@ -487,6 +506,7 @@ pub fn read_planned(planned: Planned, req: &Request<'_>) -> Result<Loaded, Strin
                 Read::Eager(m, s) => (*m, Some(s), None),
                 Read::Lazy(l) => (l.manifest.clone(), None, Some(*l)),
             };
+        let app_resources = resources.pop_front().expect("one read per package")?;
         let role = if manifest.id.eq_ignore_ascii_case(SYSTEM_APP_ID) {
             Role::Platform
         } else {
@@ -524,6 +544,7 @@ pub fn read_planned(planned: Planned, req: &Request<'_>) -> Result<Loaded, Strin
             role,
             lazy: lazy.map(|l| l.source),
             preprocessor_symbols: manifest.preprocessor_symbols.clone(),
+            resources: app_resources,
         });
     }
     loaded.notes = notes;

@@ -410,6 +410,7 @@ fn al_runner(what: &str) -> Pin {
 pub fn types() -> Vec<RegistryType> {
     let mut all = super::compression::types();
     all.extend(super::last_error::types());
+    all.extend(super::drawing::types());
     all.extend(own_types());
     all
 }

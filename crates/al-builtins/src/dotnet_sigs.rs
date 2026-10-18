@@ -58,6 +58,14 @@ pub const NULL_EXCEPTION: &str = "<no last error>";
 /// that name would take their members.
 pub const RUNTIME_TYPE: &str = "<Type of a last-error exception>";
 
+/// The `System.Drawing` types `O365 Brand Color`.MakePicture uses (ADR-044).
+pub const BITMAP: &str = "System.Drawing.Bitmap";
+pub const GRAPHICS: &str = "System.Drawing.Graphics";
+pub const COLOR_TRANSLATOR: &str = "System.Drawing.ColorTranslator";
+pub const COLOR: &str = "System.Drawing.Color";
+pub const SOLID_BRUSH: &str = "System.Drawing.SolidBrush";
+pub const IMAGE_FORMAT: &str = "System.Drawing.Imaging.ImageFormat";
+
 pub const GZIP_STREAM: &str = "System.IO.Compression.GZipStream";
 /// `System.IO.Compression.CompressionMode`.
 pub const COMPRESSION_MODE: &str = "System.IO.Compression.CompressionMode";
@@ -155,6 +163,15 @@ pub const SIGS: &[(&str, &str, Ret)] = &[
     (GZIP_STREAM, "Dispose", Ret::Void),
     (COMPRESSION_MODE, "Compress", Ret::Object),
     (COMPRESSION_MODE, "Decompress", Ret::Object),
+    (BITMAP, "Bitmap", Ret::Object),
+    (BITMAP, "Save", Ret::Void),
+    (BITMAP, "Dispose", Ret::Void),
+    (GRAPHICS, "FromImage", Ret::Object),
+    (GRAPHICS, "FillEllipse", Ret::Void),
+    (GRAPHICS, "Dispose", Ret::Void),
+    (COLOR_TRANSLATOR, "FromHtml", Ret::Object),
+    (SOLID_BRUSH, "SolidBrush", Ret::Object),
+    (IMAGE_FORMAT, "Png", Ret::Object),
 ];
 
 /// The declared result of `member` on `clr_type`, if the runtime provides that member.

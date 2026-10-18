@@ -301,3 +301,20 @@ Tests-SMB: 3.4 GB peak, 8 s) and read the `parse:` lines; a normal run prints th
 - **Tests-Cost Accounting 17.6 s -> 1.5 s** (run phase 17.1 s -> 0.8 s). One test (`GLTransferWithAmountZero`, refused after its setup) took 17 s alone: every step of a loop over a table (`FindSet`/`Next`) looked at all rows of the table, and each comparison of two integers went through a `Decimal`. `MemStore::next` now steps through the table in primary key order, integer, decimal and text keys compare directly, and the other keys compare without building the key of each row. A walk over 30,000 rows in primary key order: seconds, where it took minutes (`cargo test --release -p al-data -- --ignored`: two walks 442 s -> 49 s, the rest being the secondary key walk, which is still one pass over the table per step).
 - **Tests-SCM-Service stays at about 105 s**, of which 102 to 112 s are codeunit 136106 `Service Response Time`: five tests stopped by the 20 s per-test CPU limit (`ResponseTimeInSameWorkingDay`, `ResponseTimeSameWorkingDayFull`, `ResponseTimeTwoSimulWorkingDay`, `ResponseTimeWorkingNonWorking`, `ResponseTimeValidOnHolidays`). `Library - Service.GetFirstWorkingDay` loops over days until a day has a Service Hour row; the restored CRONUS company has none, so the loop runs to the year 9999 (about 2.7 million days). Real BC does the same on this database and would need hours. Not a runtime loop bug: missing demo data. The rest of the bucket takes 3 s.
 - Tests-Workflow printed no `Tests:` or `Time:` line to a `grep -I` / ugrep (the shell function in the agent shells) because one failure text holds a NUL (`Expected:<asdf\0>`), which made the whole output a binary file to those tools. Not a crash or an out-of-memory kill: ten reruns finished with exit 1 and all lines. A control character in a failure text is shown as `\x00` now.
+
+## Package mode (`--company-data package`) measured
+
+Tests-ERM (BC 27.5.46862.48827), same binary, backup company against package company:
+
+| Company | Rows read | Reader refusals | Passed | Failed | Not run |
+|---|---|---|---|---|---|
+| backup | 38904 in 283 tables | 0 | 6980 | 124 | 2229 |
+| package, before | 12627 in 300 tables | 2 (`To-do.Duration`, `Send Reminders Setup.MinimumTimeBetweenSending`: XML durations such as `P1DT0H0M0.0S` were read as whole numbers) | 6974 | 161 | 2198 |
+| package, after | 12687 in 302 tables | 0 | 6974 | 161 | 2198 |
+
+The package has fewer rows than the backup (it is the DemoTool's Extended data, not the sandbox company), so some tests
+that pass on the backup fail on it and the other way round; that is the Legacy lane's data, which is what Microsoft's
+Legacy buckets run on. The two tables the reader used to refuse are now read, and no test of this bucket touches them,
+so the counts did not change. The largest package-only failure is `The Country/Region does not exist ... Code=''` (40
+tests, first: ERM Report Amount in FCY, `AmountInFCYOnDocumentEntriesReport`); it is a lead for the next round, not
+explained yet.

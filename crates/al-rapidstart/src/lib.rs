@@ -444,6 +444,51 @@ fn date_formula_stored(text: &str) -> Option<String> {
     Some(out)
 }
 
+/// An XML duration (`P1DT2H3M4.5S`, `-PT0.25S`) in milliseconds. Years and months have no fixed length: `None`.
+fn parse_xml_duration(t: &str) -> Option<i64> {
+    let (neg, rest) = match t.strip_prefix('-') {
+        Some(r) => (true, r),
+        None => (false, t),
+    };
+    let rest = rest.strip_prefix('P')?;
+    let (date, time) = match rest.split_once('T') {
+        Some((d, t)) => (d, t),
+        None => (rest, ""),
+    };
+    if date.is_empty() && time.is_empty() {
+        return None;
+    }
+    // "<number><unit>" pieces; the unit letters allowed in each part.
+    fn pieces(s: &str, units: &str) -> Option<Vec<(f64, char)>> {
+        let mut out = Vec::new();
+        let mut num = String::new();
+        for c in s.chars() {
+            if c.is_ascii_digit() || c == '.' {
+                num.push(c);
+            } else if units.contains(c) && !num.is_empty() {
+                out.push((num.parse::<f64>().ok()?, c));
+                num.clear();
+            } else {
+                return None;
+            }
+        }
+        num.is_empty().then_some(out)
+    }
+    let mut ms = 0f64;
+    for (n, u) in pieces(date, "D")? {
+        ms += n * 86_400_000.0 * if u == 'D' { 1.0 } else { 0.0 };
+    }
+    for (n, u) in pieces(time, "HMS")? {
+        ms += n * match u {
+            'H' => 3_600_000.0,
+            'M' => 60_000.0,
+            _ => 1000.0,
+        };
+    }
+    let ms = ms.round() as i64;
+    Some(if neg { -ms } else { ms })
+}
+
 /// A package value as the cell the runtime rebuilds the field's value from. `Err`: why the value cannot be read.
 pub fn convert(kind: FieldKind, text: &str) -> Result<Cell, String> {
     let t = text.trim();
@@ -462,12 +507,17 @@ pub fn convert(kind: FieldKind, text: &str) -> Result<Cell, String> {
             "1" | "true" | "True" | "Yes" => Cell::Bool(true),
             _ => return bad("a Boolean"),
         },
-        FieldKind::Integer | FieldKind::BigInteger | FieldKind::Byte | FieldKind::Ordinal | FieldKind::Duration => {
-            match t.parse::<i64>() {
-                Ok(i) => Cell::Int(i),
-                Err(_) => return bad("a whole number"),
-            }
-        }
+        FieldKind::Duration => match t.parse::<i64>() {
+            Ok(i) => Cell::Int(i),
+            Err(_) => match parse_xml_duration(t) {
+                Some(ms) => Cell::Int(ms),
+                None => return bad("a duration (an XML duration such as P1DT0H0M0.0S)"),
+            },
+        },
+        FieldKind::Integer | FieldKind::BigInteger | FieldKind::Byte | FieldKind::Ordinal => match t.parse::<i64>() {
+            Ok(i) => Cell::Int(i),
+            Err(_) => return bad("a whole number"),
+        },
         FieldKind::Decimal => match parse_decimal(t) {
             Some(c) => c,
             None => return bad("a decimal"),
@@ -709,6 +759,16 @@ mod tests {
         );
         assert_eq!(convert(FieldKind::Boolean, "1"), Ok(Cell::Bool(true)));
         assert_eq!(convert(FieldKind::Ordinal, " 3 "), Ok(Cell::Int(3)));
+        // A Duration is written as an XML duration (the shipped package: To-do `Duration`, Send Reminders Setup
+        // `MinimumTimeBetweenSending`), and read as milliseconds.
+        assert_eq!(convert(FieldKind::Duration, "P0DT0H0M0.0S"), Ok(Cell::Int(0)));
+        assert_eq!(convert(FieldKind::Duration, "P1DT0H0M0.0S"), Ok(Cell::Int(86_400_000)));
+        assert_eq!(convert(FieldKind::Duration, "PT1H30M0.5S"), Ok(Cell::Int(5_400_500)));
+        assert_eq!(convert(FieldKind::Duration, "-PT0.25S"), Ok(Cell::Int(-250)));
+        assert_eq!(convert(FieldKind::Duration, "3600000"), Ok(Cell::Int(3_600_000)));
+        // A month or a year has no fixed length.
+        assert!(convert(FieldKind::Duration, "P1M").is_err());
+        assert!(convert(FieldKind::Duration, "PT1X").is_err());
         assert_eq!(convert(FieldKind::Date, "\n   "), Ok(Cell::Null));
         assert_eq!(convert(FieldKind::Code, "\n   "), Ok(Cell::Text(String::new())));
         assert_eq!(convert(FieldKind::Text, "a b"), Ok(Cell::Text("a b".into())));

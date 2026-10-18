@@ -2105,13 +2105,11 @@ impl Session {
                     && matches!(ty, RtType::Date)
                     && self.engine.events.is_subscribed(crate::events::FILTER_HELPER_TRIGGERS, "makedatefilter")
                 {
-                    if self.global_language != 1033 || args.len() > 2 {
-                        return Err(Signal::Unsupported(
-                            "SetFilter: MakeDateFilter subscribers on a Date text outside an English session or with placeholders (not pinned)".into(),
-                        ));
-                    }
-                    if let Some(fixed) = self.repair_date_filter_text(&text, &|t| parse(t).is_ok())? {
-                        parsed = parse(&fixed);
+                    // Outside the pinned shape (an English session, no placeholders) the event is not raised, as before.
+                    if self.global_language == 1033 && args.len() <= 2 {
+                        if let Some(fixed) = self.repair_date_filter_text(&text, &|t| parse(t).is_ok())? {
+                            parsed = parse(&fixed);
+                        }
                     }
                 }
                 let expr = match parsed {

@@ -930,6 +930,12 @@ impl Session {
                         });
                         never_equal = true;
                     }
+                    // A Guid field against a different Guid: the wanted value is braced from BC 28 and unbraced before, the current
+                    // value is braced on every version (record/lt-testfield-value-types/RecordTestFieldGroupB.al:Guid_Plain,
+                    // fieldref/lt-testfield-value-types/FieldRefTestFieldGroupB.al:Guid_Plain; `#if BC28PLUS`).
+                    (Value::Guid(_), Value::Guid(g)) if !from28 => {
+                        shown = Some(al_builtins::format::format_guid(g).trim_matches(['{', '}']).to_string());
+                    }
                     (_, Value::Byte(b)) if from28 && matches!(current, Value::Integer(_)) => {
                         if *b > 9 {
                             return unsupported("TestField against a Byte above 9 (the escaped form is not pinned)");

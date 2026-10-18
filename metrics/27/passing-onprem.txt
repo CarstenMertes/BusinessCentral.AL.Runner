@@ -57,6 +57,7 @@
 61243 SaveAsXml_RunsTheReportOnce_AndClosesTheRequestPage
 61243 TemporaryPath_EndsWithTheTempFolderAndABackslash
 61251 P109_LogAuditMessage_Overload1
+61257 O_SecretText_Unwrap
 61260 CodeCoverageRows_OfAnAppWithSource_HoldTheSourceLines
 61261 PlatformTable_Chart
 61261 PlatformTable_ObjectOptions
@@ -74,6 +75,9 @@
 61270 P110_IsPathTemporary
 61275 Erase_EmptyName_FullErrorText
 61275 IsPathTemporary_Paths
+61276 Exists_Folder_And_Blank_Names
+61289 PSuperUser_DisableLastSuper
+61289 PSuperUser_RemoveLastSuperAssignment
 61290 Database_SID_Shape
 61291 AzureAdGraph_Calls_WithoutDotNetVariables
 61292 SaveAsPdf_ReportWithoutLayoutFile

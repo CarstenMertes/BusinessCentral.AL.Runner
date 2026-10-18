@@ -94,6 +94,7 @@ mod tests {
     fn reads_the_pinned_corpus_app() {
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/tests/al-language");
         let v = read_app_versions(&dir).unwrap();
-        assert_eq!(v.runtime, Some(Runtime { major: 16, minor: 0 }), "ADR-015 2.0");
+        // Corpus bump 24: the corpus app targets the newest runtime (18.0); each oracle leg compiles it with its own (oracle.toml app_runtime).
+        assert_eq!(v.runtime, Some(Runtime { major: 18, minor: 0 }), "ADR-015 2.0");
     }
 }

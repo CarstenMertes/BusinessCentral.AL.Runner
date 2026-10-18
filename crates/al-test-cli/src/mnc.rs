@@ -179,12 +179,10 @@ pub fn run_case(case: &Case, bc_major: u16) -> Outcome {
     let ctx = AppContext {
         target: case.target,
         // The corpus apps' runtime on this leg (`oracle.toml` app_runtime): 16.1, 17.1, 18.0.
-        runtime: case
-            .appjson_runtime
-            .or_else(|| {
-                let r = al_version::Runtime::max_for_bc(bc_major);
-                Some((u32::from(r.major), u32::from(r.minor)))
-            }),
+        runtime: case.appjson_runtime.or_else(|| {
+            let r = al_version::Runtime::max_for_bc(bc_major);
+            Some((u32::from(r.major), u32::from(r.minor)))
+        }),
         app_json_keys: case.appjson_keys.clone(),
         bc_major: Some(major),
     };

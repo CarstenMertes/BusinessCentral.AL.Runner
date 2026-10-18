@@ -240,7 +240,11 @@ mod tests {
     /// BC 29.0 publishes 18.0.
     #[test]
     fn the_newest_runtime_each_major_publishes_is_accepted() {
-        for (bc_v, ok, refused) in [("27.5", "16.1", "16.2"), ("28.5", "17.1", "17.2"), ("29.0", "18.0", "18.1")] {
+        for (bc_v, ok, refused) in [
+            ("27.5", "16.1", "16.2"),
+            ("28.5", "17.1", "17.2"),
+            ("29.0", "18.0", "18.1"),
+        ] {
             let c = choose_target(Some(&bc(bc_v)), &app(Some(ok), None, None), &bc("29")).unwrap();
             assert_eq!(c.target.runtime, rt(ok), "BC {bc_v}");
             let e = choose_target(Some(&bc(bc_v)), &app(Some(refused), None, None), &bc("29")).unwrap_err();

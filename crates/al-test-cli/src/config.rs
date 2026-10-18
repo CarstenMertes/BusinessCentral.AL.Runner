@@ -340,12 +340,14 @@ baseline = "metrics/28/passing-isolation-function.txt"
         // Without app_runtime the app's own runtime stays (and BC 28 refuses nothing at 17.0).
         let v28 = f.select(Some("28")).unwrap();
         assert_eq!(v28.app_versions_for_leg(declared.clone()).unwrap(), declared);
-        assert!(OracleFile::parse(&TOML.replace("bc_version = \"27.5\"", "bc_version = \"27.5\"\napp_runtime = \"x\""))
-            .unwrap()
-            .select(Some("27"))
-            .unwrap()
-            .app_versions_for_leg(declared)
-            .is_err());
+        assert!(
+            OracleFile::parse(&TOML.replace("bc_version = \"27.5\"", "bc_version = \"27.5\"\napp_runtime = \"x\""))
+                .unwrap()
+                .select(Some("27"))
+                .unwrap()
+                .app_versions_for_leg(declared)
+                .is_err()
+        );
     }
 
     /// Run 39110861115 published the corpus apps with these runtimes on the three legs.

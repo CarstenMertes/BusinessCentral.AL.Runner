@@ -36,6 +36,25 @@ impl Session {
             names: &names,
             sender: None,
         };
+        // A subscriber of a dependency app other than Microsoft's Filter Tokens has an effect no case pins: refuse.
+        let engine = self.engine.clone();
+        if let Some(subs) = engine
+            .events
+            .subscribers
+            .get(&(crate::events::FILTER_HELPER_TRIGGERS, "makedatefilter".to_string()))
+        {
+            for s in subs {
+                let o = &engine.program.objects[s.object];
+                let dependency = engine.program.apps.get(o.app as usize).is_some_and(|a| a.dependency);
+                if dependency && !o.name.eq_ignore_ascii_case("Filter Tokens Impl.") {
+                    return unpinned(&format!(
+                        "the subscriber {} \"{}\" of a dependency app",
+                        o.kind.label(),
+                        o.name
+                    ));
+                }
+            }
+        }
         // Microsoft's own subscriber (System Application "Filter Tokens") is not run: it reads date formulas, which are not
         // pinned, and running it turned a passing corpus case into a refusal (filters/lt-date-text-forms/
         // DateFilterTextForms.al:GetRange_DayAboveTwelve_English). So only the subscribers of the app under test run.
@@ -73,6 +92,18 @@ impl Session {
         reads: &dyn Fn(&str) -> bool,
     ) -> Result<Option<String>, Signal> {
         let t = text.trim();
+        // Only the inputs the corpus pins raise the event: a single word of letters (`abc`), or a range of two six-digit
+        // numbers (`010120..311220`). In both, Microsoft's Filter Tokens subscriber leaves the text alone (PtObserve.al:157,
+        // Bad_Date), which is why it is not run. Any other text did not raise the event before and still does not.
+        let letters = !t.is_empty() && t.chars().all(|c| c.is_ascii_alphabetic());
+        let range = t.split_once("..").is_some_and(|(a, b)| {
+            [a, b]
+                .iter()
+                .all(|p| p.len() == 6 && p.bytes().all(|c| c.is_ascii_digit()))
+        });
+        if !letters && !range {
+            return Ok(None);
+        }
         if t.contains("...") || t.chars().any(|c| "|&<>=@*?'\"()%".contains(c)) || t.matches("..").count() > 1 {
             // Not the pinned shape: the event is not raised for it (as before this change).
             return Ok(None);

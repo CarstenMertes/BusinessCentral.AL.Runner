@@ -78,6 +78,7 @@ fn layout_row(
     r: &mut al_data::Row,
 ) -> Result<(), String> {
     let what = || format!("layout '{}' of report '{}'", l.name, o.name);
+    // Dynamic reads (RecordRef) of a layout without Subtype get Default and blank, which no case pins; static reads of the columns are refused (not in PINNED_COLUMNS).
     // BC 29: "Layout Subtype" (19), HeaderFooterPart (20), ThemePart (21)
     // (report/lt-y-report-props/YReportParts.al:75). The enum is Default 0, HeaderFooter 1, Theme 2, Body 3. A layout that
     // declares none reads the column defaults (Default and blank); the corpus pins only layouts that declare them.

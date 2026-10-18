@@ -14740,7 +14740,7 @@
         "code": "Evaluate",
         "file": "crates/al-builtins/src/evaluate.rs",
         "generic": false,
-        "line": 1299,
+        "line": 1313,
         "pinned": true,
         "site": "codeunit/TestCrossAppDispatch.al:61",
         "template": "Evaluate"
@@ -14749,7 +14749,7 @@
         "code": "",
         "file": "crates/al-builtins/src/evaluate.rs",
         "generic": false,
-        "line": 1302,
+        "line": 1316,
         "pinned": true,
         "site": "codeunit/TestCrossAppDispatch.al:61",
         "template": "Evaluate"
@@ -15082,7 +15082,7 @@
         "code": "ArgumentOutOfRange",
         "file": "crates/al-vm/src/interfaces.rs",
         "generic": false,
-        "line": 102,
+        "line": 103,
         "pinned": true,
         "site": "codeunit/TestInterfaceRuntimeContracts.al:103",
         "template": "Enum does not contain value %."

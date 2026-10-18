@@ -278,6 +278,9 @@ impl Session {
                 .map(|(_, c)| c.clone())
                 .unwrap_or_else(|| ordinal.to_string())
         };
+        if let Value::Enum(id, _) = v {
+            self.note_enum(*id);
+        }
         let mut text = pagefmt::control_text(v, &f, &caption);
         // ExtendedDatatype = Ratio shows a percentage: zero is `0%` (pages/lt-page-presentation-properties/P119PageFields.al:P119_FieldState); another
         // value is not pinned.

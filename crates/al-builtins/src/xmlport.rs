@@ -132,7 +132,18 @@ fn write_elem(e: &Elem, level: usize, out: &mut String) {
         return;
     }
     out.push('>');
-    if e.children.iter().any(|c| matches!(c, Node::Elem(_))) {
+    // Text next to elements (a field element's value before the nodes below it) puts the whole element on one line, without
+    // indentation inside it (xmlport/lt-af-xmlport/AfXmlPortAttrChildren.al:285, 313: `<Name>Alpha<Child>c1</Child></Name>`).
+    let mixed = e.children.iter().any(|c| matches!(c, Node::Text(t) if !t.is_empty()))
+        && e.children.iter().any(|c| matches!(c, Node::Elem(_)));
+    if mixed {
+        for c in &e.children {
+            match c {
+                Node::Elem(c) => write_elem(c, 0, out),
+                Node::Text(t) => crate::xml::escape_text(t, out),
+            }
+        }
+    } else if e.children.iter().any(|c| matches!(c, Node::Elem(_))) {
         out.push_str("\r\n");
         for c in &e.children {
             match c {

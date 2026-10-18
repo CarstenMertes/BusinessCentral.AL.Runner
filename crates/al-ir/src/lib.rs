@@ -537,6 +537,16 @@ pub struct XmlPort {
     pub table_separator: Option<String>,
     #[serde(default)]
     pub utf8: bool,
+    /// `Encoding = UTF8` on a Format = Xml port: the export declares UTF-8 and writes UTF-8 bytes with no byte order mark
+    /// (corpus xmlport/lt-af-xmlport/AfXmlPortEncoding.al:AF_Encoding_Export). `Encoding = UTF16` is the default.
+    #[serde(default)]
+    pub xml_utf8: bool,
+    /// `InlineSchema = true`: the export writes an XSD inside the root element.
+    #[serde(default)]
+    pub inline_schema: bool,
+    /// `Namespaces`: (prefix, uri) pairs.
+    #[serde(default)]
+    pub namespaces: Vec<(String, String)>,
     /// A `TextEncoding` property other than UTF8 was declared (its value is not kept).
     #[serde(default)]
     pub text_encoding_declared: bool,
@@ -591,6 +601,14 @@ pub struct XmlNode {
     /// `Width` of a field element in a FixedText port.
     #[serde(default)]
     pub width: Option<usize>,
+    /// `NamespacePrefix` of a field node: the prefix the port declares in `Namespaces`. A field element is written
+    /// `prefix:Name`; a field attribute is written without it (corpus xmlport/lt-y-xmlport-props/YXmlPortProps.al:
+    /// NodeProperties_Export_NamesPrefixesAutoCalc).
+    #[serde(default)]
+    pub ns_prefix: Option<String>,
+    /// `AutoCalcField` of a field node as declared (`None`: not declared; a FlowField is calculated then, by an assumption).
+    #[serde(default)]
+    pub auto_calc: Option<bool>,
     /// Triggers by lower-case name (`onbeforepassvariable`, ...) to routine index.
     pub triggers: Vec<(String, usize)>,
 }

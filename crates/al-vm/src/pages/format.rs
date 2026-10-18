@@ -273,6 +273,9 @@ impl Session {
                 .map(|(_, c)| c.clone())
                 .unwrap_or_else(|| ordinal.to_string())
         };
+        if let Value::Enum(id, _) = v {
+            self.note_enum(*id);
+        }
         let mut text = pagefmt::control_text(v, &f, &caption);
         // ExtendedDatatype = Ratio shows a percentage: zero is `0%` (pages/lt-page-presentation-properties/P119PageFields.al:P119_FieldState); another
         // value is not pinned.
@@ -624,10 +627,7 @@ impl Session {
         if matches!(page_of(&engine, st).controls[idx].binding, ir::Binding::Field(_))
             && st.borrow().cursor == Cursor::Row
             && !st.borrow().draft
-            && engine.program.objects[st.borrow().object as usize]
-                .properties
-                .iter()
-                .any(|(k, v)| k.eq_ignore_ascii_case("ModifyAllowed") && v.trim().eq_ignore_ascii_case("false"))
+            && flag_denied(&engine, st.borrow().object as usize, "ModifyAllowed")?
         {
             return Ok(false);
         }

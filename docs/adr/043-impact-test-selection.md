@@ -325,7 +325,7 @@ apps in `tests/fixtures/impact`, including the selection-independence test).
    unreached tests are counted, not listed; "same, reached" lists 30 unless `--verbose`.
 3. Exit code: 1 when a test is newly failing, fails differently or is newly refused; otherwise 0, or the code of a
    side that selected nothing or stopped. `--junit`, `--output-json`, `--coverage*` and `--explain` are refused with
-   `--impact-of` until step 3.
+   `--impact-of` until step 3. (Step 3 lifted this for `--junit` and `--output-json FILE`.)
 4. "Calls" of a routine are the runs of its first statement; a routine with no statement (empty body) is not seen.
 5. A failure the runner does not trust (an earlier test of the codeunit did not run) is "newly refused"; the report
    prints the failure text under it. **Changed (untrusted-failure-2, 2026-10-18):** the runner now distrusts a failure
@@ -381,3 +381,99 @@ apps in `tests/fixtures/impact`, including the selection-independence test).
    finer keys of section 2.2 (operation, validated field) are recorded for events only.
 5. Selection miss: a changed test is not a miss when an earlier test of its codeunit reached an impact point (the
    codeunit's tests share state, section 2.1).
+
+## Step 3 as built (impact-3, 2026-10-18)
+
+- **JSON diff** (`--impact-json FILE`, `impact::json`): `format` 1, `mode` (`all`, `dynamic` or `static`), `extensions`,
+  `testApps`, `counts` per class, `accepted`, `notSelected` (dynamic selection only), `exitCode`, and per test
+  `codeunit`, `codeunitName`, `test`, `class`, `accepted`, `without` and `with` (`outcome` pass, fail, not run or
+  missing; `flagged`; `message`), `reached` (impact points) and `ran` (extension routines with calls). On the "with"
+  side a failure the runner does not trust counts as a failure, as in the text report.
+- **Accept file** (`--impact-accept FILE`, `impact::Accepts`): the shape of the JSON diff. Every entry whose class is a
+  change is an accepted change; entries of an unchanged class are skipped, so the diff of an earlier run works as it
+  is, and a partner deletes the tests whose change they do not accept. A changed test is accepted when its codeunit,
+  name (without case), outcome with the extension and message equal an entry. It is listed under its class, marked
+  `(accepted)`, the class heading counts it, and it does not fail the run. Entries that matched no change are listed
+  below the report ("accept file: N accepted changes no longer match"). A file that cannot be read stops the run
+  (exit 2) before it starts.
+- **Exit codes**: 1 when a test is newly failing, fails differently, newly refused or a selection miss and not
+  accepted; else 0; 2 for bad options or an unreadable accept file; the code of a side that stopped (6: no test
+  selected). Not-run tests give no 7 or 8: they are the class "not verified". Listed in `alrunner --help`.
+- **JUnit** (`--junit FILE`): the run with the extension (in dynamic selection only the selected codeunits), each test
+  with the properties `impact_class`, `impact_without` (its outcome without the extension) and, when accepted,
+  `impact_accepted`. `al_testrun::junit::Case` gained a `properties` list (additive; written in the Runner dialect
+  only, also for a test that was not run).
+- `--output-json FILE` writes the run with the extension in AL Runner v2's shape, with the impact run's exit code.
+  `--output-json` without a file stays refused (the report is on stdout); `--coverage*`, `--explain` and scratch runs
+  stay refused with `--impact-of`.
+
+### Decided without owner review (2026-10-18, impact-3)
+
+1. The accept file is the JSON diff's own shape, not a separate format; tests are matched by codeunit id and name,
+   not by app (Microsoft's test codeunit ids are unique across its test apps; a path to an app differs per machine).
+2. The match needs the whole message, not a pattern. A change whose error text moves is reported again as new; that
+   is the point of the file ("later runs report only new differences").
+3. Any changed class can be accepted, including selection miss (section 3 lists it among the classes an accept file
+   covers); acceptance changes the exit code only for the four classes that fail the run.
+4. `--output-json` with an impact run needs a FILE, and its document holds the "with" run only; the diff itself is
+   `--impact-json`.
+
+## Step 5 as built (impact-5, 2026-10-18)
+
+- **Graph** (`al-testrun/src/impact_static.rs`, `Graph::build`): one node per routine, per object, per event, one
+  "written" node per table, the `Global Triggers` write node, and six nodes for what the program does not name
+  (`Codeunit.Run`, `RecordRef.Open`, `Page.Run`, `Report.Run` with an id from a variable; a `RecordRef` write to a
+  table the code does not name; a routine that was not compiled). A routine leads to what it calls
+  (`Lowered::calls_of`), to the objects of its record, page, test page, enum, query, report and xmlport variables,
+  to the objects `Codeunit.Run`, `Page.Run`, `Report.Run` and `RecordRef.Open` name by constant, to the enums of its
+  enum constants, and to a table's written node for `Insert`, `Modify`, `Delete`, `DeleteAll`, `ModifyAll`,
+  `Rename`, `Truncate` and `Validate` on a record variable (the implicit `Rec` included). A `RecordRef` write or a
+  `FieldRef.Validate` leads to the written nodes of the tables the routine opens by constant or takes with
+  `GetTable`, and to the "RecordRef write" node. A table's written node leads to its triggers, its extensions'
+  triggers, its table events and the table; the table itself only to related tables and the enums of its fields.
+  A page leads to its routines, its extensions' routines, its events and the written node of its source table; a
+  codeunit to its `OnRun`. A codeunit variable alone leads nowhere.
+- **Verdicts** (`select`): one reverse search per impact point. A test *reaches* a point over named code only, and
+  *cannot rule it out* when only paths through an unnamed node lead there. Both select the test's codeunit.
+- **Install code** (`Install`): see decision 1 below.
+- **Modes** (`alrunner-cli/src/impact.rs`): `--impact static`, and with no index cached the same with the warning
+  of section 2.3. Both sides run the selected codeunits. In dynamic mode, the tests the index's run refused get a
+  `refused in the index's run (N)` section with their static verdicts (`static: reaches X`,
+  `static: cannot rule out X (via)`), because the index holds nothing for them.
+- **Cross-check** (`alrunner impact-index check-static APP...`): every key a test recorded in the cached index must
+  be in the test's static reach; a miss exits 1. It prints, per kind of key, how many more tests and codeunits
+  static reach selects. `AL_IMPACT_WHY=<key>` also prints a shortest path to the key from the install code and from
+  a test that did not record it, and the counts for that key.
+- **Measured (BC 27.5 W1, CRONUS).** Tests-Resource (346 tests, 17 codeunits): 0 keys missed of 8529. Summed over
+  the keys, static reach selects 15x the tests and 5.8x the codeunits of the index for `write` keys, 20x and 7.9x
+  for events, 8.9x and 4.4x for `table` keys, 8.1x and 4.0x for enums. The example extension (subscriber to
+  `Res. Jnl.-Post Line` `OnBeforeResLedgEntryInsert`): dynamic selects 20 tests in 5 of 17 codeunits; static
+  reaches 343 tests in all 17 codeunits; both find the 2 newly failing tests, no selection miss.
+  Tests-Job (1289 tests, 36 codeunits): 0 keys missed of 12695; static reach selects 7.7x the tests and 3.5x the
+  codeunits for `write` keys, 11.9x and 4.7x for events, 4.2x and 2.4x for `table` keys, 4.2x and 2.9x for enums.
+  For the example extension's event: the index 131 tests in 12 codeunits, static reach 1288 tests in all 36. The
+  static run (all 36 codeunits on both sides) finds no change; the dynamic run reports `Job Posting.
+  PurchaseOrderFCYWithJob` newly failing on a rounding difference (23,432.19 for 23,432.2), which points to an
+  outcome that depends on the selection (condition 1 of section 2.2), not to the extension.
+- **Why static stays coarse for posting code.** In Microsoft's Base Application a write of almost any table raises
+  a table event that `Workflow Event Handling` subscribes to; `Workflow Management` then runs the responses of
+  enabled workflow steps, and `Workflow Response Handling` can post documents. Which steps are enabled is data, so
+  static reach cannot cut this path: every test that writes such a table reaches nearly every posting routine. This
+  is not fixable without reasoning about data; the index is the precise mode, static reach the fallback.
+
+### Decided without owner review (2026-10-18, impact-5)
+
+1. **Install code.** An impact run selects after the install baseline has run: `RunOptions::narrow` is now called
+   between the baseline and the first test, and the baseline then runs with the trace on (it is not read from the
+   compile cache). Static selection decides whether the install code reached an impact point that runs code by
+   that trace, with the same matchers the index uses; only a point the trace cannot answer (its matcher is
+   unsupported) falls back to static reach from the install roots (`baseline_roots`). Static reach from
+   `Company-Initialize` passes the workflow path above and would make every subscriber to posting code take every
+   test codeunit. The trace is exact for the run's own baseline, so nothing is missed. A baseline that does not
+   run (no selected test can observe it) changes no test's data.
+2. A validation counts as a write (its node holds the table's triggers): it runs field triggers and the validate
+   events, which share the written node. This over-selects a little and keeps one node per table.
+3. Every `RecordRef` write may write any table (the ref can be opened anywhere), so a test that reaches one
+   "cannot rule out" any point behind a table's triggers or events.
+4. A routine that was not compiled has no edges: a test that reaches one is refused when it runs, so it changes
+   nothing a run can compare. Its static verdict covers only the rest of its reach.

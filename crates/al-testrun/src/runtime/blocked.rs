@@ -117,12 +117,22 @@ impl ReachFacts {
 }
 
 pub(crate) fn reach_facts(engine: &Engine, lowered: &Lowered, object: usize, routine: usize) -> ReachFacts {
+    reach_facts_in(&engine.events, lowered, object, routine)
+}
+
+/// [`reach_facts`] with the program's event registry instead of an engine.
+pub(crate) fn reach_facts_in(
+    events: &al_vm::events::Registry,
+    lowered: &Lowered,
+    object: usize,
+    routine: usize,
+) -> ReachFacts {
     use al_builtins::value::RtType;
     let objs = &lowered.program.objects;
     let mut out = ReachFacts::default();
     let mut seen = BTreeSet::new();
     let mut stack = vec![(object, routine)];
-    stack.extend(subscribers_reached(engine, lowered, object, routine));
+    stack.extend(subscribers_reached_in(events, lowered, object, routine));
     while let Some((o, r)) = stack.pop() {
         if !seen.insert((o, r)) {
             continue;
@@ -209,6 +219,15 @@ pub(crate) fn subscribers_reached(
     object: usize,
     routine: usize,
 ) -> Vec<(usize, usize)> {
+    subscribers_reached_in(&engine.events, lowered, object, routine)
+}
+
+fn subscribers_reached_in(
+    events: &al_vm::events::Registry,
+    lowered: &Lowered,
+    object: usize,
+    routine: usize,
+) -> Vec<(usize, usize)> {
     let objs = &lowered.program.objects;
     let mut seen = BTreeSet::new();
     let mut reached = BTreeSet::new();
@@ -219,7 +238,7 @@ pub(crate) fn subscribers_reached(
         }
         lowered.calls_into(o, r, &mut stack);
         let mut keys = Vec::new();
-        if let Some(p) = engine.events.publishers.get(&(o, r)) {
+        if let Some(p) = events.publishers.get(&(o, r)) {
             keys.push((p.object, p.event.clone()));
         }
         // Table events fire for any table whose record the routine uses.
@@ -229,16 +248,9 @@ pub(crate) fn subscribers_reached(
                 tables.insert(*t as usize);
             }
         }
-        keys.extend(
-            engine
-                .events
-                .subscribers
-                .keys()
-                .filter(|(po, _)| tables.contains(po))
-                .cloned(),
-        );
+        keys.extend(events.subscribers.keys().filter(|(po, _)| tables.contains(po)).cloned());
         for k in keys {
-            for sub in engine.events.subscribers.get(&k).into_iter().flatten() {
+            for sub in events.subscribers.get(&k).into_iter().flatten() {
                 if reached.insert((sub.object, sub.routine)) {
                     stack.push((sub.object, sub.routine));
                 }

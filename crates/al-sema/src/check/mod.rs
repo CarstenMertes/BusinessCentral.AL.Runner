@@ -651,13 +651,15 @@ pub(crate) fn one_char_literal(node: &SyntaxNode) -> bool {
         .is_some_and(|inner| inner.replace("''", "'").chars().count() == 1)
 }
 
-/// `Char + 'X'`, `'X' - Char` and the like: a Char-typed operand and a one-character literal under `+` or `-`
-/// ([`one_char_literal`]). The corpus pins it with a Char variable (AfCharLiteralArithmetic.al:22-43).
+/// `Ch + 'X'`, `'X' - Ch` and the like: a Char variable and a one-character literal under `+` or `-` ([`one_char_literal`];
+/// AfCharLiteralArithmetic.al:22-43). Only a variable: a character of a text joins a literal as text
+/// (json/TestJsonXmlDeepContracts.al:71, `'a' + Format(10, 0, '<Integer>')[1] + 'b'`), and other Char expressions are not pinned.
 pub(crate) fn char_and_one_char_literal(op: &str, kids: &[SyntaxNode], l: &Ty, r: &Ty) -> bool {
+    let var = |n: &SyntaxNode| n.kind() == SyntaxKind::NameRef;
     matches!(op, "+" | "-")
         && kids.len() == 2
-        && ((matches!(l, Ty::Char) && one_char_literal(&kids[1]))
-            || (matches!(r, Ty::Char) && one_char_literal(&kids[0])))
+        && ((matches!(l, Ty::Char) && var(&kids[0]) && one_char_literal(&kids[1]))
+            || (matches!(r, Ty::Char) && var(&kids[1]) && one_char_literal(&kids[0])))
 }
 
 fn op_token(node: &SyntaxNode) -> String {

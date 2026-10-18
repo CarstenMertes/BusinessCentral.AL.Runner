@@ -297,6 +297,7 @@ impl Session {
         run_trigger: bool,
         element: Option<&str>,
     ) -> Result<(), Signal> {
+        self.note_event(t.object as usize, event, element);
         if !self.listened(t, event, element)? {
             return Ok(());
         }
@@ -1087,6 +1088,7 @@ impl Session {
     pub(crate) fn record_op(&mut self, method: RecordOp, rec: &Rec, args: &mut [Value]) -> Result<Value, Signal> {
         self.connection_check(rec)?;
         let t = self.table(rec)?;
+        self.note_table(t.object, method.writes());
         if matches!(
             method,
             RecordOp::Find

@@ -25,6 +25,7 @@ impl Session {
 
     /// The page instance of `st`, created on first use (a `Page` variable has one before it runs).
     pub(crate) fn page_instance(&mut self, st: &St) -> Result<Rc<RefCell<al_builtins::value::Instance>>, Signal> {
+        self.note_page(st.borrow().object as usize);
         if let Some(i) = st.borrow().instance.clone() {
             return Ok(i);
         }

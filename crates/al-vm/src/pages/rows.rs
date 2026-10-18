@@ -53,6 +53,7 @@ impl Session {
     }
 
     pub(super) fn raise_resolve_caption_class(&mut self, area: &str, expr: &str, text: &str) -> Result<String, Signal> {
+        self.note_event(crate::events::CAPTION_CLASS, "onresolvecaptionclass", None);
         if !self
             .engine
             .events

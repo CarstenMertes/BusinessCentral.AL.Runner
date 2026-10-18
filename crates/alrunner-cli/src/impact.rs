@@ -10,7 +10,7 @@ use crate::output;
 use crate::run::{self, Collected};
 use crate::style;
 use al_testrun::coverage::CoverageStatement;
-use al_testrun::runtime::TestResult;
+use al_testrun::runtime::{NarrowInput, TestResult};
 use al_testrun::{CaseId, Outcome, refusals};
 use std::collections::{BTreeMap, HashMap};
 
@@ -23,6 +23,9 @@ pub enum Class {
     FailsDifferently,
     /// Ran without, not run with.
     NewlyRefused,
+    /// Changed, and neither it nor an earlier test of its codeunit reached an impact point in the index's run: the
+    /// index missed something (a runtime bug, ADR-043 section 2.1).
+    SelectionMiss,
     /// Failed without, passes with.
     NewlyPassing,
     /// Not run without, runs with.
@@ -37,10 +40,11 @@ pub enum Class {
 }
 
 impl Class {
-    pub const ALL: [Class; 8] = [
+    pub const ALL: [Class; 9] = [
         Class::NewlyFailing,
         Class::FailsDifferently,
         Class::NewlyRefused,
+        Class::SelectionMiss,
         Class::NewlyPassing,
         Class::NewlyRuns,
         Class::SameReached,
@@ -54,6 +58,7 @@ impl Class {
             Class::NewlyFailing => "newly failing",
             Class::FailsDifferently => "fails differently",
             Class::NewlyRefused => "newly refused",
+            Class::SelectionMiss => "selection miss",
             Class::NewlyPassing => "newly passing",
             Class::NewlyRuns => "newly runs",
             Class::SameReached => "same, reached",
@@ -75,8 +80,13 @@ impl Class {
     pub fn breaks(self) -> bool {
         matches!(
             self,
-            Class::NewlyFailing | Class::FailsDifferently | Class::NewlyRefused
+            Class::NewlyFailing | Class::FailsDifferently | Class::NewlyRefused | Class::SelectionMiss
         )
+    }
+
+    /// The outcome changed.
+    fn changed(self) -> bool {
+        !matches!(self, Class::SameReached | Class::SameNotReached | Class::NotVerified)
     }
 }
 
@@ -170,21 +180,47 @@ pub struct Row<'a> {
     pub with: Option<&'a TestResult>,
     /// The extension routines it entered on the "with" side, with their calls.
     pub entered: Vec<(usize, u32)>,
+    /// The impact points it reached in the index's run (dynamic selection).
+    pub points: Vec<String>,
 }
 
 /// The rows of both sides, in the order of the "without" run, then any test only the "with" run has.
 pub fn diff<'a>(without: &'a [TestResult], with: &'a [TestResult], routines: &Routines) -> Vec<Row<'a>> {
+    diff_reached(without, with, routines, None)
+}
+
+/// The impact points a test of the "without" side reached in the index's run.
+type PointsOf<'f> = dyn Fn(&TestResult) -> Vec<String> + 'f;
+
+/// [`diff`] for dynamic selection: `points_of` names the impact points each test of the "without" side reached in the
+/// index's run. A test that reached one counts as reached, and a changed test that did not, after no test of its
+/// codeunit that did, is a selection miss.
+pub fn diff_reached<'a>(
+    without: &'a [TestResult],
+    with: &'a [TestResult],
+    routines: &Routines,
+    points_of: Option<&PointsOf<'_>>,
+) -> Vec<Row<'a>> {
     let key = |r: &TestResult| (r.app, r.codeunit, r.test.clone());
     let with_by: HashMap<_, &TestResult> = with.iter().map(|r| (key(r), r)).collect();
     let mut seen = std::collections::HashSet::new();
     let mut rows = Vec::new();
     let row = |w: Option<&'a TestResult>, x: Option<&'a TestResult>| {
         let entered = x.map(|x| routines.entered(&x.coverage)).unwrap_or_default();
+        let points = match (points_of, w) {
+            (Some(f), Some(w)) => f(w),
+            _ => Vec::new(),
+        };
         Row {
-            class: classify(w.map(|r| &r.outcome), x.map(|r| &r.outcome), !entered.is_empty()),
+            class: classify(
+                w.map(|r| &r.outcome),
+                x.map(|r| &r.outcome),
+                !entered.is_empty() || !points.is_empty(),
+            ),
             without: w,
             with: x,
             entered,
+            points,
         }
     };
     for w in without {
@@ -196,6 +232,20 @@ pub fn diff<'a>(without: &'a [TestResult], with: &'a [TestResult], routines: &Ro
     for x in with {
         if !seen.contains(&key(x)) {
             rows.push(row(None, Some(x)));
+        }
+    }
+    if points_of.is_some() {
+        // Tests of one codeunit share its state: a change after a test that reached an impact point is no miss.
+        let mut reached_codeunits = std::collections::HashSet::new();
+        for r in &mut rows {
+            let side = r.with.or(r.without).expect("a row has a side");
+            let unit = (side.app, side.codeunit);
+            if r.points.is_empty() && r.class.changed() && !reached_codeunits.contains(&unit) {
+                r.class = Class::SelectionMiss;
+            }
+            if !r.points.is_empty() {
+                reached_codeunits.insert(unit);
+            }
         }
     }
     rows
@@ -254,6 +304,15 @@ fn row_lines(row: &Row, routines: &Routines) -> Vec<String> {
     {
         lines.push(format!("    without: {}", output::first_line(m, 300)));
     }
+    if !row.points.is_empty() {
+        let mut shown: Vec<&str> = row.points.iter().take(3).map(String::as_str).collect();
+        let more = row.points.len().saturating_sub(3);
+        let tail = format!("and {more} more");
+        if more > 0 {
+            shown.push(&tail);
+        }
+        lines.push(format!("    reached: {}", shown.join(", ")));
+    }
     if !row.entered.is_empty() {
         let ran: Vec<String> = row
             .entered
@@ -274,6 +333,20 @@ fn row_lines(row: &Row, routines: &Routines) -> Vec<String> {
 /// The impact report: the counts per class, then the tests of each class but the unchanged unreached ones, the
 /// extension procedures the tests ran, and the refusal reasons of the tests that ran on neither side.
 pub fn report(rows: &[Row], routines: &Routines, verbose: bool) -> Vec<String> {
+    report_with(rows, routines, verbose, None)
+}
+
+fn plural(n: usize, word: &str) -> String {
+    format!("{n} {word}{}", if n == 1 { "" } else { "s" })
+}
+
+/// [`report`], with the tests dynamic selection left out: (tests, codeunits).
+pub fn report_with(
+    rows: &[Row],
+    routines: &Routines,
+    verbose: bool,
+    not_selected: Option<(usize, usize)>,
+) -> Vec<String> {
     let mut out = Vec::new();
     let count = |c: Class| rows.iter().filter(|r| r.class == c).count();
     let counts: Vec<String> = Class::ALL
@@ -285,6 +358,13 @@ pub fn report(rows: &[Row], routines: &Routines, verbose: bool) -> Vec<String> {
         rows.len(),
         counts.join(", ")
     )));
+    if let Some((tests, codeunits)) = not_selected {
+        out.push(format!(
+            "not selected: {} in {}: they reached no impact point of the extension in the index's run, so it cannot change them",
+            plural(tests, "test"),
+            plural(codeunits, "codeunit")
+        ));
+    }
     for class in Class::ALL {
         if matches!(class, Class::SameNotReached | Class::NotVerified) || count(class) == 0 {
             continue;
@@ -350,9 +430,17 @@ pub fn report(rows: &[Row], routines: &Routines, verbose: bool) -> Vec<String> {
     out
 }
 
-/// `alrunner test --impact-of ...`: both runs, then the report. Exit 1 when a test newly fails, fails
-/// differently or is newly not run; a run that selected nothing or stopped exits as that run did.
-pub fn run(a: &TestArgs) -> Result<u8, String> {
+/// The names of the APPs, for the first line of the run.
+fn names(paths: &[std::path::PathBuf]) -> String {
+    paths
+        .iter()
+        .map(|p| p.display().to_string())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// The options both sides of an impact run share.
+fn side_args(a: &TestArgs) -> TestArgs {
     let mut side = a.clone();
     side.impact_of.clear();
     side.impact = None;
@@ -360,18 +448,65 @@ pub fn run(a: &TestArgs) -> Result<u8, String> {
     side.quiet = !a.verbose;
     // Microsoft's disabled tests are left out of an impact run (ADR-043 owner decision 2).
     side.parity = a.disabled_tests_dir.is_some();
-    let names = |paths: &[std::path::PathBuf]| -> String {
-        paths
-            .iter()
-            .map(|p| p.display().to_string())
-            .collect::<Vec<_>>()
-            .join(", ")
-    };
+    side
+}
+
+/// The command that builds the index this run lacks: the run's own arguments, as `impact-index build`, without the
+/// extension (ADR-043 section 2.3: it repeats the test apps and flags exactly).
+fn build_command(args: &[String]) -> String {
+    let mut out = vec!["alrunner".to_string(), "impact-index".into(), "build".into()];
+    let mut it = args.iter().skip_while(|a| *a != "test").skip(1);
+    while let Some(a) = it.next() {
+        if a == "--impact-of" || a == "--impact" {
+            it.next();
+            continue;
+        }
+        out.push(
+            if a.is_empty() || a.contains(|c: char| c.is_whitespace() || c == '\'') {
+                format!("'{}'", a.replace('\'', "'\\''"))
+            } else {
+                a.clone()
+            },
+        );
+    }
+    out.join(" ")
+}
+
+/// The warning of a run with no cached index (ADR-043 section 2.3, owner decision 1).
+fn no_index_warning(a: &TestArgs) -> String {
+    let args: Vec<String> = std::env::args().collect();
+    format!(
+        "warning: no impact index for these test apps and options (country {}, this runtime build): every selected test runs without and with the extension, which costs two runs of the test apps. With an index, only the test codeunits that reach one of the extension's impact points run, once. Static selection, the fallback ADR-043 plans for a run without an index, is not built yet. Build the index once with: {}",
+        a.country(),
+        build_command(&args)
+    )
+}
+
+/// `alrunner test --impact-of ...`: with a cached index (and not `--impact all`) dynamic selection, else both runs and
+/// the diff. Exit 1 when a test newly fails, fails differently, is newly not run or is a selection miss; a run that
+/// selected nothing or stopped exits as that run did.
+pub fn run(a: &TestArgs) -> Result<u8, String> {
+    if a.impact.as_deref() == Some("all") {
+        return run_all(a, None);
+    }
+    match crate::impact_index::lookup(&side_args(a))? {
+        Some((index, path)) => run_dynamic(a, index, &path),
+        None => run_all(a, Some(no_index_warning(a))),
+    }
+}
+
+/// Both sides run every selected test (`--impact all`, or no index).
+fn run_all(a: &TestArgs, warning: Option<String>) -> Result<u8, String> {
+    let side = side_args(a);
     println!(
-        "impact of {} on the tests of {}: every selected test runs without, then with the extension (--impact all)",
+        "impact of {} on the tests of {}: every selected test runs without, then with the extension{}",
         names(&a.impact_of),
-        names(&a.apps)
+        names(&a.apps),
+        if warning.is_some() { "" } else { " (--impact all)" }
     );
+    if let Some(w) = &warning {
+        println!("{}", style::yellow(w));
+    }
 
     println!("\nwithout the extension:");
     let mut without = Collected::default();
@@ -394,11 +529,17 @@ pub fn run(a: &TestArgs) -> Result<u8, String> {
     let routines = Routines::of(&with.statements, |app| app >= tests);
     let rows = diff(&without.results, &with.results, &routines);
     println!();
+    if let Some(w) = &warning {
+        println!("{}\n", style::yellow(w));
+    }
     for line in report(&rows, &routines, a.verbose) {
         println!("{line}");
     }
+    Ok(verdict(&rows))
+}
+
+fn verdict(rows: &[Row]) -> u8 {
     let breaking = rows.iter().filter(|r| r.class.breaks()).count();
-    let code = u8::from(breaking > 0);
     let verdict = if breaking > 0 {
         style::red(&format!(
             "Result: {breaking} test(s) changed for the worse with the extension (exit 1)"
@@ -407,7 +548,226 @@ pub fn run(a: &TestArgs) -> Result<u8, String> {
         style::green("Result: no test changed for the worse with the extension (exit 0)")
     };
     println!("\n{}", style::bold(&verdict));
-    Ok(code)
+    u8::from(breaking > 0)
+}
+
+/// What dynamic selection decided once the "with" side was compiled.
+enum Plan {
+    /// Run these test codeunits (caller's app index, id).
+    Select(Vec<(usize, u32)>),
+    /// The index cannot select for some impact points: run every test codeunit; the reasons say why.
+    Everything(Vec<String>),
+    /// The index was recorded on other Microsoft apps: it cannot be used.
+    Stale(String),
+}
+
+struct Decision {
+    plan: Plan,
+    /// The test codeunits the run would run without selection.
+    would: Vec<(usize, u32)>,
+    /// Per test of the index (app, codeunit, test): the impact points it reached.
+    reached: std::collections::HashMap<(usize, u32, String), Vec<String>>,
+}
+
+/// Dynamic selection over `index` for the compiled "with" side (ADR-043 section 2.2).
+fn decide(index: &crate::impact_index::Index, input: &NarrowInput) -> Decision {
+    use al_testrun::impact_trace::{Matcher, impact_points};
+    let program = input.program;
+    let mut would: Vec<(usize, u32)> = match input.only {
+        Some(o) => o.to_vec(),
+        None => index.tests.iter().map(|t| (t.app, t.codeunit)).collect(),
+    };
+    would.sort_unstable();
+    would.dedup();
+    let mut d = Decision {
+        plan: Plan::Select(Vec::new()),
+        would,
+        reached: Default::default(),
+    };
+    // The Microsoft apps must be the ones the index was recorded on.
+    for (id, name, version) in &index.apps {
+        match program.apps.iter().find(|p| &p.id == id) {
+            Some(p) if &p.version == version => {}
+            Some(p) => {
+                d.plan = Plan::Stale(format!("{name} is {} here and {version} in the index", p.version));
+                return d;
+            }
+            None => {
+                d.plan = Plan::Stale(format!("{name} {version} of the index is not in this run"));
+                return d;
+            }
+        }
+    }
+    // The extensions: every app of the compile the index's run did not have.
+    let known: std::collections::HashSet<&str> = index.apps.iter().map(|(id, _, _)| id.as_str()).collect();
+    let extension: Vec<bool> = program.apps.iter().map(|p| !known.contains(p.id.as_str())).collect();
+    let points = impact_points(program, |oi| {
+        extension
+            .get(program.objects[oi].app as usize)
+            .copied()
+            .unwrap_or(false)
+    });
+    let mut reasons: Vec<String> = points
+        .iter()
+        .filter_map(|p| match &p.matcher {
+            Matcher::Unsupported(why) => Some(why.clone()),
+            _ => None,
+        })
+        .collect();
+    // An impact point the install code reached changes the data every test starts from.
+    if let Some(baseline) = index.baseline_keys() {
+        let set: std::collections::HashSet<&str> = baseline.iter().map(String::as_str).collect();
+        for p in points
+            .iter()
+            .filter(|p| p.runs_code && !matches!(p.matcher, Matcher::Unsupported(_)))
+        {
+            if p.reached_by(&baseline, |k| set.contains(k)) {
+                reasons.push(format!(
+                    "{}: the install code reached it in the index's run, so it changes the data every test starts from",
+                    p.what
+                ));
+            }
+        }
+    }
+    let mut per_point = vec![0usize; points.len()];
+    let mut selected = std::collections::BTreeSet::new();
+    for t in &index.tests {
+        let keys = index.keys_of(t);
+        let set: std::collections::HashSet<&str> = keys.iter().map(String::as_str).collect();
+        let mut hit = Vec::new();
+        for (i, p) in points.iter().enumerate() {
+            if !matches!(p.matcher, Matcher::Unsupported(_)) && p.reached_by(&keys, |k| set.contains(k)) {
+                per_point[i] += 1;
+                hit.push(p.what.clone());
+            }
+        }
+        if !hit.is_empty() {
+            selected.insert((t.app, t.codeunit));
+            d.reached.insert((t.app, t.codeunit, t.test.to_lowercase()), hit);
+        }
+    }
+    println!("dynamic selection: {} impact point(s) of the extension", points.len());
+    for (p, n) in points.iter().zip(&per_point) {
+        match &p.matcher {
+            Matcher::Unsupported(_) => println!("  {}: not covered by the index", p.what),
+            _ => println!("  {}: reached by {} of {} tests", p.what, n, index.tests.len()),
+        }
+    }
+    d.plan = if reasons.is_empty() {
+        Plan::Select(d.would.iter().copied().filter(|u| selected.contains(u)).collect())
+    } else {
+        Plan::Everything(reasons)
+    };
+    d
+}
+
+/// Dynamic selection: the codeunits that reach an impact point run once, with the extension; the outcomes without it
+/// come from the index.
+fn run_dynamic(a: &TestArgs, index: crate::impact_index::Index, path: &std::path::Path) -> Result<u8, String> {
+    use std::sync::{Arc, Mutex};
+    println!(
+        "impact of {} on the tests of {}: dynamic selection with the impact index {}",
+        names(&a.impact_of),
+        names(&a.apps),
+        path.display()
+    );
+    let index = Arc::new(index);
+    let decision: Arc<Mutex<Option<Decision>>> = Arc::new(Mutex::new(None));
+    let (ix, dec) = (index.clone(), decision.clone());
+    let narrow = al_testrun::runtime::Narrow(Arc::new(move |input: &NarrowInput| {
+        let d = decide(&ix, input);
+        let only = match &d.plan {
+            Plan::Select(units) => {
+                println!("selected {} of {} test codeunits", units.len(), d.would.len());
+                Some(units.clone())
+            }
+            Plan::Everything(reasons) => {
+                println!(
+                    "{}",
+                    style::yellow(&format!(
+                        "warning: the index cannot select for every impact point of the extension, so all {} test codeunits run with it:",
+                        d.would.len()
+                    ))
+                );
+                for r in reasons {
+                    println!("  {r}");
+                }
+                None
+            }
+            Plan::Stale(_) => Some(Vec::new()),
+        };
+        *dec.lock().expect("the decision") = Some(d);
+        only
+    }));
+
+    println!("\nwith the extension:");
+    let mut with_side = side_args(a);
+    with_side.apps.extend(a.impact_of.iter().cloned());
+    with_side.coverage = true;
+    let mut with = Collected {
+        narrow: Some(narrow),
+        ..Default::default()
+    };
+    let code = run::test_collect(&with_side, &mut with)?;
+    let Some(d) = decision.lock().expect("the decision").take() else {
+        // The run stopped before its compile was done.
+        return Ok(code);
+    };
+    if let Plan::Stale(why) = &d.plan {
+        let w = format!(
+            "warning: the impact index {} was recorded on other Microsoft apps ({why}); rebuild it with: {}",
+            path.display(),
+            build_command(&std::env::args().collect::<Vec<_>>())
+        );
+        println!("{}", style::yellow(&w));
+        return run_all(a, Some(w));
+    }
+    if !matches!(code, 0 | 1 | 6 | 7 | 8) {
+        return Ok(code);
+    }
+    let ran: std::collections::HashSet<(usize, u32)> = match &d.plan {
+        Plan::Select(units) => units.iter().copied().collect(),
+        _ => d.would.iter().copied().collect(),
+    };
+    let present: std::collections::HashSet<(usize, u32, &str)> = with
+        .results
+        .iter()
+        .map(|r| (r.app, r.codeunit, r.test.as_str()))
+        .collect();
+    let without: Vec<TestResult> = index
+        .tests
+        .iter()
+        .filter(|t| present.contains(&(t.app, t.codeunit, t.test.as_str())))
+        .map(|t| index.result(t))
+        .collect();
+    let would: std::collections::HashSet<&(usize, u32)> = d.would.iter().collect();
+    let left_out: Vec<&crate::impact_index::IndexedTest> = index
+        .tests
+        .iter()
+        .filter(|t| would.contains(&(t.app, t.codeunit)) && !ran.contains(&(t.app, t.codeunit)))
+        .collect();
+    let left_out_units: std::collections::HashSet<(usize, u32)> =
+        left_out.iter().map(|t| (t.app, t.codeunit)).collect();
+
+    let tests = a.apps.len();
+    let routines = Routines::of(&with.statements, |app| app >= tests);
+    let points_of = |r: &TestResult| -> Vec<String> {
+        d.reached
+            .get(&(r.app, r.codeunit, r.test.to_lowercase()))
+            .cloned()
+            .unwrap_or_default()
+    };
+    let rows = diff_reached(&without, &with.results, &routines, Some(&points_of));
+    println!();
+    for line in report_with(
+        &rows,
+        &routines,
+        a.verbose,
+        Some((left_out.len(), left_out_units.len())),
+    ) {
+        println!("{line}");
+    }
+    Ok(verdict(&rows))
 }
 
 #[cfg(test)]
@@ -486,6 +846,7 @@ mod tests {
             coverage,
             messages: Vec::new(),
             captured: None,
+            impact: Vec::new(),
         }
     }
 

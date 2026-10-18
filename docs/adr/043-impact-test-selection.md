@@ -329,3 +329,50 @@ apps in `tests/fixtures/impact`, including the selection-independence test).
 4. "Calls" of a routine are the runs of its first statement; a routine with no statement (empty body) is not seen.
 5. A failure the runner does not trust (an earlier test of the codeunit did not run) is "newly refused"; the report
    prints the failure text under it.
+
+## Step 2 as built (impact-2, 2026-10-18)
+
+- **Recording** (`al-vm/src/impact.rs`, additive `Session` state in `CoverageState`): `enable_impact_trace`,
+  `take_impact_trace` -> `Touches`. Noted: every event raise at its raise, before the subscriber lookup (publisher
+  routines in `dispatch::publish`, the ten table events in `records::table_event`, the page, page-field and
+  page-action events, `OnResolveCaptionClass`); every record operation's table (`records::record_op`, which typed
+  records, `RecordRef` and the page client go through) and whether it wrote; every page instance
+  (`pages::page_instance`); every report schema read (`reports::report_schema`). Off, each site costs one branch.
+- **Keys** (`al-testrun/src/impact_trace.rs`): objects by kind and id, never by program index:
+  `event <kind> <id> <event>` and `.../<element>`, `table <id>`, `write <id>`, `page <id>`, `report <id>`. The
+  runner records per test (the first test of a codeunit also holds what ran before it) and, with the trace on, runs
+  the install baseline instead of reading it from the compile cache, so the index also holds what the install code
+  raised and touched.
+- **Impact points** (`impact_points`): subscribers of the extension (not manual ones, not to its own publishers) ->
+  their event key; a `Global Triggers` subscriber to the table-write events -> any `write`; table, page and report
+  extensions -> `table`/`page`/`report` of the base object (fields, keys and triggers alike: over-selects a little).
+  Not covered, so the run takes every test codeunit with a warning that names them: enum extensions, install
+  codeunits, subscribers to events whose raises are not noted, profiles and other kinds. New objects, interfaces and
+  permission sets are no impact points of their own.
+- **Index** (`alrunner-cli/src/impact_index.rs`): gzip JSON, `format: 1`, at `<cache>/impact/<key>/index.json.gz`.
+  It holds the compiled apps (id, name, version), the key table, the baseline's keys, and per test: app, codeunit,
+  name, outcome with its text, assumption ids, key numbers (delta coded). The key hashes the runtime build, the test
+  apps' source, `--country`, `--bc-version`, the company and test data options, `--isolation`, `--define`, the
+  environment options and the `--disabled-tests` files. `alrunner impact-index build APP... [options]` runs every
+  test (selection flags are refused) and writes it.
+- **Impact run** (`impact.rs`): with no `--impact`, or `--impact dynamic`, and an index cached: the "with" side is
+  compiled, `decide` lists the impact points and, through `RunOptions::narrow` (a callback between compile and run),
+  runs only the codeunits with a test that reached one; the "without" outcomes come from the index. Tests in run
+  codeunits that reached nothing and whose outcome changed with no reached test before them in their codeunit are
+  the class **selection miss** (exit 1). Unselected codeunits are counted on a `not selected:` line. `--impact all`
+  is step 1. No index: step 1 behavior with the warning, printed before the run and above the summary.
+
+### Decided without owner review (2026-10-18, impact-2)
+
+1. No index cached: the run does what `--impact all` does, with the warning, because static selection (step 5) does
+   not exist yet. Section 6 said to stop with the warning; the orchestrator's task asked for the fallback.
+   `--impact static` stops with exit 2 ("not built yet").
+2. An impact point the index does not cover, or one the install code reached in the index's run (a subscriber, or a
+   table extension with triggers on a table the install code used), does not stop the run: every test codeunit
+   runs with the extension and the "without" outcomes still come from the index (they are exact for any selection).
+3. The index records Microsoft's app versions; when the impact run compiles other versions under the same key, the
+   index is stale: the run warns and falls back to both sides.
+4. A table extension selects every test that used its table, whatever it adds (fields, keys or triggers); the
+   finer keys of section 2.2 (operation, validated field) are recorded for events only.
+5. Selection miss: a changed test is not a miss when an earlier test of its codeunit reached an impact point (the
+   codeunit's tests share state, section 2.1).

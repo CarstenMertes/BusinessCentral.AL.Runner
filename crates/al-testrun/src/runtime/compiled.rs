@@ -43,6 +43,36 @@ pub struct RunOptions {
     /// Do not print the `baseline:` detail lines to stderr (`alrunner test` prints them only with `--verbose`). The counts
     /// stay in `Phases::baseline_roots`. Default `false`: print, as the corpus job does.
     pub quiet_baseline: bool,
+    /// `alrunner impact-index build` (ADR-043 step 2): note per test what it raised and touched
+    /// (`TestResult::impact`), and what the install baseline raised and touched (`CorpusRuntime::impact_baseline`).
+    /// The baseline then runs instead of being read from the compile cache. Off, a run pays one branch per raise and
+    /// record operation.
+    pub impact_trace: bool,
+    /// Called once the compile is done and before anything runs: it may narrow the test codeunits to run (an impact
+    /// run that selects the codeunits that reach the extension's impact points). `None`: the selection stays.
+    pub narrow: Option<Narrow>,
+}
+
+/// What [`RunOptions::narrow`] sees of the compile.
+pub struct NarrowInput<'a> {
+    pub program: &'a al_ir::Program,
+    /// Per app of the program: its index as the caller gave it.
+    pub order: &'a [usize],
+    /// The test codeunits the run would run (caller's app index, codeunit id); `None`: all.
+    pub only: Option<&'a [(usize, u32)]>,
+}
+
+/// The test codeunits to run instead, as (caller's app index, codeunit id); `None` keeps the selection.
+pub type NarrowFn = dyn Fn(&NarrowInput) -> Option<Vec<(usize, u32)>> + Send + Sync;
+
+/// See [`RunOptions::narrow`].
+#[derive(Clone)]
+pub struct Narrow(pub Arc<NarrowFn>);
+
+impl std::fmt::Debug for Narrow {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Narrow(..)")
+    }
 }
 
 /// What the compile phase of a run leaves for its run phase (`CorpusRuntime::compile_suites`).

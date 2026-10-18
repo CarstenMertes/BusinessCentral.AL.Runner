@@ -232,6 +232,7 @@ name = "alrunner-cli"
 version = "3.0.0-alpha.1"
 dependencies = [
  "al-bcdb-std",
+ "al-builtins",
  "al-deps",
  "al-host",
  "al-rapidstart",
@@ -239,6 +240,7 @@ dependencies = [
  "al-testrun",
  "al-version",
  "al-vm",
+ "flate2",
  "mimalloc",
  "serde_json",
  "tempfile",

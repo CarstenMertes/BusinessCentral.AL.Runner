@@ -177,6 +177,9 @@ pub(crate) fn run_codeunit_core(
     if covering {
         session.enable_coverage();
     }
+    if scratch.trace {
+        session.enable_impact_trace();
+    }
     let instance = session.instance(object);
     let is_on_run = |r: usize| obj.routines[r].is_trigger && obj.routines[r].name.eq_ignore_ascii_case("OnRun");
     let tests: Vec<usize> = (0..obj.routines.len())
@@ -521,6 +524,13 @@ pub(crate) fn run_codeunit_core(
         }
         times.push((routine.name.clone(), took));
         let cov = if covering { session.take_coverage() } else { Vec::new() };
+        if scratch.trace {
+            let touched = session.take_impact_trace();
+            scratch.traces.push((
+                routine.name.clone(),
+                crate::impact_trace::keys(&lowered.program, &touched),
+            ));
+        }
         if crate::events::wants_events() {
             crate::events::report(crate::events::TestEvent {
                 codeunit: obj.id.unwrap_or(0),

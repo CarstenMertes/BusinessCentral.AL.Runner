@@ -55,7 +55,7 @@ fn an_impact_run_classifies_each_test_and_names_the_extension_routines_that_ran(
     assert_eq!(code(&o), 1, "{t}");
     assert!(
         t.contains(
-            "Impact: 5 tests: 1 newly failing, 0 fails differently, 0 newly refused, 0 newly passing, 0 newly runs, 1 same (reached), 3 same (not reached), 0 not verified"
+            "Impact: 5 tests: 1 newly failing, 0 fails differently, 0 newly refused, 0 selection miss, 0 newly passing, 0 newly runs, 1 same (reached), 3 same (not reached), 0 not verified"
         ),
         "{t}"
     );
@@ -104,7 +104,7 @@ fn outcomes_do_not_depend_on_the_selection_or_on_an_unrelated_app_in_the_compile
     assert_eq!(code(&all), 0, "{t}");
     assert!(
         t.contains(
-            "Impact: 5 tests: 0 newly failing, 0 fails differently, 0 newly refused, 0 newly passing, 0 newly runs, 0 same (reached), 5 same (not reached), 0 not verified"
+            "Impact: 5 tests: 0 newly failing, 0 fails differently, 0 newly refused, 0 selection miss, 0 newly passing, 0 newly runs, 0 same (reached), 5 same (not reached), 0 not verified"
         ),
         "{t}"
     );
@@ -124,7 +124,7 @@ fn outcomes_do_not_depend_on_the_selection_or_on_an_unrelated_app_in_the_compile
     assert_eq!(code(&one), 0, "{t}");
     assert!(
         t.contains(
-            "Impact: 4 tests: 0 newly failing, 0 fails differently, 0 newly refused, 0 newly passing, 0 newly runs, 0 same (reached), 4 same (not reached), 0 not verified"
+            "Impact: 4 tests: 0 newly failing, 0 fails differently, 0 newly refused, 0 selection miss, 0 newly passing, 0 newly runs, 0 same (reached), 4 same (not reached), 0 not verified"
         ),
         "{t}"
     );
@@ -157,23 +157,18 @@ fn outcomes_do_not_depend_on_the_selection_or_on_an_unrelated_app_in_the_compile
 }
 
 #[test]
-fn an_impact_run_needs_impact_all_and_the_compile_cache() {
+fn an_impact_run_without_an_index_runs_both_sides_and_says_how_to_build_the_index() {
     let (tests, ext, lib) = (fixture("tests"), fixture("ext"), fixture("lib"));
-    // No index and no static reach yet (ADR-043 steps 2 and 5): without `--impact all` the run stops and says
-    // what to pass.
+    // No index cached: every selected test runs without and with the extension (ADR-043 owner decision 1, until
+    // static selection exists), with a warning before the run and again above the summary.
     let o = alrunner(&["test", &tests, "--impact-of", &ext, "--dep", &lib]);
-    assert_eq!(code(&o), 2, "{}", text(&o));
-    assert!(text(&o).contains("--impact all"), "{}", text(&o));
-    let o = alrunner(&[
-        "test",
-        &tests,
-        "--impact-of",
-        &ext,
-        "--impact",
-        "dynamic",
-        "--dep",
-        &lib,
-    ]);
+    let t = text(&o);
+    assert_eq!(code(&o), 1, "{t}");
+    assert_eq!(t.matches("warning: no impact index").count(), 2, "{t}");
+    assert!(t.contains("alrunner impact-index build"), "{t}");
+    assert!(t.contains("1 newly failing"), "{t}");
+    // Static selection is ADR-043 step 5.
+    let o = alrunner(&["test", &tests, "--impact-of", &ext, "--impact", "static", "--dep", &lib]);
     assert_eq!(code(&o), 2, "{}", text(&o));
     assert!(text(&o).contains("not built yet"), "{}", text(&o));
     // `--impact` without `--impact-of` has nothing to compare.
@@ -193,4 +188,69 @@ fn an_impact_run_needs_impact_all_and_the_compile_cache() {
     ]);
     assert_eq!(code(&o), 2, "{}", text(&o));
     assert!(text(&o).contains("--no-compile-cache"), "{}", text(&o));
+    // An index is built without an extension.
+    let o = alrunner(&["impact-index", "build", &tests, "--impact-of", &ext, "--dep", &lib]);
+    assert_eq!(code(&o), 2, "{}", text(&o));
+}
+
+fn alrunner_in(cache: &std::path::Path, args: &[&str]) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_alrunner"))
+        .env("AL_CHECK_THREADS", "2")
+        .env("AL_LOWER_THREADS", "2")
+        .env("AL_TEST_THREADS", "2")
+        .args(args)
+        .args(["--no-download", "--cache-dir", cache.to_str().unwrap()])
+        .output()
+        .expect("run alrunner")
+}
+
+#[test]
+fn with_an_index_the_run_selects_the_codeunits_that_reach_the_extension_and_runs_them_once() {
+    let (tests, ext, lib, unrelated) = (fixture("tests"), fixture("ext"), fixture("lib"), fixture("unrelated"));
+    let cache = tempfile::tempdir().unwrap();
+    let o = alrunner_in(cache.path(), &["impact-index", "build", &tests, "--dep", &lib]);
+    let t = text(&o);
+    assert_eq!(code(&o), 0, "{t}");
+    assert!(t.contains("impact index: 5 tests in 2 codeunits"), "{t}");
+
+    // The default with an index is dynamic selection: only codeunit 50510 calls the publisher the extension
+    // subscribes to. The "without" side comes from the index.
+    let o = alrunner_in(cache.path(), &["test", &tests, "--impact-of", &ext, "--dep", &lib]);
+    let t = text(&o);
+    assert_eq!(code(&o), 1, "{t}");
+    assert!(!t.contains("warning: no impact index"), "{t}");
+    assert!(t.contains("selected 1 of 2 test codeunits"), "{t}");
+    assert!(!t.contains("\nwithout the extension:"), "{t}");
+    // The same classes as `--impact all` for the codeunit that ran, and the rest counted as not selected.
+    assert!(
+        t.contains(
+            "Impact: 4 tests: 1 newly failing, 0 fails differently, 0 newly refused, 0 selection miss, 0 newly passing, 0 newly runs, 1 same (reached), 2 same (not reached), 0 not verified"
+        ),
+        "{t}"
+    );
+    assert!(t.contains("not selected: 1 test in 1 codeunit"), "{t}");
+    let failing = section(&t, "newly failing");
+    assert!(
+        failing.contains("50510 Imp Tests.PostKeepsALargeAmount: pass -> fail: amount 20"),
+        "{t}"
+    );
+    assert!(failing.contains("reached: subscriber"), "{t}");
+
+    // An extension that reaches nothing the tests reach selects nothing and runs nothing.
+    let o = alrunner_in(
+        cache.path(),
+        &["test", &tests, "--impact-of", &unrelated, "--dep", &lib],
+    );
+    let t = text(&o);
+    assert_eq!(code(&o), 0, "{t}");
+    assert!(t.contains("selected 0 of 2 test codeunits"), "{t}");
+
+    // `--impact all` still runs both sides, index or not.
+    let o = alrunner_in(
+        cache.path(),
+        &["test", &tests, "--impact-of", &ext, "--impact", "all", "--dep", &lib],
+    );
+    let t = text(&o);
+    assert_eq!(code(&o), 1, "{t}");
+    assert!(t.contains("\nwithout the extension:"), "{t}");
 }

@@ -9,7 +9,7 @@ def messages(path):
         f = tc.find('failure')
         if f is None: f = tc.find('error')
         if f is None: continue
-        t = (f.text or f.get('message') or '').split('\n\nCall stack')[0]
+        t = (f.text or f.get('message') or '').split('\nAL Callstack')[0].split('\n\nCall stack')[0].strip('\n')
         out[(tc.get('classname'), tc.get('name'))] = t
     return out
 
@@ -20,7 +20,7 @@ def dump_entries(path):
         f = tc.find('failure')
         if f is None: f = tc.find('error')
         if f is None: continue
-        t = (f.text or f.get('message') or '').split('\n\nCall stack')[0]
+        t = (f.text or f.get('message') or '').split('\nAL Callstack')[0].split('\n\nCall stack')[0].strip('\n')
         chunks.append((tc.get('name'), t[len('DUMP:'):] if t.startswith('DUMP:') else t))
     chunks.sort()
     full = ''.join(c for _, c in chunks if c != '<empty>')

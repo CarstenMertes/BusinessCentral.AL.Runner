@@ -62,21 +62,35 @@ pub fn microsoft_calls(ws: &Workspace, checked: &CheckResult) -> BTreeMap<String
     out
 }
 
-/// The map of the pinned corpus under `root` (the repository root): the corpus's `al-language` app
-/// and its fixture, with the dependency apps of the corpus's `.alpackages` so that calls on Microsoft's
-/// types resolve, checked with the preprocessor symbol of BC 27 and the whole catalog.
-pub fn corpus_coverage(root: &std::path::Path, corpus_commit: &str) -> Result<Coverage, String> {
+/// The corpus apps whose files count as the corpus's own: `al-language`, the OnPrem app and the
+/// OnPrem DotNet app (items only a `Target = OnPrem` app can name are pinned there), plus the fixture.
+pub const CORPUS_TEST_APPS: [&str; 3] = ["al-language", "al-language-onprem", "al-language-onprem-dotnet"];
+
+/// The workspace both coverage maps check: the fixture and every app of `CORPUS_TEST_APPS` as
+/// workspace apps, then the dependency apps of the corpus's `.alpackages`.
+pub fn corpus_workspace(root: &std::path::Path) -> Result<Workspace, String> {
     let tests = root.join("corpus/tests");
     let fixture = tests.join("al-language-internals-fixture");
-    let mut apps = vec![
-        crate::runtime::load_app(&fixture)?,
-        crate::runtime::load_app(&tests.join("al-language"))?,
-    ];
+    let mut apps = vec![crate::runtime::load_app(&fixture)?];
+    for name in CORPUS_TEST_APPS {
+        apps.push(crate::runtime::load_app(&tests.join(name))?);
+    }
     let mut kinds = vec![al_sema::AppKind::Workspace; apps.len()];
     let dependencies = crate::deps::load(&tests.join("al-language"), &[fixture], &[])?;
     kinds.extend(dependencies.apps.iter().map(|_| al_sema::AppKind::Dependency));
     apps.extend(dependencies.apps);
-    let ws = Workspace::load_apps(apps, kinds, &al_version::corpus_symbols(al_version::MIN_BC_MAJOR));
+    Ok(Workspace::load_apps(
+        apps,
+        kinds,
+        &al_version::corpus_symbols(al_version::MIN_BC_MAJOR),
+    ))
+}
+
+/// The map of the pinned corpus under `root` (the repository root): the corpus's test apps
+/// and the fixture, with the dependency apps of the corpus's `.alpackages` so that calls on Microsoft's
+/// types resolve, checked with the preprocessor symbol of BC 27 and the whole catalog.
+pub fn corpus_coverage(root: &std::path::Path, corpus_commit: &str) -> Result<Coverage, String> {
+    let ws = corpus_workspace(root)?;
     let members = al_sema::members::build(&ws);
     let catalog = Catalog::load();
     let checked = al_sema::check::check(&ws, &members, &catalog);

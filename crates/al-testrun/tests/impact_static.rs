@@ -125,6 +125,12 @@ codeunit 50986 "SX Tests"
     end;
 
     [Test]
+    procedure CastsAKindConstant()
+    begin
+        if Format(Enum::"SX Kind"::None) = '' then;
+    end;
+
+    [Test]
     procedure ReadsKinds()
     var
         K: Enum "SX Kind";
@@ -279,6 +285,7 @@ fn an_enum_extension_is_reached_through_variables_of_its_enum_and_fields_of_that
     assert_eq!(
         of(&all, "enumextension \"SX Kind Ext\""),
         [
+            ("CastsAKindConstant", &Verdict::Reaches),
             (
                 "OpensAnyRef",
                 &cannot("RecordRef.Open with a table number from a variable")

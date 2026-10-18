@@ -145,6 +145,13 @@ impl Graph {
             by_name.entry((o.kind, o.name.to_lowercase())).or_insert(oi);
         }
         let mut edges = std::mem::take(&mut g.edges);
+        // The events the platform raises to resolve a caption class.
+        let caption_class: Vec<usize> = g
+            .events
+            .iter()
+            .filter(|((o, _), _)| *o == al_vm::events::CAPTION_CLASS)
+            .map(|(_, &n)| n)
+            .collect();
         for (oi, o) in objs.iter().enumerate() {
             for (ri, r) in o.routines.iter().enumerate() {
                 let from = g.base[oi] + ri;
@@ -186,10 +193,18 @@ impl Graph {
                     Some(ty)
                 };
                 al_ir::types::for_each_expr_post(&r.body, &mut |e| {
+                    // A constant of an enum reads its values (an interface cast of it, a format of it).
+                    if let al_ir::Expr::Const(al_ir::Const::Enum(en, _)) = e {
+                        out.push((routines + *en as usize) as u32);
+                        return;
+                    }
                     let al_ir::Expr::Builtin { id, receiver, args, .. } = e else {
                         return;
                     };
                     let name = id.name();
+                    if name.starts_with("System.CaptionClassTranslate") {
+                        out.extend(caption_class.iter().map(|&n| n as u32));
+                    }
                     let method = id.method();
                     let (class, _) = name.split_once('.').unwrap_or((name, ""));
                     let constant = |i: usize| match args.get(i) {
@@ -278,6 +293,8 @@ impl Graph {
                 }
                 ObjKind::Page => {
                     all(oi, &mut out);
+                    // A page resolves the CaptionClass of its controls (`pages/rows.rs`).
+                    out.extend(caption_class.iter().map(|&n| n as u32));
                     for &e in o.page.iter().flat_map(|p| p.extensions.iter()) {
                         all(e, &mut out);
                     }
@@ -618,12 +635,13 @@ pub fn select(
             continue;
         };
         let reach = graph.reaching(&targets);
+        // Still decide per test: the report names what each test reaches, and a changed test that reaches nothing is
+        // a selection miss even when every codeunit ran.
         if p.runs_code && baseline.iter().any(|&b| reach.precise[b]) {
             sel.everything[pi] = Some(format!(
                 "{}: the install code can reach it, so it can change the data every test starts from",
                 p.what
             ));
-            continue;
         }
         for (i, nodes) in &roots {
             let verdict = if nodes.iter().any(|&n| reach.precise[n]) {

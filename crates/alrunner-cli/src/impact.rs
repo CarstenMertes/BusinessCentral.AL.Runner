@@ -954,7 +954,11 @@ fn decide_static(
     );
     for ((p, (r, c)), why) in points.iter().zip(&per_point).zip(&sel.everything) {
         match why {
-            Some(_) => println!("  {}: static reach cannot select for it", p.what),
+            Some(_) => println!(
+                "  {}: reached by {r} of {} tests, {c} more cannot rule it out; static reach cannot select for it",
+                p.what,
+                routines.len()
+            ),
             None => println!(
                 "  {}: reached by {r} of {} tests, {c} more cannot rule it out",
                 p.what,

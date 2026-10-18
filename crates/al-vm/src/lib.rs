@@ -600,6 +600,7 @@ impl Session {
                 lock_timeout: true,
                 lock_timeout_duration: 10,
                 committed_row_version: 0,
+                last_commit_wrote: false,
                 deferred_insert: None,
                 immediate_errors: false,
                 try_depth: 0,
@@ -669,6 +670,7 @@ impl Session {
         self.truncate_undo.clear();
         // Rows at or below this rowversion are durable: a buffer older than one of them is stale.
         self.tx.committed_row_version = self.next_row_version;
+        self.tx.last_commit_wrote = self.tx.tx_phase == crate::transactions::TX_WRITE;
         self.isolated_committed = self.isolated_storage.clone();
         self.end_write_phase();
     }

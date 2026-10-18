@@ -313,7 +313,3 @@
 27 0575-session-logsecurityaudit-is-onprem
 28 0575-session-logsecurityaudit-is-onprem
 29 0575-session-logsecurityaudit-is-onprem
-# Bump 24: new case (issue 580 item 5); the front end does not judge Text to Decimal assignments yet.
-27 0501-text-to-decimal-implicit
-28 0501-text-to-decimal-implicit
-29 0501-text-to-decimal-implicit

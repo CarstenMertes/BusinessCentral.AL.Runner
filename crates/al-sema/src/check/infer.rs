@@ -41,7 +41,12 @@ impl<'a> Checker<'a> {
                 let t = len.map_or("Text".to_string(), |n| format!("Text[{n}]"));
                 format!("Cannot implicitly convert type 'Integer' to '{t}'")
             }
-            (Ty::Integer, Ty::Text(None)) if rhs.kind() == SyntaxKind::Literal => {
+            // A Text variable (case 0501, `D := T`) into a Decimal; a text literal of more than one character is judged below as for an
+            // Integer (case 0501, `D := '100'`). Text[30], Code and a one-character literal are not judged.
+            (Ty::Decimal, Ty::Text(None)) if rhs.kind() == SyntaxKind::NameRef => {
+                "Cannot implicitly convert type 'Text' to 'Decimal'".to_string()
+            }
+            (Ty::Integer | Ty::Decimal, Ty::Text(None)) if rhs.kind() == SyntaxKind::Literal => {
                 let Some(tok) = rhs
                     .children_with_tokens()
                     .filter_map(|e| e.into_token())
@@ -57,7 +62,14 @@ impl<'a> Checker<'a> {
                 if inner.chars().count() <= 1 {
                     return;
                 }
-                "Cannot implicitly convert type 'Text' to 'Integer'".to_string()
+                format!(
+                    "Cannot implicitly convert type 'Text' to '{}'",
+                    if matches!(target, Ty::Decimal) {
+                        "Decimal"
+                    } else {
+                        "Integer"
+                    }
+                )
             }
             _ => return,
         };

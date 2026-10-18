@@ -472,6 +472,49 @@ impl Session {
         Ok(())
     }
 
+    /// A part list that shows rows of the host's own table, edited through SetValue on the host's current row: the host card reads that
+    /// row's new values and runs its OnAfterGetCurrRecord once more, so its fields show the edit, whatever `UpdatePropagation` says
+    /// (pages/lt-page-controls-aa/AaPartsLists.al:AA_UpdatePropagation_Both line 191, _SubPart line 218, _Default line 245). The part
+    /// saves its row later, when its cursor leaves it (testpart/TestPartCloseLinkEditableContracts.al:Parts_EnabledReadsTheControl_
+    /// EditableFalseDoesNotBlockWrites). Pinned for a host card over the same table, without OnFindRecord; any other pairing keeps the
+    /// earlier behavior.
+    pub(super) fn refresh_host_after_part_edit(&mut self, st: &St) -> Result<(), Signal> {
+        let Some(host) = st.borrow().host.as_ref().and_then(|(h, _)| h.upgrade()) else {
+            return Ok(());
+        };
+        if !host.borrow().open
+            || self.is_list(&host)
+            || !self.is_list(st)
+            || !self.has_source(&host)
+            || !self.has_source(st)
+            || host.borrow().cursor != Cursor::Row
+            || host.borrow().draft
+            || self.declares(&host, "onfindrecord")
+            || self.declares(&host, "onnextrecord")
+        {
+            return Ok(());
+        }
+        let (a, b) = (self.page_rec(&host), self.page_rec(st));
+        let table = self.table(&a)?;
+        if table.object != self.table(&b)?.object {
+            return Ok(());
+        }
+        if !Self::same_key(
+            &table.primary_key(&a.borrow().fields),
+            &table.primary_key(&b.borrow().fields),
+        ) {
+            return Ok(());
+        }
+        let fields = b.borrow().fields.clone();
+        a.borrow_mut().fields = fields;
+        let r = (|| {
+            self.populate_current(&host)?;
+            self.page_trigger(&host, "onaftergetcurrrecord", vec![])?;
+            self.page_event(&host, "onaftergetcurrrecordevent", None, None)
+        })();
+        self.torn_down_on_error(&host, r).map(|_| ())
+    }
+
     /// Saves what was typed into the rows the parts stand on.
     pub(super) fn save_parts(&mut self, st: &St) -> Result<(), Signal> {
         let parts = st.borrow().parts.clone();

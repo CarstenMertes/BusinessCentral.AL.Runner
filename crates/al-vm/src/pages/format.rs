@@ -136,9 +136,22 @@ impl Session {
         if let Some(b) = lit("blanknumbers").or_else(|| from_field("blanknumbers")) {
             f.blank = Blank::parse(&b).unwrap_or_default();
         }
-        f.option_captions = lit("optioncaption")
-            .or_else(|| from_field("optioncaption"))
-            .map(|c| unquote(&c).split(',').map(str::to_string).collect());
+        f.option_captions = lit("optioncaption").map(|c| unquote(&c).split(',').map(str::to_string).collect());
+        // OptionCaptionML on the control: a TestPage shows and takes the ENU captions in every session language (pages/lt-page-controls-aa/
+        // AaFieldProps.al:AA_OptionCaptionML_PageField line 179: 1033, 1031 and 1036 all show One, Two, Three), over the table field's
+        // captions. An entry without ENU is not pinned.
+        if f.option_captions.is_none() {
+            if let Some(ml) = lit("optioncaptionml") {
+                let Some(enu) = enu_entry(&ml) else {
+                    return unsupported("OptionCaptionML without an ENU entry on a page field (not pinned)");
+                };
+                f.option_captions = Some(enu.split(',').map(str::to_string).collect());
+            }
+        }
+        if f.option_captions.is_none() {
+            f.option_captions =
+                from_field("optioncaption").map(|c| unquote(&c).split(',').map(str::to_string).collect());
+        }
         if f.option_captions.is_none() {
             // Without captions an option shows its member names, a blank member as nothing.
             f.option_captions = from_field("optionmembers").map(|c| {
@@ -695,4 +708,14 @@ impl Session {
         }
         Ok(visible)
     }
+}
+
+/// The text of the `ENU = '...'` entry of a `...ML` property value.
+fn enu_entry(ml: &str) -> Option<String> {
+    let low = ml.to_ascii_lowercase();
+    let at = low.find("enu")?;
+    let rest = ml[at + 3..].trim_start().strip_prefix('=')?.trim_start();
+    let rest = rest.strip_prefix('\'')?;
+    let end = rest.find('\'')?;
+    Some(rest[..end].to_string())
 }

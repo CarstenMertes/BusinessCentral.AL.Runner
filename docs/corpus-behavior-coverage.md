@@ -12,7 +12,7 @@ The catalog of each area is what the AL language server offers in probe files (`
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
 | attributes | 42 | 24 | 57.1% | 26 | 61.9% | 0 | 16 | 5 |
 | events | 23 | 16 | 69.6% | 22 | 95.7% | 0 | 1 | 0 |
-| properties | 720 | 406 | 56.4% | 501 | 69.6% | 39 | 180 | 80 |
+| properties | 720 | 406 | 56.4% | 518 | 71.9% | 39 | 163 | 80 |
 | syntax | 16 | 16 | 100.0% | 16 | 100.0% | 0 | 0 | 0 |
 | triggers | 128 | 112 | 87.5% | 116 | 90.6% | 3 | 9 | 0 |
 
@@ -49,9 +49,9 @@ Left out: 293 presentation-only properties (Caption, ToolTip, ApplicationArea, .
 | Entitlement | 5 | 2 | 40.0% | 2 | 40.0% | 0 | 3 | 3 |
 | EnumType | 9 | 5 | 55.6% | 8 | 88.9% | 0 | 1 | 3 |
 | EnumValue | 4 | 1 | 25.0% | 4 | 100.0% | 0 | 0 | 3 |
-| Field | 46 | 36 | 78.3% | 31 | 67.4% | 0 | 15 | 3 |
+| Field | 46 | 36 | 78.3% | 33 | 71.7% | 0 | 13 | 3 |
 | FieldGroup | 3 | 0 | 0.0% | 3 | 100.0% | 0 | 0 | 0 |
-| FieldModify | 8 | 1 | 12.5% | 5 | 62.5% | 0 | 3 | 0 |
+| FieldModify | 8 | 1 | 12.5% | 6 | 75.0% | 0 | 2 | 0 |
 | Interface | 5 | 1 | 20.0% | 5 | 100.0% | 0 | 0 | 4 |
 | Key | 11 | 11 | 100.0% | 8 | 72.7% | 0 | 3 | 0 |
 | Page | 46 | 32 | 69.6% | 37 | 80.4% | 0 | 9 | 9 |
@@ -62,19 +62,19 @@ Left out: 293 presentation-only properties (Caption, ToolTip, ApplicationArea, .
 | PageActionRef | 4 | 3 | 75.0% | 4 | 100.0% | 0 | 0 | 1 |
 | PageActionSeparator | 4 | 1 | 25.0% | 3 | 75.0% | 0 | 1 | 3 |
 | PageArea | 3 | 0 | 0.0% | 3 | 100.0% | 0 | 0 | 0 |
-| PageControlModify | 21 | 7 | 33.3% | 12 | 57.1% | 0 | 9 | 0 |
-| PageCueGroup | 16 | 4 | 25.0% | 7 | 43.8% | 0 | 9 | 3 |
+| PageControlModify | 21 | 7 | 33.3% | 13 | 61.9% | 0 | 8 | 0 |
+| PageCueGroup | 16 | 4 | 25.0% | 9 | 56.2% | 0 | 7 | 3 |
 | PageCustomAction | 13 | 9 | 69.2% | 6 | 46.2% | 0 | 7 | 1 |
 | PageCustomizationObject | 10 | 0 | 0.0% | 5 | 50.0% | 0 | 5 | 0 |
 | PageExtension | 14 | 0 | 0.0% | 11 | 78.6% | 0 | 3 | 5 |
-| PageField | 46 | 45 | 97.8% | 30 | 65.2% | 0 | 16 | 0 |
+| PageField | 46 | 45 | 97.8% | 32 | 69.6% | 0 | 14 | 0 |
 | PageFileUploadAction | 10 | 5 | 50.0% | 6 | 60.0% | 0 | 4 | 2 |
-| PageFixed | 16 | 1 | 6.2% | 7 | 43.8% | 0 | 9 | 0 |
-| PageGrid | 16 | 3 | 18.8% | 7 | 43.8% | 0 | 9 | 0 |
-| PageGroup | 16 | 6 | 37.5% | 7 | 43.8% | 0 | 9 | 3 |
+| PageFixed | 16 | 1 | 6.2% | 9 | 56.2% | 0 | 7 | 0 |
+| PageGrid | 16 | 3 | 18.8% | 9 | 56.2% | 0 | 7 | 0 |
+| PageGroup | 16 | 6 | 37.5% | 9 | 56.2% | 0 | 7 | 3 |
 | PageLabel | 16 | 12 | 75.0% | 9 | 56.2% | 0 | 7 | 4 |
 | PagePart | 15 | 15 | 100.0% | 13 | 86.7% | 0 | 2 | 0 |
-| PageRepeater | 16 | 11 | 68.8% | 7 | 43.8% | 0 | 9 | 0 |
+| PageRepeater | 16 | 11 | 68.8% | 9 | 56.2% | 0 | 7 | 0 |
 | PageSystemAction | 1 | 1 | 100.0% | 1 | 100.0% | 0 | 0 | 0 |
 | PageSystemPart | 13 | 6 | 46.2% | 12 | 92.3% | 0 | 1 | 0 |
 | PageUserControl | 4 | 1 | 25.0% | 4 | 100.0% | 0 | 0 | 0 |
@@ -87,7 +87,7 @@ Left out: 293 presentation-only properties (Caption, ToolTip, ApplicationArea, .
 | QueryDataItem | 3 | 3 | 100.0% | 3 | 100.0% | 0 | 0 | 0 |
 | QueryFilter | 4 | 1 | 25.0% | 4 | 100.0% | 0 | 0 | 0 |
 | Report | 36 | 17 | 47.2% | 23 | 63.9% | 13 | 0 | 7 |
-| ReportColumn | 11 | 10 | 90.9% | 9 | 81.8% | 0 | 2 | 0 |
+| ReportColumn | 11 | 10 | 90.9% | 10 | 90.9% | 0 | 1 | 0 |
 | ReportDataItem | 13 | 9 | 69.2% | 13 | 100.0% | 0 | 0 | 0 |
 | ReportExtension | 3 | 0 | 0.0% | 3 | 100.0% | 0 | 0 | 0 |
 | ReportExtensionModify | 2 | 1 | 50.0% | 2 | 100.0% | 0 | 0 | 0 |
@@ -110,9 +110,9 @@ Left out: 293 presentation-only properties (Caption, ToolTip, ApplicationArea, .
 - **Entitlement** (3 of 5): `GroupName` unknown, MS 8; `Id` implemented, MS 100; `RoleType` unknown, MS 28
 - **EnumType** (4 of 9): `AssignmentCompatibilityReason` unknown; `ObsoleteReason` implemented, MS 6; `ObsoleteState` implemented, MS 6; `ObsoleteTag` implemented, MS 6
 - **EnumValue** (3 of 4): `ObsoleteReason` implemented, MS 5; `ObsoleteState` implemented, MS 5; `ObsoleteTag` implemented, MS 5
-- **Field** (10 of 46): `DateFormula` implemented; `MaskType` unknown; `MovedFrom` unknown, MS 85; `OptimizeForTextSearch` implemented, MS 130; `OptionCaptionML` unknown; `OptionOrdinalValues` unknown, MS 229; `SignDisplacement` unknown; `SqlDataType` unknown; `SqlTimestamp` unknown; `Width` implemented
+- **Field** (10 of 46): `DateFormula` implemented; `MaskType` unknown; `MovedFrom` unknown, MS 85; `OptimizeForTextSearch` implemented, MS 130; `OptionCaptionML` implemented; `OptionOrdinalValues` unknown, MS 229; `SignDisplacement` unknown; `SqlDataType` unknown; `SqlTimestamp` unknown; `Width` implemented
 - **FieldGroup** (3 of 3): `ObsoleteReason` implemented; `ObsoleteState` implemented; `ObsoleteTag` implemented
-- **FieldModify** (7 of 8): `BlankZero` implemented; `CaptionClass` implemented; `ClosingDates` unknown; `MaskType` unknown; `OptionCaption` implemented; `OptionCaptionML` unknown; `Width` implemented
+- **FieldModify** (7 of 8): `BlankZero` implemented; `CaptionClass` implemented; `ClosingDates` unknown; `MaskType` unknown; `OptionCaption` implemented; `OptionCaptionML` implemented; `Width` implemented
 - **Interface** (4 of 5): `ObsoleteReason` implemented, MS 3; `ObsoleteState` implemented, MS 3; `ObsoleteTag` implemented, MS 3; `Scope` implemented, MS 4
 - **Page** (14 of 46): `AdditionalSearchTermsML` implemented; `ContextSensitiveHelpPage` implemented, MS 36; `DataAccessIntent` implemented, MS 2; `EntityCaption` implemented, MS 3; `EntityCaptionML` unknown; `EntitySetCaption` implemented, MS 3; `EntitySetCaptionML` unknown; `HelpLink` unknown, MS 7; `IsPreview` unknown, MS 1; `ObsoleteReason` implemented, MS 37; `ObsoleteState` implemented, MS 37; `ObsoleteTag` implemented, MS 37; `PromotedActionCategoriesML` unknown; `PromptMode` implemented
 - **PageActionArea** (3 of 3): `ObsoleteReason` implemented; `ObsoleteState` implemented; `ObsoleteTag` implemented
@@ -121,16 +121,16 @@ Left out: 293 presentation-only properties (Caption, ToolTip, ApplicationArea, .
 - **PageActionRef** (1 of 4): `Visible` implemented, MS 7
 - **PageActionSeparator** (3 of 4): `ObsoleteReason` implemented, MS 4; `ObsoleteState` implemented, MS 4; `ObsoleteTag` implemented, MS 4
 - **PageArea** (3 of 3): `ObsoleteReason` implemented; `ObsoleteState` implemented; `ObsoleteTag` implemented
-- **PageControlModify** (14 of 21): `AssistEdit` implemented; `BlankZero` implemented; `CaptionClass` implemented; `ClosingDates` unknown; `HideValue` implemented; `LookupPageId` implemented; `MaskType` unknown; `ODataEDMType` unknown; `OptionCaptionML` unknown; `QuickEntry` unknown; `ShowCaption` unknown; `ShowMandatory` implemented; `Style` unknown; `Width` implemented
-- **PageCueGroup** (12 of 16): `Enabled` implemented; `FileUploadAction` implemented; `FileUploadRowAction` unknown; `FreezeColumn` unknown; `GridLayout` unknown; `IndentationColumn` unknown; `IndentationControls` unknown; `ObsoleteReason` implemented, MS 1; `ObsoleteState` implemented, MS 1; `ObsoleteTag` implemented, MS 1; `ShowAsTree` unknown; `TreeInitialState` unknown
+- **PageControlModify** (14 of 21): `AssistEdit` implemented; `BlankZero` implemented; `CaptionClass` implemented; `ClosingDates` unknown; `HideValue` implemented; `LookupPageId` implemented; `MaskType` unknown; `ODataEDMType` unknown; `OptionCaptionML` implemented; `QuickEntry` unknown; `ShowCaption` unknown; `ShowMandatory` implemented; `Style` unknown; `Width` implemented
+- **PageCueGroup** (12 of 16): `Enabled` implemented; `FileUploadAction` implemented; `FileUploadRowAction` unknown; `FreezeColumn` unknown; `GridLayout` unknown; `IndentationColumn` implemented; `IndentationControls` unknown; `ObsoleteReason` implemented, MS 1; `ObsoleteState` implemented, MS 1; `ObsoleteTag` implemented, MS 1; `ShowAsTree` implemented; `TreeInitialState` unknown
 - **PageCustomAction** (4 of 13): `ObsoleteReason` implemented; `ObsoleteState` implemented; `ObsoleteTag` implemented; `Visible` implemented, MS 15
 - **PageCustomizationObject** (10 of 10): `ClearActions` unknown; `ClearLayout` unknown; `ClearViews` unknown; `DeleteAllowed` unknown; `InsertAllowed` implemented; `ModifyAllowed` implemented; `ObsoleteReason` implemented; `ObsoleteState` implemented; `ObsoleteTag` implemented; `PromotedActionCategories` unknown
 - **PageExtension** (14 of 14): `AdditionalSearchTerms` implemented; `AdditionalSearchTermsML` implemented; `CardPageId` implemented; `ContextSensitiveHelpPage` implemented; `DataCaptionExpression` implemented, MS 3; `DeleteAllowed` unknown; `Editable` implemented, MS 1; `InsertAllowed` implemented; `ModifyAllowed` implemented; `ObsoleteReason` implemented, MS 3; `ObsoleteState` implemented, MS 3; `ObsoleteTag` implemented, MS 3; `PromotedActionCategories` unknown; `PromotedActionCategoriesML` unknown
 - **PageField** (1 of 46): `FileUploadAction` implemented
 - **PageFileUploadAction** (5 of 10): `Enabled` implemented, MS 3; `ObsoleteReason` implemented; `ObsoleteState` implemented; `ObsoleteTag` implemented; `Scope` implemented, MS 3
-- **PageFixed** (15 of 16): `CuegroupLayout` unknown; `Editable` implemented; `Enabled` implemented; `FileUploadAction` implemented; `FileUploadRowAction` unknown; `FreezeColumn` unknown; `GridLayout` unknown; `IndentationColumn` unknown; `IndentationControls` unknown; `ObsoleteReason` implemented; `ObsoleteState` implemented; `ObsoleteTag` implemented; `ShowAsTree` unknown; `TreeInitialState` unknown; `Visible` implemented
-- **PageGrid** (13 of 16): `CuegroupLayout` unknown; `Enabled` implemented; `FileUploadAction` implemented; `FileUploadRowAction` unknown; `FreezeColumn` unknown; `IndentationColumn` unknown; `IndentationControls` unknown; `ObsoleteReason` implemented; `ObsoleteState` implemented; `ObsoleteTag` implemented; `ShowAsTree` unknown; `TreeInitialState` unknown; `Visible` implemented
-- **PageGroup** (10 of 16): `CuegroupLayout` unknown; `FileUploadRowAction` unknown; `FreezeColumn` unknown; `GridLayout` unknown; `IndentationColumn` unknown; `IndentationControls` unknown; `ObsoleteReason` implemented, MS 42; `ObsoleteState` implemented, MS 42; `ObsoleteTag` implemented, MS 42; `TreeInitialState` unknown
+- **PageFixed** (15 of 16): `CuegroupLayout` unknown; `Editable` implemented; `Enabled` implemented; `FileUploadAction` implemented; `FileUploadRowAction` unknown; `FreezeColumn` unknown; `GridLayout` unknown; `IndentationColumn` implemented; `IndentationControls` unknown; `ObsoleteReason` implemented; `ObsoleteState` implemented; `ObsoleteTag` implemented; `ShowAsTree` implemented; `TreeInitialState` unknown; `Visible` implemented
+- **PageGrid** (13 of 16): `CuegroupLayout` unknown; `Enabled` implemented; `FileUploadAction` implemented; `FileUploadRowAction` unknown; `FreezeColumn` unknown; `IndentationColumn` implemented; `IndentationControls` unknown; `ObsoleteReason` implemented; `ObsoleteState` implemented; `ObsoleteTag` implemented; `ShowAsTree` implemented; `TreeInitialState` unknown; `Visible` implemented
+- **PageGroup** (10 of 16): `CuegroupLayout` unknown; `FileUploadRowAction` unknown; `FreezeColumn` unknown; `GridLayout` unknown; `IndentationColumn` implemented; `IndentationControls` unknown; `ObsoleteReason` implemented, MS 42; `ObsoleteState` implemented, MS 42; `ObsoleteTag` implemented, MS 42; `TreeInitialState` unknown
 - **PageLabel** (4 of 16): `Enabled` implemented, MS 7; `ObsoleteReason` implemented, MS 1; `ObsoleteState` implemented, MS 1; `ObsoleteTag` implemented, MS 1
 - **PageRepeater** (5 of 16): `CuegroupLayout` unknown; `GridLayout` unknown; `ObsoleteReason` implemented; `ObsoleteState` implemented; `ObsoleteTag` implemented
 - **PageSystemPart** (7 of 13): `EntityName` implemented; `EntitySetName` implemented; `ObsoleteReason` implemented; `ObsoleteState` implemented; `ObsoleteTag` implemented; `SubPageLink` implemented; `SubPageView` implemented
@@ -142,7 +142,7 @@ Left out: 293 presentation-only properties (Caption, ToolTip, ApplicationArea, .
 - **QueryColumn** (3 of 6): `ObsoleteReason` implemented; `ObsoleteState` implemented; `ObsoleteTag` implemented
 - **QueryFilter** (3 of 4): `ObsoleteReason` implemented; `ObsoleteState` implemented; `ObsoleteTag` implemented
 - **Report** (19 of 36): `AdditionalSearchTermsML` implemented; `DefaultHeaderFooterPart` refused, BC 29; `DefaultThemePart` refused, BC 29; `EnableExternalAssemblies` refused; `EnableExternalImages` refused; `ExcelLayout` implemented; `ExcelLayoutMultipleDataSheets` implemented; `FormatRegion` implemented; `InherentEntitlements` implemented, MS 1; `InherentPermissions` implemented, MS 1; `ObsoleteReason` implemented, MS 18; `ObsoleteState` implemented, MS 18; `ObsoleteTag` implemented, MS 18; `PaperSourceDefaultPage` refused; `PaperSourceFirstPage` refused; `PaperSourceLastPage` refused; `PdfFontEmbedding` refused; `RDLCLayout` implemented, MS 338; `WordLayout` implemented, MS 2
-- **ReportColumn** (1 of 11): `OptionCaptionML` unknown
+- **ReportColumn** (1 of 11): `OptionCaptionML` implemented
 - **ReportDataItem** (4 of 13): `ObsoleteReason` implemented; `ObsoleteState` implemented; `ObsoleteTag` implemented; `RequestFilterHeadingML` implemented
 - **ReportExtension** (3 of 3): `ExcelLayout` implemented; `RDLCLayout` implemented; `WordLayout` implemented
 - **ReportExtensionModify** (1 of 2): `RequestFilterFields` implemented

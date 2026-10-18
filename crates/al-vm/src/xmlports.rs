@@ -666,6 +666,16 @@ impl Session {
             let units: Vec<u16> = rest.chunks_exact(2).map(|p| u16::from_le_bytes([p[0], p[1]])).collect();
             return Ok(String::from_utf16_lossy(&units));
         }
+        // A UTF-16 little endian document without a byte order mark that starts with `<` is read as UTF-16 (a TextEncoding::UTF16
+        // OutStream writes no byte order mark and the document declares encoding="UTF-16": xmlport/lt-xmlport-linktable/
+        // XmlPortLinkTableNoLinkFields.al, Import runner at line 395 and BothTemporary_Import_OneParentOneChild).
+        if bytes.len() >= 2 && bytes[0] == b'<' && bytes[1] == 0 {
+            let units: Vec<u16> = bytes
+                .chunks_exact(2)
+                .map(|p| u16::from_le_bytes([p[0], p[1]]))
+                .collect();
+            return Ok(String::from_utf16_lossy(&units));
+        }
         let rest = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(&bytes);
         match std::str::from_utf8(rest) {
             // A document that declares utf-16 in bytes without a UTF-16 byte order mark cannot be read
@@ -1224,6 +1234,21 @@ impl Session {
         self.xp_run_trigger(inst, schema, node, "onafterinitrecord")?;
         self.xp_import_attrs(inst, schema, node, elem, Some(&mut assigned))?;
         let mut saved = false;
+        let table_children: Vec<usize> = schema
+            .children(node)
+            .into_iter()
+            .filter(|&c| schema.node(c).kind == ir::XmlNodeKind::Table)
+            .collect();
+        let linked_children = table_children
+            .iter()
+            .filter(|&&c| schema.node(c).link_node.is_some())
+            .count();
+        if linked_children != 0 && linked_children != table_children.len() {
+            return unsupported(
+                "XmlPort import of a table element with table elements below it of which only some name a LinkTable (not pinned)",
+            );
+        }
+        let save_first = linked_children == table_children.len();
         let mut seq = Sequence::new(schema, node);
         let mut linked: Vec<usize> = Vec::new();
         for ce in elem.elements() {
@@ -1237,9 +1262,11 @@ impl Session {
                     self.xp_assign_variable(inst, schema, child, ce.text())?
                 }
                 ir::XmlNodeKind::Table => {
-                    // The record is stored before the elements below it are read (assumption:
-                    // docs/probes-needed.md).
-                    if !saved {
+                    // The record is stored before the elements below it are read when they are linked to it by LinkTable (assumption:
+                    // docs/probes-needed.md; xmlport/lt-xmlport-linktable/XmlPortLinkTableNoLinkFields.al:BothTemporary_Import_*,
+                    // PersistentChild_Import_*, with LinkTable and no LinkFields). Without LinkTable the elements below are imported first and
+                    // the record is stored after them (same file, NoLinkTable_Import_OneParentOneChild, _TwoParents).
+                    if save_first && !saved {
                         self.xp_save_record(inst, schema, node, &assigned)?;
                         saved = true;
                     }
@@ -1529,9 +1556,6 @@ impl Session {
             },
             _ => return unsupported("XmlPort export without SetDestination (a download is not supported)"),
         };
-        if xp.nodes.iter().any(|n| n.use_temporary) {
-            return unsupported("XmlPort export from a UseTemporary table element (it needs OnPreXmlItem; not pinned)");
-        }
         let tops: Vec<usize> = (0..xp.nodes.len()).filter(|&i| xp.nodes[i].parent.is_none()).collect();
         let [top] = tops[..] else {
             return unsupported("XmlPort export with more than one top-level element (not pinned)");

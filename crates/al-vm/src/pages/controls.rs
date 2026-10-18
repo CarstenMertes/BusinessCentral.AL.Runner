@@ -218,6 +218,36 @@ impl Session {
                 "Your entry of '{text}' is not an acceptable value for '{caption}'. Only numeric characters are allowed in field."
             )));
         }
+        // CharAllowed on a page field or on the table field it shows: a Text or Code entry may hold only the characters from the first to
+        // the second of the property's two characters, case sensitive (pages/lt-page-controls-aa/AaFieldProps.al:AA_CharAllowed_PageField
+        // line 67 `az` and `09`, AA_CharAllowed_TableField line 100). The error names the first character outside it. The table field's
+        // property restricts the page only: Validate and assignment in code accept anything (same file, `validate-upper`, `assign`).
+        // Pinned on a card with a row and a two-character property only.
+        if matches!(ty, RtType::Text(_) | RtType::Code(_)) {
+            let page_prop = match page_of(&engine, st).controls[idx].prop("charallowed") {
+                Some(ir::PropVal::Lit(v)) => Some(unquote(v)),
+                _ => None,
+            };
+            let field_prop = self.control_field(st, idx).and_then(|f| {
+                f.properties
+                    .iter()
+                    .find(|(k, _)| k.eq_ignore_ascii_case("CharAllowed"))
+                    .map(|(_, v)| unquote(v))
+            });
+            if let Some(allowed) = page_prop.or(field_prop) {
+                let range: Vec<char> = allowed.chars().collect();
+                if range.len() != 2 || no_row || self.is_list(st) {
+                    return unsupported(
+                        "SetValue on a field with CharAllowed that is not two characters, on a list or on a page without a row (not pinned)",
+                    );
+                }
+                if let Some(bad) = text.chars().find(|c| !(range[0]..=range[1]).contains(c)) {
+                    return Err(refuse_bound(format!(
+                        "The character {bad} is not valid in this field. You can specify the following characters: {allowed}."
+                    )));
+                }
+            }
+        }
         let parsed = match al_builtins::pagefmt::parse_control_text(&text, &ty, &fmt, &by_text) {
             Ok(v) => v,
             Err(al_builtins::pagefmt::ParseError::Invalid) => {
@@ -678,6 +708,7 @@ impl Session {
             PageMethod::Value if !args.is_empty() => {
                 let r = self.control_set_value(st, idx, args)?;
                 self.resync_parts_linked_by(st, idx)?;
+                self.refresh_host_after_part_edit(st)?;
                 Ok(r)
             }
             PageMethod::Value => {
@@ -785,6 +816,7 @@ impl Session {
             PageMethod::SetValue => {
                 let r = self.control_set_value(st, idx, args)?;
                 self.resync_parts_linked_by(st, idx)?;
+                self.refresh_host_after_part_edit(st)?;
                 Ok(r)
             }
             PageMethod::Activate => {

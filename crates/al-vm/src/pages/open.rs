@@ -1,6 +1,9 @@
 use super::*;
 use al_builtins::record_op::RecordOp;
 
+/// The filter group of the cut that hides the rows below indentation 0 of a tree repeater.
+const TREE_GROUP: i32 = 6;
+
 impl Session {
     pub(super) fn page_open(&mut self, st: &St, mode: PageMode) -> Result<Value, Signal> {
         // corpus testpageclose/TestPageClosingActions.al:19-24: an open variable cannot be opened.
@@ -243,6 +246,47 @@ impl Session {
             let viewed: Vec<usize> = r.filters.iter().filter(|f| f.group == 2).map(|f| f.field).collect();
             r.filters
                 .extend(kept.into_iter().filter(|f| !viewed.contains(&f.field)));
+        }
+        // A repeater with ShowAsTree shows the rows at indentation 0 only, whatever TreeInitialState says: the rows below them are collapsed
+        // and a TestPage does not expand them (pages/lt-page-controls-aa/AaPartsLists.al:AA_Repeater_TreeExpandedRows line 272, ExpandAll;
+        // pageext/lt-page-ext-properties/PageTree.al:P123_ShowAsTreeRows, CollapseAll). The rows are cut by a filter in a group of its own.
+        if has_source {
+            let tree_field = {
+                let page = page_of(&engine, st);
+                page.controls
+                    .iter()
+                    .find(|c| {
+                        c.kind == ir::ControlKind::Repeater
+                            && matches!(c.prop("showastree"), Some(ir::PropVal::Lit(v)) if unquote(v).eq_ignore_ascii_case("true"))
+                    })
+                    .and_then(|c| match c.prop("indentationcolumn") {
+                        Some(ir::PropVal::Lit(v)) => Some(unquote(v)),
+                        _ => None,
+                    })
+            };
+            if let Some(expr) = tree_field {
+                let rec = self.page_rec(st);
+                let table = self.table(&rec)?;
+                let name = expr
+                    .trim()
+                    .strip_prefix("Rec.")
+                    .unwrap_or(expr.trim())
+                    .trim_matches('"')
+                    .to_string();
+                // An indentation column that is a page variable, or a field that is not an Integer, cannot cut the rows: not pinned, the
+                // rows stay as they were before.
+                if let Some(pos) = table
+                    .fields
+                    .iter()
+                    .position(|f| f.name.eq_ignore_ascii_case(&name) && matches!(f.ty, RtType::Integer))
+                {
+                    rec.borrow_mut().filters.push(al_builtins::filter::FieldFilter {
+                        field: pos,
+                        expr: al_builtins::filter::FilterExpr::Eq(Value::Integer(0)),
+                        group: TREE_GROUP,
+                    });
+                }
+            }
         }
         let result = (|| {
             // A `Page` variable whose procedure ran before this open was constructed then, and its
@@ -505,6 +549,14 @@ impl Session {
             // The refused line was reported when it was left; closing drops it.
             let mut s = st.borrow_mut();
             s.refused = false;
+            s.draft = false;
+            s.dirty = false;
+        }
+        // A page that still holds a refused entry drops its unsaved row when it closes (pages/lt-page-controls-aa/AaFieldProps.al:
+        // AA_CharAllowed_PageField `stored` and AA_CharAllowed_TableField `stored-after-page`: entries accepted before the refused one
+        // are not stored either).
+        if !st.borrow().errors.is_empty() {
+            let mut s = st.borrow_mut();
             s.draft = false;
             s.dirty = false;
         }

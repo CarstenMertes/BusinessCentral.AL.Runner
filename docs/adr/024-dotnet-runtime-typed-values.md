@@ -257,7 +257,7 @@ rules (static refusal of operands and of `foreach`).
 5. **Policy refusals (ADR-014 section 8) now become the visible reason** for tests that stopped earlier on the
    operand rule: `System.IO.File.Exists` (59 tests), `DateTimeOffset.Now` (17), `System.Drawing.Bitmap`,
    `OfficeHostType.OutlookItemRead` (a server class that is neither registered nor classified pure),
-   `MailAddress` (network). These stay refused.
+   `MailAddress` (network). These stay refused, except `MailAddress`: see the owner decision below.
 6. **Observed, not part of this ADR:** `Encoding.UTF8` reports `member not found` in 24 NP Retail tests;
    boxed primitives from `Array.GetValue(I)` assigned to `DotNet Byte` need a rule for `fit`
    (`Value::Byte` into a `T::DotNet` slot). Both need their own change.
@@ -387,3 +387,11 @@ submodule. Code comments cite it by corpus path.
   other object kinds are refused), collection modified (`DotNetInvoke:InvalidOperation`, only that .NET exception type),
   `Int32` into Text (`Argument`) and Text into Date (`Conversion`). Any other bad element or exception is a refusal.
   `foreach` over a `string` value (characters) is not built: a Text cannot be held in a `DotNet String` variable yet.
+
+## Owner decision 2026-10-18: System.Net.Mail.MailAddress is allowed
+
+The owner allows the .NET type `System.Net.Mail.MailAddress`, and only it. It parses text and does not touch the
+network. The corpus pins it in `tests/al-language-onprem-dotnet/lt-af-dotnet/AfMailAddress.al` (constructor, `User`,
+`Host`, `DisplayName`, `ToString`, error texts and codes `DotNetInvoke:Format` and `DotNetInvoke:Argument`).
+`policy.txt` has a new rule kind `allow-type` (exact type, never a prefix) placed before `deny-type System.Net.`.
+Every other `System.Net.` type stays refused, including `SmtpClient` and `MailMessage`.

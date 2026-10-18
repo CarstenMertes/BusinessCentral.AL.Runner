@@ -282,8 +282,12 @@ fn tests_of(lowered: &al_sema::lower::Lowered) -> Vec<((usize, usize), String)> 
     out
 }
 
-/// Per impact point (by the start of its description): test name -> verdict.
-fn verdicts(base: &str) -> (Vec<Option<String>>, BTreeMap<String, BTreeMap<String, Verdict>>) {
+/// Per impact point (by its description): test name -> verdict.
+type ByPoint = BTreeMap<String, BTreeMap<String, Verdict>>;
+
+/// Why every test runs (per impact point), and per impact point (by the start of its description): test name ->
+/// verdict.
+fn verdicts(base: &str) -> (Vec<Option<String>>, ByPoint) {
     let lowered = compile(base, true);
     let program = &lowered.program;
     let ext = program.apps.iter().position(|a| a.id == "ext").unwrap() as u32;

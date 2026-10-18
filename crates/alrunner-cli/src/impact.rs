@@ -1482,7 +1482,9 @@ fn run_static(
         println!("{}", style::yellow(&no_index_warning(a, None)));
     }
     let (tests, extensions) = (a.apps.len(), a.impact_of.len());
-    let decision: Arc<Mutex<Option<(StaticDecision, HashMap<(usize, u32), usize>)>>> = Arc::new(Mutex::new(None));
+    // The decision, and the number of tests per test codeunit.
+    type Decided = Option<(StaticDecision, HashMap<(usize, u32), usize>)>;
+    let decision: Arc<Mutex<Decided>> = Arc::new(Mutex::new(None));
     let dec = decision.clone();
     let narrow = al_testrun::runtime::Narrow(Arc::new(move |input: &NarrowInput| {
         let ext = extension_apps(input, tests, extensions);

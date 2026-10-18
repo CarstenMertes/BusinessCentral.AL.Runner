@@ -4,6 +4,7 @@ mod apps;
 mod args;
 mod capture;
 mod coverage;
+mod impact;
 mod output;
 mod run;
 mod serve;

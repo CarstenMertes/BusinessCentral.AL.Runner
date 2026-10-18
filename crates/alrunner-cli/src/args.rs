@@ -120,6 +120,13 @@ pub struct TestArgs {
     pub disabled_tests_dir: Option<PathBuf>,
     /// `--parity`: skip the tests Microsoft turns off instead of running and marking them.
     pub parity: bool,
+    /// `--impact-of APP` (ADR-043): the partner extensions whose effect on the tests of the APPs is measured. Repeatable.
+    pub impact_of: Vec<PathBuf>,
+    /// `--impact MODE`: how an impact run selects tests. Only `all` exists (ADR-043 step 1).
+    pub impact: Option<String>,
+    /// Not a command line option: only the test codeunits of the first N APPs are selected (the "with" side of an
+    /// impact run gives the extensions as further APPs).
+    pub test_apps: Option<usize>,
 }
 
 impl TestArgs {
@@ -268,6 +275,15 @@ COVERAGE
                          its runs, and for each test the statements it ran. File names are absolute with
                          forward slashes (`archive.zip!/inner/path.al` inside a package). Statements are the
                          ones the lowering marks, one per AL statement.
+
+IMPACT (ADR-043)
+    --impact-of APP      Measure what an extension changes in the tests of the APPs (for example
+                         Microsoft's test apps): run the selected tests without the extension, then
+                         with it, and list per test what changed and which extension procedures ran.
+                         Repeatable. Exit 1 when a test newly fails, fails differently or is newly
+                         not run. With --disabled-tests, the tests Microsoft turns off are left out.
+    --impact all         Run every selected test on both sides. Required for now: the impact index
+                         (`dynamic`) and static selection (`static`) are not built yet.
 
 ISOLATION
     --isolation MODE     `codeunit` (default): the database is rolled back when a test codeunit ends.
@@ -612,6 +628,8 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Command, String> 
             }
             "--filter" | "--test" => a.filters.push(text()?),
             "--coverage" => a.coverage = true,
+            "--impact-of" => a.impact_of.push(text()?.into()),
+            "--impact" => a.impact = Some(text()?),
             "--coverage-out" => {
                 a.coverage = true;
                 a.coverage_out = Some(text()?.into());
@@ -728,7 +746,48 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Command, String> 
     if a.verbose && a.quiet {
         return Err("--verbose and --quiet cannot be combined".into());
     }
+    impact_args(&a)?;
     Ok(Command::Test(Box::new(a)))
+}
+
+/// The checks of an impact run's options (ADR-043 step 1: `--impact all` is the only mode).
+fn impact_args(a: &TestArgs) -> Result<(), String> {
+    if a.impact_of.is_empty() {
+        if a.impact.is_some() {
+            return Err("--impact needs --impact-of APP: the extension whose impact the run measures".into());
+        }
+        return Ok(());
+    }
+    match a.impact.as_deref() {
+        Some("all") => {}
+        Some("dynamic" | "static") => {
+            return Err(format!(
+                "--impact {} is not built yet (ADR-043 steps 2 and 5: the impact index and static reach); --impact all runs every selected test without and with the extension",
+                a.impact.as_deref().unwrap_or_default()
+            ));
+        }
+        Some(other) => return Err(format!("--impact needs all, dynamic or static, got `{other}`")),
+        None => {
+            return Err("an impact run needs --impact all for now: there is no impact index and no static selection yet (ADR-043 steps 2 and 5), so every selected test runs without and with the extension".into());
+        }
+    }
+    if a.no_compile_cache {
+        return Err("--impact-of cannot be combined with --no-compile-cache: both sides must compile the dependency apps completely from the compile cache, never only what the tests reach (ADR-043 section 2.2)".into());
+    }
+    for (set, flag) in [
+        (a.explain.is_some(), "--explain"),
+        (a.coverage, "--coverage, --coverage-out and --coverage-json"),
+        (a.junit.is_some(), "--junit"),
+        (a.output_json.is_some(), "--output-json"),
+        (a.execute, "a scratch run"),
+    ] {
+        if set {
+            return Err(format!(
+                "--impact-of cannot be combined with {flag} yet (ADR-043 step 3 adds the JSON diff and JUnit of an impact run)"
+            ));
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

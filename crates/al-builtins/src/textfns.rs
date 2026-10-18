@@ -740,6 +740,25 @@ pub fn tb_append_variant(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]
     tb_append(c, r, a)
 }
 
+/// `Append(FieldRef.Value())` written directly as the argument appends the value as `Format` shows it, for the field types the
+/// corpus pins: Integer, Decimal, Boolean, Date (blank and set) and Code
+/// (text/lt-textbuilder-field-direct/TextBuilderAppendFieldDirect.al, through `FieldRef` and `RecordRef.FieldIndex(i)`).
+/// Other kinds are refused.
+pub fn tb_append_field_value(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
+    match a.first() {
+        Some(v @ (Value::Integer(_) | Value::Decimal(_) | Value::Boolean(_) | Value::Date(..))) => {
+            let t = crate::format::try_format(v, 0, 0, &*c).map_err(Signal::Unsupported)?;
+            a[0] = Value::Text(t.into());
+            tb_append(c, r, a)
+        }
+        Some(Value::Text(_) | Value::Code(_)) => tb_append(c, r, a),
+        other => unsupported(format!(
+            "TextBuilder.Append of a FieldRef value of type {} (not pinned)",
+            other.describe()
+        )),
+    }
+}
+
 /// The line terminator is a carriage return and a line feed (types/TestFormatEvaluateTextContracts.al:
 /// TextBuilder_AppendLine_EndsWithNewLineOnly, text/TestTextBuilder.al:TextBuilder_AppendLine_AddsNewline).
 fn tb_append_line(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {

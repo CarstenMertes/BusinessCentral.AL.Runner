@@ -365,6 +365,7 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("System.Format#2", format_2),
     ("System.FormatVariant#1", format_variant),
     ("TextBuilder.AppendVariant#1", crate::textfns::tb_append_variant),
+    ("TextBuilder.AppendFieldValue#1", crate::textfns::tb_append_field_value),
     ("System.FormatDecimalField#1", format_decimal_field),
     ("System.Evaluate#1", crate::evaluate::evaluate),
     (
@@ -786,7 +787,7 @@ fn by_name() -> &'static std::collections::HashMap<String, NativeFn> {
 }
 
 /// Ids the lowering writes that are no catalog overload and have no native of their own (the VM runs them).
-pub const INVENTED_IDS: &[&str] = &["Record.SetCurrFieldNo#1", "Record.CurrFieldNo#1", "Media.ToVariant#1"];
+pub const INVENTED_IDS: &[&str] = &["Record.SetCurrFieldNo#1", "Record.CurrFieldNo#1", "Media.ToVariant#1", "TextBuilder.AppendFieldValue#1"];
 
 /// Every name that gets a [`BuiltinId`]: the catalog's overloads of every version, the registered natives
 /// and the invented ids. Sorted, unique. This is what `builtin_ids.rs` is generated from.

@@ -585,8 +585,11 @@ fn parse_formula(text: &str) -> Result<Vec<Term>, Signal> {
             continue;
         }
         let Some(unit) = unit_of(b.get(i)) else {
-            // A number with no unit: at the end of the formula or before a slash (`+5`, `5`, `01/01/26`).
-            if i == b.len() || b[i] == b'/' {
+            // A number with no unit: at the end of the formula or before a slash (`+5`, `5`, `01/01/26`), or
+            // a text of digits and hyphens, a date (errors/lt-ms-refusals-128/P128CalcDateForms.al:
+            // P128_CalcDate_DateTextIsNotAFormula `2026-10-16`, `10-16-26`).
+            let date_with_hyphens = b.iter().all(|c| c.is_ascii_digit() || *c == b'-');
+            if i == b.len() || b[i] == b'/' || (b[i] == b'-' && date_with_hyphens) {
                 return err_unit();
             }
             return refuse();
@@ -673,7 +676,7 @@ pub enum Evaluated {
     /// `Evaluate` answers false when its result is used. With a message, the statement form raises it
     /// (code Evaluate); without one, that error text is not pinned.
     Rejected(Option<String>),
-    /// The statement form raises this error (code Evaluate). What the form with a used result does is not pinned.
+    /// The statement form raises this error (code Evaluate); the form with a used result answers false.
     Failed(String),
 }
 
@@ -1215,6 +1218,11 @@ mod tests {
             ("<W", "The date formula '<W' should include a number."),
             ("<+5>", "The date formula '+5' should include a time unit."),
             ("01/01/26", "The date formula '01/01/26' should include a time unit."),
+            (
+                "2026-10-16",
+                "The date formula '2026-10-16' should include a time unit.",
+            ),
+            ("10-16-26", "The date formula '10-16-26' should include a time unit."),
         ] {
             match calc(f, mon.clone()) {
                 Err(Signal::Error(e)) => assert!(e.message.starts_with(msg), "{f}: {}", e.message),

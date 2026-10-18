@@ -1300,11 +1300,10 @@ fn evaluate_with_max(
             }
             crate::datefns::Evaluated::Rejected(_) => Parsed::Rejected,
             crate::datefns::Evaluated::Failed(m) if !c.ret_used() => return crate::native::raise(m, "Evaluate"),
-            crate::datefns::Evaluated::Failed(_) => {
-                return unsupported(format!(
-                    "Evaluate of `{text}` into a DateFormula with the result used (only the statement form is pinned)"
-                ));
-            }
+            // With the result used, both errors of this kind answer false and leave the value
+            // (errors/lt-ms-refusals-128/P128CalcDateForms.al:154-169: date texts, "should include a
+            // time unit"; errors/lt-ms-refusals-131/P131CalcDate.al:140,152: `<1D>+`, "should include a number").
+            crate::datefns::Evaluated::Failed(_) => Parsed::Rejected,
         },
         other => return unsupported(format!("Evaluate into {} (not pinned by the corpus)", other.describe())),
     };

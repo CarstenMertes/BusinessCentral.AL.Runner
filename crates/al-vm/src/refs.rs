@@ -1106,7 +1106,22 @@ impl Session {
                     (f.stored, f.flow_filter, f.ty.clone())
                 };
                 let flow_field = !stored && !flow_filter;
-                if flow_field || (stored && matches!(ty, RtType::Text(_) | RtType::Code(_))) {
+                // Pinned for every type of FieldRefCalcSumTypes.al:CalcSum_NumericTypes, CalcSum_NonNumericTypes: a FlowFilter,
+                // Option, Boolean, Date, Time, DateTime, Text and Code field raise too; BigInteger and Duration sum.
+                if flow_field
+                    || flow_filter
+                    || (stored
+                        && matches!(
+                            ty,
+                            RtType::Text(_)
+                                | RtType::Code(_)
+                                | RtType::Option(..)
+                                | RtType::Boolean
+                                | RtType::Date
+                                | RtType::Time
+                                | RtType::DateTime
+                        ))
+                {
                     return Err(crate::transactions::al_error_code(
                         &format!(
                             "Cannot calculate a sum of the values in the {} field in the {} table because one or more values are not normal numeric fields.",
@@ -1116,7 +1131,7 @@ impl Session {
                         "DB:Ok",
                     ));
                 }
-                if !stored || !matches!(ty, RtType::Decimal | RtType::Integer) {
+                if !stored || !matches!(ty, RtType::Decimal | RtType::Integer | RtType::BigInteger | RtType::Duration) {
                     return unsupported("FieldRef.CalcSum on a field of another type (not pinned)");
                 }
                 self.flow_op(RecordOp::CalcSums, &rec, &[Value::Integer(pos as i32)])?;

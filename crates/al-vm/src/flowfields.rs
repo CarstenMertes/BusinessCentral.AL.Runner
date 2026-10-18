@@ -628,7 +628,7 @@ impl Session {
         let fields = &engine.program.objects[table].table.as_ref().expect("table").fields;
         for &p in positions {
             let f = &fields[p];
-            if !f.stored || !matches!(f.ty, RtType::Decimal | RtType::Integer | RtType::BigInteger) {
+            if !f.stored || !matches!(f.ty, RtType::Decimal | RtType::Integer | RtType::BigInteger | RtType::Duration) {
                 return unsupported(format!(
                     "CalcSums on {} (only stored number fields are implemented)",
                     f.name

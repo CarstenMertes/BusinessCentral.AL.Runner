@@ -80,6 +80,47 @@ fn page_of<'a>(engine: &'a Engine, st: &St) -> &'a ir::Page {
         .expect("a TestPage is typed by a page object")
 }
 
+/// A property of a page as the page and its extensions leave it: an extension's value wins over the base
+/// page's (corpus pageext/lt-z-page-ext-props/ZPageExtProps.al:629, 685-1110). Two extensions that set the
+/// same property are not pinned. The value is trimmed.
+fn effective_prop(engine: &Engine, object: usize, name: &str) -> Result<Option<String>, Signal> {
+    let prop = |o: usize| {
+        engine.program.objects[o]
+            .properties
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case(name))
+            .map(|(_, v)| v.trim().to_string())
+    };
+    let exts: Vec<String> = engine.program.objects[object]
+        .page
+        .as_ref()
+        .map(|p| p.extensions.iter().filter_map(|&e| prop(e as usize)).collect())
+        .unwrap_or_default();
+    match exts.len() {
+        0 => Ok(prop(object)),
+        1 => Ok(exts.into_iter().next()),
+        _ => unsupported(format!("several page extensions set {name} (which one wins is not pinned)")),
+    }
+}
+
+/// Whether the page declares InsertAllowed or ModifyAllowed as false, extensions counted
+/// (ZInsertAllowed_1 to _4, ZModifyAllowed_1 to _4 in the same file). An extension's value other than a
+/// literal true or false is not pinned.
+fn flag_denied(engine: &Engine, object: usize, name: &str) -> Result<bool, Signal> {
+    let in_extension = engine.program.objects[object]
+        .page
+        .as_ref()
+        .is_some_and(|p| p.extensions.iter().any(|&e| {
+            engine.program.objects[e as usize].properties.iter().any(|(k, _)| k.eq_ignore_ascii_case(name))
+        }));
+    match effective_prop(engine, object, name)?.map(|v| v.to_ascii_lowercase()) {
+        None => Ok(false),
+        Some(v) if v == "false" => Ok(true),
+        Some(v) if v == "true" || !in_extension => Ok(false),
+        Some(_) => unsupported(format!("a page extension sets {name} to something other than a literal true or false (not pinned)")),
+    }
+}
+
 /// `'text'` → `text`; anything else as written.
 fn unquote(s: &str) -> String {
     let t = s.trim();

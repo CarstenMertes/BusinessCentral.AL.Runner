@@ -924,3 +924,31 @@ codeunit 50000 "T" { Subtype = Test;
     );
     passes(&o, "Reads");
 }
+
+/// Page Metadata InsertAllowed, ModifyAllowed and DeleteAllowed (columns 16 to 18): Yes unless the page
+/// declares false; a page extension's literal wins over the base page's
+/// (corpus pageext/lt-z-page-ext-props/ZPageExtProps.al:685-1110, ZDeleteAllowed_1 to ZModifyAllowed_4).
+/// Two extensions that set the same property are not pinned and are refused.
+#[test]
+fn page_metadata_allowed_columns_follow_the_page_and_its_extension() {
+    let o = outcomes(
+        r#"page 50010 "B1" { PageType = List; }
+pageextension 50011 "E1" extends "B1" { DeleteAllowed = false; }
+page 50012 "B2" { PageType = List; InsertAllowed = false; ModifyAllowed = false; }
+pageextension 50013 "E2" extends "B2" { InsertAllowed = true; }
+page 50014 "B3" { PageType = List; }
+page 50015 "B4" { PageType = List; }
+pageextension 50016 "E4a" extends "B4" { DeleteAllowed = false; }
+pageextension 50017 "E4b" extends "B4" { DeleteAllowed = true; }
+codeunit 50000 "T" { Subtype = Test;
+  [Test] procedure ExtensionFalse() var M: Record "Page Metadata"; begin M.Get(50010); if not M.InsertAllowed or not M.ModifyAllowed or M.DeleteAllowed then Error('x'); end;
+  [Test] procedure BaseFalseExtensionTrue() var M: Record "Page Metadata"; begin M.Get(50012); if not M.InsertAllowed or M.ModifyAllowed or not M.DeleteAllowed then Error('x'); end;
+  [Test] procedure Plain() var M: Record "Page Metadata"; begin M.Get(50014); if not (M.InsertAllowed and M.ModifyAllowed and M.DeleteAllowed) then Error('x'); end;
+  [Test] procedure TwoExtensions() var M: Record "Page Metadata"; begin M.Get(50015); if M.DeleteAllowed then; end; }"#,
+    );
+    for t in ["ExtensionFalse", "BaseFalseExtensionTrue", "Plain"] {
+        passes(&o, t);
+    }
+    let why = not_run(&o, "TwoExtensions");
+    assert!(why.contains("DeleteAllowed") && why.contains("50015") || why.contains("B4"), "{why}");
+}

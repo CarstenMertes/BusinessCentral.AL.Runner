@@ -9,12 +9,18 @@ impl Session {
         self.refuse_read_only_part(st, "New()")?;
         let engine = self.engine();
         let object = st.borrow().object as usize;
-        let insert_denied = engine.program.objects[object]
-            .properties
-            .iter()
-            .any(|(k, v)| k.eq_ignore_ascii_case("InsertAllowed") && v.trim().eq_ignore_ascii_case("false"));
+        let insert_denied = flag_denied(&engine, object, "InsertAllowed")?;
         if insert_denied {
-            return Err(error("New method failed because Insert is not allowed."));
+            // The text names the page and its id, the code is DB:ClientInsertDenied (corpus
+            // pageext/lt-z-page-ext-props/ZPageExtProps.al:ZInsertAllowed_1, _4).
+            let o = &engine.program.objects[object];
+            let Some(id) = o.id else {
+                return unsupported("New() on a page without an id denied by InsertAllowed (the text is not pinned)");
+            };
+            return Err(error_code(
+                format!("New method failed because Insert is not allowed. Page = {}, Id = {id}.", o.name),
+                "DB:ClientInsertDenied",
+            ));
         }
         match self.leave_row(st, PageMethod::New)? {
             Left::Stay => Ok(Value::Null),
@@ -234,6 +240,27 @@ impl Session {
 
     /// Writes what the client holds for the current row: inserts a typed new record, modifies an
     /// edited one when a value really differs (corpus handlers/TestPageSameValueSetValue_Tests.al:1-30).
+    /// Closing a page whose row was changed while ModifyAllowed is false raises `Page cannot be saved.` with the
+    /// code TestWrapped and leaves the stored row alone (corpus pageext/lt-z-page-ext-props/ZPageExtProps.al:
+    /// ZModifyAllowed_1 and _4, a list page opened for edit with one changed field).
+    pub(super) fn close_denied_modify(&mut self, st: &St) -> Result<(), Signal> {
+        let (cursor, draft, dirty) = {
+            let s = st.borrow();
+            (s.cursor, s.draft, s.dirty)
+        };
+        if cursor == Cursor::None || !dirty || draft || !self.has_source(st) {
+            return Ok(());
+        }
+        if !flag_denied(&self.engine(), st.borrow().object as usize, "ModifyAllowed")? {
+            return Ok(());
+        }
+        let rec = self.page_rec(st);
+        if Self::same_values(&rec.borrow().fields, &self.page_xrec_fields(st)) {
+            return Ok(());
+        }
+        Err(error_code("Page cannot be saved.", "TestWrapped"))
+    }
+
     pub(super) fn save_row(&mut self, st: &St) -> Result<(), Signal> {
         let (cursor, draft, dirty) = {
             let s = st.borrow();
@@ -249,6 +276,10 @@ impl Session {
         if Self::same_values(&rec.borrow().fields, &self.page_xrec_fields(st)) {
             st.borrow_mut().dirty = false;
             return Ok(());
+        }
+        // Only a close with a changed row on a page that does not allow modify is pinned (see `close_denied_modify`).
+        if flag_denied(&self.engine(), st.borrow().object as usize, "ModifyAllowed")? {
+            return unsupported("saving a changed row on a page whose ModifyAllowed is false, other than at Close (not pinned)");
         }
         // corpus handlers/TestPageTriggerEvents.al (ModifyRecordEvent_RunsAfterThePagesOwnOnModifyRecordTrigger)
         let keep = self.page_trigger_answer(st, "onmodifyrecord", vec![])?;

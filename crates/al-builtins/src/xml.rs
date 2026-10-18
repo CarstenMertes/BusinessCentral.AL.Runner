@@ -4124,10 +4124,12 @@ pub(crate) fn read_tree(text: &str) -> Result<Result<crate::xmlport::Elem, Optio
             } => (prefix.clone(), local.clone(), ns.clone(), attrs.clone()),
             _ => unreachable!("callers pass elements"),
         });
-        if !prefix.is_empty() || !ns.is_empty() {
+        // A prefixed element keeps its prefix in its name (`p:Name`); the port checks the prefix against its own
+        // `Namespaces`. A default namespace is not carried over.
+        if prefix.is_empty() != ns.is_empty() {
             return Err("namespaces in an XmlPort document".into());
         }
-        let mut out = Elem::new(&local);
+        let mut out = Elem::new(&if prefix.is_empty() { local.clone() } else { format!("{prefix}:{local}") });
         for a in attrs {
             let (p, l, n, v) = with(&a, |d| match d {
                 XData::Attribute {
@@ -4138,6 +4140,11 @@ pub(crate) fn read_tree(text: &str) -> Result<Result<crate::xmlport::Elem, Optio
                 } => (prefix.clone(), local.clone(), ns.clone(), value.clone()),
                 _ => unreachable!("attributes of an element"),
             });
+            // `xmlns:p="uri"` is kept as an attribute of that name; any other prefixed attribute is not carried over.
+            if p == "xmlns" {
+                out.attrs.push((format!("xmlns:{l}"), v));
+                continue;
+            }
             if !p.is_empty() || !n.is_empty() || l == "xmlns" {
                 return Err("namespace declarations in an XmlPort document".into());
             }

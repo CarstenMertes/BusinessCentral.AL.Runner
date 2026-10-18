@@ -502,26 +502,30 @@ impl Session {
         try_call: bool,
         f: &mut Frame,
     ) -> Result<Value, Signal> {
-        // A publisher's `var` arguments are references to the caller's variables. A subscriber that changes such a variable
-        // through the sender (not through its own parameter) must keep the change, so a scalar the subscribers left as it was
-        // sent is not written back over the caller's place. Assumption event-var-alias-through-sender.
-        let sent: Vec<Value> = if self.engine.facts[object][routine].publisher {
+        // A publisher's `var` argument that is a global of the caller's instance is that variable itself for its subscribers
+        // (events/lt-event-var-through-sender/EventVarThroughSender.al): they alias it, see `Frame::aliases`.
+        if self.engine.facts[object][routine].publisher {
             let by_var = &self.engine.program.objects[object].routines[routine].by_var;
-            values
+            self.events.var_origins = args
                 .iter()
                 .enumerate()
-                .map(|(i, v)| {
-                    if by_var.get(i).copied().unwrap_or(false) {
-                        v.clone()
-                    } else {
-                        Value::Null
+                .map(|(i, a)| match a {
+                    ir::Arg::Ref(ir::Place::Global(g)) if by_var.get(i).copied().unwrap_or(false) => {
+                        Some((f.instance.clone(), *g))
                     }
+                    _ => None,
                 })
-                .collect()
-        } else {
-            Vec::new()
-        };
+                .collect();
+        }
+        // The variables the frame's event parameters stand for: the parameter's value goes to the variable before the call and
+        // the variable's value comes back after it, because the callee (the sender) may read or change either.
+        for (slot, inst, g) in &f.aliases {
+            inst.borrow_mut().globals[*g] = f.locals[*slot].clone();
+        }
         let result = self.call(object, routine, inst, values);
+        for (slot, inst, g) in &f.aliases {
+            f.locals[*slot] = inst.borrow().globals[*g].clone();
+        }
         if let Err(Signal::Error(_)) = &result {
             if let Some(finals) = self.error_finals.take() {
                 for (a, v) in args.iter().zip(finals) {
@@ -540,16 +544,8 @@ impl Session {
             (Ok((_, finals)), true) => (Value::Boolean(true), finals),
             (r, _) => r?,
         };
-        for (i, (a, v)) in args.iter().zip(finals).enumerate() {
+        for (a, v) in args.iter().zip(finals) {
             if let ir::Arg::Ref(p) = a {
-                if let Some(sent) = sent.get(i) {
-                    if unchanged_scalar(sent, &v) && self.read(p, f).is_ok_and(|now| !unchanged_scalar(sent, &now)) {
-                        al_builtins::assumptions::assume(
-                            al_builtins::assumptions::Assumption::EventVarAliasThroughSender,
-                        );
-                        continue;
-                    }
-                }
                 self.write_back(p, v, f)?;
             }
         }
@@ -1182,26 +1178,5 @@ impl ForKind {
             is_boolean: matches!(ty, RtType::Boolean),
             is_integer: matches!(ty, RtType::Integer),
         }
-    }
-}
-
-/// Both values are the same scalar (a kind that is copied, not shared). Anything else is "not known to be unchanged".
-fn unchanged_scalar(a: &Value, b: &Value) -> bool {
-    match (a, b) {
-        (Value::Boolean(x), Value::Boolean(y)) => x == y,
-        (Value::Integer(x), Value::Integer(y)) => x == y,
-        (Value::BigInteger(x), Value::BigInteger(y)) => x == y,
-        (Value::Decimal(x), Value::Decimal(y)) => x == y,
-        (Value::Byte(x), Value::Byte(y)) => x == y,
-        (Value::Char(x), Value::Char(y)) => x == y,
-        (Value::Text(x), Value::Text(y)) | (Value::Code(x), Value::Code(y)) => x.as_str() == y.as_str(),
-        (Value::Date(x, c), Value::Date(y, d)) => x == y && c == d,
-        (Value::Time(x), Value::Time(y))
-        | (Value::DateTime(x), Value::DateTime(y))
-        | (Value::Duration(x), Value::Duration(y)) => x == y,
-        (Value::Option(x, _), Value::Option(y, _)) => x == y,
-        (Value::Enum(t, x), Value::Enum(u, y)) => t == u && x == y,
-        (Value::Guid(x), Value::Guid(y)) => x == y,
-        _ => false,
     }
 }

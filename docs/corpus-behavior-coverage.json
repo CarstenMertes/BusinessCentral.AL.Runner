@@ -13308,6 +13308,24 @@
         "template": "The date is not valid."
       },
       {
+        "code": "Evaluate",
+        "file": "crates/al-builtins/src/evaluate.rs",
+        "generic": false,
+        "line": 1259,
+        "pinned": true,
+        "site": "codeunit/TestCrossAppDispatch.al:61",
+        "template": "Evaluate"
+      },
+      {
+        "code": "",
+        "file": "crates/al-builtins/src/evaluate.rs",
+        "generic": false,
+        "line": 1262,
+        "pinned": true,
+        "site": "codeunit/TestCrossAppDispatch.al:61",
+        "template": "Evaluate"
+      },
+      {
         "code": "MissingFileName",
         "file": "crates/al-builtins/src/file.rs",
         "generic": false,
@@ -13680,7 +13698,7 @@
         "code": "StackOverflow",
         "file": "crates/al-vm/src/lib.rs",
         "generic": false,
-        "line": 937,
+        "line": 938,
         "pinned": true,
         "site": "record/TestCalcFieldsTruncateUniqueContracts.al:179",
         "template": "There is insufficient memory to execute this function. This can be caused by recursive function calls. Contact your system administrator."
@@ -13734,7 +13752,7 @@
         "code": "RenameArgument",
         "file": "crates/al-vm/src/records.rs",
         "generic": false,
-        "line": 2255,
+        "line": 2304,
         "pinned": true,
         "site": "recordref/lt-refs/RfTWrite.al:223",
         "template": "The number of field arguments does not match the primary key size."
@@ -13770,7 +13788,7 @@
         "code": "RecordNotOpened",
         "file": "crates/al-vm/src/refs.rs",
         "generic": false,
-        "line": 551,
+        "line": 602,
         "pinned": true,
         "site": "errors/lt-ms-refusals-131/P131RecordRefGet.al:183",
         "template": "The record is not open."
@@ -13779,7 +13797,7 @@
         "code": "IndexOutOfBounds",
         "file": "crates/al-vm/src/refs.rs",
         "generic": false,
-        "line": 800,
+        "line": 851,
         "pinned": true,
         "site": "collections/lt-array-rows/ArrayRows.al:185",
         "template": "Index out of bounds."
@@ -13788,7 +13806,7 @@
         "code": "DB:KeyNotFound",
         "file": "crates/al-vm/src/refs.rs",
         "generic": false,
-        "line": 820,
+        "line": 871,
         "pinned": true,
         "site": "recordref/TestRecordRefKeyIndexSetRecFilterContracts.al:103",
         "template": "The % table does not have an active key at index %."
@@ -13797,7 +13815,7 @@
         "code": "KeyRef.{other}",
         "file": "crates/al-vm/src/refs.rs",
         "generic": false,
-        "line": 915,
+        "line": 966,
         "pinned": true,
         "site": "collections/lt-array-rows/ArrayRows.al:185",
         "template": "Index out of bounds"
@@ -13806,7 +13824,7 @@
         "code": "NotInitialized",
         "file": "crates/al-vm/src/refs.rs",
         "generic": false,
-        "line": 935,
+        "line": 986,
         "pinned": true,
         "site": "misc/lt-probes-needed-4/PnD05_UnassignedFieldRef.al:42",
         "template": "Microsoft.Dynamics.Nav.Runtime.NavFieldRef variable not initialized."
@@ -13851,13 +13869,13 @@
         "code": "DB:Ok",
         "file": "crates/al-vm/src/views.rs",
         "generic": false,
-        "line": 458,
+        "line": 514,
         "pinned": true,
         "site": "record/TestRecordViewCopyMarkContracts.al:145",
         "template": "Invalid expression of type: table view.%%"
       }
     ],
-    "pinned": 62,
-    "sites": 66
+    "pinned": 64,
+    "sites": 68
   }
 }

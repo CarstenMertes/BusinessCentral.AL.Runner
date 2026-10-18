@@ -2,7 +2,7 @@
   "corpus_commit": "be87ec9ce1781c95c1513514c6a3e4df6721881e",
   "language": {
     "bc": "27-29",
-    "implemented": 1493,
+    "implemented": 1494,
     "methods": [
       {
         "bc": [
@@ -15876,7 +15876,7 @@
         "scope": "",
         "sig": "(Integer)",
         "site": "handlers/TestPrecompiledReportLayouts.al:38",
-        "state": "refused",
+        "state": "implemented",
         "type": "Report"
       },
       {
@@ -27947,7 +27947,7 @@
     ],
     "overloads": 1750,
     "pinned": 1530,
-    "refused": 228,
+    "refused": 227,
     "runtime_only": [
       "ErrorInfo.Create#3",
       "FieldRef.FieldError#2",

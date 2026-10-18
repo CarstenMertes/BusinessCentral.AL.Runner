@@ -77,9 +77,41 @@ pub fn parse(text: &str) -> Result<Elem, ReadFailure> {
 /// two spaces of indentation per level. An element without content is `<X />`; an element with
 /// text only is on one line (xmlport/TestXmlPortExportImportContracts.al:XmlPortExport_Document_FullText reads it line by line, which drops the CR; the lengths in xmlport/lt-xmlport-query-datatransfer/XpTExportBasic.al count it).
 pub fn serialize(root: &Elem) -> String {
-    let mut out = String::from("<?xml version=\"1.0\" encoding=\"UTF-16\" standalone=\"no\"?>\r\n");
+    serialize_as(root, "UTF-16")
+}
+
+/// [`serialize`] with the encoding named in the declaration.
+pub fn serialize_as(root: &Elem, encoding: &str) -> String {
+    let mut out = format!("<?xml version=\"1.0\" encoding=\"{encoding}\" standalone=\"no\"?>\r\n");
     write_elem(root, 0, &mut out);
     out
+}
+
+/// An element on one line with no indentation: `<Item><Id>1</Id></Item>`. `None` when an element has no text (how an
+/// empty value is written without indentation is not pinned) or holds attributes.
+pub fn compact(e: &Elem) -> Option<String> {
+    fn go(e: &Elem, out: &mut String) -> Option<()> {
+        if !e.attrs.is_empty() || e.children.is_empty() {
+            return None;
+        }
+        out.push('<');
+        out.push_str(&e.name);
+        out.push('>');
+        for c in &e.children {
+            match c {
+                Node::Elem(c) => go(c, out)?,
+                Node::Text(t) if t.is_empty() => return None,
+                Node::Text(t) => crate::xml::escape_text(t, out),
+            }
+        }
+        out.push_str("</");
+        out.push_str(&e.name);
+        out.push('>');
+        Some(())
+    }
+    let mut out = String::new();
+    go(e, &mut out)?;
+    Some(out)
 }
 
 fn write_elem(e: &Elem, level: usize, out: &mut String) {

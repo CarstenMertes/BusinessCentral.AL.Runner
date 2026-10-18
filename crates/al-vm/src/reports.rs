@@ -151,6 +151,69 @@ impl Session {
                 )),
                 Some(other) => unsupported(format!("CurrReport.Language with {}", other.describe())),
             },
+            // The kind a report names with `DefaultLayout`, else the kind of the layout `DefaultRenderingLayout` picks, else RDLC;
+            // a processing-only report that names none is None (metadata/lt-report-metadata-columns/ReportMetadata.al:272
+            // P175_DefaultLayout_PerReport; report/lt-y-report-props/YReportPropsTests.al:236 and YReportExt.al:152: the Word or
+            // RDLC layout properties alone leave RDLC). Not pinned: a processing-only report that names a kind, a kind other than
+            // RDLC, Word and Excel, a number no report declares.
+            ids::REPORT_DEFAULTLAYOUT_2 => {
+                let Some(Value::Integer(n)) = args.first() else {
+                    return unsupported("Report.DefaultLayout with an id that is not an integer");
+                };
+                let Some(o) = self.engine.program.objects.iter().find(|o| {
+                    (o.is_kind(al_ir::ObjKind::Report) || o.is_shell_of(al_ir::ObjKind::Report))
+                        && o.id == u32::try_from(*n).ok()
+                }) else {
+                    return unsupported(format!(
+                        "Report.DefaultLayout of id {n}, which no report declares (error text not pinned)"
+                    ));
+                };
+                let prop = |name: &str| {
+                    o.properties
+                        .iter()
+                        .find(|(k, _)| k.eq_ignore_ascii_case(name))
+                        .map(|(_, v)| v.trim().trim_matches('"').to_string())
+                };
+                let named = match (prop("DefaultLayout"), prop("DefaultRenderingLayout")) {
+                    (Some(k), _) => Some(k),
+                    (None, Some(layout)) => match o.report.as_ref().and_then(|r| {
+                        r.rendering_layouts
+                            .iter()
+                            .find(|l| l.name.eq_ignore_ascii_case(&layout))
+                            .map(|l| l.kind.clone())
+                    }) {
+                        Some(k) => Some(k),
+                        None => {
+                            return unsupported(
+                                "Report.DefaultLayout of a report whose DefaultRenderingLayout is not resolved (not pinned)",
+                            );
+                        }
+                    },
+                    (None, None) => None,
+                };
+                let kind = match named {
+                    Some(k) if ["rdlc", "word", "excel"].contains(&k.to_ascii_lowercase().as_str()) => {
+                        if prop("ProcessingOnly").is_some_and(|v| v.eq_ignore_ascii_case("true")) {
+                            return unsupported(
+                                "Report.DefaultLayout of a processing-only report that names a layout kind (not pinned)",
+                            );
+                        }
+                        k
+                    }
+                    Some(k) => {
+                        return unsupported(format!(
+                            "Report.DefaultLayout of a report whose layout kind is {k} (not pinned)"
+                        ));
+                    }
+                    None if prop("ProcessingOnly").is_some_and(|v| v.eq_ignore_ascii_case("true")) => "None".into(),
+                    None => "RDLC".into(),
+                };
+                let members: std::sync::Arc<[String]> = al_builtins::sysenum::option_members("DefaultLayout")
+                    .expect("known")
+                    .into();
+                let ordinal = members.iter().position(|m| m.eq_ignore_ascii_case(&kind)).unwrap_or(0);
+                Ok(Value::Option(ordinal as i32, members))
+            }
             // `FormatRegion` only takes effect when a Word or Excel layout renders; a run that writes the
             // dataset (an Xml export) never does, and the property reads back empty
             // (handlers/TestReportCurrReportLanguage.al:12-18, :76-83). In a report started by `Run` the region is kept,
@@ -1089,7 +1152,8 @@ impl Session {
                 "Report {} does not have a valid layout. Valid layout types are: Word, RDLC, Excel, and Custom.",
                 self.object_id_of(schema.object as u32)
             ),
-            code: "Dialog".into(),
+            // The code is ReportNoLayout (pages/lt-obsolete-layout-parts/P117NoLayout.al:57, misc/lt-probes-needed-8/PnH6SaveAs.al:254, :389).
+            code: "ReportNoLayout".into(),
             call_stack: String::new(),
             ..Default::default()
         }))

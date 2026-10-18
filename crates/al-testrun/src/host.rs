@@ -7,8 +7,8 @@ use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// The system clock, read once: the instant the run first asked for the time. Every later answer
-/// is that instant (the session adds the time `Sleep` has waited and keeps system stamps strictly
-/// increasing, see `al-host`). A clock that ran with the wall would make an outcome depend on the
+/// is that instant (the session adds 1 ms per read and the time `Sleep` has waited, ADR-045, and keeps
+/// system stamps strictly increasing, see `al-host`). A clock that ran with the wall would make an outcome depend on the
 /// load of the machine: `Item.OnModify` sets "Last Time Modified" to `Time`, and
 /// `Format(xRec) <> Format(Rec)` is then true only when a second passed between the insert and the
 /// modify, which decides whether Base Application's workflow subscriber runs. The wall clock is

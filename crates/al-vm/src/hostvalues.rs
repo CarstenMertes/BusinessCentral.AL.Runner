@@ -18,6 +18,9 @@ fn unsupported<T>(what: impl Into<String>) -> Result<T, Signal> {
     Err(Signal::Unsupported(what.into()))
 }
 
+/// How far a read of the clock moves it on: the resolution of `DateTime` and `Time` (ADR-045).
+pub(crate) const READ_STEP_MS: i64 = 1;
+
 /// Day number (1 = 0001-01-01) of 1970-01-01.
 fn unix_epoch_day() -> i64 {
     i64::from(day_from_civil(1970, 1, 1))
@@ -33,6 +36,15 @@ impl Session {
     /// waited.
     pub(crate) fn now_millis(&self) -> i64 {
         self.host.clock.now_utc_millis() + self.waited_ms
+    }
+
+    /// One reading of the clock by AL code (`Today`, `Time`, `CurrentDateTime`, the .NET clock
+    /// members): the instant now, after which the clock moves on by [`READ_STEP_MS`], so the next
+    /// reading is later (ADR-045). `Sleep` adds to the same counter, so there is one source.
+    pub(crate) fn read_clock_millis(&mut self) -> i64 {
+        let at = self.now_millis();
+        self.waited_ms += READ_STEP_MS;
+        at
     }
 
     /// Today as a day number.
@@ -52,9 +64,13 @@ impl Session {
     /// The builtins of this module, `None` for any other id.
     pub(crate) fn host_op(&mut self, id: al_ir::BuiltinId, args: &mut [Value]) -> Option<Result<Value, Signal>> {
         Some(match id {
-            ids::SYSTEM_TODAY_1 => Ok(Value::Date(self.today_day_number(), false)),
-            ids::SYSTEM_TIME_1 => Ok(Value::Time(self.now_millis().rem_euclid(MS_PER_DAY) + 1)),
-            ids::SYSTEM_CURRENTDATETIME_1 => Ok(datetime_of_unix_millis(self.now_millis())),
+            ids::SYSTEM_TODAY_1 => {
+                let day = self.today_day_number();
+                self.waited_ms += READ_STEP_MS;
+                Ok(Value::Date(day, false))
+            }
+            ids::SYSTEM_TIME_1 => Ok(Value::Time(self.read_clock_millis().rem_euclid(MS_PER_DAY) + 1)),
+            ids::SYSTEM_CURRENTDATETIME_1 => Ok(datetime_of_unix_millis(self.read_clock_millis())),
             ids::SYSTEM_WORKDATE_1 => self.work_date_op(args),
             ids::SYSTEM_SLEEP_1 => match args.first() {
                 // A negative wait is not pinned.

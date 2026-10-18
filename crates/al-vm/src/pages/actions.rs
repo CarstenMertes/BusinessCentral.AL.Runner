@@ -283,12 +283,7 @@ impl Session {
     pub(super) fn list_card_page(&self, st: &St) -> Result<Option<usize>, Signal> {
         let engine = self.engine();
         let object = st.borrow().object as usize;
-        let Some(card) = engine.program.objects[object]
-            .properties
-            .iter()
-            .find(|(k, _)| k.eq_ignore_ascii_case("CardPageId"))
-            .map(|(_, v)| v.trim().trim_matches('"').to_string())
-        else {
+        let Some(card) = effective_prop(&engine, object, "CardPageId")?.map(|v| v.trim_matches('"').to_string()) else {
             return Ok(None);
         };
         engine
@@ -330,12 +325,7 @@ impl Session {
     pub(super) fn list_card_action(&mut self, st: &St, edit: bool) -> Result<Value, Signal> {
         let engine = self.engine();
         let object = st.borrow().object as usize;
-        let Some(card) = engine.program.objects[object]
-            .properties
-            .iter()
-            .find(|(k, _)| k.eq_ignore_ascii_case("CardPageId"))
-            .map(|(_, v)| v.trim().trim_matches('"').to_string())
-        else {
+        let Some(card) = effective_prop(&engine, object, "CardPageId")?.map(|v| v.trim_matches('"').to_string()) else {
             return unsupported("the built-in Edit/View action of a list page with no CardPageId (not pinned)");
         };
         let Some(target) = engine.program.objects.iter().position(|o| {

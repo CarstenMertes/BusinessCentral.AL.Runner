@@ -153,7 +153,17 @@ impl Lowerer<'_> {
                 };
                 match dim.and_then(|k| usize::try_from(k - 1).ok()).and_then(|k| dims.get(k)) {
                     Some(n) => Ok(ir::Expr::Const(ir::Const::Integer(*n as i32))),
-                    None => Err("ArrayLen with a dimension outside the array (error text not pinned)".into()),
+                    // A dimension outside the array raises when the call runs (misc/lt-system-functions/Arrays.al:ArrayLen_Values
+                    // `dim 3 of 2d`, `dim 0`); the call carries the dimension and the number of dimensions.
+                    None => Ok(ir::Expr::Builtin {
+                        id: builtin_id(&id)?,
+                        receiver: None,
+                        args: vec![
+                            ir::Arg::Value(ir::Expr::Const(ir::Const::Integer(dim.unwrap_or(0)))),
+                            ir::Arg::Value(ir::Expr::Const(ir::Const::Integer(dims.len() as i32))),
+                        ],
+                        ret_used: true,
+                    }),
                 }
             }
             // Refused when it runs, so code that never reaches it still runs: Base Application's Item Picture page exports in an

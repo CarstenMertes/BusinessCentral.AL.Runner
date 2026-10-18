@@ -1025,18 +1025,25 @@ impl Session {
         let RtType::Array(dims, _) = self.place_type(base, f) else {
             return Ok(None);
         };
-        let ([rows, cols], [e]) = (dims.as_slice(), idx) else {
+        // A row is what is left of the array after fixing its first indexes: one of two (`A[2]` of `array[3, 4]`), or one or two of
+        // three (collections/lt-array-rows/ArrayRows.al:ThreeDim_Rows, ThreeDim_RowToShorterParameter). More dimensions are not pinned.
+        if dims.len() < 2 || dims.len() > 3 || idx.is_empty() || idx.len() >= dims.len() {
             return Ok(None);
-        };
-        let i = int(&Self::index_value(e, f)?)?;
-        if i < 1 || i > i64::from(*rows) {
-            return al_builtins::native::raise("Index out of bounds.", "IndexOutOfBounds");
         }
+        let mut start = 0usize;
+        for (k, e) in idx.iter().enumerate() {
+            let i = int(&Self::index_value(e, f)?)?;
+            if i < 1 || i > i64::from(dims[k]) {
+                return al_builtins::native::raise("Index out of bounds.", "IndexOutOfBounds");
+            }
+            let below: usize = dims[k + 1..].iter().map(|d| *d as usize).product();
+            start += (i as usize - 1) * below;
+        }
+        let len: usize = dims[idx.len()..].iter().map(|d| *d as usize).product();
         let arr = match self.read(base, f)? {
             Value::Array(a) => a,
             other => return Err(Signal::Unsupported(format!("indexing {}", other.describe()))),
         };
-        let (start, len) = ((i as usize - 1) * *cols as usize, *cols as usize);
         if start + len > arr.borrow().len() {
             return Err(Signal::Unsupported(
                 "a row of an array that has fewer cells than it declares (not pinned)".into(),

@@ -1568,6 +1568,19 @@ fn lowercase(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Resu
 /// parameter takes the caller's array whatever size it was declared with (types/W7VarArray.al: a parameter declared
 /// `array[3]` called with `array[2]` and `array[5]` sees 2 and 5, BC 27.5 and 29.0).
 fn array_len(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
+    match args {
+        // The lowering passes the dimension asked for and the number of dimensions when the dimension is outside the array.
+        [Value::Integer(dim), Value::Integer(n)] => raise(
+            format!(
+                "The value of ARRAYLEN parameter 2 is outside of the permitted range. The current value is: {dim}. The permitted range is: from 1 to {n}."
+            ),
+            "OutsidePermittedRange",
+        ),
+        _ => array_len_of(args),
+    }
+}
+
+fn array_len_of(args: &[Value]) -> Result<Value, Signal> {
     match args.first() {
         Some(Value::Array(a)) => Ok(Value::Integer(a.borrow().len() as i32)),
         other => Err(Signal::Unsupported(format!("ArrayLen of {}", other.describe()))),

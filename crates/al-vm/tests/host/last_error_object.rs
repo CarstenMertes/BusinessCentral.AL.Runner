@@ -27,8 +27,11 @@ codeunit 50161 "LEO Thrower"
             5: Error(Lbl);
             6: begin Info.Message := 'info message'; Error(Info); end;
             7: Row.TestField(Id, 5);
+            8: begin Row.Id := 1; Row.Insert(); Row.Insert(); end;
+            9: Helper();
         end;
     end;
+    local procedure Helper() begin Error('boom from helper'); end;
     procedure SetMode(NewMode: Integer) begin Mode := NewMode; end;
     [TryFunction] procedure TryRaise() begin Error('boom from try'); end;
     procedure Raise() begin Error('boom from asserterror'); end;
@@ -160,21 +163,31 @@ fn a_successful_run_after_an_error_keeps_the_object() {
     assert_eq!(r, format!("No|boom from Run|Yes|{DIALOG}|Yes"));
 }
 
-/// Not pinned: the exception type of an error raised by Error(ErrorInfo) or TestField is refused, naming the code.
+/// GetLastErrorObjectKinds.al pins Error(ErrorInfo) as a dialog exception and a failing TestField as NavTestFieldException.
+#[test]
+fn error_info_and_test_field_kinds_are_pinned() {
+    assert_eq!(text(after_run(6)), format!("No|info message|Yes|{DIALOG}|Yes"));
+    assert_eq!(
+        text(after_run(7)),
+        format!(
+            "No|{}|Yes|Microsoft.Dynamics.Nav.Types.NavTestFieldException|Yes",
+            "Id must be equal to '5'  in LEO Row: Id=0. Current value is '0'."
+        )
+    );
+}
+
+/// Not pinned: the exception type of an error no probe shows (a duplicate insert) is refused, naming the code.
 #[test]
 fn an_error_kind_the_corpus_does_not_pin_is_refused() {
-    for mode in [6, 7] {
-        match after_run(mode) {
-            Err(Signal::Unsupported(why)) => assert!(why.contains("GetLastErrorObject"), "{why}"),
-            other => panic!("mode {mode}: {other:?}"),
-        }
+    match after_run(8) {
+        Err(Signal::Unsupported(why)) => assert!(why.contains("GetLastErrorObject"), "{why}"),
+        other => panic!("{other:?}"),
     }
 }
 
-/// Error(Label) is not the literal form GetLastErrorObject.al pins; it is the registered assumption that it is
-/// the same exception.
+/// GetLastErrorObjectKinds.al:Kind_ErrorWithLabel pins Error(Label) as the same dialog exception.
 #[test]
-fn error_with_a_label_is_assumed_to_be_a_dialog_exception() {
+fn error_with_a_label_is_a_dialog_exception() {
     assert_eq!(text(after_run(5)), format!("No|boom from label|Yes|{DIALOG}|Yes"));
 }
 
@@ -195,14 +208,15 @@ fn before_any_error_is_refused_but_after_clear_is_null() {
     assert_eq!(cleared, "Yes");
 }
 
-/// ToString and Format after the first line are not pinned (only the `   at ` marker): both mark the assumption.
+/// An error raised in a helper of OnRun has stack frames no probe shows: ToString and Format mark the assumption.
+/// (An error raised in OnRun itself has the three frames GetLastErrorObjectKinds.al:ToString_DialogException_Lines pins.)
 #[test]
 fn to_string_and_format_mark_the_stack_frame_assumption() {
     use al_builtins::assumptions::{Assumption, take_hits};
     for body in ["exit(Exc.ToString());", "exit(Format(Exc));"] {
         take_hits();
         let r = text(run(&format!(
-            "procedure F(): Text var T: Codeunit \"LEO Thrower\"; Exc: DotNet LeoExc; begin T.SetMode(1); if T.Run() then exit('ran'); Exc := GetLastErrorObject(); {body} end;"
+            "procedure F(): Text var T: Codeunit \"LEO Thrower\"; Exc: DotNet LeoExc; begin T.SetMode(9); if T.Run() then exit('ran'); Exc := GetLastErrorObject(); {body} end;"
         )));
         assert!(r.starts_with(DIALOG), "{r}");
         assert!(

@@ -41,6 +41,11 @@ pub const USER_ACCOUNT_HELPER: &str = "Microsoft.Dynamics.Nav.NavUserAccount.Nav
 pub const NCL_DIALOG_EXCEPTION: &str = "Microsoft.Dynamics.Nav.Types.Exceptions.NavNCLDialogException";
 pub const RECORD_NOT_FOUND_EXCEPTION: &str = "Microsoft.Dynamics.Nav.Types.Exceptions.NavCSideRecordNotFoundException";
 pub const AL_EXCEPTION: &str = "Microsoft.Dynamics.Nav.Types.Exceptions.NavALException";
+/// A failing `TestField`, an `Evaluate` without a return value, and the base exception of a division by zero
+/// (tests/al-language-onprem-dotnet/lt-dotnet-interop/GetLastErrorObjectKinds.al).
+pub const TEST_FIELD_EXCEPTION: &str = "Microsoft.Dynamics.Nav.Types.NavTestFieldException";
+pub const NCL_EVALUATE_EXCEPTION: &str = "Microsoft.Dynamics.Nav.Types.Exceptions.NavNCLEvaluateException";
+pub const DIVIDE_BY_ZERO_EXCEPTION: &str = "System.DivideByZeroException";
 /// The inner exception of a `NavALException`: only that it is not null is pinned, so it has no member.
 pub const AL_INNER_EXCEPTION: &str = "<inner exception of NavALException (type not pinned)>";
 /// What `GetLastErrorObject` answers when there is no last error (after `ClearLastError`): `IsNull` is true and
@@ -120,6 +125,27 @@ pub const SIGS: &[(&str, &str, Ret)] = &[
     (AL_EXCEPTION, "GetType", Ret::Object),
     (AL_EXCEPTION, "InnerException", Ret::Object),
     (AL_EXCEPTION, "ToString", Ret::Text),
+    (TEST_FIELD_EXCEPTION, "Message", Ret::Text),
+    (TEST_FIELD_EXCEPTION, "GetType", Ret::Object),
+    (TEST_FIELD_EXCEPTION, "InnerException", Ret::Object),
+    (TEST_FIELD_EXCEPTION, "ToString", Ret::Text),
+    (NCL_EVALUATE_EXCEPTION, "Message", Ret::Text),
+    (NCL_EVALUATE_EXCEPTION, "GetType", Ret::Object),
+    (NCL_EVALUATE_EXCEPTION, "InnerException", Ret::Object),
+    (NCL_EVALUATE_EXCEPTION, "ToString", Ret::Text),
+    (DIVIDE_BY_ZERO_EXCEPTION, "Message", Ret::Text),
+    (DIVIDE_BY_ZERO_EXCEPTION, "GetType", Ret::Object),
+    (NCL_DIALOG_EXCEPTION, "GetBaseException", Ret::Object),
+    (NCL_DIALOG_EXCEPTION, "Equals", Ret::Boolean),
+    (RECORD_NOT_FOUND_EXCEPTION, "GetBaseException", Ret::Object),
+    (RECORD_NOT_FOUND_EXCEPTION, "Equals", Ret::Boolean),
+    (AL_EXCEPTION, "GetBaseException", Ret::Object),
+    (AL_EXCEPTION, "Equals", Ret::Boolean),
+    (TEST_FIELD_EXCEPTION, "GetBaseException", Ret::Object),
+    (TEST_FIELD_EXCEPTION, "Equals", Ret::Boolean),
+    (NCL_EVALUATE_EXCEPTION, "GetBaseException", Ret::Object),
+    (NCL_EVALUATE_EXCEPTION, "Equals", Ret::Boolean),
+    (RUNTIME_TYPE, "Equals", Ret::Boolean),
     (RUNTIME_TYPE, "FullName", Ret::Text),
     (NULL_EXCEPTION, "Message", Ret::Text),
     (NULL_EXCEPTION, "GetType", Ret::Object),

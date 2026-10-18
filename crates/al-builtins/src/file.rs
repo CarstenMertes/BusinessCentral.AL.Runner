@@ -299,10 +299,10 @@ fn exists(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
 
 fn erase(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
     let name = path(a, 0)?;
-    // Only the text up to and including `(Parameter ` is pinned (the test cuts the text at the quote), so only that is raised (al-language-onprem/lt-file-type/FileErrors.al:P110_InvalidPaths `erase_empty_name`);
-    // the rest of the text is not pinned (docs/probes-needed.md).
+    // The full text is pinned (al-language-onprem/lt-file-type/FileEraseAndTempPath.al:Erase_EmptyName_FullErrorText; the shorter
+    // FileErrors.al:P110_InvalidPaths `erase_empty_name` cuts it at the quote).
     if name.is_empty() {
-        return crate::native::raise("The value cannot be an empty string. (Parameter ", "InvalidPath");
+        return crate::native::raise("The value cannot be an empty string. (Parameter 'path')", "InvalidPath");
     }
     if c.fs_remove(&name)? {
         Ok(Value::Boolean(true))
@@ -342,7 +342,7 @@ fn rename(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
 
 /// The paths the corpus pins as temporary, all answering Yes (al-language-onprem/lt-file-type/FileTemp.al:140-146, P110_IsPathTemporary):
 /// a name under `TemporaryPath()` (`\TEMP\`, also with `../` in it), the temporary folder itself, the empty text, a name with no
-/// separator (`relative.txt`), `/` and `/etc/passwd`. Any other path is refused: whether it is temporary is not pinned.
+/// separator (`relative.txt`), `/` and `/etc/passwd`, and the forms of FileEraseAndTempPath.al. Any other path is refused: whether it is temporary is not pinned.
 fn is_path_temporary(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
     let p = path(a, 0)?;
     let pinned = p.starts_with(TEMP_DIR)
@@ -350,7 +350,16 @@ fn is_path_temporary(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) ->
         || p.is_empty()
         || !p.contains(['/', '\\'])
         || p == "/"
-        || p == "/etc/passwd";
+        || p == "/etc/passwd"
+        // FileEraseAndTempPath.al:IsPathTemporary_Paths: a relative path with a subfolder, a blank text, a drive-letter path with
+        // either separator and a UNC path all answer Yes.
+        || (!p.starts_with(['/', '\\']) && !p.contains(':'))
+        || p.trim().is_empty()
+        || (p.len() > 2
+            && p.as_bytes()[0].is_ascii_alphabetic()
+            && p.as_bytes()[1] == b':'
+            && matches!(p.as_bytes()[2], b'/' | b'\\'))
+        || p.starts_with("\\\\");
     if pinned {
         Ok(Value::Boolean(true))
     } else {

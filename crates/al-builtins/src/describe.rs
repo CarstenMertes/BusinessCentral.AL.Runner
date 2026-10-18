@@ -284,6 +284,7 @@ mod tests {
             auto_calc: Vec::new(),
             load: Default::default(),
             touched: false,
+            assigned: false,
             dirty_base: None,
             globals: Default::default(),
         })))

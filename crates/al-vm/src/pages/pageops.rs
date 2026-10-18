@@ -539,9 +539,52 @@ impl Session {
                         dst.borrow_mut().filters = page_filters;
                         return Ok(Value::Null);
                     }
-                    return unsupported(
-                        "Page.SetSelectionFilter of a page on no row of a table that has rows (not pinned)",
-                    );
+                    // A page whose Rec is the blank record (a part that is hidden, or not yet on a row) hands a record without
+                    // filters or marks the filter on the blank key, `Id: 0` and a count of 0
+                    // (pages/lt-hidden-part-selection-filter/HiddenPartSelectionFilter.al:SelectionFilter_HiddenLiteral_FilterAndCount,
+                    // _HiddenByVariable_, _VisiblePart_): that is the blank-row path below.
+                    let initial = self.initial_fields(src.borrow().table as usize);
+                    let blank_rec = {
+                        let s = src.borrow();
+                        s.fields.len() == initial.len()
+                            && s.fields
+                                .iter()
+                                .zip(&initial)
+                                .all(|(a, b)| al_builtins::ops::compare(a, b).ok() == Some(std::cmp::Ordering::Equal))
+                    };
+                    // The record may hold the blank-key filter of an earlier call (HiddenPartSelectionFilter.al: `rec-before=Id: 0/0`).
+                    let t = self.table(dst)?;
+                    let plain_dst = {
+                        let d = dst.borrow();
+                        d.marks.is_empty()
+                            && !d.marked_only
+                            && d.filters.iter().all(|f| {
+                                f.field == t.keys[0][0]
+                                    && t.keys[0].len() == 1
+                                    && match &f.expr {
+                                        al_builtins::filter::FilterExpr::Eq(v) => {
+                                            al_builtins::ops::compare(v, &initial[f.field]).ok()
+                                                == Some(std::cmp::Ordering::Equal)
+                                        }
+                                        al_builtins::filter::FilterExpr::Range(Some(a), Some(b)) => {
+                                            al_builtins::ops::compare(a, &initial[f.field]).ok()
+                                                == Some(std::cmp::Ordering::Equal)
+                                                && al_builtins::ops::compare(b, &initial[f.field]).ok()
+                                                    == Some(std::cmp::Ordering::Equal)
+                                        }
+                                        _ => false,
+                                    }
+                            })
+                    };
+                    // Pinned for the page of a part only.
+                    if !(blank_rec && plain_dst && st.borrow().host.is_some()) {
+                        return unsupported(
+                            "Page.SetSelectionFilter of a page on no row of a table that has rows (not pinned)",
+                        );
+                    }
+                    if Rc::ptr_eq(dst, &src) {
+                        st.borrow_mut().selection_on_rec = true;
+                    }
                 }
                 // A record that already has filters ends with the filter of the selected row alone: a filter on another field and
                 // on the key field, a range on the key, and the page's own filters copied from Rec are gone; a mark and MarkedOnly stay

@@ -365,6 +365,7 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("System.Format#2", format_2),
     ("System.FormatVariant#1", format_variant),
     ("TextBuilder.AppendVariant#1", crate::textfns::tb_append_variant),
+    ("TextBuilder.AppendFieldValue#1", crate::textfns::tb_append_field_value),
     ("System.FormatDecimalField#1", format_decimal_field),
     ("System.Evaluate#1", crate::evaluate::evaluate),
     (
@@ -677,6 +678,17 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("Variant.IsDateTime#1", |_, r, _| is(r, "DateTime")),
     ("Variant.IsDuration#1", |_, r, _| is(r, "Duration")),
     ("Variant.IsGuid#1", |_, r, _| is(r, "Guid")),
+    // A Media or MediaSet value put into a Variant: the media id, as a value no Is... test answers Yes for.
+    ("Media.ToVariant#1", |_, _, a| {
+        let Some(Value::Guid(g)) = a.first() else {
+            return unsupported("a Media value that is not a media id");
+        };
+        let text = crate::format::format_guid(g);
+        Ok(Value::Library(
+            crate::library_kind::LibraryKind::Media,
+            std::rc::Rc::new(std::cell::RefCell::new(crate::value::LibraryValue::Text(text))),
+        ))
+    }),
     ("Variant.IsDateFormula#1", |_, r, _| is(r, "DateFormula")),
     ("Variant.IsOption#1", |_, r, _| is(r, "Option")),
     ("Variant.IsList#1", |_, r, _| is(r, "List")),
@@ -775,7 +787,12 @@ fn by_name() -> &'static std::collections::HashMap<String, NativeFn> {
 }
 
 /// Ids the lowering writes that are no catalog overload and have no native of their own (the VM runs them).
-pub const INVENTED_IDS: &[&str] = &["Record.SetCurrFieldNo#1", "Record.CurrFieldNo#1"];
+pub const INVENTED_IDS: &[&str] = &[
+    "Record.SetCurrFieldNo#1",
+    "Record.CurrFieldNo#1",
+    "Media.ToVariant#1",
+    "TextBuilder.AppendFieldValue#1",
+];
 
 /// Every name that gets a [`BuiltinId`]: the catalog's overloads of every version, the registered natives
 /// and the invented ids. Sorted, unique. This is what `builtin_ids.rs` is generated from.
@@ -1120,7 +1137,9 @@ pub const EXC_CALL_STACK: usize = 1;
 /// (:138-230), `Get` without a row (:232-255) and a division by zero (:257-280); null after `ClearLastError`
 /// (:283-301). Any other error is refused, naming its code.
 fn get_last_error_object(ctx: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
-    use crate::dotnet_sigs::{AL_EXCEPTION, NCL_DIALOG_EXCEPTION, RECORD_NOT_FOUND_EXCEPTION};
+    use crate::dotnet_sigs::{
+        AL_EXCEPTION, NCL_DIALOG_EXCEPTION, NCL_EVALUATE_EXCEPTION, RECORD_NOT_FOUND_EXCEPTION, TEST_FIELD_EXCEPTION,
+    };
     let e = ctx.last_error();
     if e.message.is_empty() && e.code.is_empty() {
         if e.exception != ExceptionKind::Cleared {
@@ -1137,12 +1156,17 @@ fn get_last_error_object(ctx: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Valu
     }
     let type_name = match e.exception {
         ExceptionKind::Dialog => NCL_DIALOG_EXCEPTION,
-        ExceptionKind::DialogComputed => {
-            crate::assumptions::assume(crate::assumptions::Assumption::LastErrorObjectOfComputedErrorText);
-            NCL_DIALOG_EXCEPTION
-        }
+        // Error(Label, ...) and Error(Variable) raise the same exception as a literal (GetLastErrorObjectKinds.al:Kind_ErrorWithLabel,
+        // _ErrorWithTextVariable, _ErrorWithErrorInfo).
+        ExceptionKind::DialogComputed => NCL_DIALOG_EXCEPTION,
         ExceptionKind::RecordNotFound => RECORD_NOT_FOUND_EXCEPTION,
         ExceptionKind::DivideByZero => AL_EXCEPTION,
+        // The class follows the error code for these (GetLastErrorObjectKinds.al:Kind_FailingTestFieldWithValue, _WithoutValue,
+        // _ModifyOfMissingRow, _DeleteOfMissingRow, _EvaluateWithoutReturnValue).
+        ExceptionKind::Unknown if e.code == "Dialog" => NCL_DIALOG_EXCEPTION,
+        ExceptionKind::Unknown if e.code == "TestField" => TEST_FIELD_EXCEPTION,
+        ExceptionKind::Unknown if e.code == "Evaluate" => NCL_EVALUATE_EXCEPTION,
+        ExceptionKind::Unknown if e.code == "DB:RecordNotFound" => RECORD_NOT_FOUND_EXCEPTION,
         ExceptionKind::Unknown | ExceptionKind::Cleared => {
             return unsupported(&format!(
                 "GetLastErrorObject after an error of code '{}' (the .NET exception BC holds for it is not pinned; only Error() with a text, Get without a row and a division by zero are)",
@@ -2195,6 +2219,8 @@ pub(crate) mod tests {
             "TextBuilder.AppendVariant#1",
             "System.FormatDecimalField#1",
             "Dialog.ErrorNotLiteral#1",
+            "TextBuilder.AppendFieldValue#1",
+            "Media.ToVariant#1",
         ];
         for id in registered_ids().into_iter().filter(|id| !derived.contains(id)) {
             assert!(ids.iter().any(|i| i == id), "{id} is not a catalog overload id");

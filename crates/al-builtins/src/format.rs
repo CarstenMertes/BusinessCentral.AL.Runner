@@ -256,6 +256,14 @@ pub fn format_value(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) 
         // Management.HasValue formats such a value on every insert and the tests pass on BC
         // (permissions/TestMetadataExpandedPermission.al:219-235); the text of a set filter is not
         // pinned (docs/probes-needed.md).
+        Value::Library(crate::library_kind::LibraryKind::Media, l)
+            if matches!(&*l.borrow(), crate::value::LibraryValue::Text(_)) =>
+        {
+            match &*l.borrow() {
+                crate::value::LibraryValue::Text(s) => s.clone(),
+                _ => unreachable!(),
+            }
+        }
         Value::Library(name, l)
             if name == "TableFilter" && matches!(&*l.borrow(), crate::value::LibraryValue::Empty) =>
         {

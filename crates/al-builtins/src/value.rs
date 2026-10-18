@@ -320,6 +320,9 @@ pub struct PageState {
     pub blank_on_open: bool,
     /// The part opens with its host and reads its rows last to first, once each (see `view_names_link_field`).
     pub read_backwards: bool,
+    /// `CurrPage.SetSelectionFilter(Rec)` ran on this page while it stood on no row: the part's next refresh with its host
+    /// drops the filter (pages/lt-hidden-part-selection-filter/HiddenPartSelectionFilter.al).
+    pub selection_on_rec: bool,
     /// The control that has the client's focus, and whether it is on the current row. Moving
     /// focus to a non-key control of a new row is what inserts it (corpus
     /// handlers/TestPageBlankKeyInsert.al:1-25).
@@ -441,6 +444,7 @@ impl PageState {
             landing_first: false,
             blank_on_open: false,
             read_backwards: false,
+            selection_on_rec: false,
             focus: None,
             focus_in_row: false,
             errors: Vec::new(),
@@ -579,6 +583,9 @@ pub struct RecordState {
     /// AL code has written a field of the buffer. BC builds the buffer of a record variable on
     /// the first write, and evaluates the `InitValue`s only then (record/TestDateTimeInitValue.Codeunit.al).
     pub touched: bool,
+    /// AL code assigned a field since the last `Init` or `Clear`, even to its own default value; `AreFieldsLoaded` on a
+    /// record nothing was fetched into reads it (record/lt-arefieldsloaded-default).
+    pub assigned: bool,
     /// What a RecordRef last read or wrote into the buffer: `RecordRef.IsDirty` compares with it, not with the stored row
     /// (recordref/lt-recordref-fieldref-members/RecordRefIsDirtyEdges.al:IsDirty_TwoRefs_OtherModifies). `None` when the
     /// buffer came from elsewhere (GetTable, Init).

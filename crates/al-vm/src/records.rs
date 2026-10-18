@@ -1250,6 +1250,7 @@ impl Session {
             RecordOp::Init => {
                 let fresh = self.initial_fields(t.object as usize);
                 let mut r = rec.borrow_mut();
+                r.assigned = false;
                 for (i, v) in fresh.into_iter().enumerate() {
                     // Doc (Record.Init): primary key fields keep their values.
                     if !t.keys[0].contains(&i) {
@@ -1269,6 +1270,7 @@ impl Session {
                 self.reset_table_globals(rec);
                 let mut r = rec.borrow_mut();
                 r.fields = fresh;
+                r.assigned = false;
                 r.filters.clear();
                 r.filter_group = 0;
                 r.marks.clear();

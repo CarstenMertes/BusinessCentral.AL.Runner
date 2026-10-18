@@ -1597,7 +1597,7 @@ codeunit 50100 C
 // the sender (`Sender.SetFlag()`), without touching its own copy of the parameter, keeps the change: Base Application's
 // "Create Inventory Pick/Movement" passes its globals LineCreated and CurrWarehouseActivityHeader to
 // OnAutoCreatePickOrMoveFromWhseRequest, and the manufacturing subscriber fills them through `sender.CreatePickOrMoveLine`
-// (Tests-SCM "SCM Extend Warehouse".SC4TC41Silver and 34 more). Not pinned in the corpus: assumption event-var-alias-through-sender.
+// (Tests-SCM "SCM Extend Warehouse".SC4TC41Silver and 34 more). Pinned by events/lt-event-var-through-sender/EventVarThroughSender.al.
 const ALIAS: &str = r#"
 codeunit 50200 Pub
 {
@@ -1624,4 +1624,36 @@ codeunit 50100 C
 #[test]
 fn a_var_parameter_sees_the_publishers_variable_changed_through_the_sender() {
     assert_eq!(text(run(ALIAS, "F")), "Yes7marked3");
+}
+
+// The subscriber assigns its parameter before the sender call: the sender's assignment wins; after the call: the subscriber's wins
+// (events/lt-event-var-through-sender/EventVarThroughSender.al:SubscriberAssignsBeforeSenderCall, :SubscriberAssignsAfterSenderCall).
+const ALIAS_ORDER: &str = r#"
+codeunit 50210 Pub
+{
+    var Count: Integer;
+    procedure Mark() begin Count := 5; end;
+    procedure Get(): Integer begin exit(Count); end;
+    [IntegrationEvent(true, false)] local procedure OnWork(var Count: Integer) begin end;
+    procedure Go(): Integer begin OnWork(Count); exit(Count); end;
+}
+codeunit 50211 SubFirst
+{
+    [EventSubscriber(ObjectType::Codeunit, Codeunit::Pub, 'OnWork', '', false, false)]
+    local procedure F(var Sender: Codeunit Pub; var Count: Integer) begin Count := 77; Sender.Mark(); end;
+}
+codeunit 50100 C
+{
+    procedure F(): Integer var P: Codeunit Pub; begin exit(P.Go()); end;
+}"#;
+
+#[test]
+fn a_subscriber_assignment_before_the_sender_call_is_overwritten_by_the_sender() {
+    assert_eq!(int(run(ALIAS_ORDER, "F")), 5);
+}
+
+#[test]
+fn a_subscriber_assignment_after_the_sender_call_wins() {
+    let src = ALIAS_ORDER.replace("Count := 77; Sender.Mark();", "Sender.Mark(); Count := 99;");
+    assert_eq!(int(run(&src, "F")), 99);
 }

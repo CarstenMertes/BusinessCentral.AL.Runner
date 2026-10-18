@@ -926,13 +926,15 @@ codeunit 50000 "T" { Subtype = Test;
 }
 
 /// A column of a platform row whose value nothing pins is unknown: a dynamic read of it (FieldRef.Value, Format, a filter on
-/// it, TransferFields, storing a copy) is refused and names the table and the field, while the other columns, FindSet and
+/// it, TransferFields into another type, a read or a filter on a copy) is refused and names the table and the field, while the other columns, FindSet and
 /// Count of the same rows run, and a value written into the buffer reads back. "Type Name" (9) of the Field table is pinned
 /// for a Text field only (record/PZFieldObsoleteRows.al:47, `Text30`); for the Integer field it is unknown.
 #[test]
 fn an_unknown_column_of_a_platform_row_is_refused_where_it_is_read_dynamically() {
     let o = outcomes(
         r#"table 50003 "Buf" { fields { field(1; TableNo; Integer) { } field(2; "No."; Integer) { } field(9; "Type Name"; Text[30]) { } }
+  keys { key(PK; TableNo, "No.") { Clustered = true; } } }
+table 50004 "Buf2" { fields { field(1; TableNo; Integer) { } field(2; "No."; Integer) { } field(9; "Type Name"; Text[20]) { } }
   keys { key(PK; TableNo, "No.") { Clustered = true; } } }
 codeunit 50000 "T" { Subtype = Test;
   [Test] procedure OtherColumnsAndCountRun() var F: Record Field; R: RecordRef; N: Integer; begin
@@ -946,22 +948,36 @@ codeunit 50000 "T" { Subtype = Test;
     F.Get(50003, 1); R.GetTable(F); FR := R.Field(9); if Format(FR) = 'x' then; end;
   [Test] procedure FilterOnIt() var R: RecordRef; begin
     R.Open(Database::Field); R.Field(1).SetRange(50003); R.Field(9).SetRange('Integer'); if R.IsEmpty() then; end;
-  [Test] procedure TransferFieldsReadsIt() var F: Record Field; B: Record Buf temporary; begin
+  [Test] procedure TransferFieldsCarriesIt() var F: Record Field; B: Record Buf temporary; begin
+    F.Get(50003, 1); B.TransferFields(F); B.Insert(); end;
+  [Test] procedure TransferFieldsThenRead() var F: Record Field; B: Record Buf temporary; X: Text; begin
+    F.Get(50003, 1); B.TransferFields(F); X := B."Type Name"; end;
+  [Test] procedure TransferFieldsIntoAnotherType() var F: Record Field; B: Record Buf2 temporary; begin
     F.Get(50003, 1); B.TransferFields(F); end;
   [Test] procedure CopiedIntoATemporaryRecord() var F: Record Field; T: Record Field temporary; begin
-    F.Get(50003, 1); T := F; T.Insert(); end;
+    F.Get(50003, 1); T := F; T.Insert(); F.Get(50003, 9); T := F; T.Insert();
+    T.SetRange(TableNo, 50003); if T.Count() <> 2 then Error('copies %1', T.Count()); T.Get(50003, 9); end;
+  [Test] procedure CopyFilteredOnIt() var F: Record Field; T: Record Field temporary; R: RecordRef; begin
+    F.Get(50003, 1); T := F; T.Insert(); R.GetTable(T); R.Field(9).SetRange('Integer'); if R.IsEmpty() then; end;
+  [Test] procedure CopyReadBack() var F: Record Field; T: Record Field temporary; R: RecordRef; X: Text; begin
+    F.Get(50003, 1); T := F; T.Insert(); T.Get(50003, 1); R.GetTable(T); X := R.Field(9).Value; end;
   [Test] procedure WrittenReadsBack() var F: Record Field; R: RecordRef; begin
     F.Get(50003, 1); R.GetTable(F); R.Field(9).Value := 'mine';
     if Format(R.Field(9).Value) <> 'mine' then Error('read back'); end; }"#,
     );
     passes(&o, "OtherColumnsAndCountRun");
     passes(&o, "WrittenReadsBack");
+    // A copy of the row can be stored and counted; a filter on the column, or a read of it, is refused there too.
+    passes(&o, "CopiedIntoATemporaryRecord");
+    passes(&o, "TransferFieldsCarriesIt");
     for t in [
         "FieldRefValue",
         "FormatFieldRef",
         "FilterOnIt",
-        "TransferFieldsReadsIt",
-        "CopiedIntoATemporaryRecord",
+        "TransferFieldsThenRead",
+        "TransferFieldsIntoAnotherType",
+        "CopyFilteredOnIt",
+        "CopyReadBack",
     ] {
         let why = not_run(&o, t);
         assert!(

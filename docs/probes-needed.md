@@ -975,7 +975,7 @@ Pinned (types/lt-filter-enum-relation-duration-guid/D_Duration.al:211-218, 349-3
 
 A provider can leave one column of a row unknown (`Value::Unknown`) instead of giving it a default. Every read of it is
 refused naming the table and the field (a static or FieldRef read, Format, a filter or an order on it, TransferFields, a
-Sum or a query column over it, storing a copy of the row, a page control or an XmlPort element). The rest of the row, and
+Sum or a query column over it, a filter or an order on it in a temporary table the row was copied into, a page control or an XmlPort element). The rest of the row, and
 FindSet and Count over the rows, run as usual. Writing the field replaces the unknown value.
 
 | Table | Column left unknown | Probe wanted | Where |

@@ -191,8 +191,8 @@ fn asserterror_without_an_error_is_an_error() {
 
 #[test]
 fn a_blocked_routine_reports_unsupported() {
-    let src = cu("procedure F() begin MinimumActiveRowVersion(); end;");
-    assert!(matches!(run(&src, "F", vec![]), Err(Signal::Unsupported(r)) if r.contains("MinimumActiveRowVersion")));
+    let src = cu("procedure F() begin SerialNumber(); end;");
+    assert!(matches!(run(&src, "F", vec![]), Err(Signal::Unsupported(r)) if r.contains("SerialNumber")));
 }
 
 #[test]
@@ -563,4 +563,14 @@ fn foreach_runs_over_the_result_of_a_builtin_method() {
         "procedure F(): Integer var D: XmlDocument; E: XmlElement; N: XmlNode; C: Integer; begin XmlDocument.ReadFrom('<a><b/><c/><d/></a>', D); D.GetRoot(E); foreach N in E.GetChildNodes() do C += 1; exit(C); end;",
     );
     assert_eq!(int(run(&src, "F", vec![])), 3);
+}
+
+/// The corpus pins only the bounds of Database.MinimumActiveRowVersion (0 <= value <= LastUsedRowVersion() + 1),
+/// not the value AL code reads, so the call is refused.
+#[test]
+fn minimum_active_row_version_is_refused_because_its_value_is_unpinned() {
+    let src = cu("procedure F() begin MinimumActiveRowVersion(); end;");
+    assert!(
+        matches!(run(&src, "F", vec![]), Err(Signal::Unsupported(r)) if r.contains("MinimumActiveRowVersion") && r.contains("not pinned"))
+    );
 }

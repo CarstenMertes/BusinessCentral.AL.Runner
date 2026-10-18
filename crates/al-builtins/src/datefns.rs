@@ -23,6 +23,7 @@ pub const REGISTRY: &[(&str, NativeFn)] = &[
     ("System.DaTi2Variant#1", create_datetime),
     ("System.Date2DMY#1", date2dmy),
     ("System.Date2DWY#1", date2dwy),
+    ("System.DWY2Date#1", dwy2date),
     ("System.NormalDate#1", normal_date),
     ("System.ClosingDate#1", closing_date),
     ("System.RoundDateTime#1", round_datetime),
@@ -282,6 +283,65 @@ fn date2dwy(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
         ),
         None => unsupported("Date2DWY with a part that is not an Integer"),
     }
+}
+
+/// `DWY2Date(WeekDay [, Week [, Year]])`: the date of an ISO 8601 weekday (Monday is 1), week and year
+/// (types/lt-datetime/DateFuncs.al:311-346 `DWY2Date_Valid`). A missing Week is the ISO week of today and a missing
+/// Year the ISO year of today (`only day`, `day week`, lines 324-325 and 339-340). Week 1 holds January 4th
+/// (`mon w1 2020` is 2019-12-30, line 334). A week 53 the year does not have, and a day after 9999-12-31, raise
+/// "The date is not valid." (`DateInvalid`, `DWY2Date_Invalid` lines 349-399). A part outside its range raises with the
+/// range text, and the date `0001-01-01` is the blank date (`w1 1`, lines 326 and 341).
+/// Not pinned, so refused: two parts outside their range in one call (which one BC reports first), and a part that
+/// is not an Integer.
+fn dwy2date(ctx: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
+    let Some(wd) = int_of(a.first()) else {
+        return unsupported("DWY2Date with a WeekDay that is not an Integer");
+    };
+    let today = if a.len() < 3 { ctx.today_day() } else { None };
+    if a.len() < 3 && today.is_none() {
+        return unsupported("DWY2Date without Week or Year needs today's date from the host");
+    }
+    let today_iso = today.map(|t| {
+        let thursday = t + (4 - weekday(t));
+        let (iso_year, _, _) = civil_from_day(thursday);
+        ((thursday - day_from_civil(iso_year, 1, 1)) / 7 + 1, iso_year)
+    });
+    let week = match a.get(1) {
+        Some(Value::Integer(n)) => *n,
+        Some(_) => return unsupported("DWY2Date with a Week that is not an Integer"),
+        None => today_iso.map_or(0, |t| t.0),
+    };
+    let year = match a.get(2) {
+        Some(Value::Integer(n)) => *n,
+        Some(_) => return unsupported("DWY2Date with a Year that is not an Integer"),
+        None => today_iso.map_or(0, |t| t.1),
+    };
+    let checks = [(1, wd, 1, 7), (2, week, 1, 53), (3, year, 1, 9999)];
+    let bad: Vec<_> = checks.iter().filter(|c| c.1 < c.2 || c.1 > c.3).collect();
+    match bad.as_slice() {
+        [] => {}
+        [(n, v, lo, hi)] => {
+            return raise(
+                format!(
+                    "The value of DWY2Date parameter {n} is outside of the permitted range. The current value is: {v}. The permitted range is: from {lo} to {hi}."
+                ),
+                "OutsidePermittedRange",
+            );
+        }
+        _ => return unsupported("DWY2Date with several parts outside their range (the reported one is not pinned)"),
+    }
+    let jan4 = day_from_civil(year, 1, 4);
+    let week1_monday = jan4 - (weekday(jan4) - 1);
+    let day = week1_monday + (week - 1) * 7 + (wd - 1);
+    let in_week_year = {
+        let thursday = day + (4 - weekday(day));
+        civil_from_day(thursday).0 == year
+    };
+    if day < 1 || day > LAST_DAY || !in_week_year {
+        return raise("The date is not valid.", "DateInvalid");
+    }
+    // 0001-01-01 is BC's blank date (`w1 1` formats as '', DateFuncs.al:326 and :341), the one day this can reach below week 1 of year 2.
+    Ok(Value::Date(if day == 1 { 0 } else { day }, false))
 }
 
 /// record/TestDateVirtualTable.al:188-190: a closing date gives its plain day, a plain date is unchanged.
@@ -1359,6 +1419,88 @@ mod tests {
         assert!(matches!(
             f(&mut TestCtx::default(), None, &mut args),
             Ok(Value::Boolean(true))
+        ));
+    }
+
+    fn dwy(d: i32, w: i32, y: i32) -> Result<Value, Signal> {
+        call(
+            "System.DWY2Date#1",
+            vec![Value::Integer(d), Value::Integer(w), Value::Integer(y)],
+        )
+    }
+    #[track_caller]
+    fn raises(r: Result<Value, Signal>, code: &str) {
+        match r {
+            Err(Signal::Error(e)) => assert_eq!(e.code, code),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    // types/lt-datetime/DateFuncs.al:311-346 DWY2Date_Valid.
+    #[test]
+    fn dwy2date_valid_cases_of_the_corpus() {
+        for ((d, w, y), want) in [
+            ((1, 1, 2024), (2024, 1, 1)),
+            ((7, 1, 2024), (2024, 1, 7)),
+            ((3, 3, 2024), (2024, 1, 17)),
+            ((1, 1, 2021), (2021, 1, 4)),
+            ((1, 1, 2020), (2019, 12, 30)),
+            ((1, 53, 2020), (2020, 12, 28)),
+            ((7, 53, 2020), (2021, 1, 3)),
+            ((1, 52, 2024), (2024, 12, 23)),
+            ((7, 52, 2024), (2024, 12, 29)),
+            ((1, 1, 1), (1, 1, 1)),
+            ((4, 53, 2015), (2015, 12, 31)),
+            ((1, 1, 9999), (9999, 1, 4)),
+            ((5, 52, 9999), (9999, 12, 31)),
+        ] {
+            if (d, w, y) == (1, 1, 1) {
+                assert!(
+                    matches!(dwy(d, w, y), Ok(Value::Date(0, false))),
+                    "w1 1 is the blank date"
+                );
+                continue;
+            }
+            is_date(dwy(d, w, y), want.0, want.1, want.2);
+        }
+    }
+
+    // types/lt-datetime/DateFuncs.al:349-399 DWY2Date_Invalid.
+    #[test]
+    fn dwy2date_invalid_cases_of_the_corpus() {
+        for (d, w, y) in [
+            (0, 1, 2024),
+            (8, 1, 2024),
+            (-1, 1, 2024),
+            (1, 0, 2024),
+            (1, 54, 2024),
+            (1, 1, 0),
+            (1, 1, 10000),
+            (1, 1, -5),
+        ] {
+            raises(dwy(d, w, y), "OutsidePermittedRange");
+        }
+        raises(dwy(1, 53, 2024), "DateInvalid");
+        raises(dwy(1, 53, 2023), "DateInvalid");
+        raises(dwy(7, 52, 9999), "DateInvalid");
+        match dwy(8, 1, 2024) {
+            Err(Signal::Error(e)) => assert_eq!(
+                e.message,
+                "The value of DWY2Date parameter 1 is outside of the permitted range. The current value is: 8. The permitted range is: from 1 to 7."
+            ),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    // Two parts outside their range, a non-Integer part, and a missing Week or Year without a host clock are not pinned.
+    #[test]
+    fn dwy2date_refuses_what_the_corpus_does_not_pin() {
+        refused(dwy(0, 0, 2024));
+        refused(call("System.DWY2Date#1", vec![Value::Integer(3)]));
+        refused(call("System.DWY2Date#1", vec![Value::Integer(3), Value::Integer(10)]));
+        refused(call(
+            "System.DWY2Date#1",
+            vec![t("x"), Value::Integer(1), Value::Integer(2024)],
         ));
     }
 }

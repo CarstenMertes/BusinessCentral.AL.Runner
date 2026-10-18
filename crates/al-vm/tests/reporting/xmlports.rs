@@ -4,6 +4,10 @@ use al_builtins::native::Signal;
 use al_builtins::value::Value;
 
 const FIXTURES: &str = r#"
+// UseLax (YXmlPortProps.al:67, :87).
+xmlport 60091 "ALT Lax" { Format = Xml; UseLax = true; schema { textelement(Root) { tableelement(U; "ALT Universal") { XmlName = 'Item'; fieldelement(Id; U."Entry No.") { } fieldelement(Name; U."Text Field") { } } } } }
+xmlport 60092 "ALT Strict" { Format = Xml; schema { textelement(Root) { tableelement(U; "ALT Universal") { XmlName = 'Item'; fieldelement(Id; U."Entry No.") { } fieldelement(Name; U."Text Field") { } } } } }
+
 table 60000 "ALT Universal"
 {
     fields
@@ -1376,4 +1380,40 @@ fn an_import_of_a_key_that_is_stored_raises_the_table_error() {
         Err(Signal::Error(e)) => assert!(e.message.contains("already exists"), "{}", e.message),
         other => panic!("the second import must raise: {other:?}"),
     }
+}
+
+// xmlport/lt-y-xmlport-props/YXmlPortProps.al:UseLax_Import_AcceptsUnknownElements: a UseLax port skips an element of another
+// namespace after the last element of a sequence and lists `any element in namespace '##other'` for one of no namespace; a
+// strict port names the other namespace.
+#[test]
+fn use_lax_skips_an_element_of_another_namespace_at_the_end_of_a_sequence() {
+    let ports = r#"
+procedure Imp(Id: Integer; Xml: Text): Text var H: Codeunit Helpers; B: Record "ALT Blob" temporary; InStr: InStream; begin H.Stage(B, InStr, Xml); if not TryImp(Id, InStr) then exit('error:' + GetLastErrorText()); exit('ok'); end;
+[TryFunction] procedure TryImp(Id: Integer; InStr: InStream) begin XmlPort.Import(Id, InStr); end;
+"#;
+    let procs = ports;
+    let run_one = |body: &str| {
+        let src_extra = procs.to_string();
+        match run_in("U: Record \"ALT Universal\";", body, &src_extra, None) {
+            Ok(Value::Text(s)) => s.to_string(),
+            other => panic!("{other:?}"),
+        }
+    };
+    let lax_ns = run_one(
+        "exit(Imp(60091, '<Root><Item><Id>6</Id><Name>six</Name><Unknown xmlns=\"urn:other\">x</Unknown></Item></Root>') + '|' + Format(U.Count()));",
+    );
+    assert_eq!(lax_ns, "ok|1");
+    let lax =
+        run_one("exit(Imp(60091, '<Root><Item><Id>7</Id><Name>seven</Name><Unknown>x</Unknown></Item></Root>'));");
+    assert_eq!(
+        lax,
+        "error:Imported XML cannot validate with the schema: The element 'Item' has invalid child element 'Unknown'. List of possible elements expected: any element in namespace '##other'."
+    );
+    let strict = run_one(
+        "exit(Imp(60092, '<Root><Item><Id>5</Id><Name>five</Name><Unknown xmlns=\"urn:other\">x</Unknown></Item></Root>'));",
+    );
+    assert_eq!(
+        strict,
+        "error:Imported XML cannot validate with the schema: The element 'Item' has invalid child element 'Unknown' in namespace 'urn:other'."
+    );
 }

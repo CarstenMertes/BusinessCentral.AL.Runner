@@ -43,6 +43,8 @@ pub struct Layout {
     pub xml_utf8: bool,
     pub namespaces: Vec<(String, String)>,
     pub inline_schema: bool,
+    pub use_lax: bool,
+    pub xml_v11: bool,
     /// `Encoding` as written.
     pub encoding: Option<String>,
     pub format_evaluate_xml: bool,
@@ -105,9 +107,18 @@ fn allowed_properties(kind: ir::XmlNodeKind) -> &'static [&'static str] {
             "autoreplace",
             "usetemporary",
         ],
-        ir::XmlNodeKind::Field => &["xmlname", "minoccurs", "width", "namespaceprefix", "autocalcfield"],
-        ir::XmlNodeKind::FieldAttr => &["xmlname", "namespaceprefix", "autocalcfield"],
-        ir::XmlNodeKind::TextAttr => &["xmlname", "namespaceprefix", "width"],
+        // `Unbound = true` on a field or text node changes neither the import nor the export of a field or text attribute
+        // (xmlport/lt-y-xmlport-props/YXmlPortProps.al:682-722); the export of an unbound field element is refused when it runs.
+        ir::XmlNodeKind::Field => &[
+            "xmlname",
+            "minoccurs",
+            "width",
+            "namespaceprefix",
+            "autocalcfield",
+            "unbound",
+        ],
+        ir::XmlNodeKind::FieldAttr => &["xmlname", "namespaceprefix", "autocalcfield", "unbound"],
+        ir::XmlNodeKind::TextAttr => &["xmlname", "namespaceprefix", "width", "unbound"],
         _ => &["xmlname"],
     }
 }
@@ -127,6 +138,8 @@ pub fn layout(obj: &ast::Object) -> Layout {
         xml_utf8: false,
         namespaces: Vec::new(),
         inline_schema: false,
+        use_lax: false,
+        xml_v11: false,
         encoding: None,
         format_evaluate_xml: false,
         format_evaluate_declared: None,
@@ -170,6 +183,30 @@ pub fn layout(obj: &ast::Object) -> Layout {
                     .run_reasons
                     .push(format!("xmlport property inlineschema = {other} is not pinned")),
             },
+            // xmlport/lt-y-xmlport-props/YXmlPortProps.al:582 (UseLax_Import_AcceptsUnknownElements): the import skips an element of
+            // another namespace at the end of a sequence; the run checks the shapes it pins.
+            "uselax" => match value.trim().to_ascii_lowercase().as_str() {
+                "true" => out.use_lax = true,
+                "false" => {}
+                other => out
+                    .run_reasons
+                    .push(format!("xmlport property uselax = {other} is not pinned")),
+            },
+            // YXmlPortProps.al:607 (XmlVersionNo_Export_Declaration): V10 and V11 export the same `version="1.0"` declaration, and
+            // the import reads a declaration as it always does (`1.1` is refused by the reader on a V11 port as on any other).
+            "xmlversionno" => match value.trim().to_ascii_lowercase().as_str() {
+                "v10" => {}
+                "v11" => out.xml_v11 = true,
+                other => out
+                    .run_reasons
+                    .push(format!("xmlport property xmlversionno = {other} is not pinned")),
+            },
+            // YXmlPortProps.al:628 (FileName_Export_Output): an export to a stream ignores it, named or empty. Only Xmlport.Run
+            // would use it, which the runtime does not implement.
+            "filename" => {}
+            // YXmlPortProps.al:641: grant permissions the runtime does not enforce; an export runs as without them. The values
+            // read back through the XmlPort Metadata row (platform/objects.rs).
+            "inherentpermissions" | "inherententitlements" => {}
             // xmlport/lt-y-xmlport-props/YXmlPortProps.al:213: one `prefix = 'uri'` pair.
             "namespaces" => match crate::scan::split_double(&value, ',').as_slice() {
                 [one] => match one.split_once('=') {
@@ -393,6 +430,8 @@ pub fn build(cx: &Context, mut reasons: Vec<String>) -> ir::XmlPort {
                 .property(i, "NamespacePrefix")
                 .map(|v| crate::scan::unquote_xmlport(&v)),
             auto_calc: layout.property(i, "AutoCalcField").and_then(|v| bool_prop(&v)),
+            unbound: kind == ir::XmlNodeKind::Field
+                && layout.property(i, "Unbound").and_then(|v| bool_prop(&v)) == Some(true),
             triggers,
         };
         match kind {
@@ -559,6 +598,8 @@ pub fn build(cx: &Context, mut reasons: Vec<String>) -> ir::XmlPort {
         xml_utf8: layout.xml_utf8,
         namespaces: layout.namespaces.clone(),
         inline_schema: layout.inline_schema,
+        use_lax: layout.use_lax,
+        xml_v11: layout.xml_v11,
         format_evaluate_xml: layout.format_evaluate_xml,
         format_evaluate_declared: layout.format_evaluate_declared.is_some(),
         nodes,

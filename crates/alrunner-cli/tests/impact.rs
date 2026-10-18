@@ -254,3 +254,226 @@ fn with_an_index_the_run_selects_the_codeunits_that_reach_the_extension_and_runs
     assert_eq!(code(&o), 1, "{t}");
     assert!(t.contains("\nwithout the extension:"), "{t}");
 }
+
+#[test]
+fn the_json_diff_can_be_given_back_as_the_accept_file_and_then_only_new_differences_fail_the_run() {
+    let (tests, ext, lib) = (fixture("tests"), fixture("ext"), fixture("lib"));
+    let dir = tempfile::tempdir().unwrap();
+    let json = dir.path().join("impact.json");
+    let json_s = json.to_str().unwrap();
+    let o = alrunner(&[
+        "test",
+        &tests,
+        "--impact-of",
+        &ext,
+        "--impact",
+        "all",
+        "--dep",
+        &lib,
+        "--impact-json",
+        json_s,
+    ]);
+    let t = text(&o);
+    assert_eq!(code(&o), 1, "{t}");
+    let doc: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&json).unwrap()).unwrap();
+    assert_eq!(doc["format"], 1, "{doc}");
+    assert_eq!(doc["exitCode"], 1, "{doc}");
+    assert_eq!(doc["counts"]["newlyFailing"], 1, "{doc}");
+    assert_eq!(doc["counts"]["sameNotReached"], 3, "{doc}");
+    let rows = doc["tests"].as_array().unwrap();
+    assert_eq!(rows.len(), 5, "{doc}");
+    let failing = rows.iter().find(|r| r["test"] == "PostKeepsALargeAmount").unwrap();
+    assert_eq!(failing["class"], "newly failing", "{doc}");
+    assert_eq!(failing["codeunit"], 50510, "{doc}");
+    assert_eq!(failing["without"]["outcome"], "pass", "{doc}");
+    assert_eq!(failing["with"]["outcome"], "fail", "{doc}");
+    assert_eq!(failing["with"]["message"], "amount 20", "{doc}");
+    assert_eq!(
+        failing["ran"][0]["routine"], "Imp Ext Subscriber.DoubleLargeAmounts",
+        "{doc}"
+    );
+    assert_eq!(failing["ran"][0]["calls"], 1, "{doc}");
+    assert_eq!(failing["accepted"], false, "{doc}");
+
+    // The same file given back accepts that change: the run reports it, marked accepted, and exits 0.
+    let o = alrunner(&[
+        "test",
+        &tests,
+        "--impact-of",
+        &ext,
+        "--impact",
+        "all",
+        "--dep",
+        &lib,
+        "--impact-accept",
+        json_s,
+    ]);
+    let t = text(&o);
+    assert_eq!(code(&o), 0, "{t}");
+    let failing = section(&t, "newly failing");
+    assert!(failing.contains("newly failing (1, 1 accepted)"), "{t}");
+    assert!(
+        failing.contains("50510 Imp Tests.PostKeepsALargeAmount: pass -> fail: amount 20 (accepted)"),
+        "{t}"
+    );
+    assert!(t.contains("1 accepted change"), "{t}");
+
+    // An accepted change whose error text is not the one of this run is a new difference: exit 1, and the report
+    // says which entry of the accept file no longer matches.
+    let edited = std::fs::read_to_string(&json)
+        .unwrap()
+        .replace("\"amount 20\"", "\"amount 30\"");
+    let accept = dir.path().join("accept.json");
+    std::fs::write(&accept, edited).unwrap();
+    let o = alrunner(&[
+        "test",
+        &tests,
+        "--impact-of",
+        &ext,
+        "--impact",
+        "all",
+        "--dep",
+        &lib,
+        "--impact-accept",
+        accept.to_str().unwrap(),
+    ]);
+    let t = text(&o);
+    assert_eq!(code(&o), 1, "{t}");
+    assert!(section(&t, "newly failing").contains("newly failing (1)"), "{t}");
+    assert!(t.contains("accept file: 1 accepted change no longer matches"), "{t}");
+    assert!(
+        t.contains("50510 Imp Tests.PostKeepsALargeAmount: accepted fail: amount 30"),
+        "{t}"
+    );
+
+    // An accept file that cannot be read stops the run before it starts.
+    std::fs::write(&accept, "not json").unwrap();
+    let o = alrunner(&[
+        "test",
+        &tests,
+        "--impact-of",
+        &ext,
+        "--impact",
+        "all",
+        "--dep",
+        &lib,
+        "--impact-accept",
+        accept.to_str().unwrap(),
+    ]);
+    assert_eq!(code(&o), 2, "{}", text(&o));
+    assert!(text(&o).contains("--impact-accept"), "{}", text(&o));
+    // Both flags belong to an impact run.
+    let o = alrunner(&["test", &tests, "--dep", &lib, "--impact-json", json_s]);
+    assert_eq!(code(&o), 2, "{}", text(&o));
+}
+
+#[test]
+fn junit_and_the_json_document_of_an_impact_run_hold_the_run_with_the_extension() {
+    let (tests, ext, lib) = (fixture("tests"), fixture("ext"), fixture("lib"));
+    let dir = tempfile::tempdir().unwrap();
+    let junit = dir.path().join("impact.xml");
+    let out = dir.path().join("out.json");
+    let o = alrunner(&[
+        "test",
+        &tests,
+        "--impact-of",
+        &ext,
+        "--impact",
+        "all",
+        "--dep",
+        &lib,
+        "--junit",
+        junit.to_str().unwrap(),
+        "--output-json",
+        out.to_str().unwrap(),
+    ]);
+    let t = text(&o);
+    assert_eq!(code(&o), 1, "{t}");
+    let x = std::fs::read_to_string(&junit).unwrap();
+    // One file, for the "with" run, with the change class of each test as a property.
+    assert_eq!(x.matches("<testcase ").count(), 5, "{x}");
+    assert!(x.contains("<testsuites tests=\"5\" failures=\"2\""), "{x}");
+    let case = |name: &str| -> String {
+        let start = x.find(&format!("name=\"{name}\"")).unwrap();
+        x[start..].split("</testcase>").next().unwrap().to_string()
+    };
+    assert!(
+        case("PostKeepsALargeAmount").contains("<property name=\"impact_class\" value=\"newly failing\" />"),
+        "{x}"
+    );
+    assert!(
+        case("PostKeepsALargeAmount").contains("<property name=\"impact_without\" value=\"pass\" />"),
+        "{x}"
+    );
+    assert!(
+        case("PostKeepsASmallAmount").contains("<property name=\"impact_class\" value=\"same, reached\" />"),
+        "{x}"
+    );
+    assert!(
+        case("PostsNothing").contains("<property name=\"impact_class\" value=\"same, not reached\" />"),
+        "{x}"
+    );
+    // The JSON document of AL Runner v2's shape: the "with" run, with the exit code of the impact run.
+    let doc: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&out).unwrap()).unwrap();
+    assert_eq!(doc["total"], 5, "{doc}");
+    assert_eq!(doc["failed"], 2, "{doc}");
+    assert_eq!(doc["exitCode"], 1, "{doc}");
+    // The JSON document on stdout would mix with the impact report.
+    let o = alrunner(&[
+        "test",
+        &tests,
+        "--impact-of",
+        &ext,
+        "--impact",
+        "all",
+        "--dep",
+        &lib,
+        "--output-json",
+    ]);
+    assert_eq!(code(&o), 2, "{}", text(&o));
+}
+
+#[test]
+fn with_an_index_the_json_diff_counts_the_tests_left_out() {
+    let (tests, ext, lib) = (fixture("tests"), fixture("ext"), fixture("lib"));
+    let cache = tempfile::tempdir().unwrap();
+    let o = alrunner_in(cache.path(), &["impact-index", "build", &tests, "--dep", &lib]);
+    assert_eq!(code(&o), 0, "{}", text(&o));
+    let json = cache.path().join("impact.json");
+    let junit = cache.path().join("impact.xml");
+    let o = alrunner_in(
+        cache.path(),
+        &[
+            "test",
+            &tests,
+            "--impact-of",
+            &ext,
+            "--dep",
+            &lib,
+            "--impact-json",
+            json.to_str().unwrap(),
+            "--junit",
+            junit.to_str().unwrap(),
+        ],
+    );
+    let t = text(&o);
+    assert_eq!(code(&o), 1, "{t}");
+    let doc: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&json).unwrap()).unwrap();
+    assert_eq!(doc["mode"], "dynamic", "{doc}");
+    assert_eq!(doc["notSelected"]["tests"], 1, "{doc}");
+    assert_eq!(doc["notSelected"]["codeunits"], 1, "{doc}");
+    let failing = doc["tests"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["test"] == "PostKeepsALargeAmount")
+        .unwrap();
+    assert!(
+        failing["reached"][0].as_str().unwrap().starts_with("subscriber"),
+        "{doc}"
+    );
+    // JUnit holds the codeunit that ran with the extension.
+    let x = std::fs::read_to_string(&junit).unwrap();
+    assert_eq!(x.matches("<testcase ").count(), 4, "{x}");
+    assert!(x.contains("value=\"newly failing\""), "{x}");
+}

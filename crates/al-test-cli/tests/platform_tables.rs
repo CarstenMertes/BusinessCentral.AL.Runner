@@ -868,3 +868,25 @@ codeunit 50000 "T" { Subtype = Test;
     );
     passes(&o, "Counts");
 }
+
+/// Tenant Web Service and Web Service take Insert, Modify and Delete from AL
+/// (corpus tests/al-language-onprem/session/PZPlatformSurvey.al:178-187). A fresh tenant holds rows
+/// there that nothing pins (the count is 64 and 29 in records/W4PlatformAndMeta.al:93-95 and
+/// depends on the apps), so a read that would count or scan them is refused, and a Get that finds nothing too.
+#[test]
+fn tenant_web_service_takes_writes_and_refuses_reads_of_rows_it_does_not_hold() {
+    let o = outcomes(
+        r#"codeunit 50000 "T" { Subtype = Test;
+  [Test] procedure Writes() var R: Record "Tenant Web Service"; W: Record "Web Service"; begin
+    R.Init(); R."Object Type" := R."Object Type"::Page; R."Service Name" := 'Zed'; R.Insert();
+    R."Object ID" := 21; R.Modify(); if not R.Get(R."Object Type"::Page, 'Zed') then Error('lost'); R.Delete();
+    W.Init(); W."Object Type" := W."Object Type"::Page; W."Service Name" := 'Zed'; W.Insert(); W.Delete(); end;
+  [Test] procedure CountIsRefused() var R: Record "Tenant Web Service"; begin if R.Count() < 0 then; end;
+  [Test] procedure MissIsRefused() var R: Record "Tenant Web Service"; begin if R.Get(0, 'Nope') then; end; }"#,
+    );
+    passes(&o, "Writes");
+    for t in ["CountIsRefused", "MissIsRefused"] {
+        let why = not_run(&o, t);
+        assert!(why.contains("Tenant Web Service"), "{t}: {why}");
+    }
+}

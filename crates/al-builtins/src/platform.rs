@@ -220,7 +220,18 @@ pub const REGISTRY: &[(u32, &str, Provider)] = &[
     (2_000_000_175, "Scheduled Task", Provider::Stored),
     (2_000_000_096, "API Webhook Notification", Provider::Stored),
     (2_000_000_098, "API Webhook Notification Aggr", Provider::Stored),
+    // Take Insert, Modify and Delete (tests/al-language-onprem/session/PZPlatformSurvey.al:178-187). A fresh tenant
+    // holds rows in them that nothing pins: see `UNSEEDED_ROWS`.
+    (2_000_000_076, "Web Service", Provider::Stored),
+    (2_000_000_168, "Tenant Web Service", Provider::Stored),
 ];
+
+/// Stored platform tables that a fresh tenant fills with rows no corpus test pins (Web Service and
+/// Tenant Web Service: not empty, PZPlatformSurvey.al:178-187; 64 rows in W4PlatformAndMeta.al:93,
+/// depending on the apps). The runtime starts them empty, so it treats them as unseeded
+/// (`Engine::unseeded`): writes work, and a read of rows that were not written, or a `Get` that
+/// finds nothing, is refused.
+pub const UNSEEDED_ROWS: &[u32] = &[2_000_000_076, 2_000_000_168];
 
 /// Platform tables that only the System app of a later major declares (the registry above is checked against the System app
 /// of the first major the corpus pins, `tests/platform_tables.rs`). Ordinary stored tables here, written by install code:

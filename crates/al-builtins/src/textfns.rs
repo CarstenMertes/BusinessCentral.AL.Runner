@@ -894,6 +894,14 @@ fn bt_read(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
     Ok(Value::Boolean(true))
 }
 
+/// `Write(OutStream)`: only ASCII text on a fresh stream is pinned (see `stream::write_bigtext`).
+fn bt_write(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
+    let h = string_of(r)?;
+    let text = with_string(&h, |s| s.clone());
+    crate::stream::write_bigtext(&mut a[0], &text)?;
+    Ok(Value::Null)
+}
+
 fn bt_length(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> NResult {
     let h = string_of(r)?;
     Ok(Value::Integer(with_string(&h, |s| Value::text_len(s)) as i32))
@@ -972,6 +980,7 @@ pub fn native_for(sig: &Signature) -> Option<NativeFn> {
         ("TextBuilder", "Replace", [_, _]) => tb_replace,
         ("BigText", "AddText", ["Text", ..]) => bt_add_text,
         ("BigText", "Read", [_]) => bt_read,
+        ("BigText", "Write", [_]) => bt_write,
         ("BigText", "Length", []) => bt_length,
         ("BigText", "TextPos", [_]) => bt_text_pos,
         ("BigText", "GetSubText", ["Text", ..]) => bt_get_sub_text,

@@ -952,6 +952,22 @@ pub(crate) fn write_serialised_text(stream: &mut Value, text: &str) -> Result<()
     Ok(())
 }
 
+/// `BigText.Write(OutStream)`: the text as one byte per character into a stream nothing was written to
+/// (corpus streams/StTBigText.al:WriteToStreamAndRead, :WriteReadLargeText; the blob holds 16 bytes for 16 characters and
+/// 100000 for 100000). Only ASCII text is pinned: the probe's three non-ASCII characters (WriteNonAscii) give 3 bytes, which
+/// no encoding explains. A stream that was written to is not pinned either, nor where the stream stands afterwards.
+pub(crate) fn write_bigtext(stream: &mut Value, text: &str) -> Result<(), Signal> {
+    if !text.is_ascii() {
+        return unsupported("BigText.Write of text beyond ASCII (the bytes written are not pinned)");
+    }
+    let (b, _) = out_buf(Some(stream))?;
+    if b.borrow().write_pos != 0 {
+        return unsupported("BigText.Write to a stream that was written to (not pinned)");
+    }
+    write_bytes(&b, text.as_bytes());
+    Ok(())
+}
+
 /// Like [`write_raw_bytes`], for a write that does not move the stream: it starts at the beginning, and the stream is back there
 /// after it. Refused when something else was written to the stream first.
 pub fn write_raw_bytes_rewinding(stream: &mut Value, bytes: &[u8]) -> Result<(), Signal> {

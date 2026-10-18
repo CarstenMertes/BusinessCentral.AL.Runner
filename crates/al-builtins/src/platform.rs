@@ -273,8 +273,8 @@ pub const PINNED_COLUMNS: &[(u32, &[u32])] = &[
     // Table Metadata: record/TestTableMetadataVirtualTable.al.
     (2_000_000_136, &[1, 2, 3, 4, 5, 6, 11, 12, 13, 15]),
     // Field: record/TestField*VirtualTable.al, TestFieldDataClassificationInheritance.al. TableName, Class, Enabled and "Field Caption"
-    // are read from the declaration (probe batch 5); Len (6) from the type (record/TestFieldLenAndFeatureKeyContracts.al); Type Name (9), ExternalName (10) and the rest are not.
-    (2_000_000_041, &[1, 2, 3, 4, 5, 6, 7, 8, 20, 21, 22, 24, 25, 26, 27]),
+    // are read from the declaration (probe batch 5); IsPartOfPrimaryKey (28): metadata/lt-platform-metadata-columns/PlatformMetadataColumnValues.al:237-268; Len (6) from the type (record/TestFieldLenAndFeatureKeyContracts.al); Type Name (9), ExternalName (10) and the rest are not.
+    (2_000_000_041, &[1, 2, 3, 4, 5, 6, 7, 8, 20, 21, 22, 24, 25, 26, 27, 28]),
     // Feature Key: ID (1), Enabled (2), Mandatory By (5), Can Try (6), Is One Way (7), Data Update Required (8) and Mandatory By Version (9),
     // record/PFFeatureKeyColumns.al, TestFieldLenAndFeatureKeyContracts.al, TestFeatureKeyEnabledContracts.al.
     (2_000_000_211, &[1, 2, 5, 6, 7, 8, 9]),

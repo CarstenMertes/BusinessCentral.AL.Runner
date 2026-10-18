@@ -890,3 +890,17 @@ fn tenant_web_service_takes_writes_and_refuses_reads_of_rows_it_does_not_hold() 
         assert!(why.contains("Tenant Web Service"), "{t}: {why}");
     }
 }
+
+/// Field.IsPartOfPrimaryKey (column 28) is read in AL code: true for a field of the primary key
+/// (corpus metadata/lt-platform-metadata-columns/PlatformMetadataColumnValues.al:237-268).
+#[test]
+fn is_part_of_primary_key_is_read_from_the_primary_key() {
+    let o = outcomes(
+        r#"table 50001 "K" { fields { field(1; A; Integer) {} field(2; B; Code[10]) {} field(3; C; Text[30]) {} } keys { key(PK; A, B) { Clustered = true; } key(S; C) {} } }
+codeunit 50000 "T" { Subtype = Test;
+  [Test] procedure Reads() var F: Record Field; begin
+    F.SetRange(TableNo, 50001); F.SetRange(IsPartOfPrimaryKey, true); if F.Count() <> 2 then Error('count %1', F.Count());
+    F.Reset(); F.Get(50001, 3); if F.IsPartOfPrimaryKey then Error('C is not in the key'); F.Get(50001, 2); if not F.IsPartOfPrimaryKey then Error('B is'); end; }"#,
+    );
+    passes(&o, "Reads");
+}

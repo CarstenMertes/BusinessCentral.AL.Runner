@@ -924,3 +924,49 @@ codeunit 50000 "T" { Subtype = Test;
     );
     passes(&o, "Reads");
 }
+
+/// A column of a platform row whose value nothing pins is unknown: a dynamic read of it (FieldRef.Value, Format, a filter on
+/// it, TransferFields, storing a copy) is refused and names the table and the field, while the other columns, FindSet and
+/// Count of the same rows run, and a value written into the buffer reads back. "Type Name" (9) of the Field table is pinned
+/// for a Text field only (record/PZFieldObsoleteRows.al:47, `Text30`); for the Integer field it is unknown.
+#[test]
+fn an_unknown_column_of_a_platform_row_is_refused_where_it_is_read_dynamically() {
+    let o = outcomes(
+        r#"table 50003 "Buf" { fields { field(1; TableNo; Integer) { } field(2; "No."; Integer) { } field(9; "Type Name"; Text[30]) { } }
+  keys { key(PK; TableNo, "No.") { Clustered = true; } } }
+codeunit 50000 "T" { Subtype = Test;
+  [Test] procedure OtherColumnsAndCountRun() var F: Record Field; R: RecordRef; N: Integer; begin
+    F.SetRange(TableNo, 50003); F.SetRange("No.", 1, 9); if F.Count() <> 3 then Error('count %1', F.Count()); F.FindSet();
+    repeat N += 1; until F.Next() = 0; if N <> 3 then Error('n');
+    F.Get(50003, 9); R.GetTable(F); if Format(R.Field(9).Value) <> 'Text30' then Error('text %1', R.Field(9).Value);
+    F.Get(50003, 1); R.GetTable(F); if Format(R.Field(4).Value) <> 'TableNo' then Error('name %1', R.Field(4).Value); end;
+  [Test] procedure FieldRefValue() var F: Record Field; R: RecordRef; T: Text; begin
+    F.Get(50003, 1); R.GetTable(F); T := R.Field(9).Value; end;
+  [Test] procedure FormatFieldRef() var F: Record Field; R: RecordRef; FR: FieldRef; begin
+    F.Get(50003, 1); R.GetTable(F); FR := R.Field(9); if Format(FR) = 'x' then; end;
+  [Test] procedure FilterOnIt() var R: RecordRef; begin
+    R.Open(Database::Field); R.Field(1).SetRange(50003); R.Field(9).SetRange('Integer'); if R.IsEmpty() then; end;
+  [Test] procedure TransferFieldsReadsIt() var F: Record Field; B: Record Buf temporary; begin
+    F.Get(50003, 1); B.TransferFields(F); end;
+  [Test] procedure CopiedIntoATemporaryRecord() var F: Record Field; T: Record Field temporary; begin
+    F.Get(50003, 1); T := F; T.Insert(); end;
+  [Test] procedure WrittenReadsBack() var F: Record Field; R: RecordRef; begin
+    F.Get(50003, 1); R.GetTable(F); R.Field(9).Value := 'mine';
+    if Format(R.Field(9).Value) <> 'mine' then Error('read back'); end; }"#,
+    );
+    passes(&o, "OtherColumnsAndCountRun");
+    passes(&o, "WrittenReadsBack");
+    for t in [
+        "FieldRefValue",
+        "FormatFieldRef",
+        "FilterOnIt",
+        "TransferFieldsReadsIt",
+        "CopiedIntoATemporaryRecord",
+    ] {
+        let why = not_run(&o, t);
+        assert!(
+            why.contains("field 'Type Name' of platform table 'Field' is not known"),
+            "{t}: {why}"
+        );
+    }
+}

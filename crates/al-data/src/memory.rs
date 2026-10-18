@@ -376,6 +376,15 @@ fn pk_band<'a>(
     )
 }
 
+/// A row that holds a column a platform row left unknown (`Value::Unknown`, a record copied from one) is not stored: the
+/// store reads its columns to filter and order its rows, and that read would decide on a value nothing pins.
+fn unknown_refusal(row: &Row) -> Result<(), StoreError> {
+    match row.iter().find_map(Value::unknown) {
+        Some(why) => Err(StoreError::Refused(why.to_string())),
+        None => Ok(()),
+    }
+}
+
 fn passes(row: &Row, filters: &[FieldFilter]) -> bool {
     #[cfg(test)]
     ROWS_LOOKED_AT.with(|c| c.set(c.get() + 1));
@@ -887,6 +896,7 @@ impl Store for MemStore {
         if self.virtual_of(t).is_some() {
             return Err(self.read_only(t, "Insert"));
         }
+        unknown_refusal(&row)?;
         let k = Key(t.primary_key(&row));
         let table = self.table_mut(cx, t);
         if table.contains_key(&k) {
@@ -933,6 +943,7 @@ impl Store for MemStore {
             }
             return Err(self.read_only(t, "Modify"));
         }
+        unknown_refusal(&row)?;
         let k = Key(t.primary_key(&row));
         self.note_restored(cx, t, &k, "Modify", Some(&row));
         let table = self.table_mut(cx, t);

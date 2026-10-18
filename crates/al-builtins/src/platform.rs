@@ -370,6 +370,7 @@ pub fn unpinned_column(table: u32, field: u32) -> Option<String> {
     }
     let name = REGISTRY
         .iter()
+        .chain(LATER_MAJORS)
         .find(|(i, _, _)| *i == table)
         .map_or("?", |(_, n, _)| *n);
     Some(format!(

@@ -168,6 +168,10 @@ fn encode_in(v: &Value, out: &mut Vec<u8>) -> bool {
                     | ((b.temp_row as u8) << 5),
             );
         }
+        Value::Unknown(why) => {
+            put_u8(out, 18);
+            put_str(out, why);
+        }
         // Handles (`Rc`) have no form: they cannot leave their thread. Every variant is named, so a new one is a
         // compile error here and has to be placed (plain, with a tag, or in this list), never a silent fallback.
         Value::List(_)
@@ -205,6 +209,7 @@ pub fn decode(r: &mut Reader) -> Option<Value> {
         12 => Value::Duration(r.i64()?),
         13 => Value::Guid(r.take(16)?.try_into().ok()?),
         14 => Value::DateFormula(r.str()?),
+        18 => Value::Unknown(r.str()?.into()),
         15 => {
             let ord = i32::from_le_bytes(r.take(4)?.try_into().ok()?);
             let n = r.u32()? as usize;

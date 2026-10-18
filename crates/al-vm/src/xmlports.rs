@@ -1697,6 +1697,10 @@ impl Session {
             self.record_op(RecordOp::CalcFields, &rec, &mut [Value::Integer(pos as i32)])?;
         }
         let v = rec.borrow().fields[pos].clone();
+        // A column the platform row leaves unknown is not exported.
+        if let Some(why) = v.unknown() {
+            return Err(Signal::Unsupported(why.to_string()));
+        }
         if schema.xp().format_evaluate_xml {
             return self.xp_field_text_xml(&v);
         }

@@ -949,6 +949,9 @@ fn walk_xmlport<V: RefVisitor>(x: &mut XmlPort, v: &mut V) {
         table_separator: _,
         text_encoding_declared: _,
         utf8: _,
+        xml_utf8: _,
+        namespaces: _,
+        inline_schema: _,
         format_evaluate_xml: _,
         format_evaluate_declared: _,
         nodes,
@@ -976,6 +979,8 @@ fn walk_xmlport<V: RefVisitor>(x: &mut XmlPort, v: &mut V) {
             use_temporary: _,
             min_zero: _,
             width: _,
+            ns_prefix: _,
+            auto_calc: _,
             triggers: _,
         } = n;
         let of_node = |i: &Option<usize>| TableOf::object(i.and_then(|i| tables.get(i).copied().flatten()));

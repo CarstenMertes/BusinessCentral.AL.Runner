@@ -12,7 +12,7 @@ The catalog of each area is what the AL language server offers in probe files (`
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
 | attributes | 42 | 25 | 59.5% | 26 | 61.9% | 0 | 16 | 5 |
 | events | 23 | 16 | 69.6% | 22 | 95.7% | 0 | 1 | 0 |
-| properties | 720 | 494 | 68.6% | 526 | 73.1% | 34 | 160 | 78 |
+| properties | 720 | 494 | 68.6% | 532 | 73.9% | 31 | 157 | 78 |
 | syntax | 16 | 16 | 100.0% | 16 | 100.0% | 0 | 0 | 0 |
 | triggers | 128 | 112 | 87.5% | 116 | 90.6% | 3 | 9 | 0 |
 
@@ -54,7 +54,7 @@ Left out: 293 presentation-only properties (Caption, ToolTip, ApplicationArea, .
 | FieldModify | 8 | 1 | 12.5% | 6 | 75.0% | 0 | 2 | 0 |
 | Interface | 5 | 1 | 20.0% | 5 | 100.0% | 0 | 0 | 4 |
 | Key | 11 | 11 | 100.0% | 8 | 72.7% | 0 | 3 | 0 |
-| Page | 46 | 39 | 84.8% | 37 | 80.4% | 0 | 9 | 7 |
+| Page | 46 | 39 | 84.8% | 38 | 82.6% | 0 | 8 | 7 |
 | PageAction | 14 | 14 | 100.0% | 11 | 78.6% | 0 | 3 | 0 |
 | PageActionArea | 3 | 0 | 0.0% | 3 | 100.0% | 0 | 0 | 0 |
 | PageActionGroup | 6 | 3 | 50.0% | 5 | 83.3% | 0 | 1 | 3 |
@@ -65,8 +65,8 @@ Left out: 293 presentation-only properties (Caption, ToolTip, ApplicationArea, .
 | PageControlModify | 21 | 20 | 95.2% | 13 | 61.9% | 0 | 8 | 0 |
 | PageCueGroup | 16 | 4 | 25.0% | 9 | 56.2% | 0 | 7 | 3 |
 | PageCustomAction | 13 | 9 | 69.2% | 6 | 46.2% | 0 | 7 | 1 |
-| PageCustomizationObject | 10 | 7 | 70.0% | 5 | 50.0% | 0 | 5 | 0 |
-| PageExtension | 14 | 8 | 57.1% | 11 | 78.6% | 0 | 3 | 5 |
+| PageCustomizationObject | 10 | 7 | 70.0% | 6 | 60.0% | 0 | 4 | 0 |
+| PageExtension | 14 | 8 | 57.1% | 12 | 85.7% | 0 | 2 | 5 |
 | PageField | 46 | 45 | 97.8% | 32 | 69.6% | 0 | 14 | 0 |
 | PageFileUploadAction | 10 | 5 | 50.0% | 6 | 60.0% | 0 | 4 | 2 |
 | PageFixed | 16 | 1 | 6.2% | 9 | 56.2% | 0 | 7 | 0 |
@@ -92,10 +92,10 @@ Left out: 293 presentation-only properties (Caption, ToolTip, ApplicationArea, .
 | ReportExtension | 3 | 3 | 100.0% | 3 | 100.0% | 0 | 0 | 0 |
 | ReportExtensionModify | 2 | 2 | 100.0% | 2 | 100.0% | 0 | 0 | 0 |
 | ReportLayout | 12 | 9 | 75.0% | 11 | 91.7% | 0 | 1 | 0 |
-| RequestPage | 22 | 17 | 77.3% | 20 | 90.9% | 2 | 0 | 1 |
+| RequestPage | 22 | 17 | 77.3% | 21 | 95.5% | 1 | 0 | 1 |
 | Table | 24 | 17 | 70.8% | 17 | 70.8% | 0 | 7 | 3 |
 | TableExtension | 4 | 0 | 0.0% | 3 | 75.0% | 0 | 1 | 0 |
-| XmlPort | 26 | 22 | 84.6% | 20 | 76.9% | 6 | 0 | 4 |
+| XmlPort | 26 | 22 | 84.6% | 22 | 84.6% | 4 | 0 | 4 |
 | XmlPortFieldAttribute | 7 | 5 | 71.4% | 4 | 57.1% | 3 | 0 | 1 |
 | XmlPortFieldElement | 8 | 8 | 100.0% | 5 | 62.5% | 3 | 0 | 0 |
 | XmlPortTableElement | 18 | 18 | 100.0% | 15 | 83.3% | 3 | 0 | 0 |

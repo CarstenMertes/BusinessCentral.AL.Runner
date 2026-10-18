@@ -1,4 +1,5 @@
-//! `alrunner test --impact-of APP --impact all` (ADR-043 step 1: two runs and a diff).
+//! `alrunner test --impact-of APP` (ADR-043 steps 1 to 3: two runs or dynamic selection, the diff, the accept file,
+//! the JSON diff and the JUnit of the run with the extension).
 //!
 //! Runs the selected tests of the APPs without the extensions, then with them (the extensions given as further
 //! APPs, their statements counted per test), and compares the outcome of each test. The report names the
@@ -65,6 +66,26 @@ impl Class {
             Class::SameNotReached => "same, not reached",
             Class::NotVerified => "not verified",
         }
+    }
+
+    /// Its key in the `counts` of the JSON diff.
+    pub fn key(self) -> &'static str {
+        match self {
+            Class::NewlyFailing => "newlyFailing",
+            Class::FailsDifferently => "failsDifferently",
+            Class::NewlyRefused => "newlyRefused",
+            Class::SelectionMiss => "selectionMiss",
+            Class::NewlyPassing => "newlyPassing",
+            Class::NewlyRuns => "newlyRuns",
+            Class::SameReached => "sameReached",
+            Class::SameNotReached => "sameNotReached",
+            Class::NotVerified => "notVerified",
+        }
+    }
+
+    /// The class whose heading is `h`.
+    fn of_heading(h: &str) -> Option<Class> {
+        Class::ALL.into_iter().find(|c| c.heading() == h)
     }
 
     /// Its count in the summary line.
@@ -199,6 +220,8 @@ pub struct Row<'a> {
     pub entered: Vec<(usize, u32)>,
     /// The impact points it reached in the index's run (dynamic selection).
     pub points: Vec<String>,
+    /// The change is in the accept file (`--impact-accept`): listed, but it does not fail the run.
+    pub accepted: bool,
 }
 
 /// The rows of both sides, in the order of the "without" run, then any test only the "with" run has.
@@ -238,6 +261,7 @@ pub fn diff_reached<'a>(
             with: x,
             entered,
             points,
+            accepted: false,
         }
     };
     for w in without {
@@ -266,6 +290,221 @@ pub fn diff_reached<'a>(
         }
     }
     rows
+}
+
+/// What one side of a row shows in the JSON diff and the accept file: its outcome (`pass`, `fail`, `not run` or
+/// `missing`), whether it is a flagged pass, and its message (the error text or the refusal reason).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Side {
+    pub outcome: &'static str,
+    pub flagged: bool,
+    pub message: Option<String>,
+}
+
+fn side_of(r: Option<&TestResult>) -> Side {
+    let Some(r) = r else {
+        return Side {
+            outcome: "missing",
+            flagged: false,
+            message: None,
+        };
+    };
+    let (outcome, message) = match &r.outcome {
+        Outcome::Pass => ("pass", None),
+        Outcome::Fail(m) => ("fail", Some(m.clone())),
+        Outcome::NotRun(m) => ("not run", Some(m.clone())),
+    };
+    Side {
+        outcome,
+        flagged: matches!(r.outcome, Outcome::Pass) && !r.assumptions.is_empty(),
+        message,
+    }
+}
+
+/// The "with" side of a row as the report counts it: a failure the runner does not trust is a failure when the test ran
+/// without the extension (see [`run_failure`]).
+pub fn with_side(row: &Row) -> Side {
+    match run_failure(row.without.map(|r| &r.outcome), row.with.map(|r| &r.outcome)) {
+        Some(failure) => Side {
+            outcome: "fail",
+            flagged: false,
+            message: Some(failure),
+        },
+        None => side_of(row.with),
+    }
+}
+
+/// One change of the accept file (`--impact-accept`, ADR-043 section 3): the test and its outcome with the extension.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Accept {
+    pub codeunit: u32,
+    pub codeunit_name: String,
+    pub test: String,
+    /// `pass`, `fail`, `not run` or `missing`.
+    pub outcome: String,
+    pub message: Option<String>,
+}
+
+/// The changes a partner accepts. The file has the shape of the JSON diff (`--impact-json`): every entry of `tests[]`
+/// whose class is a change is accepted; entries of an unchanged class are left out, so the diff of an earlier run can be
+/// given as it is.
+#[derive(Debug, Default)]
+pub struct Accepts {
+    pub entries: Vec<Accept>,
+}
+
+impl Accepts {
+    pub fn load(path: &std::path::Path) -> Result<Accepts, String> {
+        let text = std::fs::read_to_string(path).map_err(|e| format!("--impact-accept {}: {e}", path.display()))?;
+        Accepts::parse(&text).map_err(|e| format!("--impact-accept {}: {e}", path.display()))
+    }
+
+    pub fn parse(text: &str) -> Result<Accepts, String> {
+        let doc: serde_json::Value =
+            serde_json::from_str(text).map_err(|e| format!("not a JSON document of an impact run: {e}"))?;
+        let tests = doc
+            .get("tests")
+            .and_then(|t| t.as_array())
+            .ok_or("no `tests` list (the file has the shape --impact-json writes)")?;
+        let mut entries = Vec::new();
+        for (i, t) in tests.iter().enumerate() {
+            let at = |what: &str| format!("tests[{i}]: {what}");
+            if let Some(class) = t.get("class") {
+                let class = class
+                    .as_str()
+                    .and_then(Class::of_heading)
+                    .ok_or_else(|| at(&format!("unknown class {class}")))?;
+                if !class.changed() {
+                    continue;
+                }
+            }
+            let codeunit = t
+                .get("codeunit")
+                .and_then(|c| c.as_u64())
+                .and_then(|c| u32::try_from(c).ok())
+                .ok_or_else(|| at("needs `codeunit`, a codeunit id"))?;
+            let test = t
+                .get("test")
+                .and_then(|c| c.as_str())
+                .ok_or_else(|| at("needs `test`, the test's name"))?;
+            let (outcome, message) = match t.get("with") {
+                None | Some(serde_json::Value::Null) => ("missing".to_string(), None),
+                Some(w) => {
+                    let outcome = w
+                        .get("outcome")
+                        .and_then(|o| o.as_str())
+                        .filter(|o| matches!(*o, "pass" | "fail" | "not run" | "missing"))
+                        .ok_or_else(|| at("`with.outcome` must be pass, fail, not run or missing"))?;
+                    let message = match w.get("message") {
+                        None | Some(serde_json::Value::Null) => None,
+                        Some(m) => Some(m.as_str().ok_or_else(|| at("`with.message` must be text"))?.to_string()),
+                    };
+                    (outcome.to_string(), message)
+                }
+            };
+            entries.push(Accept {
+                codeunit,
+                codeunit_name: t
+                    .get("codeunitName")
+                    .and_then(|c| c.as_str())
+                    .unwrap_or_default()
+                    .to_string(),
+                test: test.to_string(),
+                outcome,
+                message,
+            });
+        }
+        Ok(Accepts { entries })
+    }
+
+    /// Marks the changed rows the file accepts: same codeunit, test (names compare without case, as AL does), outcome
+    /// with the extension and message. Returns the entries no row matched.
+    pub fn apply<'s>(&'s self, rows: &mut [Row]) -> Vec<&'s Accept> {
+        let mut used = vec![false; self.entries.len()];
+        for row in rows.iter_mut().filter(|r| r.class.changed()) {
+            let any = row.with.or(row.without).expect("a row has a side");
+            let side = with_side(row);
+            if let Some(i) = self.entries.iter().position(|e| {
+                e.codeunit == any.codeunit
+                    && e.test.eq_ignore_ascii_case(&any.test)
+                    && e.outcome == side.outcome
+                    && e.message == side.message
+            }) {
+                row.accepted = true;
+                used[i] = true;
+            }
+        }
+        self.entries
+            .iter()
+            .zip(used)
+            .filter(|(_, used)| !used)
+            .map(|(e, _)| e)
+            .collect()
+    }
+}
+
+/// What the JSON diff says about the run besides its rows.
+pub struct JsonRun<'a> {
+    /// `all` (both sides ran) or `dynamic` (the "without" side came from the index).
+    pub mode: &'a str,
+    pub extensions: &'a [std::path::PathBuf],
+    pub test_apps: &'a [std::path::PathBuf],
+    pub not_selected: Option<(usize, usize)>,
+    pub exit_code: u8,
+}
+
+/// The JSON diff of an impact run (`--impact-json`): the counts per class and every test with both sides. Its shape is
+/// also the accept file's.
+pub fn json(rows: &[Row], routines: &Routines, run: &JsonRun) -> String {
+    use serde_json::{Value, json};
+    let side = |s: Side, present: bool| -> Value {
+        if !present {
+            return Value::Null;
+        }
+        let mut m = serde_json::Map::new();
+        m.insert("outcome".into(), json!(s.outcome));
+        m.insert("flagged".into(), json!(s.flagged));
+        if let Some(msg) = s.message {
+            m.insert("message".into(), json!(msg));
+        }
+        Value::Object(m)
+    };
+    let mut counts = serde_json::Map::new();
+    for c in Class::ALL {
+        counts.insert(c.key().into(), json!(rows.iter().filter(|r| r.class == c).count()));
+    }
+    let paths = |p: &[std::path::PathBuf]| -> Vec<String> { p.iter().map(|p| p.display().to_string()).collect() };
+    let tests: Vec<Value> = rows
+        .iter()
+        .map(|r| {
+            let any = r.with.or(r.without).expect("a row has a side");
+            json!({
+                "codeunit": any.codeunit,
+                "codeunitName": any.codeunit_name,
+                "test": any.test,
+                "class": r.class.heading(),
+                "accepted": r.accepted,
+                "without": side(side_of(r.without), r.without.is_some()),
+                "with": side(with_side(r), r.with.is_some()),
+                "reached": r.points,
+                "ran": r.entered.iter().map(|&(i, calls)| json!({"routine": routines.names[i], "calls": calls})).collect::<Vec<_>>(),
+            })
+        })
+        .collect();
+    let mut doc = json!({
+        "format": 1,
+        "mode": run.mode,
+        "extensions": paths(run.extensions),
+        "testApps": paths(run.test_apps),
+        "counts": counts,
+        "accepted": rows.iter().filter(|r| r.accepted).count(),
+        "exitCode": run.exit_code,
+        "tests": tests,
+    });
+    if let Some((tests, codeunits)) = run.not_selected {
+        doc["notSelected"] = json!({"tests": tests, "codeunits": codeunits});
+    }
+    serde_json::to_string_pretty(&doc).expect("a JSON value serializes")
 }
 
 /// What ends the reason of a failure the runner does not trust, before the failure's text (al-testrun `run.rs`).
@@ -317,6 +556,9 @@ fn row_lines(row: &Row, routines: &Routines) -> Vec<String> {
             }
         }
     }
+    if row.accepted {
+        head.push_str(" (accepted)");
+    }
     let mut lines = vec![head];
     // A failure the runner does not trust and that did not run on the "without" side either stays "not run" with the
     // failure at the end of the reason: show it, it is what the extension changed.
@@ -360,20 +602,23 @@ fn row_lines(row: &Row, routines: &Routines) -> Vec<String> {
 
 /// The impact report: the counts per class, then the tests of each class but the unchanged unreached ones, the
 /// extension procedures the tests ran, and the refusal reasons of the tests that ran on neither side.
+#[cfg(test)]
 pub fn report(rows: &[Row], routines: &Routines, verbose: bool) -> Vec<String> {
-    report_with(rows, routines, verbose, None)
+    report_with(rows, routines, verbose, None, &[])
 }
 
 fn plural(n: usize, word: &str) -> String {
     format!("{n} {word}{}", if n == 1 { "" } else { "s" })
 }
 
-/// [`report`], with the tests dynamic selection left out: (tests, codeunits).
+/// [`report`], with the tests dynamic selection left out: (tests, codeunits), and the entries of the accept file that
+/// matched no change.
 pub fn report_with(
     rows: &[Row],
     routines: &Routines,
     verbose: bool,
     not_selected: Option<(usize, usize)>,
+    stale: &[&Accept],
 ) -> Vec<String> {
     let mut out = Vec::new();
     let count = |c: Class| rows.iter().filter(|r| r.class == c).count();
@@ -398,7 +643,12 @@ pub fn report_with(
             continue;
         }
         out.push(String::new());
-        let head = format!("{} ({})", class.heading(), count(class));
+        let accepted = rows.iter().filter(|r| r.class == class && r.accepted).count();
+        let head = if accepted > 0 {
+            format!("{} ({}, {accepted} accepted)", class.heading(), count(class))
+        } else {
+            format!("{} ({})", class.heading(), count(class))
+        };
         out.push(if class.breaks() {
             style::red(&head)
         } else {
@@ -455,6 +705,24 @@ pub fn report_with(
         ));
         out.push(refusals::render_top("not verified tests", &list, 10));
     }
+    if !stale.is_empty() {
+        out.push(String::new());
+        out.push(style::yellow(&format!(
+            "accept file: {} no longer {} (the test changed in another way, or not at all):",
+            plural(stale.len(), "accepted change"),
+            if stale.len() == 1 { "matches" } else { "match" }
+        )));
+        for e in stale {
+            let mut line = format!(
+                "  {} {}.{}: accepted {}",
+                e.codeunit, e.codeunit_name, e.test, e.outcome
+            );
+            if let Some(m) = &e.message {
+                line.push_str(&format!(": {}", output::first_line(m, 300)));
+            }
+            out.push(line);
+        }
+    }
     out
 }
 
@@ -472,6 +740,11 @@ fn side_args(a: &TestArgs) -> TestArgs {
     let mut side = a.clone();
     side.impact_of.clear();
     side.impact = None;
+    // The impact run writes these itself, for the run with the extension and the diff.
+    side.impact_accept = None;
+    side.impact_json = None;
+    side.junit = None;
+    side.output_json = None;
     side.test_apps = Some(a.apps.len());
     side.quiet = !a.verbose;
     // Microsoft's disabled tests are left out of an impact run (ADR-043 owner decision 2).
@@ -514,17 +787,32 @@ fn no_index_warning(a: &TestArgs) -> String {
 /// the diff. Exit 1 when a test newly fails, fails differently, is newly not run or is a selection miss; a run that
 /// selected nothing or stopped exits as that run did.
 pub fn run(a: &TestArgs) -> Result<u8, String> {
+    let started = std::time::Instant::now();
+    // A wrong accept file or an unwritable output path stops the run before the long part.
+    let accepts = a.impact_accept.as_deref().map(Accepts::load).transpose()?;
+    for path in [&a.impact_json, &a.junit].into_iter().flatten() {
+        run::write_file(path, "")?;
+    }
+    if let Some(Some(path)) = &a.output_json {
+        run::write_file(path, "")?;
+    }
+    let accepts = accepts.as_ref();
     if a.impact.as_deref() == Some("all") {
-        return run_all(a, None);
+        return run_all(a, None, accepts, started);
     }
     match crate::impact_index::lookup(&side_args(a))? {
-        Some((index, path)) => run_dynamic(a, index, &path),
-        None => run_all(a, Some(no_index_warning(a))),
+        Some((index, path)) => run_dynamic(a, index, &path, accepts, started),
+        None => run_all(a, Some(no_index_warning(a)), accepts, started),
     }
 }
 
 /// Both sides run every selected test (`--impact all`, or no index).
-fn run_all(a: &TestArgs, warning: Option<String>) -> Result<u8, String> {
+fn run_all(
+    a: &TestArgs,
+    warning: Option<String>,
+    accepts: Option<&Accepts>,
+    started: std::time::Instant,
+) -> Result<u8, String> {
     let side = side_args(a);
     println!(
         "impact of {} on the tests of {}: every selected test runs without, then with the extension{}",
@@ -555,28 +843,123 @@ fn run_all(a: &TestArgs, warning: Option<String>) -> Result<u8, String> {
 
     let tests = a.apps.len();
     let routines = Routines::of(&with.statements, |app| app >= tests);
-    let rows = diff(&without.results, &with.results, &routines);
-    println!();
-    if let Some(w) = &warning {
-        println!("{}\n", style::yellow(w));
+    let mut rows = diff(&without.results, &with.results, &routines);
+    Finish {
+        a,
+        mode: "all",
+        warning: warning.as_deref(),
+        not_selected: None,
+        accepts,
+        started,
     }
-    for line in report(&rows, &routines, a.verbose) {
-        println!("{line}");
-    }
-    Ok(verdict(&rows))
+    .run(&mut rows, &routines, &with)
+}
+
+/// The exit code of an impact run (ADR-043 section 3): 1 when a change for the worse is not in the accept file, else 0.
+pub fn exit_code(rows: &[Row]) -> u8 {
+    u8::from(rows.iter().any(|r| r.class.breaks() && !r.accepted))
 }
 
 fn verdict(rows: &[Row]) -> u8 {
-    let breaking = rows.iter().filter(|r| r.class.breaks()).count();
+    let breaking = rows.iter().filter(|r| r.class.breaks() && !r.accepted).count();
+    let accepted = rows.iter().filter(|r| r.accepted).count();
+    let besides = if accepted > 0 {
+        format!(" ({} not counted)", plural(accepted, "accepted change"))
+    } else {
+        String::new()
+    };
     let verdict = if breaking > 0 {
         style::red(&format!(
-            "Result: {breaking} test(s) changed for the worse with the extension (exit 1)"
+            "Result: {breaking} test(s) changed for the worse with the extension{besides} (exit 1)"
         ))
     } else {
-        style::green("Result: no test changed for the worse with the extension (exit 0)")
+        style::green(&format!(
+            "Result: no test changed for the worse with the extension{besides} (exit 0)"
+        ))
     };
     println!("\n{}", style::bold(&verdict));
-    u8::from(breaking > 0)
+    exit_code(rows)
+}
+
+/// How an impact run ends, whatever its mode: the report, the verdict and the files asked for.
+struct Finish<'a> {
+    a: &'a TestArgs,
+    /// `all` or `dynamic`, for the JSON diff.
+    mode: &'a str,
+    warning: Option<&'a str>,
+    not_selected: Option<(usize, usize)>,
+    accepts: Option<&'a Accepts>,
+    started: std::time::Instant,
+}
+
+impl Finish<'_> {
+    fn run(&self, rows: &mut [Row], routines: &Routines, with: &Collected) -> Result<u8, String> {
+        let stale = self.accepts.map(|x| x.apply(rows)).unwrap_or_default();
+        println!();
+        if let Some(w) = self.warning {
+            println!("{}\n", style::yellow(w));
+        }
+        for line in report_with(rows, routines, self.a.verbose, self.not_selected, &stale) {
+            println!("{line}");
+        }
+        let code = verdict(rows);
+        let a = self.a;
+        if let Some(path) = &a.impact_json {
+            let doc = json(
+                rows,
+                routines,
+                &JsonRun {
+                    mode: self.mode,
+                    extensions: &a.impact_of,
+                    test_apps: &a.apps,
+                    not_selected: self.not_selected,
+                    exit_code: code,
+                },
+            );
+            run::write_file(path, &doc)?;
+        }
+        let wall = self.started.elapsed().as_secs_f64();
+        let results: Vec<&TestResult> = with.results.iter().collect();
+        if let Some(path) = &a.junit {
+            let key = |r: &TestResult| (r.app, r.codeunit, r.test.clone());
+            let by: HashMap<_, &Row> = rows.iter().filter_map(|r| Some((key(r.with?), r))).collect();
+            let disabled: std::collections::HashSet<(u32, &str)> = with
+                .results
+                .iter()
+                .zip(&with.disabled)
+                .filter(|(_, d)| **d)
+                .map(|(r, _)| (r.codeunit, r.test.as_str()))
+                .collect();
+            let properties = |r: &TestResult| -> Vec<(String, String)> {
+                let Some(row) = by.get(&key(r)) else {
+                    return Vec::new();
+                };
+                let mut p = vec![
+                    ("impact_class".to_string(), row.class.heading().to_string()),
+                    ("impact_without".to_string(), outcome_word(row.without)),
+                ];
+                if row.accepted {
+                    p.push(("impact_accepted".into(), "1".into()));
+                }
+                p
+            };
+            run::write_file(
+                path,
+                &output::junit_with(
+                    &results,
+                    with.bc_build.as_deref(),
+                    wall,
+                    &|cu, t| disabled.contains(&(cu, t)),
+                    &with.baseline_assumptions,
+                    &properties,
+                ),
+            )?;
+        }
+        if let Some(Some(path)) = &a.output_json {
+            run::write_file(path, &output::json(&results, code, wall))?;
+        }
+        Ok(code)
+    }
 }
 
 /// What dynamic selection decided once the "with" side was compiled.
@@ -691,7 +1074,13 @@ fn decide(index: &crate::impact_index::Index, input: &NarrowInput) -> Decision {
 
 /// Dynamic selection: the codeunits that reach an impact point run once, with the extension; the outcomes without it
 /// come from the index.
-fn run_dynamic(a: &TestArgs, index: crate::impact_index::Index, path: &std::path::Path) -> Result<u8, String> {
+fn run_dynamic(
+    a: &TestArgs,
+    index: crate::impact_index::Index,
+    path: &std::path::Path,
+    accepts: Option<&Accepts>,
+    started: std::time::Instant,
+) -> Result<u8, String> {
     use std::sync::{Arc, Mutex};
     println!(
         "impact of {} on the tests of {}: dynamic selection with the impact index {}",
@@ -748,7 +1137,7 @@ fn run_dynamic(a: &TestArgs, index: crate::impact_index::Index, path: &std::path
             build_command(&std::env::args().collect::<Vec<_>>())
         );
         println!("{}", style::yellow(&w));
-        return run_all(a, Some(w));
+        return run_all(a, Some(w), accepts, started);
     }
     if !matches!(code, 0 | 1 | 6 | 7 | 8) {
         return Ok(code);
@@ -785,17 +1174,16 @@ fn run_dynamic(a: &TestArgs, index: crate::impact_index::Index, path: &std::path
             .cloned()
             .unwrap_or_default()
     };
-    let rows = diff_reached(&without, &with.results, &routines, Some(&points_of));
-    println!();
-    for line in report_with(
-        &rows,
-        &routines,
-        a.verbose,
-        Some((left_out.len(), left_out_units.len())),
-    ) {
-        println!("{line}");
+    let mut rows = diff_reached(&without, &with.results, &routines, Some(&points_of));
+    Finish {
+        a,
+        mode: "dynamic",
+        warning: None,
+        not_selected: Some((left_out.len(), left_out_units.len())),
+        accepts,
+        started,
     }
-    Ok(verdict(&rows))
+    .run(&mut rows, &routines, &with)
 }
 
 #[cfg(test)]
@@ -906,5 +1294,69 @@ mod tests {
         let with = vec![result("T", untrusted, vec![])];
         let rows = diff(&without, &with, &routines);
         assert_eq!(rows[0].class, Class::NotVerified);
+    }
+    #[test]
+    fn the_accept_file_accepts_a_change_only_with_the_same_outcome_and_text() {
+        let routines = Routines::of(&[], |_| false);
+        let without = vec![
+            result("T", pass(), vec![]),
+            result("U", pass(), vec![]),
+            result("S", pass(), vec![]),
+        ];
+        let with = vec![
+            result("T", fail("amount 20"), vec![]),
+            result("U", fail("other"), vec![]),
+            result("S", pass(), vec![]),
+        ];
+        let mut rows = diff(&without, &with, &routines);
+        let accepts = Accepts::parse(
+            r#"{"tests": [
+                {"codeunit": 50510, "test": "t", "class": "newly failing", "with": {"outcome": "fail", "message": "amount 20"}},
+                {"codeunit": 50510, "test": "U", "class": "newly failing", "with": {"outcome": "fail", "message": "amount 20"}},
+                {"codeunit": 50510, "test": "S", "class": "same, not reached", "with": {"outcome": "pass"}},
+                {"codeunit": 50510, "test": "Gone", "with": null}
+            ]}"#,
+        )
+        .unwrap();
+        // Entries of an unchanged class are not changes to accept.
+        assert_eq!(accepts.entries.len(), 3);
+        let stale = accepts.apply(&mut rows);
+        assert!(rows[0].accepted, "names compare without case");
+        assert!(!rows[1].accepted, "another error text is a new difference");
+        assert!(!rows[2].accepted);
+        assert_eq!(stale.iter().map(|e| e.test.as_str()).collect::<Vec<_>>(), ["U", "Gone"]);
+        assert_eq!(exit_code(&rows), 1);
+        rows[1].accepted = true;
+        assert_eq!(exit_code(&rows), 0);
+        // What cannot be read is an error, not an empty list.
+        assert!(Accepts::parse("[]").is_err());
+        assert!(Accepts::parse(r#"{"tests": [{"test": "T", "with": {"outcome": "fail"}}]}"#).is_err());
+        assert!(Accepts::parse(r#"{"tests": [{"codeunit": 1, "test": "T", "with": {"outcome": "broken"}}]}"#).is_err());
+        assert!(Accepts::parse(r#"{"tests": [{"codeunit": 1, "test": "T", "class": "renamed"}]}"#).is_err());
+    }
+
+    #[test]
+    fn the_json_diff_reads_back_as_an_accept_file_that_accepts_every_change() {
+        let statements = vec![stmt(4, 1, "Handler", 10)];
+        let routines = Routines::of(&statements, |app| app >= 1);
+        let without = vec![result("T", pass(), vec![]), result("S", pass(), vec![])];
+        let with = vec![result("T", fail("boom"), vec![(4, 1)]), result("S", pass(), vec![])];
+        let mut rows = diff(&without, &with, &routines);
+        let doc = json(
+            &rows,
+            &routines,
+            &JsonRun {
+                mode: "all",
+                extensions: &[],
+                test_apps: &[],
+                not_selected: None,
+                exit_code: 1,
+            },
+        );
+        let accepts = Accepts::parse(&doc).unwrap();
+        assert_eq!(accepts.entries.len(), 1, "{doc}");
+        assert!(accepts.apply(&mut rows).is_empty());
+        assert!(rows[0].accepted && !rows[1].accepted);
+        assert_eq!(exit_code(&rows), 0);
     }
 }

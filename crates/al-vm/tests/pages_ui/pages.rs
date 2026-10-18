@@ -810,7 +810,10 @@ fn new_is_denied_on_a_page_that_does_not_allow_inserts() {
         "procedure F() var TP: TestPage \"PG NoInsert\"; begin TP.OpenEdit(); TP.New(); end;",
         "F",
     );
-    assert_eq!(error_text(r), "New method failed because Insert is not allowed.");
+    assert_eq!(
+        error_text(r),
+        "New method failed because Insert is not allowed. Page = PG NoInsert, Id = 50007."
+    );
 }
 
 // handlers/TestPageFieldVisibleGroup_Tests.al:1-30 and TestPageActionReachability_Tests.al:100-122: a control

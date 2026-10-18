@@ -294,11 +294,11 @@ pub const PINNED_COLUMNS: &[(u32, &[u32])] = &[
     (2_000_000_211, &[1, 2, 5, 6, 7, 8, 9]),
     // Key: record/TestKeyVirtualTable.al.
     (2_000_000_063, &[1, 2, 4, 7, 9, 10, 11, 13]),
-    // Page Metadata: record/TestPageMetadata*.al. Caption (3) and CardPageID (6) are read from the declaration (probe batch 5).
+    // Page Metadata: record/TestPageMetadata*.al. Caption (3) and CardPageID (6) are read from the declaration (probe batch 5). InsertAllowed, ModifyAllowed and DeleteAllowed (16 to 18): pageext/lt-z-page-ext-props/ZPageExtProps.al.
     (
         2_000_000_138,
         &[
-            1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 19, 20, 21, 22, 23, 24, 26, 27, 28, 30, 31, 32,
+            1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 26, 27, 28, 30, 31, 32,
         ],
     ),
     // Page Control Field: record/TestPageControlField*.al. "ControlId" (2) is not read; Sequence (11): record/TestTableRelationsSequenceMetadataContracts.al.

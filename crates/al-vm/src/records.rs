@@ -1018,15 +1018,18 @@ impl Session {
             // with `Get` and written in memory is read back from the row too (record/lt-blob-calcfields-length/
             // BlobCalcFieldsLength.al:BlobCalcFields_UnsavedContent_Result, 17 bytes in memory, 6 after CalcFields): see `BlobBuf::fetched`.
             let temporary = rec.borrow().temporary;
-            if buf.borrow().fetched && !buf.borrow().refetch && !temporary {
-                continue;
-            }
+            let keeps_content = buf.borrow().fetched && !buf.borrow().refetch && !temporary;
             if stored.is_none() {
                 let pk = t.primary_key(&rec.borrow().fields);
                 stored = self
                     .store_for(rec)
                     .get(&cx, &t, &pk)
                     .map_err(|e| Signal::Unsupported(format!("{e}")))?;
+            }
+            // A row this variable inserted and that is gone (an error inside ASSERTERROR rolled the Insert back) leaves the Blob empty, whatever a
+            // stream wrote since (misc/lt-probes-needed-5/PnE08RecordMisc.al:TestField_Blob `af219`).
+            if keeps_content && (stored.is_some() || !rec.borrow().inserted) {
+                continue;
             }
             // A row that is not stored (a copy of a record never inserted) leaves the Blob empty: the buffer
             // showed `*` after `Copy1 := Row`, and CalcFields reads nothing back
@@ -1251,6 +1254,7 @@ impl Session {
                 let fresh = self.initial_fields(t.object as usize);
                 let mut r = rec.borrow_mut();
                 r.assigned = false;
+                r.inserted = false;
                 for (i, v) in fresh.into_iter().enumerate() {
                     // Doc (Record.Init): primary key fields keep their values.
                     if !t.keys[0].contains(&i) {
@@ -1271,6 +1275,7 @@ impl Session {
                 let mut r = rec.borrow_mut();
                 r.fields = fresh;
                 r.assigned = false;
+                r.inserted = false;
                 r.filters.clear();
                 r.filter_group = 0;
                 r.marks.clear();
@@ -1401,6 +1406,7 @@ impl Session {
                 {
                     InsertOutcome::Inserted => {
                         Self::clear_blob_written(rec);
+                        rec.borrow_mut().inserted = true;
                         // The Blob content an Insert of a temporary record stored is persisted, as one a Modify stored (see Rename).
                         if rec.borrow().temp_id.is_some() {
                             for v in &rec.borrow().fields {

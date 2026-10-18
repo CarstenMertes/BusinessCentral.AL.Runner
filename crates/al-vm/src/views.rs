@@ -279,14 +279,17 @@ impl Session {
             t.keys[key].iter().map(|&p| name(p)).collect::<Vec<_>>().join(",")
         );
         let fields = t.keys[key].len();
+        // Only the key's own fields show in the view. When just the primary key fields after the key run descending
+        // (`Ascending(false)`, then `SetAscending(Field, true)`), the view is the plain ascending sorting
+        // (record/lt-record-sort-ascending/RecordSortAscendingViews.al:P161_SetAscending_Single_AscendingMethodAndTies `back.view`).
+        let key_bits = if fields >= 32 { u32::MAX } else { (1u32 << fields) - 1 };
+        let mask_all = mask;
+        let mask = mask & key_bits;
+        let only_ties_descending = mask == 0 && mask_all != 0;
         if mask != 0 && !(fields == 1 && mask == 1) {
             // One direction per field of the key: `ORDER(Descending,Ascending)` (records/W4SortKeys.al:
             // SetAscending_TwoFieldKey_OneFieldAtATime). Every field descending, a field of the primary key's part, or the
             // numeric form is not pinned.
-            let key_bits = if fields >= 32 { u32::MAX } else { (1u32 << fields) - 1 };
-            if mask & !key_bits != 0 {
-                return unsupported("GetView of a record with SetAscending on these fields of a sorting (not pinned)");
-            }
             if mask == key_bits {
                 // Every field descending reads as the one direction (SetAscendingEdges.al:GetView_AllKeyFieldsDescending).
                 out.push_str(if use_names || !record_form {
@@ -306,7 +309,7 @@ impl Session {
                     .collect();
                 out.push_str(&format!(" ORDER({})", dirs.join(",")));
             }
-        } else if !ascending {
+        } else if !ascending && !only_ties_descending {
             out.push_str(if use_names || !record_form {
                 " ORDER(Descending)"
             } else {

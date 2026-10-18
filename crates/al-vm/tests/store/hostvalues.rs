@@ -18,6 +18,8 @@ table 50900 "ALT T"
     keys { key(PK; "No.") { } }
 }
 table 50902 "ALT FF" { fields { field(1; K; Integer) { } field(2; Flt; Integer) { FieldClass = FlowFilter; } field(3; Txt; Text[10]) { } } keys { key(PK; K) { } } }
+table 50903 "ALT FF2" { fields { field(1; K; Integer) { } field(2; FltA; Integer) { FieldClass = FlowFilter; } field(3; Cnt; Integer) { FieldClass = FlowField; CalcFormula = count("ALT T"); } field(4; FltB; Integer) { FieldClass = FlowFilter; } field(5; Txt; Text[10]) { } } keys { key(PK; K) { } } }
+table 50904 "ALT Blb" { fields { field(1; K; Integer) { } field(2; Pic; Blob) { } } keys { key(PK; K) { } } }
 table 50901 "ALT Temp" { TableType = Temporary; fields { field(1; K; Integer) { } } keys { key(PK; K) { } } }
 "#;
 
@@ -733,6 +735,19 @@ fn format_of_a_record_ends_with_its_flow_filter_fields_at_their_value() {
     );
 }
 
+// misc/lt-probes-needed-5/PnE08RecordMisc.al:FormatRecord_FlowFilterPlacement `afterCalc`: after the stored fields come all
+// FlowFilter fields, then the FlowFields, whatever their field numbers.
+#[test]
+fn format_of_a_record_puts_flow_filter_fields_before_flow_fields() {
+    assert_eq!(
+        text(
+            "R: Record \"ALT FF2\"; T: Record \"ALT T\";",
+            "T.\"No.\" := 1; T.Insert(); R.K := 1; R.Txt := 'n'; R.Insert(); R.Get(1); R.CalcFields(Cnt); exit(Format(R));"
+        ),
+        "1\tn\t0\t0\t1"
+    );
+}
+
 // platform/lt-xmlport-session-navapp-cookie/P94Session.al: StopSession of an id no session has answers false; the running
 // session's own id is refused.
 #[test]
@@ -872,4 +887,18 @@ fn geturl_of_report_query_or_codeunit_with_a_record_is_refused() {
             "{obj}: {r:?}"
         );
     }
+}
+
+// misc/lt-probes-needed-5/PnE08RecordMisc.al:TestField_Blob `af219`: an error inside ASSERTERROR rolls the Insert back, and a
+// later CalcFields of the Blob finds no row, so the content a stream wrote is gone.
+#[test]
+fn calcfields_of_a_blob_of_a_rolled_back_row_empties_the_blob() {
+    assert_eq!(
+        text(
+            "R: Record \"ALT Blb\"; Out: OutStream; S: Text;",
+            "R.K := 1; R.Insert(); asserterror R.TestField(Pic); R.Pic.CreateOutStream(Out); Out.WriteText('x'); \
+             R.CalcFields(Pic); if R.Pic.HasValue() then S := 'kept' else S := 'empty'; exit(S);"
+        ),
+        "empty"
+    );
 }

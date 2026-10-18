@@ -1919,11 +1919,11 @@ fn enum_from_integer(ctx: &mut dyn Ctx, r: Option<&mut Value>, args: &mut [Value
     let n = match args.first() {
         Some(Value::Option(o, _)) => Some(*o),
         // A Variant that holds an Enum, a whole Decimal or a Text of digits takes the ordinal or the number
-        // (enum/lt-enum-fromint-variant/EnumFromIntegerVariant.al:FromInteger_VariantHolding `enum`, `decimal`, `text`).
+        // (enum/lt-enum-fromint-variant/EnumFromIntegerVariant.al:FromInteger_VariantHolding asserts the holders Integer, Enum, Decimal and Text; no other holder is added).
         // A fraction or a text that is not a whole number is not pinned.
         Some(Value::Enum(_, o)) => Some(*o),
         Some(Value::Decimal(d)) if d.fract().is_zero() => i32::try_from(d.trunc()).ok(),
-        Some(Value::Text(t) | Value::Code(t))
+        Some(Value::Text(t))
             if !t.is_empty() && t.trim_start_matches('-').chars().all(|c| c.is_ascii_digit()) =>
         {
             t.parse::<i32>().ok()

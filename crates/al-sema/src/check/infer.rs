@@ -376,7 +376,11 @@ impl<'a> Checker<'a> {
                 let l = kids.first().map(|k| self.ty(sc, k)).unwrap_or(Ty::Unknown);
                 let r = kids.get(1).map(|k| self.ty(sc, k)).unwrap_or(Ty::Unknown);
                 self.al_char_minus_text(sc, node, kids.as_slice(), &l, &r);
-                E::Val(binary_ty(&op_token(node), &l, &r))
+                let op = op_token(node);
+                if char_and_one_char_literal(&op, kids.as_slice(), &l, &r) {
+                    return E::Val(Ty::Integer);
+                }
+                E::Val(binary_ty(&op, &l, &r))
             }
             TernaryExpr => {
                 if let Some(c) = kids.first() {

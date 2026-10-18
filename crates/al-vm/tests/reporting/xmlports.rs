@@ -501,6 +501,69 @@ xmlport 60062 "FE Xml"
         fieldelement(Id; T.Id) { } fieldelement(Dt; T.Dt) { } fieldelement(Dec; T.Dec) { } fieldelement(Bl; T.Bl) { } } } }
 }
 
+// corpus xmlport/lt-af-xmlport/AfXmlPortAttrChildren.al:9-113 (without its Encoding property)
+table 60070 "ALT AF Row"
+{
+    fields { field(1; Id; Integer) { } field(2; Name; Text[30]) { } field(3; Lang; Text[10]) { } }
+    keys { key(PK; Id) { } }
+}
+
+xmlport 60071 "ALT AF XP Attr"
+{
+    Direction = Both; Format = Xml; UseRequestPage = false;
+    schema
+    {
+        textelement(Root)
+        {
+            tableelement(Row; "ALT AF Row")
+            {
+                fieldelement(Id; Row.Id) { }
+                fieldelement(Name; Row.Name)
+                {
+                    fieldattribute(Lang; Row.Lang) { }
+                    textattribute(Kind) { }
+                }
+            }
+        }
+    }
+    procedure GetKind(): Text begin exit(Kind); end;
+    procedure SetKind(NewKind: Text) begin Kind := NewKind; end;
+}
+
+xmlport 60072 "ALT AF XP Child Text"
+{
+    Direction = Both; Format = Xml; UseRequestPage = false;
+    schema
+    {
+        textelement(Root)
+        {
+            tableelement(Row; "ALT AF Row")
+            {
+                fieldelement(Id; Row.Id) { }
+                fieldelement(Name; Row.Name) { textelement(Child) { } }
+            }
+        }
+    }
+    procedure SetChild(NewChild: Text) begin Child := NewChild; end;
+    procedure GetChild(): Text begin exit(Child); end;
+}
+
+xmlport 60073 "ALT AF XP Child Field"
+{
+    Direction = Both; Format = Xml; UseRequestPage = false;
+    schema
+    {
+        textelement(Root)
+        {
+            tableelement(Row; "ALT AF Row")
+            {
+                fieldelement(Id; Row.Id) { }
+                fieldelement(Name; Row.Name) { fieldelement(Lang; Row.Lang) { } }
+            }
+        }
+    }
+}
+
 codeunit 50100 Helpers
 {
     procedure Row(EntryNo: Integer; IntegerValue: Integer; TextValue: Text; Description: Text)
@@ -1376,4 +1439,61 @@ fn an_import_of_a_key_that_is_stored_raises_the_table_error() {
         Err(Signal::Error(e)) => assert!(e.message.contains("already exists"), "{}", e.message),
         other => panic!("the second import must raise: {other:?}"),
     }
+}
+
+const AF_VARS: &str = "H: Codeunit Helpers; B: Record \"ALT Blob\"; T: Record \"ALT Blob\" temporary; OutStr: OutStream; InStr: InStream; R: Record \"ALT AF Row\";";
+const AF_SEED: &str = "R.Id := 1; R.Name := 'Alpha'; R.Lang := 'en'; R.Insert(); B.Code := 'AF'; B.Insert(); B.Data.CreateOutStream(OutStr);";
+
+// xmlport/lt-af-xmlport/AfXmlPortAttrChildren.al:AF_Attributes_In_FieldElement (lines 241-258)
+#[test]
+fn a_field_element_carries_a_field_attribute_and_a_text_attribute() {
+    let out = text(
+        &format!("{AF_VARS} P: XmlPort \"ALT AF XP Attr\"; Q: XmlPort \"ALT AF XP Attr\";"),
+        &format!(
+            "{AF_SEED} P.SetKind('K1'); P.SetDestination(OutStr); P.Export(); B.Modify();
+             H.Stage(T, InStr, '<?xml version=\"1.0\" encoding=\"utf-8\"?><Root><Row><Id>2</Id><Name Lang=\"de\" Kind=\"K9\">Beta</Name></Row></Root>');
+             Q.SetSource(InStr); Q.Import(); R.Get(2);
+             exit(CopyStr(H.ReadAll(B), StrPos(H.ReadAll(B), '<Root>')) + '|' + R.Name + '|' + R.Lang + '|' + Q.GetKind());"
+        ),
+    );
+    assert_eq!(
+        out,
+        "<Root>  <Row>    <Id>1</Id>    <Name Lang=\"en\" Kind=\"K1\">Alpha</Name>  </Row></Root>|Beta|de|K9"
+    );
+}
+
+// xmlport/lt-af-xmlport/AfXmlPortAttrChildren.al:AF_FieldElement_With_TextElement_Child (lines 271-288)
+#[test]
+fn a_field_element_holds_a_text_element_after_its_value() {
+    let out = text(
+        &format!("{AF_VARS} P: XmlPort \"ALT AF XP Child Text\"; Q: XmlPort \"ALT AF XP Child Text\";"),
+        &format!(
+            "{AF_SEED} P.SetChild('c1'); P.SetDestination(OutStr); P.Export(); B.Modify();
+             H.Stage(T, InStr, '<?xml version=\"1.0\" encoding=\"utf-8\"?><Root><Row><Id>3</Id><Name>Gamma<Child>cc</Child></Name></Row></Root>');
+             Q.SetSource(InStr); Q.Import(); R.Get(3);
+             exit(CopyStr(H.ReadAll(B), StrPos(H.ReadAll(B), '<Root>')) + '|' + R.Name + '|' + R.Lang + '|' + Q.GetChild());"
+        ),
+    );
+    assert_eq!(
+        out,
+        "<Root>  <Row>    <Id>1</Id>    <Name>Alpha<Child>c1</Child></Name>  </Row></Root>|Gamma||cc"
+    );
+}
+
+// xmlport/lt-af-xmlport/AfXmlPortAttrChildren.al:AF_FieldElement_With_FieldElement_Child (lines 300-315)
+#[test]
+fn a_field_element_holds_a_field_element_after_its_value() {
+    let out = text(
+        &format!("{AF_VARS} P: XmlPort \"ALT AF XP Child Field\"; Q: XmlPort \"ALT AF XP Child Field\";"),
+        &format!(
+            "{AF_SEED} P.SetDestination(OutStr); P.Export(); B.Modify();
+             H.Stage(T, InStr, '<?xml version=\"1.0\" encoding=\"utf-8\"?><Root><Row><Id>4</Id><Name>Delta<Lang>fr</Lang></Name></Row></Root>');
+             Q.SetSource(InStr); Q.Import(); R.Get(4);
+             exit(CopyStr(H.ReadAll(B), StrPos(H.ReadAll(B), '<Root>')) + '|' + R.Name + '|' + R.Lang);"
+        ),
+    );
+    assert_eq!(
+        out,
+        "<Root>  <Row>    <Id>1</Id>    <Name>Alpha<Lang>en</Lang></Name>  </Row></Root>|Delta|fr"
+    );
 }

@@ -10,7 +10,7 @@
 # The artifact cache key of CI follows the pin (`--print-builds`).
 corpus_repo = "corpus"
 corpus_app = "corpus/tests/al-language"
-corpus_commit = "085d6f59073695edb620947643589a383535d835"
+corpus_commit = "92aeaa757c2e510d2f9d75359b4b97763869fda6"
 
 [[version]]
 major = 27

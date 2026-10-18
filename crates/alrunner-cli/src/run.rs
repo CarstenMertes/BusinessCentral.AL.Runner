@@ -458,13 +458,22 @@ pub fn test(a: &TestArgs) -> Result<u8, String> {
     test_with(a, None)
 }
 
-/// What one side of an impact run (ADR-043) keeps of its run.
+/// What one side of an impact run (ADR-043), or the run that builds its index, asks for and keeps of its run.
 #[derive(Default)]
 pub struct Collected {
+    /// Asked for: note what each test raised and touched (`alrunner impact-index build`).
+    pub impact_trace: bool,
+    /// Asked for: narrow the test codeunits once the compile is done (dynamic selection).
+    pub narrow: Option<al_testrun::runtime::Narrow>,
     /// The selected tests, in the order of the report.
     pub results: Vec<TestResult>,
     /// With coverage: every statement of the workspace's apps.
     pub statements: Vec<al_testrun::coverage::CoverageStatement>,
+    /// With `impact_trace`: the keys `TestResult::impact` numbers, and what the install baseline touched.
+    pub impact_keys: Vec<String>,
+    pub impact_baseline: Option<Vec<u32>>,
+    /// The apps of the compiled program: (id, name, version).
+    pub program_apps: Vec<(String, String, String)>,
 }
 
 /// A run whose selected tests and coverage statements are handed back in `into` (one side of an impact run).
@@ -1019,6 +1028,8 @@ fn test_inner(a: &TestArgs, mut warm: Option<&mut WarmCtx>, collect: Option<&mut
         hooks,
         clock_starts: None,
         quiet_baseline: !a.verbose,
+        impact_trace: collect.as_ref().is_some_and(|c| c.impact_trace),
+        narrow: collect.as_ref().and_then(|c| c.narrow.clone()),
         test_data: test_data.as_ref().map(|(d, _)| d.clone()),
         compile_cache: (!a.no_compile_cache
             && !std::env::var("ALRUNNER_NO_COMPILE_CACHE").is_ok_and(|v| !v.is_empty() && v != "0"))
@@ -1490,6 +1501,9 @@ fn test_inner(a: &TestArgs, mut warm: Option<&mut WarmCtx>, collect: Option<&mut
         // One side of an impact run: its caller prints the verdict.
         into.results = results.iter().map(|r| (*r).clone()).collect();
         into.statements = rt.coverage_statements().to_vec();
+        into.impact_keys = rt.impact_keys().to_vec();
+        into.impact_baseline = rt.impact_baseline().map(<[u32]>::to_vec);
+        into.program_apps = rt.program_apps().to_vec();
         return Ok(code);
     }
     let result = format!("Result: {verdict} (exit {code})");

@@ -170,6 +170,20 @@ impl RecordOp {
         RecordOp::WritePermission,
     ];
 
+    /// The operation writes rows of the table (the impact index's "table written", ADR-043 section 2.2).
+    pub fn writes(self) -> bool {
+        matches!(
+            self,
+            RecordOp::Insert
+                | RecordOp::Modify
+                | RecordOp::ModifyAll
+                | RecordOp::Delete
+                | RecordOp::DeleteAll
+                | RecordOp::Rename
+                | RecordOp::Truncate
+        )
+    }
+
     pub fn name(self) -> &'static str {
         match self {
             RecordOp::AddLink => "AddLink",

@@ -22,6 +22,7 @@ mod events;
 mod exec;
 mod filtergroup_assign;
 mod format_variant_number;
+mod impact_trace;
 mod in_precedence;
 mod interfaces;
 mod last_error_origin;

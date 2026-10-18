@@ -24,6 +24,9 @@ pub enum Command {
     },
     /// `alrunner cache info [--cache-dir DIR]`.
     CacheInfo(Option<PathBuf>),
+    /// `alrunner impact-index build APP... [OPTIONS]` (ADR-043 step 2): run the tests of the APPs once and keep, per
+    /// test, what it raised and touched, for the impact runs that follow.
+    ImpactIndexBuild(Box<TestArgs>),
 }
 
 /// `alrunner test`.
@@ -168,6 +171,7 @@ alrunner: run AL tests without a service tier (AL Runner v3, preview)
 USAGE
     alrunner test [OPTIONS] APP...
     alrunner serve [--protocol 2] [OPTIONS]
+    alrunner impact-index build [OPTIONS] APP...
     alrunner cache clear|prune|info [--cache-dir DIR]
     alrunner --version | --help
 
@@ -289,8 +293,17 @@ IMPACT (ADR-043)
                          with it, and list per test what changed and which extension procedures ran.
                          Repeatable. Exit 1 when a test newly fails, fails differently or is newly
                          not run. With --disabled-tests, the tests Microsoft turns off are left out.
-    --impact all         Run every selected test on both sides. Required for now: the impact index
-                         (`dynamic`) and static selection (`static`) are not built yet.
+    --impact MODE        How the tests are chosen. `dynamic` (the default when an impact index of the
+                         same APPs and options is cached): only the test codeunits that reached one of
+                         the extension's impact points in the index's run, once, with the extension;
+                         the outcomes without it come from the index. `all`: every selected test runs
+                         without and with the extension. With no index cached, the run warns and does
+                         what `all` does. `static` is not built yet.
+    alrunner impact-index build [OPTIONS] APP...
+                         Run the tests of the APPs once (the same options as `test`, without
+                         --impact-of) and keep in the cache, per test, the events it raised and the
+                         tables, pages and reports it used. An impact run with the same APPs and
+                         options reads it. Never built implicitly.
 
 ISOLATION
     --isolation MODE     `codeunit` (default): the database is rolled back when a test codeunit ends.
@@ -518,6 +531,7 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Command, String> 
     let Some(first) = it.next() else {
         return Ok(Command::Help);
     };
+    let mut index_build = false;
     match first.as_str() {
         "--help" | "-h" | "help" => return Ok(Command::Help),
         "--version" | "-V" | "version" => return Ok(Command::Version),
@@ -533,6 +547,15 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Command, String> 
             return Ok(Command::ListAssumptions(dir));
         }
         "test" => {}
+        "impact-index" => match it.next().as_deref() {
+            Some("build") => index_build = true,
+            other => {
+                return Err(format!(
+                    "`alrunner impact-index` needs `build`, got `{}`",
+                    other.unwrap_or_default()
+                ));
+            }
+        },
         "cache" => return parse_cache(it),
         "warm" => return parse_warm(it),
         "serve" => return parse_serve(it.collect()),
@@ -793,6 +816,25 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Command, String> 
     if a.verbose && a.quiet {
         return Err("--verbose and --quiet cannot be combined".into());
     }
+    if index_build {
+        if !a.impact_of.is_empty() || a.impact.is_some() {
+            return Err("alrunner impact-index build runs the tests without any extension: --impact-of and --impact do not apply".into());
+        }
+        if a.no_compile_cache {
+            return Err("alrunner impact-index build cannot be combined with --no-compile-cache: impact runs compile the dependency apps completely from the compile cache, and so must the index's run (ADR-043 section 2.2)".into());
+        }
+        for (set, flag) in [
+            (a.explain.is_some(), "--explain"),
+            (a.coverage, "--coverage, --coverage-out and --coverage-json"),
+            (a.execute, "a scratch run"),
+            (a.recipe, "--recipe microsoft"),
+        ] {
+            if set {
+                return Err(format!("alrunner impact-index build cannot be combined with {flag}"));
+            }
+        }
+        return Ok(Command::ImpactIndexBuild(Box::new(a)));
+    }
     impact_args(&a)?;
     Ok(Command::Test(Box::new(a)))
 }
@@ -806,17 +848,11 @@ fn impact_args(a: &TestArgs) -> Result<(), String> {
         return Ok(());
     }
     match a.impact.as_deref() {
-        Some("all") => {}
-        Some("dynamic" | "static") => {
-            return Err(format!(
-                "--impact {} is not built yet (ADR-043 steps 2 and 5: the impact index and static reach); --impact all runs every selected test without and with the extension",
-                a.impact.as_deref().unwrap_or_default()
-            ));
+        None | Some("all" | "dynamic") => {}
+        Some("static") => {
+            return Err("--impact static is not built yet (ADR-043 step 5: static reach); --impact dynamic (the default) uses the impact index, --impact all runs every selected test without and with the extension".into());
         }
         Some(other) => return Err(format!("--impact needs all, dynamic or static, got `{other}`")),
-        None => {
-            return Err("an impact run needs --impact all for now: there is no impact index and no static selection yet (ADR-043 steps 2 and 5), so every selected test runs without and with the extension".into());
-        }
     }
     if a.no_compile_cache {
         return Err("--impact-of cannot be combined with --no-compile-cache: both sides must compile the dependency apps completely from the compile cache, never only what the tests reach (ADR-043 section 2.2)".into());

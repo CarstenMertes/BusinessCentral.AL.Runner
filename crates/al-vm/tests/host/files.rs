@@ -157,3 +157,20 @@ fn the_static_file_methods_can_be_called_without_the_type_name() {
         "YesNoYesNo"
     );
 }
+
+/// Windows BC (runs 39125184978 BC 27.5, 39125190236 BC 29.0) answers No for drive-letter, UNC and
+/// root paths; the Linux container answers Yes. Only the forms both agree on run.
+#[test]
+fn is_path_temporary_refuses_the_forms_where_windows_and_linux_differ() {
+    for p in ["C:\\\\x.tmp", "D:\\\\x.tmp", "Z:/x.tmp", "\\\\\\\\srv\\\\share\\\\x.tmp", "/", "/etc/passwd"] {
+        let r = refused("B: Boolean;", &format!("B := File.IsPathTemporary('{p}');"));
+        assert!(r.contains("File.IsPathTemporary"), "{p}: {r}");
+    }
+    for p in ["", ' '.to_string().as_str(), "rel.txt", "sub/rel.txt", "temp/1.tmp"] {
+        assert_eq!(
+            text("", &format!("exit(Format(File.IsPathTemporary('{p}')));")),
+            "Yes",
+            "{p}"
+        );
+    }
+}

@@ -936,3 +936,7 @@ Sales/Purchase header pages and tables (about 1,000 tests stop at these shapes o
 | ModifyAll | A primary key field raises `The MODIFYALL function cannot be used on the <field> field in the <table> table because it is part of the primary key.` (pinned with names equal to captions and two rows); other cases are REFUSED. | events/lt-db-events/DbtTransactions.al:ModifyAll_PrimaryKeyField | `al-vm/src/recmeta.rs` |
 | TestPage GoToKey | A lowercase text against a Code key finds no row (pinned); a value of the wrong type finds no row (pinned for an Integer). | pages/lt-page-runtime/P82TestPage.al:Navigation_GoToKey | `al-vm/src/pages/rows.rs` |
 | Blob | `CalcFields` of a Blob of a row read with `Get` and written in memory fetches the stored content; one of an inserted row keeps the write (both pinned). | record/lt-blob-calcfields-length/BlobCalcFieldsLength.al, streams/TestBlobCalcFieldsUncommittedWrite.al | `al-builtins/src/stream.rs`, `al-vm/src/records.rs` |
+
+## BigText.Write (bigtext-write, 2026-10-18)
+- Pinned (streams/StTBigText.al:WriteToStreamAndRead, :WriteReadLargeText): ASCII text on a fresh OutStream; the blob holds one byte per character and `BigText.Read` gives the text back.
+- Refused, probe wanted: text beyond ASCII (WriteNonAscii shows 3 blob bytes for 3 characters, which no encoding explains), a stream that was written to first, the stream position after the write (a further write to that stream is refused), and `Write` on a stream created with an explicit encoding.

@@ -501,7 +501,13 @@ fn run_version(
     let host = Arc::new(SidecarHost::new(SidecarConfig {
         sidecar: args.dotnet_sidecar.clone(),
         source_root: Some(root.to_path_buf()),
-        assembly_dirs: args.dotnet_assembly_dirs.clone(),
+        // ADR-014 section 3, step 2: after the user's folders, the service tier of the platform artifact in use.
+        assembly_dirs: al_testrun::dotnet::probe_dirs(
+            &args.dotnet_assembly_dirs,
+            al_deps::cache::bcartifacts_sandbox_from_env().as_deref(),
+            bc_build.as_deref(),
+            u32::from(chosen.target.bc.major),
+        ),
         allow_roll_forward: args.dotnet_allow_roll_forward,
         timeout: Duration::from_secs(args.dotnet_timeout_secs.unwrap_or(60)),
         ..Default::default()

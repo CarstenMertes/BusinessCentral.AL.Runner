@@ -937,7 +937,13 @@ fn test_inner(a: &TestArgs, mut warm: Option<&mut WarmCtx>, collect: Option<&mut
     let host = Arc::new(SidecarHost::new(SidecarConfig {
         sidecar: a.dotnet_sidecar.clone(),
         source_root: source_root(),
-        assembly_dirs: a.dotnet_assembly_dirs.clone(),
+        // ADR-014 section 3, step 2: after the user's folders, the service tier of the platform artifact in use.
+        assembly_dirs: al_testrun::dotnet::probe_dirs(
+            &a.dotnet_assembly_dirs,
+            al_deps::cache::bcartifacts_sandbox_from_env().as_deref(),
+            bc_build.as_deref(),
+            u32::from(chosen.target.bc.major),
+        ),
         allow_roll_forward: a.dotnet_allow_roll_forward,
         timeout: Duration::from_secs(a.dotnet_timeout_secs.unwrap_or(60)),
         ..Default::default()

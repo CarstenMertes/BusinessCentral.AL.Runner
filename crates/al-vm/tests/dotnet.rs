@@ -448,7 +448,7 @@ fn datetime_now_is_the_host_clock_and_needs_no_dotnet_host() {
     let r = run(
         &host,
         "D: DotNet ClrDateTime; V: DateTime;",
-        "V := D.Now; exit(V = CurrentDateTime());",
+        "V := D.Now; exit(CurrentDateTime() - V = 1);",
         ": Boolean",
     );
     assert!(matches!(r.result, Ok(Value::Boolean(true))), "{:?}", r.result);

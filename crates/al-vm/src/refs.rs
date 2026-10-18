@@ -434,7 +434,8 @@ impl Session {
         };
         let Some((table, key)) = id else {
             if !self.ret_used {
-                return unsupported("RecordRef.Get of a blank RecordId with the result unused (not pinned)");
+                // RecordRefGetRecordId.al:Get_BlankRecordId_AsStatement: the table with the ID 0 does not exist.
+                return Err(self.missing_object("Table", 0));
             }
             return Ok(Some(Value::Boolean(false)));
         };
@@ -443,9 +444,11 @@ impl Session {
                 return Ok(None);
             }
             let c = cur.borrow();
-            if c.temporary || !c.filters.is_empty() || c.marked_only {
+            // The filters of the ref are gone with the table it leaves (RecordRefGetRecordId.al:Get_RecordIdOfAnotherTable);
+            // marks and a temporary table are not pinned.
+            if c.temporary || c.marked_only || !c.marks.is_empty() {
                 return unsupported(
-                    "RecordRef.Get of a RecordId of another table on a ref with filters, marks or a temporary table (not pinned)",
+                    "RecordRef.Get of a RecordId of another table on a ref with marks or a temporary table (not pinned)",
                 );
             }
         }
@@ -459,7 +462,7 @@ impl Session {
                 *lib.borrow_mut() = LibraryValue::RecordRef(rec);
                 Ok(Some(found))
             }
-            Value::Boolean(false) if current.is_none() => Ok(Some(found)),
+            Value::Boolean(false) if current.is_none() || self.ret_used => Ok(Some(found)),
             _ => unsupported("RecordRef.Get of a missing row of another table than the open one (not pinned)"),
         }
     }

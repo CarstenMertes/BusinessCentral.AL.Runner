@@ -964,17 +964,7 @@ pub fn corpus_literals(ws: &Workspace) -> Vec<(String, usize, String)> {
 
 /// The map of the pinned corpus under `root` (the repository root).
 pub fn corpus_behavior_coverage(root: &Path, corpus_commit: &str) -> Result<BehaviorCoverage, String> {
-    let tests = root.join("corpus/tests");
-    let fixture = tests.join("al-language-internals-fixture");
-    let mut apps = vec![
-        crate::runtime::load_app(&fixture)?,
-        crate::runtime::load_app(&tests.join("al-language"))?,
-    ];
-    let mut kinds = vec![AppKind::Workspace; apps.len()];
-    let dependencies = crate::deps::load(&tests.join("al-language"), &[fixture], &[])?;
-    kinds.extend(dependencies.apps.iter().map(|_| AppKind::Dependency));
-    apps.extend(dependencies.apps);
-    let ws = Workspace::load_apps(apps, kinds, &al_version::corpus_symbols(al_version::MIN_BC_MAJOR));
+    let ws = crate::coverage::corpus_workspace(root)?;
     let members = al_sema::members::build(&ws);
     let catalog = al_builtins::catalog::Catalog::load();
     let checked = al_sema::check::check(&ws, &members, &catalog);

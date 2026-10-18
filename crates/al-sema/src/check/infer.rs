@@ -36,6 +36,15 @@ impl<'a> Checker<'a> {
         if self.ws.is_dependency(sc.oi) {
             return;
         }
+        // A Char variable minus a one-character literal is an Integer, so it cannot go into a Text; a Char variable plus a literal of
+        // two or more characters is a Text, so it cannot go into an Integer (must-not-compile 1041, `T := C - 'A'`, `I := C + 'AB'`).
+        // Other operators, operand shapes and targets are not judged.
+        if rhs.kind() == SyntaxKind::BinExpr {
+            if let Some(message) = self.char_literal_result(sc, rhs, target) {
+                self.diag(sc, rhs, "AL0122", message);
+            }
+            return;
+        }
         let message = match (target, source) {
             (Ty::Text(len), Ty::Integer) if rhs.kind() == SyntaxKind::NameRef => {
                 let t = len.map_or("Text".to_string(), |n| format!("Text[{n}]"));
@@ -74,6 +83,38 @@ impl<'a> Checker<'a> {
             _ => return,
         };
         self.diag(sc, rhs, "AL0122", message);
+    }
+
+    /// The message of AL0122 for `Char var - 'A'` into a Text or `Char var + 'AB'` into an Integer, else `None`.
+    fn char_literal_result(&self, sc: &Scope, bin: &SyntaxNode, target: &Ty) -> Option<String> {
+        let kids: Vec<SyntaxNode> = bin.children().collect();
+        let [left, right] = kids.as_slice() else { return None };
+        if left.kind() != SyntaxKind::NameRef || right.kind() != SyntaxKind::Literal {
+            return None;
+        }
+        let r = left.text_range();
+        let left_ty = self.types.get(&(sc.file, r.start().into(), r.end().into()))?;
+        if !matches!(left_ty, Ty::Char) {
+            return None;
+        }
+        let tok = right
+            .children_with_tokens()
+            .filter_map(|e| e.into_token())
+            .find(|t| t.kind() == SyntaxKind::StringLit)?;
+        let text = tok.text();
+        let chars = text
+            .get(1..text.len().saturating_sub(1))?
+            .replace("''", "'")
+            .chars()
+            .count();
+        match (op_token(bin).as_str(), target) {
+            ("-", Ty::Text(len)) if chars == 1 => {
+                let t = len.map_or("Text".to_string(), |n| format!("Text[{n}]"));
+                Some(format!("Cannot implicitly convert type 'Integer' to '{t}'"))
+            }
+            ("+", Ty::Integer) if chars >= 2 => Some("Cannot implicitly convert type 'Text' to 'Integer'".to_string()),
+            _ => None,
+        }
     }
 
     /// Infers `node` as a value, calling a parameterless callable.

@@ -33,7 +33,7 @@ pub const IMPLEMENTED: &[(&str, &str)] = &[
     ),
     (
         "AL0124",
-        "app.json key `assemblyProbingPaths` of a Cloud app at runtime 15.0, 16.0, 16.1, 17.0, 17.1 and 18.0; the property OrderBy on a query data item",
+        "app.json key `assemblyProbingPaths` of a Cloud app at runtime 15.0, 16.0, 16.1, 17.0, 17.1 and 18.0; the property OrderBy on a query data item; the property AutoCalcField on an xmlport table element",
     ),
     (
         "AL0132",
@@ -41,13 +41,13 @@ pub const IMPLEMENTED: &[(&str, &str)] = &[
     ),
     (
         "AL0161",
-        "a page extension names a non-protected variable or a local procedure of its base page, or a report extension does; a Cloud app names an internal agent table of the platform",
+        "a page extension names a non-protected variable or a local procedure of its base page, or a report extension does; a Cloud app names an internal agent table of the platform; a subscriber to the internal event GetRoleCenterBannerPartID of System Action Triggers; a page customization names a variable of its page in Editable of a modify",
     ),
     ("AL0162", "OnInit, OnFindRecord and OnNextRecord in a page extension"),
     ("AL0197", "two objects of one type and name in one app"),
     (
         "AL0296",
-        "a Cloud app names a platform table that is Scope = OnPrem (the 123 of System.app that the corpus lists), calls GetLastErrorObject, SecretText.Unwrap, or File.Open",
+        "a Cloud app names a platform table that is Scope = OnPrem (the 123 of System.app that the corpus lists), calls GetLastErrorObject, SecretText.Unwrap, or File.Open, or sets the report property EnableExternalAssemblies to true",
     ),
     (
         "AL0433",
@@ -362,13 +362,18 @@ fn display_kind(k: ObjKind) -> &'static str {
 pub fn check_workspace(ws: &Workspace) -> Vec<Diagnostic> {
     let mut out = Vec::new();
     duplicate_names(ws, &mut out);
+    event_subscriptions(ws, &mut out);
     for oi in 0..ws.objects.len() {
         let o = &ws.objects[oi];
         if ws.kinds[o.app] == AppKind::Dependency {
             continue;
         }
         let obj = ws.object_ast(oi);
+        if obj.kind() == "pagecustomization" {
+            page_customization_variables(ws, oi, &obj, &mut out);
+        }
         match o.kind {
+            ObjKind::XmlPort => xmlport_elements(ws, o.file, obj.sections(), &mut out),
             ObjKind::PageExtension => {
                 page_extension_triggers(ws, oi, &obj, &mut out);
                 extension_procedures(ws, oi, &obj, ObjKind::Page, &mut out);
@@ -381,6 +386,117 @@ pub fn check_workspace(ws: &Workspace) -> Vec<Diagnostic> {
         }
     }
     out
+}
+
+/// AL0161. A subscription to an event of a platform codeunit that is an `InternalEvent` (corpus 0740:
+/// `GetRoleCenterBannerPartID` of "System Action Triggers"). Other internal events are not listed, none is guessed.
+const INTERNAL_PLATFORM_EVENTS: &[(&str, &str)] = &[("System Action Triggers", "GetRoleCenterBannerPartID")];
+
+fn event_subscriptions(ws: &Workspace, out: &mut Vec<Diagnostic>) {
+    for (fi, f) in ws.files.iter().enumerate() {
+        if ws.kinds[f.app] == AppKind::Dependency {
+            continue;
+        }
+        let text = ws.text(fi);
+        // The objects of a parsed file carry no scanned subscribers; read the attributes with the scanner, for the files that name
+        // one of the events at all.
+        if !INTERNAL_PLATFORM_EVENTS
+            .iter()
+            .any(|(_, e)| text.to_ascii_lowercase().contains(&e.to_ascii_lowercase()))
+        {
+            continue;
+        }
+        let scan = al_syntax::scan::scan(text, &Default::default());
+        for s in scan.objects.iter().flat_map(|o| o.subscribers.iter()) {
+            if s.publisher_kind != "codeunit" {
+                continue;
+            }
+            let name = s.publisher.join(".");
+            let Some((publisher, event)) = INTERNAL_PLATFORM_EVENTS
+                .iter()
+                .find(|(p, e)| p.eq_ignore_ascii_case(&name) && e.eq_ignore_ascii_case(&s.event))
+            else {
+                continue;
+            };
+            // A codeunit of that name in a workspace app is the one named.
+            let own = ws.objects.iter().any(|x| {
+                x.kind == ObjKind::Codeunit
+                    && x.name.eq_ignore_ascii_case(publisher)
+                    && ws.kinds[x.app] != AppKind::Dependency
+            });
+            if !own {
+                push(
+                    out,
+                    ws,
+                    fi,
+                    s.offset,
+                    "AL0161",
+                    format!("'{event}' is inaccessible due to its protection level"),
+                );
+            }
+        }
+    }
+}
+
+/// AL0124. The property `AutoCalcField` on a table element of an xmlport (corpus 0826; it belongs to report and query columns).
+fn xmlport_elements(ws: &Workspace, file: usize, sections: impl Iterator<Item = ast::Section>, out: &mut Vec<Diagnostic>) {
+    for s in sections {
+        if s.name().eq_ignore_ascii_case("tableelement") {
+            if let Some(p) = s.properties().find(|p| p.name().eq_ignore_ascii_case("AutoCalcField")) {
+                push(
+                    out,
+                    ws,
+                    file,
+                    offset_of(p.syntax()),
+                    "AL0124",
+                    "The property 'AutoCalcField' cannot be used in this context".to_string(),
+                );
+            }
+        }
+        xmlport_elements(ws, file, s.sections(), out);
+    }
+}
+
+/// AL0161. A page customization names a variable of the page it customizes in the `Editable` expression of a
+/// `modify` (corpus 0865); it has no access to the page's variables. Other properties are not judged.
+fn page_customization_variables(ws: &Workspace, oi: usize, obj: &ast::Object, out: &mut Vec<Diagnostic>) {
+    let Some(parts) = obj.customizes_parts() else { return };
+    let Some(page) = ws.lookup(Some(ws.objects[oi].app), ObjKind::Page, &parts.join(".")) else { return };
+    let page_ast = ws.object_ast(page);
+    fn walk(
+        ws: &Workspace,
+        file: usize,
+        page: &ast::Object,
+        sections: impl Iterator<Item = ast::Section>,
+        in_modify: bool,
+        out: &mut Vec<Diagnostic>,
+    ) {
+        for s in sections {
+            let modify = in_modify || s.name().eq_ignore_ascii_case("modify");
+            if s.name().eq_ignore_ascii_case("modify") {
+                for p in s.properties() {
+                    let value = p.value_text();
+                    let name = value.trim();
+                    if p.name().eq_ignore_ascii_case("Editable")
+                        && !name.is_empty()
+                        && name.chars().all(|c| c.is_alphanumeric() || c == '_')
+                        && crate::base_access::declares_var(page, name)
+                    {
+                        push(
+                            out,
+                            ws,
+                            file,
+                            offset_of(p.syntax()),
+                            "AL0161",
+                            format!("'{name}' is inaccessible due to its protection level"),
+                        );
+                    }
+                }
+            }
+            walk(ws, file, page, s.sections(), modify, out);
+        }
+    }
+    walk(ws, ws.objects[oi].file, &page_ast, obj.sections(), false, out);
 }
 
 /// AL0197: one diagnostic for every declaration of a name that an app declares more than once for
@@ -614,6 +730,29 @@ pub fn check_context(ws: &Workspace, app: usize, ctx: &AppContext) -> Vec<Diagno
                 "AL0124",
                 "The property 'assemblyProbingPaths' cannot be used in this context".to_string(),
             );
+        }
+    }
+    // AL0296 (corpus 0806): a Cloud app sets the report property EnableExternalAssemblies, which has scope OnPrem. Only the value
+    // `true` is pinned.
+    if ctx.target == AppTarget::Cloud {
+        for (oi, o) in ws.objects.iter().enumerate() {
+            if o.app != app || o.kind != ObjKind::Report {
+                continue;
+            }
+            let obj = ws.object_ast(oi);
+            if let Some(p) = obj.properties().find(|p| {
+                p.name().eq_ignore_ascii_case("EnableExternalAssemblies") && p.value_text().trim().eq_ignore_ascii_case("true")
+            }) {
+                push(
+                    &mut out,
+                    ws,
+                    o.file,
+                    offset_of(p.syntax()),
+                    "AL0296",
+                    "The application object or method 'EnableExternalAssemblies' has scope 'OnPrem' and cannot be used for 'Cloud' development."
+                        .to_string(),
+                );
+            }
         }
     }
     // AL0296 (corpus 0006, 0014; and for BC 27 0020 to 0024): a Cloud app names a platform table that is

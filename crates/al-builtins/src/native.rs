@@ -1132,7 +1132,9 @@ pub const EXC_CALL_STACK: usize = 1;
 /// (:138-230), `Get` without a row (:232-255) and a division by zero (:257-280); null after `ClearLastError`
 /// (:283-301). Any other error is refused, naming its code.
 fn get_last_error_object(ctx: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
-    use crate::dotnet_sigs::{AL_EXCEPTION, NCL_DIALOG_EXCEPTION, RECORD_NOT_FOUND_EXCEPTION};
+    use crate::dotnet_sigs::{
+        AL_EXCEPTION, NCL_DIALOG_EXCEPTION, NCL_EVALUATE_EXCEPTION, RECORD_NOT_FOUND_EXCEPTION, TEST_FIELD_EXCEPTION,
+    };
     let e = ctx.last_error();
     if e.message.is_empty() && e.code.is_empty() {
         if e.exception != ExceptionKind::Cleared {
@@ -1149,12 +1151,17 @@ fn get_last_error_object(ctx: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Valu
     }
     let type_name = match e.exception {
         ExceptionKind::Dialog => NCL_DIALOG_EXCEPTION,
-        ExceptionKind::DialogComputed => {
-            crate::assumptions::assume(crate::assumptions::Assumption::LastErrorObjectOfComputedErrorText);
-            NCL_DIALOG_EXCEPTION
-        }
+        // Error(Label, ...) and Error(Variable) raise the same exception as a literal (GetLastErrorObjectKinds.al:Kind_ErrorWithLabel,
+        // _ErrorWithTextVariable, _ErrorWithErrorInfo).
+        ExceptionKind::DialogComputed => NCL_DIALOG_EXCEPTION,
         ExceptionKind::RecordNotFound => RECORD_NOT_FOUND_EXCEPTION,
         ExceptionKind::DivideByZero => AL_EXCEPTION,
+        // The class follows the error code for these (GetLastErrorObjectKinds.al:Kind_FailingTestFieldWithValue, _WithoutValue,
+        // _ModifyOfMissingRow, _DeleteOfMissingRow, _EvaluateWithoutReturnValue).
+        ExceptionKind::Unknown if e.code == "Dialog" => NCL_DIALOG_EXCEPTION,
+        ExceptionKind::Unknown if e.code == "TestField" => TEST_FIELD_EXCEPTION,
+        ExceptionKind::Unknown if e.code == "Evaluate" => NCL_EVALUATE_EXCEPTION,
+        ExceptionKind::Unknown if e.code == "DB:RecordNotFound" => RECORD_NOT_FOUND_EXCEPTION,
         ExceptionKind::Unknown | ExceptionKind::Cleared => {
             return unsupported(&format!(
                 "GetLastErrorObject after an error of code '{}' (the .NET exception BC holds for it is not pinned; only Error() with a text, Get without a row and a division by zero are)",

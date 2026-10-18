@@ -16,7 +16,8 @@
 use super::registry::{MemberKind, Pin, RegistryMember, RegistryType};
 use crate::Session;
 use al_builtins::dotnet_sigs::{
-    AL_EXCEPTION, AL_INNER_EXCEPTION, NCL_DIALOG_EXCEPTION, NULL_EXCEPTION, RECORD_NOT_FOUND_EXCEPTION, RUNTIME_TYPE,
+    AL_EXCEPTION, AL_INNER_EXCEPTION, DIVIDE_BY_ZERO_EXCEPTION, NCL_DIALOG_EXCEPTION, NCL_EVALUATE_EXCEPTION,
+    NULL_EXCEPTION, RECORD_NOT_FOUND_EXCEPTION, RUNTIME_TYPE, TEST_FIELD_EXCEPTION,
 };
 use al_builtins::native::{EXC_CALL_STACK, EXC_MESSAGE, Signal, UNTRACKED_CALL_STACK};
 use al_builtins::value::{DotNetKind, DotNetObject, Value};
@@ -45,7 +46,51 @@ fn parts(this: Option<&Rc<DotNetObject>>) -> Result<(&str, Value, Value), Signal
 
 /// Whether `type_name` is one of the exception classes `GetLastErrorObject` answers.
 pub(crate) fn is_exception(type_name: &str) -> bool {
-    [NCL_DIALOG_EXCEPTION, RECORD_NOT_FOUND_EXCEPTION, AL_EXCEPTION].contains(&type_name)
+    [
+        NCL_DIALOG_EXCEPTION,
+        RECORD_NOT_FOUND_EXCEPTION,
+        AL_EXCEPTION,
+        TEST_FIELD_EXCEPTION,
+        NCL_EVALUATE_EXCEPTION,
+        DIVIDE_BY_ZERO_EXCEPTION,
+    ]
+    .contains(&type_name)
+}
+
+/// `GetBaseException()`: the exception itself, except for a `NavALException`, whose base is the .NET exception it wraps. The only
+/// wrapped one pinned is a division by zero, `System.DivideByZeroException` with the same message
+/// (GetLastErrorObjectKinds.al:Kind_DivisionByZero, and the other kinds `baseTypeFullName`).
+fn get_base_exception(_: &mut Session, this: Option<&Rc<DotNetObject>>, _: &[Value]) -> Result<Value, Signal> {
+    let (type_name, msg, stack) = parts(this)?;
+    if type_name != AL_EXCEPTION {
+        return match this {
+            Some(o) => Ok(Value::DotNet(o.clone())),
+            None => unsupported("GetBaseException without an object"),
+        };
+    }
+    Ok(Value::DotNet(Rc::new(DotNetObject::new(DotNetKind::Internal {
+        type_name: DIVIDE_BY_ZERO_EXCEPTION.into(),
+        state: RefCell::new(vec![msg, stack]),
+    }))))
+}
+
+/// `Equals` on an exception is the identity of the object (GetLastErrorObjectKinds.al:Type_Equals_SameKinds `dialog_dialog_sameObject`
+/// No for two errors of one kind, `dialog_self_sameObject` Yes), and on a `System.Type` the identity of the type, which is its name
+/// (`dialog_dialog` Yes, `dialog_notFound` No).
+fn equals(_: &mut Session, this: Option<&Rc<DotNetObject>>, args: &[Value]) -> Result<Value, Signal> {
+    let (Some(this), Some(Value::DotNet(other))) = (this, args.first()) else {
+        return unsupported("Equals of a DotNet exception with something that is no DotNet object");
+    };
+    if Rc::ptr_eq(this, other) {
+        return Ok(Value::Boolean(true));
+    }
+    Ok(Value::Boolean(match (&this.kind, &other.kind) {
+        (
+            DotNetKind::Internal { type_name: a, state: sa },
+            DotNetKind::Internal { type_name: b, state: sb },
+        ) if a == RUNTIME_TYPE && b == RUNTIME_TYPE => matches!((&sa.borrow()[0], &sb.borrow()[0]), (Value::Text(x), Value::Text(y)) if x == y),
+        _ => false,
+    }))
 }
 
 fn message(_: &mut Session, this: Option<&Rc<DotNetObject>>, _: &[Value]) -> Result<Value, Signal> {
@@ -126,6 +171,8 @@ fn exception(clr_name: &str) -> RegistryType {
             member("InnerException", MemberKind::Get, inner_exception),
             member("GetType", MemberKind::Call, get_type),
             member("ToString", MemberKind::Call, to_string),
+            member("GetBaseException", MemberKind::Call, get_base_exception),
+            member("Equals", MemberKind::Call, equals),
         ],
     }
 }
@@ -169,6 +216,16 @@ pub fn types() -> Vec<RegistryType> {
         exception(NCL_DIALOG_EXCEPTION),
         exception(RECORD_NOT_FOUND_EXCEPTION),
         exception(AL_EXCEPTION),
+        exception(TEST_FIELD_EXCEPTION),
+        exception(NCL_EVALUATE_EXCEPTION),
+        // The base exception of a division by zero: its message and its class name are pinned.
+        RegistryType {
+            clr_name: DIVIDE_BY_ZERO_EXCEPTION.into(),
+            members: vec![
+                member("Message", MemberKind::Get, message),
+                member("GetType", MemberKind::Call, get_type),
+            ],
+        },
         // The inner exception of a NavALException: only that it exists is pinned.
         RegistryType {
             clr_name: AL_INNER_EXCEPTION.into(),
@@ -184,7 +241,10 @@ pub fn types() -> Vec<RegistryType> {
         },
         RegistryType {
             clr_name: RUNTIME_TYPE.into(),
-            members: vec![member("FullName", MemberKind::Get, full_name)],
+            members: vec![
+                member("FullName", MemberKind::Get, full_name),
+                member("Equals", MemberKind::Call, equals),
+            ],
         },
     ]
 }

@@ -573,13 +573,13 @@ impl Session {
                 };
                 if !blank_row
                     && (marked != marked_only
-                    || (marked
-                        && dst.borrow().marks.iter().any(|m| {
-                            m.len() == selected_key.len()
-                                && m.iter().zip(&selected_key).all(|(a, b)| {
-                                    al_builtins::ops::compare(a, b).ok() == Some(std::cmp::Ordering::Equal)
-                                })
-                        })))
+                        || (marked
+                            && dst.borrow().marks.iter().any(|m| {
+                                m.len() == selected_key.len()
+                                    && m.iter().zip(&selected_key).all(|(a, b)| {
+                                        al_builtins::ops::compare(a, b).ok() == Some(std::cmp::Ordering::Equal)
+                                    })
+                            })))
                 {
                     return unsupported(
                         "Page.SetSelectionFilter into a record with marks (only MarkedOnly with a mark outside the selected row is pinned)",
@@ -650,7 +650,9 @@ impl Session {
                                 .all(|(a, b)| al_builtins::ops::compare(a, b).ok() == Some(std::cmp::Ordering::Equal))
                     };
                     if !src_blank {
-                        return unsupported("Page.GetRecord of a page that closed on no row of a table that has rows (not pinned)");
+                        return unsupported(
+                            "Page.GetRecord of a page that closed on no row of a table that has rows (not pinned)",
+                        );
                     }
                     dst.borrow_mut().fields = initial;
                     return Ok(Value::Null);

@@ -1016,7 +1016,7 @@ impl Session {
     /// value parameter, and for a `var` parameter it is written back into the row when the call returns (corpus
     /// errors/lt-ms-refusals-128/P128ArrayRow.al:P128_ArrayRow_ByValue, P128_ArrayRow_ByVar, P128_ArrayRow_TextRowByVar). What
     /// BC does with a row assigned or cleared is not pinned here.
-    fn row_range(
+    pub(crate) fn row_range(
         &mut self,
         base: &ir::Place,
         idx: &[ir::Expr],
@@ -1030,9 +1030,7 @@ impl Session {
         };
         let i = int(&Self::index_value(e, f)?)?;
         if i < 1 || i > i64::from(*rows) {
-            return Err(Signal::Unsupported(
-                "array index out of bounds (error text not pinned yet)".into(),
-            ));
+            return al_builtins::native::raise("Index out of bounds.", "IndexOutOfBounds");
         }
         let arr = match self.read(base, f)? {
             Value::Array(a) => a,
@@ -1101,15 +1099,20 @@ impl Session {
         for (d, e) in dims.iter().zip(idx) {
             let i = int(&Self::index_value(e, f)?)?;
             if i < 1 || i > i64::from(*d) {
-                return Err(Signal::Unsupported(
-                    "array index out of bounds (error text not pinned yet)".into(),
-                ));
+                // Index out of bounds.: collections/lt-array-rows/ArrayRows.al, errors/lt-error-handling/ErTRuntimeErrors.al:179-184
+                // (zero, negative and too high), errors/lt-ms-refusals-129/P129ArrayIndex.al.
+                return al_builtins::native::raise("Index out of bounds.", "IndexOutOfBounds");
             }
             flat = flat * (*d as usize) + (i as usize - 1);
         }
         // A parameter declared with more elements than the argument has (Tests-ERM codeunit 134831 passes
         // an `array[2]` to `var DimensionValue: array[9]`): the stored cells are the argument's. What BC does
         // is not pinned by the corpus, so it is refused rather than indexed out of range.
+        // A one-dimensional array passed to a parameter declared with more elements: reading or writing past the argument's
+        // elements is an index error (misc/lt-probes-needed-5/PnE01Arrays.al:SmallerArray_VarParameter, SmallerArray_ByValue).
+        if flat >= arr.borrow().len() && dims.len() == 1 {
+            return al_builtins::native::raise("Index out of bounds.", "IndexOutOfBounds");
+        }
         if flat >= arr.borrow().len() {
             return Err(Signal::Unsupported(format!(
                 "array element {} of an argument that has {} elements, passed to a parameter declared with {}; not pinned (docs/probes-needed.md)",

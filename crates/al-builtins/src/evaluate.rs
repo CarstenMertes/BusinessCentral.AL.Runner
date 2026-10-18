@@ -8,8 +8,8 @@ use crate::describe::Describe;
 use crate::format::day_from_civil;
 use crate::native::{Ctx, Signal};
 use crate::value::Value;
-use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::Decimal;
+use rust_decimal::prelude::ToPrimitive;
 
 fn unsupported<T>(what: impl Into<String>) -> Result<T, Signal> {
     Err(Signal::Unsupported(what.into()))
@@ -105,7 +105,8 @@ fn big_integer(text: &str) -> Result<Parsed, Signal> {
     // An exponent, commas and a zero fraction are not pinned.
     let t = text.trim_matches(' ');
     let exponent_shape = t.bytes().any(|b| b == b'e' || b == b'E')
-        && t.bytes().all(|b| b.is_ascii_digit() || matches!(b, b'e' | b'E' | b'+' | b'-' | b'.'));
+        && t.bytes()
+            .all(|b| b.is_ascii_digit() || matches!(b, b'e' | b'E' | b'+' | b'-' | b'.'));
     if t.contains(' ') || (!exponent_shape && t.bytes().any(|b| b.is_ascii_alphabetic() || b == b'%')) {
         return Ok(Parsed::Rejected);
     }
@@ -156,10 +157,15 @@ fn decimal(text: &str, number: i64) -> Result<Parsed, Signal> {
     if !mant.bytes().all(|b| b.is_ascii_digit() || b == b',' || b == b'.') {
         // Letters, `%` and the like are no part of a number (`12abc`, `12.5pt`, `50%`, `NaN`, `%PDF-1.4`); other
         // characters are not pinned.
-        return if t.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'%' | b'-' | b'.' | b',' | b'+' | b'$')) {
+        return if t
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'%' | b'-' | b'.' | b',' | b'+' | b'$'))
+        {
             Ok(Parsed::Rejected)
         } else {
-            unsupported(format!("Evaluate of `{text}` into Decimal (form not pinned by the corpus)"))
+            unsupported(format!(
+                "Evaluate of `{text}` into Decimal (form not pinned by the corpus)"
+            ))
         };
     }
     let (int, frac) = match mant.split_once('.') {
@@ -174,7 +180,9 @@ fn decimal(text: &str, number: i64) -> Result<Parsed, Signal> {
         return Ok(Parsed::Rejected);
     }
     if currency && negative {
-        return unsupported(format!("Evaluate of `{text}` into Decimal (sign and currency sign together are not pinned)"));
+        return unsupported(format!(
+            "Evaluate of `{text}` into Decimal (sign and currency sign together are not pinned)"
+        ));
     }
     let exp: i64 = match exp {
         None => 0,
@@ -194,7 +202,11 @@ fn decimal(text: &str, number: i64) -> Result<Parsed, Signal> {
                         v
                     }
                 }
-                _ => return unsupported(format!("Evaluate of `{text}` into Decimal with a huge exponent (not pinned)")),
+                _ => {
+                    return unsupported(format!(
+                        "Evaluate of `{text}` into Decimal with a huge exponent (not pinned)"
+                    ));
+                }
             }
         }
     };
@@ -218,8 +230,16 @@ fn decimal(text: &str, number: i64) -> Result<Parsed, Signal> {
             "Evaluate of `{text}` into Decimal with more than 18 significant digits and a nonzero integer part (not pinned)"
         ));
     }
-    let mantissa = format!("{}{int}.{}", if negative { "-" } else { "" }, if frac.is_empty() { "0" } else { frac });
-    let mantissa = if int.is_empty() { mantissa.replacen('.', "0.", 1) } else { mantissa };
+    let mantissa = format!(
+        "{}{int}.{}",
+        if negative { "-" } else { "" },
+        if frac.is_empty() { "0" } else { frac }
+    );
+    let mantissa = if int.is_empty() {
+        mantissa.replacen('.', "0.", 1)
+    } else {
+        mantissa
+    };
     match Decimal::from_scientific(&format!("{mantissa}e{exp}")) {
         Ok(d) => Ok(Parsed::Value(Value::Decimal(d))),
         Err(_) if int_digits <= 0 => Ok(Parsed::Value(Value::Decimal(Decimal::ZERO))),

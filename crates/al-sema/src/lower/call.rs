@@ -428,7 +428,9 @@ impl Lowerer<'_> {
                         ("TValue", Some(Ty::Dictionary(_, v))) => Some(*v),
                         _ => None,
                     };
-                    out.push(if p.by_var {
+                    // CopyArray writes into its destination in place, so both arrays are passed as places: the destination can be a
+                    // row of a two-dimensional array (a copy that is written back), and the source's dimensions are checked at run time.
+                    out.push(if p.by_var || (id == "System.CopyArray#1" && i < 2) {
                         ir::Arg::Ref(self.place(a)?)
                     } else if let Some(el) = elem {
                         ir::Arg::Value(ir::Expr::Convert(self.rt(&el)?, Box::new(self.expr(a)?)))

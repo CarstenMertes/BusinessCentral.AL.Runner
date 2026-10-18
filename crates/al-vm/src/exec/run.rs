@@ -791,11 +791,24 @@ impl Session {
             if let Some(ir::Arg::Ref(p)) = site.args.first() {
                 // What Clear does to a row of a multi-dimensional array is not pinned (only a row as an argument is).
                 if let ir::Place::Index(base, idx) = p {
-                    if let al_builtins::value::RtType::Array(d, _) = self.place_type(base, f) {
+                    if let al_builtins::value::RtType::Array(d, el) = self.place_type(base, f) {
                         if idx.len() < d.len() {
-                            return Err(Signal::Unsupported(
-                                "Clear of a row of a multi-dimensional array: what BC does with a row is not pinned (docs/probes-needed.md)".into(),
-                            ));
+                            // The cells of that row become the default of their type and the other rows stay (misc/lt-probes-needed-6/
+                            // PnF25ArrayRowClear.al:Array_ClearRow, an Integer array[3, 4]); other element types are not pinned.
+                            if !matches!(*el, al_builtins::value::RtType::Integer) {
+                                return Err(Signal::Unsupported(
+                                    "Clear of a row of a multi-dimensional array of other than Integer (not pinned)"
+                                        .into(),
+                                ));
+                            }
+                            drop(values);
+                            let Some((arr, start, len)) = self.row_range(base, idx, f)? else {
+                                return Err(Signal::Unsupported("Clear of a row of an array (not pinned)".into()));
+                            };
+                            for c in &mut arr.borrow_mut()[start..start + len] {
+                                *c = Value::default_for(&el);
+                            }
+                            return Ok(Value::Null);
                         }
                     }
                 }
@@ -811,7 +824,38 @@ impl Session {
                 }
             }
         }
-        self.run_native(
+        // CopyArray: a multi-dimensional source raises (misc/lt-system-functions/Arrays.al:Array_MultiDimensional_ClearAndCopy
+        // `af172`); a multi-dimensional destination with a one-dimensional source is not pinned. A row of a two-dimensional array as
+        // the destination is a copy that is written back (collections/lt-array-rows/ArrayRows.al:TwoDim_CopyArrayRow).
+        let mut copy_array_row_back = None;
+        if site.id == al_builtins::builtin_id::ids::SYSTEM_COPYARRAY_1 {
+            let multi = |s: &mut Self, p: &ir::Place, f: &mut Frame| matches!(s.place_type(p, f), al_builtins::value::RtType::Array(d, _) if d.len() > 1);
+            let src_multi = match site.args.get(1) {
+                Some(ir::Arg::Ref(p)) => multi(self, p, f),
+                _ => false,
+            };
+            let dst_multi = match site.args.first() {
+                Some(ir::Arg::Ref(p)) => multi(self, p, f),
+                _ => false,
+            };
+            if src_multi {
+                return al_builtins::native::raise(
+                    "CopyArray: The source array must be one dimensional.",
+                    "ArrayDimension",
+                );
+            }
+            if dst_multi {
+                return Err(Signal::Unsupported(
+                    "CopyArray into a multi-dimensional array from a one-dimensional one (not pinned)".into(),
+                ));
+            }
+            if let (Some(ir::Arg::Ref(ir::Place::Index(..))), Some(v @ Value::Array(_))) =
+                (site.args.first(), values.first())
+            {
+                copy_array_row_back = Some(v.clone());
+            }
+        }
+        let result = self.run_native(
             native,
             site.class,
             site.receiver_arg.as_ref(),
@@ -820,8 +864,11 @@ impl Session {
             values,
             site.ret_used,
             f,
-        )
-        .map_err(|e| match e {
+        );
+        if let (Some(row), Some(ir::Arg::Ref(p)), Ok(_)) = (copy_array_row_back, site.args.first(), &result) {
+            self.write(p, row, f)?;
+        }
+        result.map_err(|e| match e {
             // Name the builtin whose argument was not the text it takes.
             Signal::Unsupported(m) if m.starts_with("text argument ") => {
                 Signal::Unsupported(format!("{}: {m}", site.id.name()))

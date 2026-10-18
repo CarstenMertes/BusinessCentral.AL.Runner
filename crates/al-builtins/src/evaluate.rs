@@ -243,10 +243,16 @@ fn decimal(text: &str, number: i64) -> Result<Parsed, Signal> {
     // With an integer part of zero, up to 29 fractional digits read (types/lt-decimal-digits/DecimalDigits.al:
     // P163_Decimal_Operands_RoundTrip `19_decimals`, `28_decimals`, `29_decimals`; Format shows 18 of them).
     // With a nonzero integer part, only 18 significant digits are pinned: more is refused.
+    // With a nonzero integer part the digits past the 18th are dropped: `1.123456789012345678901` reads as 1.12345678901234567
+    // (misc/lt-system-functions/EvalLastError.al:Evaluate_Decimal `many decimals`). Pinned without an exponent only.
+    let mut frac = frac;
     if all.len() - lead > 18 && int_digits > 0 {
-        return unsupported(format!(
-            "Evaluate of `{text}` into Decimal with more than 18 significant digits and a nonzero integer part (not pinned)"
-        ));
+        if exp != 0 {
+            return unsupported(format!(
+                "Evaluate of `{text}` into Decimal with more than 18 significant digits and an exponent (not pinned)"
+            ));
+        }
+        frac = &frac[..(18 - int_digits as usize).min(frac.len())];
     }
     let sign = if negative { "-" } else { "" };
     let mantissa = match (int.is_empty(), frac.is_empty()) {
@@ -261,7 +267,17 @@ fn decimal(text: &str, number: i64) -> Result<Parsed, Signal> {
     }
 }
 
-fn boolean(text: &str) -> Result<Parsed, Signal> {
+fn boolean(text: &str, number: i64) -> Result<Parsed, Signal> {
+    // Format number 9 reads `true`, `false`, `1` and `0`, and rejects `Yes`, `No` and the empty text; other spellings are not pinned
+    // (misc/lt-system-functions/EvalLastError.al:Evaluate_Boolean_Format9).
+    if number == 9 {
+        return match text {
+            "true" | "1" => Ok(Parsed::Value(Value::Boolean(true))),
+            "false" | "0" => Ok(Parsed::Value(Value::Boolean(false))),
+            "Yes" | "No" | "" => Ok(Parsed::Rejected),
+            _ => unsupported(format!("Evaluate of `{text}` into Boolean with format number 9 (not pinned)")),
+        };
+    }
     // text/TestEvaluate.al: 'true' / 'false'; types/TestFormatBooleanContracts.al:112
     // evaluates Format(true), which is 'Yes' (Format(false) is 'No'). In any case, `1` and `T` are
     // true and anything else, `Ja` for one, is refused
@@ -889,7 +905,7 @@ fn evaluate_with_max(
         Value::Integer(_) => integer(&text, number)?,
         Value::BigInteger(_) => big_integer(&text, number)?,
         Value::Decimal(_) => decimal(&text, number)?,
-        Value::Boolean(_) => boolean(&text)?,
+        Value::Boolean(_) => boolean(&text, number)?,
         Value::Guid(_) => guid(&text)?,
         Value::Date(..) => date(&text, number, c.today_day(), c.work_date_day())?,
         Value::Time(_) => time(&text, number)?,

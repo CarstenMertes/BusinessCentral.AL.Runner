@@ -230,15 +230,11 @@ fn decimal(text: &str, number: i64) -> Result<Parsed, Signal> {
             "Evaluate of `{text}` into Decimal with more than 18 significant digits and a nonzero integer part (not pinned)"
         ));
     }
-    let mantissa = format!(
-        "{}{int}.{}",
-        if negative { "-" } else { "" },
-        if frac.is_empty() { "0" } else { frac }
-    );
-    let mantissa = if int.is_empty() {
-        mantissa.replacen('.', "0.", 1)
-    } else {
-        mantissa
+    let sign = if negative { "-" } else { "" };
+    let mantissa = match (int.is_empty(), frac.is_empty()) {
+        (_, true) => format!("{sign}{int}"),
+        (true, false) => format!("{sign}0.{frac}"),
+        (false, false) => format!("{sign}{int}.{frac}"),
     };
     match Decimal::from_scientific(&format!("{mantissa}e{exp}")) {
         Ok(d) => Ok(Parsed::Value(Value::Decimal(d))),

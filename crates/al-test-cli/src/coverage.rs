@@ -7,6 +7,7 @@
 //! to see, per type, what a probe topic still has to cover (owner decision 2026-10-15: close whole
 //! topics, not one blocker at a time).
 
+use crate::language_catalog::{LanguageCatalog, State, majors, runtime_receiver};
 use al_builtins::catalog::Catalog;
 use al_sema::Workspace;
 use al_sema::check::{CheckResult, Res};
@@ -47,6 +48,20 @@ pub fn collect_calls(ws: &Workspace, checked: &CheckResult) -> Vec<Call> {
     out.into_iter().collect()
 }
 
+/// How often Microsoft's apps (the dependency apps the corpus loads, not the AL Language test
+/// libraries) call each builtin overload, by the checker's resolutions.
+pub fn microsoft_calls(ws: &Workspace, checked: &CheckResult) -> BTreeMap<String, usize> {
+    let mut out = BTreeMap::new();
+    for ((file, _, _), res) in checked.resolutions.iter() {
+        let Res::Builtin(id) = res else { continue };
+        let app = ws.files[*file].app;
+        if ws.kinds[app] == al_sema::AppKind::Dependency && !ws.apps[app].name.contains("AL Language") {
+            *out.entry(id.clone()).or_insert(0) += 1;
+        }
+    }
+    out
+}
+
 /// The map of the pinned corpus under `root` (the repository root): the corpus's `al-language` app
 /// and its fixture, with the dependency apps of the corpus's `.alpackages` so that calls on Microsoft's
 /// types resolve, checked with the preprocessor symbol of BC 27 and the whole catalog.
@@ -65,7 +80,215 @@ pub fn corpus_coverage(root: &std::path::Path, corpus_commit: &str) -> Result<Co
     let members = al_sema::members::build(&ws);
     let catalog = Catalog::load();
     let checked = al_sema::check::check(&ws, &members, &catalog);
-    Ok(build(&catalog, &collect_calls(&ws, &checked), corpus_commit))
+    let calls = collect_calls(&ws, &checked);
+    let mut map = build(&catalog, &calls, corpus_commit);
+    let lang = LanguageCatalog::load(root)?;
+    map.language = Some(language_view(
+        &lang,
+        &catalog,
+        &calls,
+        &microsoft_calls(&ws, &checked),
+        |id| al_builtins::native::lookup(id).is_some(),
+    ));
+    Ok(map)
+}
+
+/// One method overload of the language catalog (what the AL language server offers).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LangRow {
+    /// The type as the runtime catalog names it.
+    pub owner: String,
+    pub name: String,
+    /// The parameter types, `(Text, [Integer])`.
+    pub sig: String,
+    pub bc: Vec<u32>,
+    /// `OnPrem` when not available in the cloud.
+    pub scope: String,
+    /// The runtime catalog overload it matches.
+    pub id: Option<String>,
+    pub site: Option<(String, usize)>,
+    pub state: State,
+    pub ms_uses: usize,
+}
+
+/// The builtin map against the language catalog.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LanguageView {
+    /// `27-29`.
+    pub majors: String,
+    pub rows: Vec<LangRow>,
+    /// Runtime catalog overloads no catalog overload matches (documented only, or spelled differently).
+    pub runtime_only: Vec<String>,
+}
+
+/// Every catalog overload with its runtime overload, pinned site, state and Microsoft use.
+/// `implemented`: the runtime registers an implementation for the overload id.
+pub fn language_view(
+    lang: &LanguageCatalog,
+    catalog: &Catalog,
+    calls: &[Call],
+    ms_calls: &BTreeMap<String, usize>,
+    implemented: impl Fn(&str) -> bool,
+) -> LanguageView {
+    let mut first: BTreeMap<&str, (&str, usize)> = BTreeMap::new();
+    for c in calls {
+        let site = (c.file.as_str(), c.line);
+        let e = first.entry(c.id.as_str()).or_insert(site);
+        if site < *e {
+            *e = site;
+        }
+    }
+    let m = crate::language_catalog::match_methods(lang, catalog);
+    let mut rows: Vec<LangRow> = lang
+        .area("methods")
+        .zip(m.matched)
+        .map(|(e, hit)| {
+            let id = hit.map(|(id, _)| id);
+            let state = match &id {
+                Some(id) if implemented(id) => State::Implemented,
+                Some(_) => State::Refused,
+                None => State::Unknown,
+            };
+            LangRow {
+                owner: runtime_receiver(&e.owner).to_string(),
+                name: e.name.clone(),
+                sig: e.sig.clone(),
+                bc: e.bc.clone(),
+                scope: e.scope.clone(),
+                site: id
+                    .as_deref()
+                    .and_then(|i| first.get(i))
+                    .map(|(f, l)| (f.to_string(), *l)),
+                ms_uses: id.as_deref().and_then(|i| ms_calls.get(i)).copied().unwrap_or(0),
+                id,
+                state,
+            }
+        })
+        .collect();
+    rows.sort_by(|a, b| {
+        (a.owner.as_str(), a.name.to_ascii_lowercase(), a.sig.as_str()).cmp(&(
+            b.owner.as_str(),
+            b.name.to_ascii_lowercase(),
+            b.sig.as_str(),
+        ))
+    });
+    LanguageView {
+        majors: lang.majors(),
+        rows,
+        runtime_only: m.runtime_only,
+    }
+}
+
+/// Counts of one group of rows: all, pinned, implemented, refused, unknown, Microsoft-used and unpinned.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Counts {
+    pub all: usize,
+    pub pinned: usize,
+    pub implemented: usize,
+    pub refused: usize,
+    pub unknown: usize,
+    pub ms_unpinned: usize,
+}
+
+impl Counts {
+    pub fn of<'a>(rows: impl IntoIterator<Item = &'a LangRow>) -> Counts {
+        let mut c = Counts::default();
+        for r in rows {
+            c.add(r.site.is_some(), r.state, r.ms_uses > 0);
+        }
+        c
+    }
+
+    pub fn add(&mut self, pinned: bool, state: State, ms_used: bool) {
+        self.all += 1;
+        self.pinned += usize::from(pinned);
+        match state {
+            State::Implemented => self.implemented += 1,
+            State::Refused => self.refused += 1,
+            State::Unknown => self.unknown += 1,
+        }
+        self.ms_unpinned += usize::from(ms_used && !pinned);
+    }
+}
+
+/// `12.3%` of `all`; `-` for an empty group.
+pub fn pct(n: usize, all: usize) -> String {
+    if all == 0 {
+        "-".into()
+    } else {
+        format!("{:.1}%", 100.0 * n as f64 / all as f64)
+    }
+}
+
+fn language_markdown(v: &LanguageView, s: &mut String) {
+    let total = Counts::of(&v.rows);
+    s.push_str(&format!(
+        "## Language catalog (AL language server, BC {})\n\n",
+        v.majors
+    ));
+    s.push_str("The catalog is every method overload the AL language server offers (`docs/language-catalog.json`, generated by `tools/language-catalog/generate.sh` from the completion and signature help of the language server of each BC major). **Pinned**: a corpus call resolves to the runtime overload the catalog overload matches. **Implemented**: the runtime registers an implementation for that overload. **Refused**: the runtime catalog has the overload but no implementation, so lowering refuses a call to it. **Unknown**: the runtime catalog has no such overload, so the checker cannot resolve a call to it. **MS uses**: calls in Microsoft's apps that the corpus loads.\n\n");
+    s.push_str(&format!(
+        "**Total: {} overloads; pinned {} ({}); implemented {} ({}); refused {}; unknown {}; used by Microsoft and unpinned {}.**\n\n",
+        total.all,
+        total.pinned,
+        pct(total.pinned, total.all),
+        total.implemented,
+        pct(total.implemented, total.all),
+        total.refused,
+        total.unknown,
+        total.ms_unpinned
+    ));
+    s.push_str("| Type | Overloads | Pinned | Pinned % | Implemented | Implemented % | Refused | Unknown | MS-used unpinned |\n|---|---:|---:|---:|---:|---:|---:|---:|---:|\n");
+    let mut by_type: BTreeMap<&str, Vec<&LangRow>> = BTreeMap::new();
+    for r in &v.rows {
+        by_type.entry(r.owner.as_str()).or_default().push(r);
+    }
+    for (t, rows) in &by_type {
+        let c = Counts::of(rows.iter().copied());
+        s.push_str(&format!(
+            "| {t} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
+            c.all,
+            c.pinned,
+            pct(c.pinned, c.all),
+            c.implemented,
+            pct(c.implemented, c.all),
+            c.refused,
+            c.unknown,
+            c.ms_unpinned
+        ));
+    }
+    s.push_str("\n### Unpinned overloads by type\n\nSorted by type, then name. Columns: state, MS uses, the BC majors that have it when not all, `OnPrem` when not available in the cloud.\n");
+    for (t, rows) in &by_type {
+        let gap: Vec<&&LangRow> = rows.iter().filter(|r| r.site.is_none()).collect();
+        if gap.is_empty() {
+            continue;
+        }
+        s.push_str(&format!("\n#### {t} ({} unpinned of {})\n\n", gap.len(), rows.len()));
+        for r in gap {
+            let mut extra = String::new();
+            if majors(&r.bc) != v.majors {
+                extra.push_str(&format!(", BC {}", majors(&r.bc)));
+            }
+            if !r.scope.is_empty() {
+                extra.push_str(&format!(", {}", r.scope));
+            }
+            s.push_str(&format!(
+                "- `{t}.{}{}`: {}, MS uses {}{extra}{}\n",
+                r.name,
+                r.sig,
+                r.state.label(),
+                r.ms_uses,
+                r.id.as_ref().map(|i| format!(" (`{i}`)")).unwrap_or_default()
+            ));
+        }
+    }
+    if !v.runtime_only.is_empty() {
+        s.push_str("\n### In the runtime catalog, not matched to a catalog overload\n\n");
+        for id in &v.runtime_only {
+            s.push_str(&format!("- `{id}`\n"));
+        }
+    }
+    s.push('\n');
 }
 
 /// One overload of the catalog.
@@ -94,6 +317,8 @@ impl TypeCoverage {
 pub struct Coverage {
     pub corpus_commit: String,
     pub types: Vec<TypeCoverage>,
+    /// The map against the AL language catalog (`docs/language-catalog.json`).
+    pub language: Option<LanguageView>,
 }
 
 impl Coverage {
@@ -131,6 +356,7 @@ pub fn build(catalog: &Catalog, calls: &[Call], corpus_commit: &str) -> Coverage
             .into_iter()
             .map(|(name, overloads)| TypeCoverage { name, overloads })
             .collect(),
+        language: None,
     }
 }
 
@@ -144,6 +370,10 @@ pub fn to_markdown(c: &Coverage) -> String {
         "Corpus commit `{}`. An overload is pinned when the checker resolves at least one call of the corpus's own files to exactly that overload.\n\n",
         c.corpus_commit
     ));
+    if let Some(v) = &c.language {
+        language_markdown(v, &mut s);
+        s.push_str("## Runtime catalog (ADR-008 signatures)\n\nThe overloads of the runtime's own catalog (`crates/al-builtins/catalog/signatures.txt`).\n\n");
+    }
     s.push_str(&format!("**Total: pinned {pinned} of {all} overloads.**\n\n"));
     s.push_str("| Type | Pinned | Overloads | Unpinned |\n|---|---:|---:|---:|\n");
     for t in &c.types {
@@ -198,11 +428,36 @@ pub fn to_json(c: &Coverage) -> String {
             })
         })
         .collect();
+    let language = c.language.as_ref().map(|v| {
+        let t = Counts::of(&v.rows);
+        serde_json::json!({
+            "bc": v.majors,
+            "overloads": t.all,
+            "pinned": t.pinned,
+            "implemented": t.implemented,
+            "refused": t.refused,
+            "unknown": t.unknown,
+            "methods": v.rows.iter().map(|r| serde_json::json!({
+                "type": r.owner,
+                "name": r.name,
+                "sig": r.sig,
+                "bc": r.bc,
+                "scope": r.scope,
+                "id": r.id,
+                "pinned": r.site.is_some(),
+                "site": r.site.as_ref().map(|(f, l)| format!("{f}:{l}")),
+                "state": r.state.label(),
+                "ms_uses": r.ms_uses,
+            })).collect::<Vec<_>>(),
+            "runtime_only": v.runtime_only,
+        })
+    });
     let mut text = serde_json::to_string_pretty(&serde_json::json!({
         "corpus_commit": c.corpus_commit,
         "pinned": pinned,
         "overloads": all,
         "types": types,
+        "language": language,
     }))
     .expect("json");
     text.push('\n');
@@ -291,6 +546,63 @@ mod tests {
         assert_eq!(json["pinned"], pinned);
         assert_eq!(json["overloads"], all);
         assert_eq!(json["corpus_commit"], "abc123");
+    }
+
+    #[test]
+    fn the_language_view_names_pinned_implemented_refused_and_unknown_per_catalog_overload() {
+        let lang = LanguageCatalog::parse(
+            r#"{"sources":[{"bc":27,"al_extension":"a"},{"bc":28,"al_extension":"b"}],"items":[
+{"area":"methods","owner":"Text","name":"Contains","sig":"(Text)","bc":[27,28]},
+{"area":"methods","owner":"Text","name":"StartsWith","sig":"(Text)","bc":[28]},
+{"area":"methods","owner":"Text","name":"NoSuchMethod","sig":"()","scope":"OnPrem","bc":[27,28]}
+]}"#,
+        )
+        .unwrap();
+        let c = map();
+        let catalog = Catalog::load();
+        let ws_calls = vec![Call {
+            id: c
+                .types
+                .iter()
+                .flat_map(|t| &t.overloads)
+                .find(|o| o.signature.starts_with("Text.Contains "))
+                .unwrap()
+                .id
+                .clone(),
+            file: "fixture.al".into(),
+            line: 8,
+        }];
+        let ms = BTreeMap::from([(ws_calls[0].id.clone(), 7usize)]);
+        let v = language_view(&lang, &catalog, &ws_calls, &ms, |id| id.starts_with("Text.Contains"));
+        assert_eq!(v.majors, "27-28");
+        let row = |n: &str| v.rows.iter().find(|r| r.name == n).unwrap();
+        assert_eq!(row("Contains").site, Some(("fixture.al".into(), 8)));
+        assert_eq!(row("Contains").state, State::Implemented);
+        assert_eq!(row("Contains").ms_uses, 7);
+        assert_eq!(
+            row("StartsWith").state,
+            State::Refused,
+            "in the runtime catalog, no implementation"
+        );
+        assert_eq!(row("NoSuchMethod").state, State::Unknown);
+        let mut with = c.clone();
+        with.language = Some(v);
+        let md = to_markdown(&with);
+        assert!(
+            md.contains("**Total: 3 overloads; pinned 1 (33.3%); implemented 1 (33.3%); refused 1; unknown 1"),
+            "{md}"
+        );
+        assert!(md.contains("| Text | 3 | 1 | 33.3% | 1 | 33.3% | 1 | 1 | 0 |"), "{md}");
+        assert!(
+            md.contains("- `Text.StartsWith(Text)`: refused, MS uses 0, BC 28"),
+            "{md}"
+        );
+        assert!(
+            md.contains("- `Text.NoSuchMethod()`: unknown, MS uses 0, OnPrem"),
+            "{md}"
+        );
+        let json: serde_json::Value = serde_json::from_str(&to_json(&with)).unwrap();
+        assert_eq!(json["language"]["unknown"], 1);
     }
 
     #[test]

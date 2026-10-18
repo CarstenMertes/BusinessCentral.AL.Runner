@@ -22,16 +22,18 @@ pub enum Dim {
     Property,
     Event,
     Syntax,
+    Attribute,
 }
 
 impl Dim {
-    pub const ALL: [Dim; 4] = [Dim::Trigger, Dim::Property, Dim::Event, Dim::Syntax];
+    pub const ALL: [Dim; 5] = [Dim::Trigger, Dim::Property, Dim::Event, Dim::Syntax, Dim::Attribute];
     pub fn title(self) -> &'static str {
         match self {
             Dim::Trigger => "Triggers per object kind",
             Dim::Property => "Object properties per object kind",
             Dim::Event => "Platform and system events",
             Dim::Syntax => "Statements and expressions",
+            Dim::Attribute => "Method attributes",
         }
     }
     pub fn key(self) -> &'static str {
@@ -40,6 +42,7 @@ impl Dim {
             Dim::Property => "properties",
             Dim::Event => "events",
             Dim::Syntax => "syntax",
+            Dim::Attribute => "attributes",
         }
     }
 }
@@ -71,10 +74,22 @@ pub struct Known {
     pub syntax_kinds: HashSet<String>,
 }
 
+/// The compound assignment operators and their token kinds.
+const COMPOUND_ASSIGN: [(&str, &str); 4] = [
+    ("+=", "PlusAssign"),
+    ("-=", "MinusAssign"),
+    ("*=", "StarAssign"),
+    ("/=", "SlashAssign"),
+];
+
 impl Known {
     pub fn knows(&self, dim: Dim, name: &str) -> bool {
         let n = name.to_ascii_lowercase();
         match dim {
+            Dim::Syntax if name.starts_with("AssignStmt ") => COMPOUND_ASSIGN
+                .iter()
+                .any(|(op, tok)| name.ends_with(op) && self.syntax_kinds.contains(*tok)),
+            Dim::Syntax if name == "NameRef this" => self.strings.contains("this"),
             Dim::Syntax => {
                 self.syntax_kinds.contains(name)
                     || n.strip_prefix("literal:")
@@ -121,6 +136,8 @@ pub struct BehaviorCoverage {
     pub corpus_commit: String,
     pub items: Vec<Item>,
     pub errors: Vec<ErrorSite>,
+    /// The map against the AL language catalog (`docs/language-catalog.json`).
+    pub language: Option<LanguageView>,
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -283,6 +300,24 @@ pub fn known_from_sources(sources: &[(String, String)]) -> Known {
                 k.on_names.insert(lit.text.clone());
             }
             k.strings.insert(lit.text.to_ascii_lowercase());
+        }
+        // The lowering matches grammar kinds after `use SyntaxKind::*` (`IfStmt =>`): a whole-word
+        // use of a grammar kind or compound-assignment token name counts too.
+        for name in STATEMENT_KINDS
+            .iter()
+            .chain(&MORE_STATEMENT_KINDS)
+            .chain(&EXPRESSION_KINDS)
+            .map(|k| kind_name(*k))
+            .chain(COMPOUND_ASSIGN.iter().map(|(_, t)| t.to_string()))
+        {
+            if text.match_indices(name.as_str()).any(|(i, _)| {
+                let before = text[..i].chars().next_back();
+                let after = text[i + name.len()..].chars().next();
+                !before.is_some_and(|c| c.is_ascii_alphanumeric() || c == '_')
+                    && !after.is_some_and(|c| c.is_ascii_alphanumeric() || c == '_')
+            }) {
+                k.syntax_kinds.insert(name);
+            }
         }
         for (i, _) in text.match_indices("SyntaxKind::") {
             let name: String = text[i + 12..]
@@ -490,8 +525,21 @@ fn operator(n: &SyntaxNode) -> Option<String> {
 /// The item of a body node: the kind, refined by operator or literal type. `None`: not a statement or expression.
 fn syntax_item(n: &SyntaxNode) -> Option<(String, String)> {
     let k = n.kind();
+    if k == SyntaxKind::AssignStmt {
+        // `x += 1` is a compound assignment, an item of its own.
+        return Some((
+            "statement".into(),
+            match operator(n) {
+                Some(op) if op != ":=" => format!("AssignStmt {op}"),
+                _ => kind_name(k),
+            },
+        ));
+    }
     if is_stmt(k) {
         return Some(("statement".into(), kind_name(k)));
+    }
+    if k == SyntaxKind::NameRef && n.text().to_string().trim().eq_ignore_ascii_case("this") {
+        return Some(("expression".into(), "NameRef this".into()));
     }
     if !EXPRESSION_KINDS.contains(&k) {
         return None;
@@ -728,6 +776,7 @@ pub fn collect(ws: &Workspace, checked: &CheckResult) -> Vec<Occ> {
                     business.insert(name.to_ascii_lowercase());
                 }
                 for a in r.attributes() {
+                    out.push(occ(Dim::Attribute, "procedure".into(), a.name(), off, reached));
                     let an = a.name().to_ascii_lowercase();
                     if an == "eventsubscriber" {
                         let args = a.args().map(|n| n.text().to_string()).unwrap_or_default();
@@ -953,11 +1002,432 @@ pub fn corpus_behavior_coverage(root: &Path, corpus_commit: &str) -> Result<Beha
     sites.sort();
     sites.dedup();
     let errors = match_errors(sites, &corpus_literals(&ws));
+    let lang = crate::language_catalog::LanguageCatalog::load(root)?;
+    let language = Some(language_view(&lang, &items, &known));
     Ok(BehaviorCoverage {
         corpus_commit: corpus_commit.to_string(),
         items,
         errors,
+        language,
     })
+}
+
+// ---------------------------------------------------------------------------------------------
+// The language catalog view
+
+use crate::language_catalog::{
+    LanguageCatalog, State, event_owner, majors, property_owners, syntax_items, trigger_owners,
+};
+
+/// The areas of the language catalog this map measures, with their dimension.
+pub const LANGUAGE_AREAS: [(&str, Dim); 5] = [
+    ("triggers", Dim::Trigger),
+    ("properties", Dim::Property),
+    ("events", Dim::Event),
+    ("syntax", Dim::Syntax),
+    ("attributes", Dim::Attribute),
+];
+
+/// Object kinds whose lowering refuses every trigger or property it does not handle (the
+/// catch-all reason in the named file). An item of such an owner that the runtime source does
+/// not read is refused, not ignored. The test `refusing_owners_still_refuse` keeps the list honest.
+pub const REFUSING_OWNERS: [(&str, &str, &str, &str); 29] = [
+    (
+        "properties",
+        "Report",
+        "reports.rs",
+        "report property {other} is not supported yet",
+    ),
+    (
+        "properties",
+        "ReportDataItem",
+        "reports.rs",
+        "property {pn} of dataitem {name} is not supported yet",
+    ),
+    (
+        "properties",
+        "RequestPage",
+        "reports.rs",
+        "request page property {name} is not supported yet",
+    ),
+    (
+        "properties",
+        "RequestPageExtension",
+        "reports.rs",
+        "request page property {} is not supported yet",
+    ),
+    (
+        "properties",
+        "ReportExtension",
+        "reports.rs",
+        "reportextension property {name} is not supported yet",
+    ),
+    (
+        "properties",
+        "ReportExtensionModify",
+        "reports.rs",
+        "property {} of modify({target}) is not supported yet",
+    ),
+    (
+        "properties",
+        "Query",
+        "queries.rs",
+        "query property {} is not supported yet",
+    ),
+    (
+        "properties",
+        "QueryDataItem",
+        "queries.rs",
+        "dataitem {name}: property {other} is not supported yet",
+    ),
+    (
+        "properties",
+        "QueryColumn",
+        "queries.rs",
+        "column {name}: property {other} is not supported yet",
+    ),
+    (
+        "properties",
+        "XmlPort",
+        "xmlports.rs",
+        "xmlport property {other} is not supported yet",
+    ),
+    (
+        "properties",
+        "XmlPortTableElement",
+        "xmlports.rs",
+        "property {pn} of {section_name} {name} is not supported yet",
+    ),
+    (
+        "properties",
+        "XmlPortFieldElement",
+        "xmlports.rs",
+        "property {pn} of {section_name} {name} is not supported yet",
+    ),
+    (
+        "properties",
+        "XmlPortTextElement",
+        "xmlports.rs",
+        "property {pn} of {section_name} {name} is not supported yet",
+    ),
+    (
+        "properties",
+        "XmlPortFieldAttribute",
+        "xmlports.rs",
+        "property {pn} of {section_name} {name} is not supported yet",
+    ),
+    (
+        "properties",
+        "XmlPortTextAttribute",
+        "xmlports.rs",
+        "property {pn} of {section_name} {name} is not supported yet",
+    ),
+    (
+        "triggers",
+        "Report",
+        "reports.rs",
+        "report trigger {n} is not supported yet",
+    ),
+    (
+        "triggers",
+        "ReportDataItem",
+        "reports.rs",
+        "trigger {tn} of dataitem {name} is not supported yet",
+    ),
+    (
+        "triggers",
+        "RequestPage",
+        "reports.rs",
+        "request page trigger {name} is not supported yet",
+    ),
+    (
+        "triggers",
+        "RequestPageExtension",
+        "reports.rs",
+        "request page trigger {} is not supported yet",
+    ),
+    (
+        "triggers",
+        "ReportExtension",
+        "reports.rs",
+        "reportextension trigger {n} is not supported yet",
+    ),
+    (
+        "triggers",
+        "ReportExtensionDataSetModify",
+        "reports.rs",
+        "trigger {} in modify({}) is not supported yet",
+    ),
+    (
+        "triggers",
+        "PageExtension",
+        "lower/shared.rs",
+        "page extension `{ename}`: trigger {} is not supported yet",
+    ),
+    (
+        "triggers",
+        "ControlExtension",
+        "lower/shared.rs",
+        "trigger {} in modify({}) is not supported yet",
+    ),
+    (
+        "triggers",
+        "ActionExtension",
+        "lower/shared.rs",
+        "trigger {} in modify({}) is not supported yet",
+    ),
+    (
+        "triggers",
+        "XmlPortTableElement",
+        "xmlports.rs",
+        "trigger {tn} of {section_name} {name} is not supported yet",
+    ),
+    (
+        "triggers",
+        "XmlPortFieldElement",
+        "xmlports.rs",
+        "trigger {tn} of {section_name} {name} is not supported yet",
+    ),
+    (
+        "triggers",
+        "XmlPortTextElement",
+        "xmlports.rs",
+        "trigger {tn} of {section_name} {name} is not supported yet",
+    ),
+    (
+        "triggers",
+        "XmlPortFieldAttribute",
+        "xmlports.rs",
+        "trigger {tn} of {section_name} {name} is not supported yet",
+    ),
+    (
+        "triggers",
+        "XmlPortTextAttribute",
+        "xmlports.rs",
+        "trigger {tn} of {section_name} {name} is not supported yet",
+    ),
+];
+
+/// One item of the language catalog in a measured area.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LangItem {
+    pub area: String,
+    pub owner: String,
+    pub name: String,
+    pub bc: Vec<u32>,
+    pub scope: String,
+    pub site: Option<(String, usize)>,
+    pub state: State,
+    pub ms_uses: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LanguageView {
+    pub majors: String,
+    /// Measured items (presentation-only properties and keywords without an item left out).
+    pub items: Vec<LangItem>,
+    /// Presentation-only properties of the catalog, left out (as in the dimension above).
+    pub presentation: usize,
+    /// Statement keywords without a syntax item of their own (`else`).
+    pub no_item: Vec<String>,
+    /// Catalog areas this map does not measure yet, with their size.
+    pub not_measured: Vec<(String, usize)>,
+}
+
+/// Every trigger, trigger event, property, statement keyword and attribute of the language
+/// catalog, with the first pinned corpus site, the runtime state and the Microsoft use, taken from
+/// the items of the map whose group maps to the item's owner.
+pub fn language_view(lang: &LanguageCatalog, items: &[Item], known: &Known) -> LanguageView {
+    // (dim, owner, lower name) -> (first site, MS uses)
+    type Acc = (Option<(String, usize)>, usize);
+    let mut acc: HashMap<(Dim, String, String), Acc> = HashMap::new();
+    let mut add = |dim: Dim, owner: &str, name: &str, it: &Item| {
+        let e = acc
+            .entry((dim, owner.to_string(), name.to_ascii_lowercase()))
+            .or_insert((None, 0));
+        if let Some(site) = &it.site
+            && e.0.as_ref().is_none_or(|s| site < s)
+        {
+            e.0 = Some(site.clone());
+        }
+        e.1 += it.ms_uses;
+    };
+    for it in items {
+        match it.dim {
+            Dim::Trigger => {
+                for o in trigger_owners(&it.group) {
+                    add(Dim::Trigger, o, &it.name, it);
+                }
+            }
+            Dim::Property => {
+                for o in property_owners(&it.group) {
+                    add(Dim::Property, o, &it.name, it);
+                }
+            }
+            Dim::Event => {
+                if let Some(o) = event_owner(&it.group) {
+                    add(Dim::Event, o, &it.name, it);
+                }
+            }
+            Dim::Syntax => add(Dim::Syntax, "", &it.name, it),
+            Dim::Attribute => add(Dim::Attribute, "", &it.name, it),
+        }
+    }
+    let refusing = |area: &str, owner: &str| REFUSING_OWNERS.iter().any(|(a, o, _, _)| *a == area && *o == owner);
+    let mut out = Vec::new();
+    let mut presentation = 0;
+    let mut no_item = Vec::new();
+    for (area, dim) in LANGUAGE_AREAS {
+        for e in lang.area(area) {
+            if dim == Dim::Property && presentation_only(&e.name) {
+                presentation += 1;
+                continue;
+            }
+            let (site, ms_uses, reads) = if dim == Dim::Syntax {
+                let Some(targets) = syntax_items(&e.name) else {
+                    no_item.push(e.name.clone());
+                    continue;
+                };
+                let mut site: Option<(String, usize)> = None;
+                let mut ms = 0;
+                for t in targets {
+                    if let Some((s, m)) = acc.get(&(Dim::Syntax, String::new(), t.to_ascii_lowercase())) {
+                        ms += m;
+                        if let Some(x) = s
+                            && site.as_ref().is_none_or(|y| x < y)
+                        {
+                            site = Some(x.clone());
+                        }
+                    }
+                }
+                (site, ms, targets.iter().any(|t| known.knows(Dim::Syntax, t)))
+            } else {
+                let (site, ms) = acc
+                    .get(&(dim, e.owner.clone(), e.name.to_ascii_lowercase()))
+                    .cloned()
+                    .unwrap_or((None, 0));
+                (site, ms, known.knows(dim, &e.name))
+            };
+            let state = if reads {
+                State::Implemented
+            } else if refusing(area, &e.owner) {
+                State::Refused
+            } else {
+                State::Unknown
+            };
+            out.push(LangItem {
+                area: area.to_string(),
+                owner: e.owner.clone(),
+                name: e.name.clone(),
+                bc: e.bc.clone(),
+                scope: e.scope.clone(),
+                site,
+                state,
+                ms_uses,
+            });
+        }
+    }
+    let measured: HashSet<&str> = LANGUAGE_AREAS.iter().map(|(a, _)| *a).collect();
+    let mut not_measured: BTreeMap<String, usize> = BTreeMap::new();
+    for e in &lang.items {
+        if !measured.contains(e.area.as_str()) && e.area != "methods" {
+            *not_measured.entry(e.area.clone()).or_default() += 1;
+        }
+    }
+    LanguageView {
+        majors: lang.majors(),
+        items: out,
+        presentation,
+        no_item,
+        not_measured: not_measured.into_iter().collect(),
+    }
+}
+
+fn language_markdown(v: &LanguageView, s: &mut String) {
+    use crate::coverage::{Counts, pct};
+    s.push_str(&format!(
+        "## Language catalog (AL language server, BC {})\n\n",
+        v.majors
+    ));
+    s.push_str("The catalog of each area is what the AL language server offers in probe files (`docs/language-catalog.json`, generated by `tools/language-catalog/generate.sh`): triggers per owner, trigger events, properties per owner (the probe contexts: `PageField`, `ReportDataItem`, ...), statement keywords and attributes. **Pinned**: an item of the dimension tables below whose group maps to the owner (`crates/al-test-cli/src/language_catalog.rs`) is pinned. **Implemented**: a string literal of the runtime crates names it (the runtime reads it; a name read for one owner counts for all). **Refused**: not read, and the owner's lowering refuses what it does not handle (`REFUSING_OWNERS`). **Unknown**: not read and not refused: the runtime ignores it or rejects it as unknown. Method overloads are in `corpus-coverage.md`.\n\n");
+    let mut by_area: BTreeMap<&str, Vec<&LangItem>> = BTreeMap::new();
+    for i in &v.items {
+        by_area.entry(i.area.as_str()).or_default().push(i);
+    }
+    let counts = |items: &[&LangItem]| {
+        let mut c = Counts::default();
+        for i in items {
+            c.add(i.site.is_some(), i.state, i.ms_uses > 0);
+        }
+        c
+    };
+    let row = |label: &str, c: Counts| {
+        format!(
+            "| {label} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
+            c.all,
+            c.pinned,
+            pct(c.pinned, c.all),
+            c.implemented,
+            pct(c.implemented, c.all),
+            c.refused,
+            c.unknown,
+            c.ms_unpinned
+        )
+    };
+    const HEAD: &str = "| Area | Items | Pinned | Pinned % | Implemented | Implemented % | Refused | Unknown | MS-used unpinned |\n|---|---:|---:|---:|---:|---:|---:|---:|---:|\n";
+    s.push_str(HEAD);
+    for (area, items) in &by_area {
+        s.push_str(&row(area, counts(items)));
+    }
+    s.push_str(&format!(
+        "\nLeft out: {} presentation-only properties (Caption, ToolTip, ApplicationArea, ...), {} statement keywords without an item of their own ({}). Not measured yet: {}.\n",
+        v.presentation,
+        v.no_item.len(),
+        v.no_item.join(", "),
+        v.not_measured.iter().map(|(a, n)| format!("{a} ({n})")).collect::<Vec<_>>().join(", ")
+    ));
+    for (area, items) in &by_area {
+        let mut by_owner: BTreeMap<&str, Vec<&LangItem>> = BTreeMap::new();
+        for i in items {
+            by_owner.entry(i.owner.as_str()).or_default().push(i);
+        }
+        s.push_str(&format!("\n### {area} per owner\n\n"));
+        s.push_str(&HEAD.replace("| Area |", "| Owner |"));
+        for (owner, list) in &by_owner {
+            s.push_str(&row(if owner.is_empty() { "(code)" } else { owner }, counts(list)));
+        }
+        s.push_str(&format!("\n#### {area}: unpinned items by owner\n\n"));
+        for (owner, list) in &by_owner {
+            let mut gap: Vec<&&LangItem> = list.iter().filter(|i| i.site.is_none()).collect();
+            if gap.is_empty() {
+                continue;
+            }
+            gap.sort_by_key(|i| i.name.to_ascii_lowercase());
+            s.push_str(&format!(
+                "- **{}** ({} of {}): {}\n",
+                if owner.is_empty() { "(code)" } else { owner },
+                gap.len(),
+                list.len(),
+                gap.iter()
+                    .map(|i| {
+                        let mut t = format!("`{}` {}", i.name, i.state.label());
+                        if i.ms_uses > 0 {
+                            t.push_str(&format!(", MS {}", i.ms_uses));
+                        }
+                        if majors(&i.bc) != v.majors {
+                            t.push_str(&format!(", BC {}", majors(&i.bc)));
+                        }
+                        if !i.scope.is_empty() {
+                            t.push_str(&format!(", {}", i.scope));
+                        }
+                        t
+                    })
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            ));
+        }
+    }
+    s.push('\n');
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -985,6 +1455,10 @@ pub fn to_markdown(c: &BehaviorCoverage) -> String {
     s.push_str("# Corpus coverage of language behavior\n\n");
     s.push_str("Generated by `al-test-cli --behavior-coverage-map` (the test `corpus_behavior_coverage_is_current` checks it). Do not edit. Plan: `docs/reviews/2026-10-behavior-coverage-plan.md`. The builtin overloads are in `corpus-coverage.md`.\n\n");
     s.push_str(&format!("Corpus commit `{}`.\n\n", c.corpus_commit));
+    if let Some(v) = &c.language {
+        language_markdown(v, &mut s);
+        s.push_str("## Items the runtime or Microsoft's apps mention\n\n");
+    }
     s.push_str("An item is **pinned** when it occurs in a corpus file in a routine that static reach finds (roots: triggers, `[Test]` procedures, event subscribers and handlers of corpus objects; edges: resolved procedure calls). Properties count when declared on a corpus object. Reached is not observed. The catalog of each dimension is the union of what the runtime source mentions and what Microsoft's apps (System, System Application, Base Application, Business Foundation, Application) use. **MS uses** counts the occurrences in those apps. **Runtime reads** says a string literal (or `SyntaxKind` name) of the runtime crates matches the item; `no` means the runtime does not read it, so even a passing probe needs new code. Gap lists are sorted by MS uses.\n\n");
     s.push_str("| Dimension | Catalog | Pinned | Used by Microsoft | Microsoft-used and unpinned | of those, runtime does not read |\n|---|---:|---:|---:|---:|---:|\n");
     for d in Dim::ALL {
@@ -1077,8 +1551,28 @@ pub fn to_json(c: &BehaviorCoverage) -> String {
             })
         })
         .collect();
+    let language = c.language.as_ref().map(|v| {
+        serde_json::json!({
+            "bc": v.majors,
+            "presentation_left_out": v.presentation,
+            "keywords_without_item": v.no_item,
+            "not_measured": v.not_measured.iter().map(|(a, n)| serde_json::json!({"area": a, "items": n})).collect::<Vec<_>>(),
+            "items": v.items.iter().map(|i| serde_json::json!({
+                "area": i.area,
+                "owner": i.owner,
+                "name": i.name,
+                "bc": i.bc,
+                "scope": i.scope,
+                "pinned": i.site.is_some(),
+                "site": i.site.as_ref().map(|(f, l)| format!("{f}:{l}")),
+                "state": i.state.label(),
+                "ms_uses": i.ms_uses,
+            })).collect::<Vec<_>>(),
+        })
+    });
     let mut text = serde_json::to_string_pretty(&serde_json::json!({
         "corpus_commit": c.corpus_commit,
+        "language": language,
         "dimensions": dims,
         "errors": {
             "sites": c.errors.len(),
@@ -1295,6 +1789,7 @@ codeunit 50101 Tests
             corpus_commit: "abc".into(),
             items: classify(&occs, &Known::default()),
             errors: vec![],
+            language: None,
         };
         c.errors.push(ErrorSite {
             file: "r.rs".into(),
@@ -1309,7 +1804,11 @@ codeunit 50101 Tests
         assert!(md.contains("## Triggers per object kind: unpinned items"));
         assert!(md.contains("r.rs:4 `Nope` code `C` (generic)"));
         let json: serde_json::Value = serde_json::from_str(&to_json(&c)).unwrap();
-        assert_eq!(json["dimensions"].as_array().unwrap().len(), 4);
+        assert_eq!(
+            json["dimensions"].as_array().unwrap().len(),
+            5,
+            "triggers, properties, events, syntax, attributes"
+        );
         // Gaps: the highest Microsoft use first.
         let trig = &json["dimensions"][0]["items"];
         let uses: Vec<u64> = trig
@@ -1321,5 +1820,138 @@ codeunit 50101 Tests
         let mut sorted = uses.clone();
         sorted.sort_by(|a, b| b.cmp(a));
         assert_eq!(uses, sorted);
+    }
+
+    #[test]
+    fn a_grammar_kind_the_lowering_matches_by_its_bare_name_is_read() {
+        let k = known_from_sources(&[(
+            "lower.rs".into(),
+            "use SyntaxKind::*;\nmatch k { IfStmt => 1, PlusAssign => 2, IfStmtX => 3 }\n".into(),
+        )]);
+        assert!(k.knows(Dim::Syntax, "IfStmt"));
+        assert!(k.knows(Dim::Syntax, "AssignStmt +="));
+        assert!(!k.knows(Dim::Syntax, "AssignStmt -="));
+        assert!(!k.knows(Dim::Syntax, "WhileStmt"));
+    }
+
+    #[test]
+    fn refusing_owners_still_refuse() {
+        let sema = Path::new(env!("CARGO_MANIFEST_DIR")).join("../al-sema/src");
+        for (area, owner, file, text) in REFUSING_OWNERS {
+            let src = std::fs::read_to_string(sema.join(file)).unwrap();
+            assert!(
+                src.contains(text),
+                "{area} {owner}: `{text}` is no longer in al-sema/src/{file}"
+            );
+        }
+    }
+
+    #[test]
+    fn compound_assignment_this_and_attributes_are_their_own_items() {
+        let ws = Workspace::load(
+            vec![app(
+                "w",
+                "w",
+                &[],
+                "w.al",
+                "codeunit 60000 W\n{\n    [Test]\n    procedure T()\n    var\n        i: Integer;\n    begin\n        i := 1;\n        i += 2;\n        this.T2();\n    end;\n\n    procedure T2()\n    begin\n    end;\n}\n",
+            )],
+            &Default::default(),
+        );
+        let members = al_sema::members::build(&ws);
+        let checked = al_sema::check::check(&ws, &members, &al_builtins::catalog::Catalog::load());
+        let occs = collect(&ws, &checked);
+        let attr: Vec<&Occ> = occs.iter().filter(|o| o.dim == Dim::Attribute).collect();
+        assert_eq!(attr.len(), 1, "the [Test] attribute");
+        assert!(attr[0].name == "Test" && attr[0].reached && attr[0].group == "procedure");
+        let names: Vec<String> = occs
+            .into_iter()
+            .filter(|o| o.dim == Dim::Syntax)
+            .map(|o| o.name)
+            .collect();
+        assert!(names.iter().any(|n| n == "AssignStmt"), "{names:?}");
+        assert!(names.iter().any(|n| n == "AssignStmt +="), "{names:?}");
+        assert!(names.iter().any(|n| n == "NameRef this"), "{names:?}");
+    }
+
+    #[test]
+    fn the_language_view_maps_groups_to_catalog_owners_with_state_and_microsoft_use() {
+        let lang = LanguageCatalog::parse(
+            r#"{"sources":[{"bc":27,"al_extension":"a"},{"bc":29,"al_extension":"b"}],"items":[
+{"area":"triggers","owner":"Field","name":"OnValidate","bc":[27,29]},
+{"area":"triggers","owner":"ReportDataItem","name":"OnPreDataItemX","bc":[29]},
+{"area":"triggers","owner":"Table","name":"OnNothing","bc":[27,29]},
+{"area":"properties","owner":"Field","name":"Caption","bc":[27,29]},
+{"area":"properties","owner":"PageField","name":"Editable","bc":[27,29]},
+{"area":"events","owner":"Table","name":"OnAfterInsertEvent","bc":[27,29]},
+{"area":"syntax","owner":"keyword","name":"if","bc":[27,29]},
+{"area":"syntax","owner":"keyword","name":"else","bc":[27,29]},
+{"area":"datatypes","name":"Integer","bc":[27,29]}
+]}"#,
+        )
+        .unwrap();
+        let item = |dim, group: &str, name: &str, site: Option<usize>, ms| Item {
+            dim,
+            group: group.into(),
+            name: name.into(),
+            ms_uses: ms,
+            corpus_uses: usize::from(site.is_some()),
+            site: site.map(|l| ("a.al".to_string(), l)),
+            runtime_reads: false,
+        };
+        let items = vec![
+            item(Dim::Trigger, "table/field", "OnValidate", Some(9), 3),
+            item(Dim::Trigger, "tableextension/field", "OnValidate", Some(4), 2),
+            item(Dim::Property, "pageextension/field", "editable", None, 5),
+            item(Dim::Event, "table", "OnAfterInsertEvent", Some(1), 0),
+            item(Dim::Syntax, "statement", "IfStmt", Some(7), 1),
+        ];
+        let known = Known {
+            strings: ["onvalidate".to_string()].into_iter().collect(),
+            ..Default::default()
+        };
+        let v = language_view(&lang, &items, &known);
+        let get = |n: &str| v.items.iter().find(|i| i.name == n).unwrap();
+        assert_eq!(
+            get("OnValidate").site,
+            Some(("a.al".into(), 4)),
+            "first site over both groups"
+        );
+        assert_eq!(get("OnValidate").ms_uses, 5);
+        assert_eq!(get("OnValidate").state, State::Implemented);
+        assert_eq!(
+            get("OnPreDataItemX").state,
+            State::Refused,
+            "report data items refuse unknown triggers"
+        );
+        assert_eq!(get("OnNothing").state, State::Unknown);
+        assert_eq!(get("Editable").ms_uses, 5);
+        assert!(get("Editable").site.is_none());
+        assert!(get("OnAfterInsertEvent").site.is_some());
+        assert_eq!(get("if").site, Some(("a.al".into(), 7)));
+        assert_eq!(v.presentation, 1, "Caption is left out");
+        assert_eq!(v.no_item, vec!["else".to_string()]);
+        assert_eq!(v.not_measured, vec![("datatypes".to_string(), 1)]);
+        let mut c = BehaviorCoverage {
+            corpus_commit: "abc".into(),
+            items,
+            errors: vec![],
+            language: Some(v),
+        };
+        let md = to_markdown(&c);
+        assert!(
+            md.contains("## Language catalog (AL language server, BC 27, 29)"),
+            "{md}"
+        );
+        assert!(
+            md.contains("| triggers | 3 | 1 | 33.3% | 1 | 33.3% | 1 | 1 | 0 |"),
+            "{md}"
+        );
+        assert!(
+            md.contains("- **ReportDataItem** (1 of 1): `OnPreDataItemX` refused, BC 29"),
+            "{md}"
+        );
+        c.language = None;
+        assert!(!to_markdown(&c).contains("Language catalog"));
     }
 }

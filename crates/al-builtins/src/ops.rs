@@ -280,26 +280,7 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
         // Format gives it (corpus types/lt-filter-enum-relation-duration-guid/E_Guid.al: Guid_To_Text40_Text_Code40).
         (Value::Guid(g), T::Text(max)) => Value::Text(fit(crate::format::format_guid(&g), *max)?.into()),
         (Value::Guid(g), T::Code(max)) => Value::Code(fit(crate::format::format_guid(&g), *max)?.into()),
-        // A Text of digits converts into an Integer or BigInteger where a Variant meets a number (a Get key).
-        // A Text of a plain decimal number into a Decimal where a Variant meets a number: Library - Variable Storage's
-        // DequeueDecimal returns what a test page handler enqueued as the control's text (`-111.69`). Not pinned by the
-        // corpus, registry entry text-to-decimal-from-variant. Anything but sign, digits and one point stays refused.
-        (Value::Text(s) | Value::Code(s), T::Decimal)
-            if {
-                let d = s.trim();
-                let body = d.strip_prefix(['-', '+']).unwrap_or(d);
-                body.bytes().filter(|b| *b == b'.').count() <= 1
-                    && body.bytes().any(|b| b.is_ascii_digit())
-                    && body.bytes().all(|b| b.is_ascii_digit() || b == b'.')
-            } =>
-        {
-            let d: rust_decimal::Decimal = s
-                .trim()
-                .parse()
-                .map_err(|_| Signal::Unsupported(format!("text `{s}` into a Decimal (out of range)")))?;
-            crate::assumptions::assume(crate::assumptions::Assumption::TextToDecimalFromVariant);
-            Value::Decimal(d)
-        }
+        // A Text into a Decimal (a Variant meets a number): pinned, see `convert_rare`.
         // Not pinned by the corpus: Microsoft's Incoming Document `Get(Format(Value))`, registry entry text-digits-to-integer.
         (Value::Text(s) | Value::Code(s), T::Integer | T::BigInteger)
             if {
@@ -469,6 +450,45 @@ pub fn arith(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
     arith_general(op, l, r)
 }
 
+/// The text of a Variant read as a Decimal: `Some(Ok)` for a pinned number form, `Some(Err)` for a pinned failure, `None`
+/// for a form no test pins.
+fn variant_text_decimal(text: &str) -> Option<Result<Decimal, ()>> {
+    let t = text.trim_matches(' ');
+    if t.is_empty() {
+        return Some(Err(()));
+    }
+    let digit = |b: u8| b.is_ascii_digit();
+    if !t.bytes().any(digit) && t.bytes().all(|b| b.is_ascii_alphabetic()) {
+        return Some(Err(()));
+    }
+    // `1e3`: digits, one e, digits.
+    if let Some((a, b)) = t.split_once(['e', 'E']) {
+        if !a.is_empty() && !b.is_empty() && a.bytes().all(digit) && b.bytes().all(digit) {
+            return Some(Err(()));
+        }
+    }
+    let (neg, body) = match t.strip_prefix('-') {
+        Some(r) => (true, r),
+        None => (false, t),
+    };
+    let (int, frac) = match body.split_once('.') {
+        Some((i, f)) => (i, Some(f)),
+        None => (body, None),
+    };
+    let int: String = int.chars().filter(|c| *c != ',').collect();
+    let int_ok = !int.is_empty() && int.bytes().all(digit);
+    let frac_ok = frac.is_none_or(|f| !f.is_empty() && f.bytes().all(digit));
+    if !int_ok || !frac_ok || int.len() > 17 || frac.is_some_and(|f| f.len() > 18) {
+        return None;
+    }
+    let text = format!(
+        "{}{int}{}",
+        if neg { "-" } else { "" },
+        frac.map_or(String::new(), |f| format!(".{f}"))
+    );
+    text.parse::<Decimal>().ok().map(Ok)
+}
+
 /// The conversions no hot path reaches: a Date into a DateTime, else the refusal.
 #[cold]
 #[inline(never)]
@@ -491,6 +511,21 @@ fn convert_rare(v: Value, t: &RtType) -> Result<Value, Signal> {
                 None => unsupported(format!("conversion of {} to {t}", v.describe(), t = t.describe())),
             }
         }
+        // A Variant holding true assigned to a Decimal is 1 (types/lt-variant-time-enum/VariantTextTimeEnumFilter.al:
+        // Variant_CodeAndOtherTypes_ToDecimal `boolean`); false is not pinned.
+        (Value::Boolean(true), RtType::Decimal) => Ok(Value::Decimal(Decimal::ONE)),
+        // A Variant holding a Text or Code assigned to a Decimal reads the text. Pinned: `-111.69`, `5`, `1,000.5`, `1,000`,
+        // `100,5` (commas drop out), ` 7 ` (blanks around) read; an empty text, letters only and `1e3` raise
+        // (types/lt-variant-time-enum/VariantTextTimeEnumFilter.al:Variant_Text_ToDecimal, types/lt-evaluate-decimal/
+        // EvaluateDecimal.al:Variant_HoldingText_ConvertsToDecimal and _HoldingCode_). Other forms are refused.
+        (Value::Text(s) | Value::Code(s), RtType::Decimal) => match variant_text_decimal(&s) {
+            Some(Ok(d)) => Ok(Value::Decimal(d)),
+            Some(Err(())) => raise(
+                "The expression Variant cannot be type-converted to a Decimal value.".to_string(),
+                "TypeConversion:Format",
+            ),
+            None => unsupported(format!("conversion of {} to {t}", v.describe(), t = t.describe())),
+        },
         // A Variant holding an Integer assigned to a Text variable raises TypeConversion (corpus
         // types/lt-variant/VaTCompare.al:Concat_After_Conversion, af117). The other numbers and a Code target are not pinned.
         // The same for an Enum (types/lt-filter-enum-relation-duration-guid/B_EnumOptionVariant.al:EnumVariant_To_Integer, `text_big`).

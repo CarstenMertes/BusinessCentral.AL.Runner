@@ -56,8 +56,8 @@ fn a_variant_holding_a_record_takes_a_record_of_another_table() {
     );
 }
 
-// errors/lt-ms-refusals-128/P128EvalRecordId.al pins a single-field key; the composite key is the registered assumption
-// evaluate-recordid-composite-key (Library - Error Message.LoadErrorMessages).
+// errors/lt-ms-refusals-128/P128EvalRecordId.al pins a single-field key, types/lt-evaluate-recordid/EvaluateRecordIdComposite.al a composite
+// one (Library - Error Message.LoadErrorMessages): fewer values than key fields are kept, more are rejected.
 #[test]
 fn evaluate_into_a_record_id_of_a_composite_key_reads_one_value_per_field() {
     all_pass(
@@ -66,7 +66,8 @@ fn evaluate_into_a_record_id_of_a_composite_key_reads_one_value_per_field() {
              if not Evaluate(Rid, Format(L.RecordId)) then Error('eval');
              if Format(Rid) <> Format(L.RecordId) then Error('text %1', Format(Rid));
              if Rid <> L.RecordId then Error('equal');
-             if Evaluate(Rid, 'MM Line: A,10') then Error('too few');
+             if not Evaluate(Rid, 'MM Line: A,10') then Error('too few');
+             if Evaluate(Rid, 'MM Line: A,10,X,Y') then Error('too many');
              if Evaluate(Rid, 'MM Line: A,x,X') then Error('bad integer');
          end;",
     );

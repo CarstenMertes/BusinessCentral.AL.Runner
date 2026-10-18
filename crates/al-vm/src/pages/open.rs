@@ -161,6 +161,7 @@ impl Session {
             s.focus = None;
             s.focus_in_row = false;
             s.errors = Vec::new();
+            s.blank_on_open = false;
             s.refused = false;
             s.pending = None;
             s.result = None;
@@ -766,25 +767,32 @@ impl Session {
                 self.land_on_new_line(st)?;
             }
             self.populate_expressions(st)
-        } else if self.is_blank_list_plus(st) {
-            // A ListPlus page without a repeater, opened for edit over an empty view, stands on a blank record
-            // that has run OnNewRecord and OnAfterGetCurrRecord. Not pinned by the corpus: Microsoft's Suggest
-            // Price Lines UT.T212_CopyLinesEnabledOnPurchPriceListPageIfFixedUpgradeCompleted needs it (the
-            // Purchase Price List sets PriceListIsEditable in OnAfterGetCurrRecord). Assumption
-            // listplus-blank-record-on-empty-view; a Card or a Document keeps opening without a row.
-            al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::ListPlusBlankRecordOnEmptyView);
+        } else if self.runs_on_blank_record(st) {
+            // A Card, a Document or a ListPlus page without a repeater, opened for edit over an empty view, runs OnNewRecord and
+            // OnAfterGetCurrRecord on a blank record after OnOpenPage (no OnAfterGetRecord), and shows no row afterwards: the controls
+            // read blank and are not editable (pages/lt-page-types-empty-table/PageTypesEmptyTable.al:Card_OpenEdit_EmptyTable,
+            // Document_OpenEdit_EmptyTable, ListPlus_OpenEdit_EmptyTable; the same pages opened with OpenView run OnOpenPage only,
+            // *_OpenView_EmptyTable).
             self.land_on_new_line(st)?;
+            {
+                let mut s = st.borrow_mut();
+                s.cursor = Cursor::None;
+                s.draft = false;
+                s.blank_on_open = true;
+            }
             self.populate_expressions(st)
         } else {
             self.populate_expressions(st)
         }
     }
 
-    /// A top-level ListPlus page with a source table, no repeater, opened for edit.
-    fn is_blank_list_plus(&self, st: &St) -> bool {
+    /// A top-level Card, Document or ListPlus page with a source table, no repeater, opened for edit.
+    fn runs_on_blank_record(&self, st: &St) -> bool {
         let object = st.borrow().object as usize;
-        self.engine.object_facts[object].page_type == Some(al_ir::PageType::ListPlus)
-            && st.borrow().mode == PageMode::Edit
+        matches!(
+            self.engine.object_facts[object].page_type,
+            Some(al_ir::PageType::Card | al_ir::PageType::Document | al_ir::PageType::ListPlus)
+        ) && st.borrow().mode == PageMode::Edit
             && st.borrow().host.is_none()
             && self.has_source(st)
             && !self.is_list(st)

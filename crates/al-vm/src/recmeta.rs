@@ -1329,29 +1329,60 @@ impl Session {
         )
     }
 
-    /// The primary key values of a composite key read from the text after the colon of `Evaluate` into a RecordId: the
-    /// values as Format writes them, split at the commas outside double quotes. Not pinned (assumption
-    /// evaluate-recordid-composite-key). `Ok(None)` where the text is no key of the table.
-    pub(crate) fn evaluate_composite_record_key(
+    /// The primary key values read from the text after the colon of `Evaluate` into a RecordId: the values as Format writes them,
+    /// split at the commas outside double quotes (a quoted value may hold `""` for a quote). Fewer values than the key has fields
+    /// give a shorter key, more are `Ok(None)` (types/lt-evaluate-recordid/EvaluateRecordIdComposite.al:Evaluate_WrongNumberOfValues
+    /// `tooFew`, `tooFew3`, `tooMany`, `tooMany1`; RoundTrip_KeyValueWithComma). Each value is read as Evaluate reads its field's
+    /// type; a value that is none raises that type's error (`badInteger`, `badEnum`, `badDate`, `codeTooLong`). A Code, Integer, Enum
+    /// and Date key field is pinned (RoundTrip_CodeCode, _EnumCode, _IntCodeCode, _DateCode); another type of a composite key is
+    /// refused, a one-field key of another type reads as Evaluate reads it (errors/lt-ms-refusals-128/P128EvalRecordId.al).
+    pub(crate) fn evaluate_record_key(
         &mut self,
         t: &TableDef,
         k: &str,
+        number: i64,
     ) -> Result<Option<Vec<Value>>, Signal> {
         let fields = &t.keys[0];
         let mut parts: Vec<String> = Vec::new();
         let mut rest = k;
         loop {
             if let Some(q) = rest.strip_prefix('"') {
-                let Some((v, tail)) = q.split_once('"') else {
-                    return Ok(None);
+                let mut value = String::new();
+                let mut chars = q.char_indices();
+                let tail = loop {
+                    match chars.next() {
+                        Some((_, '"')) => match chars.clone().next() {
+                            Some((_, '"')) => {
+                                chars.next();
+                                value.push('"');
+                            }
+                            Some((i, _)) => break &q[i..],
+                            None => break "",
+                        },
+                        Some((_, c)) => value.push(c),
+                        None => {
+                            return unsupported(
+                                "Evaluate into a RecordId of a key text with a quote that is not closed (not pinned)",
+                            );
+                        }
+                    }
                 };
-                parts.push(v.to_string());
+                parts.push(value);
                 match tail.strip_prefix(',') {
                     Some(more) => rest = more,
                     None if tail.is_empty() => break,
-                    None => return Ok(None),
+                    None => {
+                        return unsupported(
+                            "Evaluate into a RecordId of a key text with characters after a closing quote (not pinned)",
+                        );
+                    }
                 }
             } else {
+                if rest.is_empty() {
+                    return unsupported(
+                        "Evaluate into a RecordId of a key text with an empty value that is not quoted (not pinned)",
+                    );
+                }
                 match rest.split_once(',') {
                     Some((v, more)) => {
                         parts.push(v.to_string());
@@ -1364,17 +1395,33 @@ impl Session {
                 }
             }
         }
-        if parts.len() != fields.len() {
+        if parts.len() > fields.len() {
             return Ok(None);
         }
         let mut key = Vec::new();
         for (v, &p) in parts.iter().zip(fields) {
             let ty = &t.fields[p].ty;
             match ty {
-                RtType::Code(_) | RtType::Text(_) => key.push(ops::convert(Value::Text(v.as_str().into()), ty)?),
-                RtType::Integer | RtType::Enum(..) => match self.parse_filter_text(v, ty) {
-                    Ok(al_builtins::filter::FilterExpr::Eq(x)) if !v.is_empty() => key.push(x),
-                    _ => return Ok(None),
+                RtType::Code(_) | RtType::Integer | RtType::Enum(..) | RtType::Date => {
+                    // The error of a value that is none is raised whether the result is used or not; the caller decides.
+                    // A Code value with blanks around it is read trimmed. Not pinned: assumption evaluate-recordid-composite-key
+                    // (Tests-Rapid Start Config. Package Record IDs).
+                    let v = if matches!(ty, RtType::Code(_)) && v.trim() != v.as_str() {
+                        al_builtins::assumptions::assume(
+                            al_builtins::assumptions::Assumption::EvaluateRecordIdCompositeKey,
+                        );
+                        v.trim()
+                    } else {
+                        v.as_str()
+                    };
+                    let used = std::mem::replace(&mut self.ret_used, false);
+                    let r = al_builtins::evaluate::evaluate_key_part(self, ty, v, number);
+                    self.ret_used = used;
+                    key.push(r?);
+                }
+                _ if fields.len() == 1 => match al_builtins::evaluate::evaluate_typed(self, ty, v, number)? {
+                    Some(x) => key.push(x),
+                    None => return Ok(None),
                 },
                 _ => {
                     return unsupported(format!(
@@ -1385,7 +1432,6 @@ impl Session {
                 }
             }
         }
-        al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::EvaluateRecordIdCompositeKey);
         Ok(Some(key))
     }
 

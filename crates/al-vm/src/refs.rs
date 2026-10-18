@@ -216,22 +216,21 @@ impl Session {
             None => Vec::new(),
             Some(k) => {
                 let k = k.strip_prefix(' ').unwrap_or(k);
-                if schema.keys[0].len() > 1 {
-                    // Composite key: the values as Format writes them (assumption evaluate-recordid-composite-key).
-                    let Some(t) = self.engine.tables.get(object).cloned().flatten() else {
-                        return unsupported("Evaluate into a RecordId of a table without a compiled schema");
-                    };
-                    match self.evaluate_composite_record_key(&t, k)? {
-                        Some(v) => v,
-                        None => return Ok(None),
+                let Some(t) = self.engine.tables.get(object).cloned().flatten() else {
+                    return unsupported("Evaluate into a RecordId of a table without a compiled schema");
+                };
+                // No values after the colon: a RecordId with no key (types/lt-evaluate-recordid/EvaluateRecordIdComposite.al:
+                // Evaluate_WrongNumberOfValues `noValues`; pinned for a table with a two-field key only).
+                if k.is_empty() {
+                    if schema.keys[0].len() == 1 {
+                        return unsupported(
+                            "Evaluate into a RecordId with an empty key text of a one-field key (not pinned)",
+                        );
                     }
+                    Vec::new()
                 } else {
-                    let ty = schema.fields[schema.keys[0][0]].ty.clone();
-                    if k.is_empty() {
-                        return unsupported("Evaluate into a RecordId with an empty key text (not pinned)");
-                    }
-                    match al_builtins::evaluate::evaluate_typed(self, &ty, k, number)? {
-                        Some(v) => vec![v],
+                    match self.evaluate_record_key(&t, k, number)? {
+                        Some(v) => v,
                         None => return Ok(None),
                     }
                 }

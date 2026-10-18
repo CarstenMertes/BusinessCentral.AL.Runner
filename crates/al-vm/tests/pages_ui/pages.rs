@@ -890,9 +890,11 @@ fn ok_closes_with_the_query_close_page_then_the_close_trigger() {
         ),
         "F",
     );
+    // The second OpenEdit sees an empty view (the asserterror before it rolled the seeded row back), so the page runs OnNewRecord on a
+    // blank record (pages/lt-page-types-empty-table/PageTypesEmptyTable.al:Card_OpenEdit_EmptyTable).
     assert_eq!(
         text(r),
-        "saved|mod:>saved;qcp:OK;close;The TestPage is not open.|The TestPage is not open.|The built-in action = Cancel is not found on the page.|qcp:OK;close;"
+        "saved|mod:>saved;qcp:OK;close;The TestPage is not open.|The TestPage is not open.|The built-in action = Cancel is not found on the page.|new:Yes,x=;qcp:OK;close;"
     );
 }
 
@@ -1091,9 +1093,9 @@ fn find_first_field_takes_a_bare_control_name() {
     assert_eq!(text(r), "B");
 }
 
-// Microsoft's Payment Export Mgt Unit Test.FilterByHasPaymentExportError needs a page field over a source field
-// that says `Editable = false` to read No (the field is also a FlowField). Unprobed: assumption
-// page-field-follows-source-field-editable-false.
+// pages/lt-page-field-editable-source/PageFieldEditableSource.al:Card_OpenEdit_FieldEditable `lockedNoProp`: a page field over a
+// stored source field with `Editable = false` and no Editable of its own reads No. A FlowField is the assumption
+// page-field-follows-source-field-editable-false (Microsoft's Payment Export Mgt Unit Test.FilterByHasPaymentExportError).
 #[test]
 fn a_page_field_over_a_source_field_with_editable_false_is_not_editable() {
     let r = run(
@@ -1107,10 +1109,9 @@ fn a_page_field_over_a_source_field_with_editable_false_is_not_editable() {
     assert_eq!(text(r), "YesNoYes");
 }
 
-// Microsoft's Suggest Price Lines UT.T212_CopyLinesEnabledOnPurchPriceListPageIfFixedUpgradeCompleted opens the
-// Purchase Price List (a ListPlus page without a repeater) over an empty table and needs its OnAfterGetCurrRecord
-// to have run (PriceListIsEditable). Unprobed: assumption listplus-blank-record-on-empty-view. A Card or a
-// Document over an empty view stays as it was (only OnOpenPage runs).
+// pages/lt-page-types-empty-table/PageTypesEmptyTable.al:ListPlus_OpenEdit_EmptyTable (also Card and Document): a page without a
+// repeater opened for edit over an empty view runs OnNewRecord and OnAfterGetCurrRecord on a blank record after OnOpenPage.
+// Microsoft's Suggest Price Lines UT.T212_CopyLinesEnabledOnPurchPriceListPageIfFixedUpgradeCompleted needs it.
 #[test]
 fn a_list_plus_page_over_an_empty_view_runs_new_record_and_get_curr_record() {
     let r = run(

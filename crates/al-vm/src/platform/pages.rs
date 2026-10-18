@@ -188,6 +188,41 @@ pub(super) fn page_metadata_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
     out
 }
 
+/// A property of a page as the page and its extensions leave it: an extension's value wins over the
+/// base page's (corpus pageext/lt-z-page-ext-props/ZPageExtProps.al:629, 685-1110). Two extensions that set
+/// the same property are not pinned.
+fn effective_prop<'a>(c: &'a Catalog, o: &'a Object, name: &str) -> Result<Option<&'a str>, String> {
+    let own = o.id.filter(|_| o.kind == al_ir::ObjKind::Page);
+    let from_extensions: Vec<&str> = c
+        .objects
+        .iter()
+        .filter(|e| e.kind == al_ir::ObjKind::PageExtension && e.extends_id.is_some() && e.extends_id == own)
+        .filter_map(|e| prop(e, name))
+        .collect();
+    match from_extensions.as_slice() {
+        [] => Ok(prop(o, name)),
+        [one] => Ok(Some(one)),
+        _ => Err(format!(
+            "page '{}': {} page extensions set {name} (which one wins is not pinned)",
+            o.name,
+            from_extensions.len()
+        )),
+    }
+}
+
+/// InsertAllowed, ModifyAllowed or DeleteAllowed as Page Metadata reports it: true unless the page or its
+/// extension declares false (ZPageExtProps.al:685-1110). A value that is not a literal is not pinned.
+fn allowed(c: &Catalog, o: &Object, name: &str) -> Result<bool, String> {
+    match effective_prop(c, o, name)?.map(str::to_ascii_lowercase).as_deref() {
+        None | Some("true") => Ok(true),
+        Some("false") => Ok(false),
+        Some(v) => Err(format!(
+            "page '{}': {name} `{v}` is not a literal true or false (what the column reports is not pinned)",
+            o.name
+        )),
+    }
+}
+
 fn page_metadata_row(c: &Catalog, o: &Object, t: &TableDef, mut r: Row) -> Result<Row, String> {
     let page_type = match prop(o, "PageType") {
         None => 0,
@@ -217,7 +252,7 @@ fn page_metadata_row(c: &Catalog, o: &Object, t: &TableDef, mut r: Row) -> Resul
             .take(80)
             .collect(),
     );
-    r[pos(t, 6)] = Value::Integer(match prop(o, "CardPageID") {
+    r[pos(t, 6)] = Value::Integer(match effective_prop(c, o, "CardPageID")? {
         None => 0,
         Some(v) => c
             .id_of(al_ir::ObjKind::Page, v)
@@ -245,6 +280,9 @@ fn page_metadata_row(c: &Catalog, o: &Object, t: &TableDef, mut r: Row) -> Resul
     r[pos(t, 13)] = Value::Text(text_prop(o, "EntityName", 250).into());
     r[pos(t, 14)] = Value::Integer(src_id as i32);
     r[pos(t, 15)] = Value::Text(view_text(o, src, c.objects)?.into());
+    for (id, name) in [(16, "InsertAllowed"), (17, "ModifyAllowed"), (18, "DeleteAllowed")] {
+        r[pos(t, id)] = Value::Boolean(allowed(c, o, name)?);
+    }
     r[pos(t, 19)] = Value::Boolean(has_source && lit_bool(o, "DelayedInsert", false));
     r[pos(t, 20)] = Value::Boolean(has_source && lit_bool(o, "ShowFilter", true));
     r[pos(t, 21)] = Value::Boolean(has_source && lit_bool(o, "MultipleNewLines", false));

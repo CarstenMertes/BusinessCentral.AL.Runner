@@ -5,7 +5,7 @@
 //! real clock is a [`Clock`] the front end (`al-test-cli`) supplies.
 //!
 //! The defaults mirror AL Runner v2 (ADR-013, decision 9): one fixed test user, tenant and
-//! session, and a frozen clock for a run that wants to be deterministic.
+//! session, and a fixed-start clock for a run that wants to be deterministic (the session steps it, ADR-045).
 //!
 //! # Time model
 //!

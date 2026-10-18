@@ -2025,7 +2025,7 @@
           "ms_uses": 748,
           "name": "DeleteAllowed",
           "pinned": true,
-          "runtime_reads": false,
+          "runtime_reads": true,
           "site": "handlers/TprlHeadList.Page.al:13"
         },
         {
@@ -5110,6 +5110,15 @@
           "corpus_uses": 2,
           "group": "xmlport",
           "ms_uses": 6,
+          "name": "Namespaces",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "xmlport/lt-xmlport-query-datatransfer/XmlPortFixtures.al:164"
+        },
+        {
+          "corpus_uses": 2,
+          "group": "xmlport",
+          "ms_uses": 6,
           "name": "UseDefaultNamespace",
           "pinned": true,
           "runtime_reads": true,
@@ -5168,15 +5177,6 @@
           "pinned": true,
           "runtime_reads": false,
           "site": "pages/lt-report-page-properties/06-xmlport-dnsfalse.al:11"
-        },
-        {
-          "corpus_uses": 2,
-          "group": "xmlport",
-          "ms_uses": 6,
-          "name": "Namespaces",
-          "pinned": true,
-          "runtime_reads": false,
-          "site": "xmlport/lt-xmlport-query-datatransfer/XmlPortFixtures.al:164"
         },
         {
           "corpus_uses": 0,
@@ -11392,6 +11392,15 @@
           "corpus_uses": 1,
           "group": "pagecustomization",
           "ms_uses": 0,
+          "name": "DeleteAllowed",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "pages/lt-z-page-customization/ZPageCustomization.al:79"
+        },
+        {
+          "corpus_uses": 1,
+          "group": "pagecustomization",
+          "ms_uses": 0,
           "name": "InsertAllowed",
           "pinned": true,
           "runtime_reads": true,
@@ -11450,6 +11459,15 @@
           "pinned": true,
           "runtime_reads": true,
           "site": "pageext/lt-z-page-ext-props/ZPageExtProps.al:50"
+        },
+        {
+          "corpus_uses": 3,
+          "group": "pageextension",
+          "ms_uses": 0,
+          "name": "DeleteAllowed",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "pageext/lt-z-page-ext-props/ZPageExtProps.al:134"
         },
         {
           "corpus_uses": 3,
@@ -11704,6 +11722,15 @@
           "site": "report/lt-y-request-page/YRequestPage.al:186"
         },
         {
+          "corpus_uses": 2,
+          "group": "report/requestpage",
+          "ms_uses": 0,
+          "name": "DeleteAllowed",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "report/lt-y-request-page/YRequestPage.al:129"
+        },
+        {
           "corpus_uses": 1,
           "group": "report/requestpage",
           "ms_uses": 0,
@@ -11945,6 +11972,15 @@
           "pinned": true,
           "runtime_reads": true,
           "site": "xmlport/lt-y-xmlport-props/YXmlPortProps.al:193"
+        },
+        {
+          "corpus_uses": 1,
+          "group": "xmlport",
+          "ms_uses": 0,
+          "name": "InlineSchema",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "xmlport/lt-y-xmlport-props/YXmlPortProps.al:52"
         },
         {
           "corpus_uses": 12,
@@ -12301,15 +12337,6 @@
           "corpus_uses": 1,
           "group": "pagecustomization",
           "ms_uses": 0,
-          "name": "DeleteAllowed",
-          "pinned": true,
-          "runtime_reads": false,
-          "site": "pages/lt-z-page-customization/ZPageCustomization.al:79"
-        },
-        {
-          "corpus_uses": 1,
-          "group": "pagecustomization",
-          "ms_uses": 0,
           "name": "PromotedActionCategories",
           "pinned": true,
           "runtime_reads": false,
@@ -12341,15 +12368,6 @@
           "pinned": true,
           "runtime_reads": false,
           "site": "pages/lt-z-page-customization/ZPageCustomization.al:156"
-        },
-        {
-          "corpus_uses": 3,
-          "group": "pageextension",
-          "ms_uses": 0,
-          "name": "DeleteAllowed",
-          "pinned": true,
-          "runtime_reads": false,
-          "site": "pageext/lt-z-page-ext-props/ZPageExtProps.al:134"
         },
         {
           "corpus_uses": 1,
@@ -12595,15 +12613,6 @@
           "site": "report/lt-y-report-props/YReports.al:576"
         },
         {
-          "corpus_uses": 2,
-          "group": "report/requestpage",
-          "ms_uses": 0,
-          "name": "DeleteAllowed",
-          "pinned": true,
-          "runtime_reads": false,
-          "site": "report/lt-y-request-page/YRequestPage.al:129"
-        },
-        {
           "corpus_uses": 1,
           "group": "report/requestpage",
           "ms_uses": 0,
@@ -12638,15 +12647,6 @@
           "pinned": true,
           "runtime_reads": false,
           "site": "handlers/ProbeObjectMetadataTables.al:162"
-        },
-        {
-          "corpus_uses": 1,
-          "group": "xmlport",
-          "ms_uses": 0,
-          "name": "InlineSchema",
-          "pinned": true,
-          "runtime_reads": false,
-          "site": "xmlport/lt-y-xmlport-props/YXmlPortProps.al:52"
         },
         {
           "corpus_uses": 1,
@@ -19446,7 +19446,7 @@
         "pinned": true,
         "scope": "",
         "site": "handlers/TprlHeadList.Page.al:13",
-        "state": "unknown"
+        "state": "implemented"
       },
       {
         "area": "properties",
@@ -21276,7 +21276,7 @@
         "pinned": true,
         "scope": "",
         "site": "pages/lt-z-page-customization/ZPageCustomization.al:79",
-        "state": "unknown"
+        "state": "implemented"
       },
       {
         "area": "properties",
@@ -21456,7 +21456,7 @@
         "pinned": true,
         "scope": "",
         "site": "pageext/lt-z-page-ext-props/ZPageExtProps.al:134",
-        "state": "unknown"
+        "state": "implemented"
       },
       {
         "area": "properties",
@@ -26276,7 +26276,7 @@
         "pinned": true,
         "scope": "",
         "site": "report/lt-y-request-page/YRequestPage.al:129",
-        "state": "refused"
+        "state": "implemented"
       },
       {
         "area": "properties",
@@ -27116,7 +27116,7 @@
         "pinned": true,
         "scope": "",
         "site": "xmlport/lt-y-xmlport-props/YXmlPortProps.al:52",
-        "state": "refused"
+        "state": "implemented"
       },
       {
         "area": "properties",
@@ -27131,7 +27131,7 @@
         "pinned": true,
         "scope": "",
         "site": "xmlport/lt-xmlport-query-datatransfer/XmlPortFixtures.al:164",
-        "state": "refused"
+        "state": "implemented"
       },
       {
         "area": "properties",

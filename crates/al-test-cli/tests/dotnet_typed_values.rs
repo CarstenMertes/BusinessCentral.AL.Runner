@@ -346,7 +346,7 @@ codeunit 50100 C
     begin
         Stamp := Stamp.Now;
         Shifted := Stamp.LocalDateTime - Stamp.Offset;
-        exit(Shifted = CurrentDateTime());
+        exit(CurrentDateTime() - Shifted = 1);
     end;
 
     procedure DateTimeNowIsTheClock(): Boolean
@@ -355,7 +355,7 @@ codeunit 50100 C
         Value: DateTime;
     begin
         Value := When.Now;
-        exit(Value = CurrentDateTime());
+        exit(CurrentDateTime() - Value = 1);
     end;
 
     procedure DateTimeTodayIsToday(): Boolean

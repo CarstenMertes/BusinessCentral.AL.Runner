@@ -40,6 +40,11 @@ pub struct Layout {
     pub table_separator: Option<String>,
     pub text_encoding_declared: bool,
     pub utf8: bool,
+    pub xml_utf8: bool,
+    pub namespaces: Vec<(String, String)>,
+    pub inline_schema: bool,
+    /// `Encoding` as written.
+    pub encoding: Option<String>,
     pub format_evaluate_xml: bool,
     /// `FormatEvaluate` as declared.
     pub format_evaluate_declared: Option<bool>,
@@ -100,7 +105,9 @@ fn allowed_properties(kind: ir::XmlNodeKind) -> &'static [&'static str] {
             "autoreplace",
             "usetemporary",
         ],
-        ir::XmlNodeKind::Field => &["xmlname", "minoccurs", "width"],
+        ir::XmlNodeKind::Field => &["xmlname", "minoccurs", "width", "namespaceprefix", "autocalcfield"],
+        ir::XmlNodeKind::FieldAttr => &["xmlname", "namespaceprefix", "autocalcfield"],
+        ir::XmlNodeKind::TextAttr => &["xmlname", "namespaceprefix", "width"],
         _ => &["xmlname"],
     }
 }
@@ -117,6 +124,10 @@ pub fn layout(obj: &ast::Object) -> Layout {
         table_separator: None,
         text_encoding_declared: false,
         utf8: false,
+        xml_utf8: false,
+        namespaces: Vec::new(),
+        inline_schema: false,
+        encoding: None,
         format_evaluate_xml: false,
         format_evaluate_declared: None,
         reasons: Vec::new(),
@@ -149,6 +160,32 @@ pub fn layout(obj: &ast::Object) -> Layout {
                     value.trim()
                 ));
             }
+            // xmlport/lt-af-xmlport/AfXmlPortEncoding.al: UTF8 and UTF16 on a Format = Xml port; any other value is refused below.
+            "encoding" => out.encoding = Some(value.trim().to_string()),
+            // xmlport/lt-y-xmlport-props/YXmlPortProps.al:52, 563: true writes the schema inside the root (the export refuses shapes it does not pin).
+            "inlineschema" => match value.trim().to_ascii_lowercase().as_str() {
+                "true" => out.inline_schema = true,
+                "false" => {}
+                other => out
+                    .run_reasons
+                    .push(format!("xmlport property inlineschema = {other} is not pinned")),
+            },
+            // xmlport/lt-y-xmlport-props/YXmlPortProps.al:213: one `prefix = 'uri'` pair.
+            "namespaces" => match crate::scan::split_double(&value, ',').as_slice() {
+                [one] => match one.split_once('=') {
+                    Some((prefix, uri)) if !prefix.trim().is_empty() && uri.trim().starts_with('\'') => {
+                        out.namespaces
+                            .push((crate::scan::unquote_xmlport(prefix), crate::scan::unquote_xmlport(uri)));
+                    }
+                    _ => out.run_reasons.push(format!(
+                        "xmlport namespaces `{}` is not a single prefix = 'uri' pair (not pinned)",
+                        value.trim()
+                    )),
+                },
+                _ => out
+                    .run_reasons
+                    .push("xmlport namespaces with several entries (not pinned)".into()),
+            },
             "fieldseparator" => out.field_separator = Some(crate::scan::unquote_xmlport(&value)),
             "fielddelimiter" => out.field_delimiter = Some(crate::scan::unquote_xmlport(&value)),
             "recordseparator" => out.record_separator = Some(crate::scan::unquote_xmlport(&value)),
@@ -172,6 +209,15 @@ pub fn layout(obj: &ast::Object) -> Layout {
             other => out
                 .run_reasons
                 .push(format!("xmlport property {other} is not supported yet")),
+        }
+    }
+    if let Some(enc) = out.encoding.clone() {
+        match enc.to_ascii_lowercase().as_str() {
+            "utf8" if out.format == ir::XmlFormat::Xml => out.xml_utf8 = true,
+            "utf16" if out.format == ir::XmlFormat::Xml => {}
+            _ => out.run_reasons.push(format!(
+                "xmlport property encoding = {enc} is not pinned (only UTF8 and UTF16 on a Format = Xml port are)"
+            )),
         }
     }
     for top in obj.sections() {
@@ -343,6 +389,10 @@ pub fn build(cx: &Context, mut reasons: Vec<String>) -> ir::XmlPort {
                 .property(i, "MinOccurs")
                 .is_some_and(|v| v.trim().eq_ignore_ascii_case("zero")),
             width: layout.property(i, "Width").and_then(|v| v.trim().parse().ok()),
+            ns_prefix: layout
+                .property(i, "NamespacePrefix")
+                .map(|v| crate::scan::unquote_xmlport(&v)),
+            auto_calc: layout.property(i, "AutoCalcField").and_then(|v| bool_prop(&v)),
             triggers,
         };
         match kind {
@@ -475,6 +525,28 @@ pub fn build(cx: &Context, mut reasons: Vec<String>) -> ir::XmlPort {
         nodes.push(node);
     }
     reasons.extend(layout.reasons.iter().cloned());
+    // Pinned: one declared namespace that a field element of the port uses. A prefix that is not declared, a namespace nobody
+    // uses and a prefix on an attribute alone are not (YXmlPortProps.al:NodeProperties_Export_NamesPrefixesAutoCalc).
+    {
+        let used: Vec<&str> = nodes.iter().filter_map(|n| n.ns_prefix.as_deref()).collect();
+        for (prefix, _) in &layout.namespaces {
+            if !nodes
+                .iter()
+                .any(|n| n.kind == ir::XmlNodeKind::Field && n.ns_prefix.as_deref() == Some(prefix.as_str()))
+            {
+                run_reasons.push(format!(
+                    "xmlport namespace `{prefix}` that no field element uses (not pinned)"
+                ));
+            }
+        }
+        for u in used {
+            if !layout.namespaces.iter().any(|(p, _)| p == u) {
+                run_reasons.push(format!(
+                    "NamespacePrefix `{u}` is not a declared namespace (not pinned)"
+                ));
+            }
+        }
+    }
     ir::XmlPort {
         direction: layout.direction,
         format: layout.format,
@@ -484,6 +556,9 @@ pub fn build(cx: &Context, mut reasons: Vec<String>) -> ir::XmlPort {
         table_separator: layout.table_separator.clone(),
         text_encoding_declared: layout.text_encoding_declared,
         utf8: layout.utf8,
+        xml_utf8: layout.xml_utf8,
+        namespaces: layout.namespaces.clone(),
+        inline_schema: layout.inline_schema,
         format_evaluate_xml: layout.format_evaluate_xml,
         format_evaluate_declared: layout.format_evaluate_declared.is_some(),
         nodes,

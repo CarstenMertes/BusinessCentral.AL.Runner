@@ -560,6 +560,7 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("Report.Preview#1", vm_only),
     ("RequestPage.Update#1", vm_only),
     ("RequestPage.Caption#1", vm_only),
+    ("Report.DefaultLayout#2", vm_only),
     ("Report.Language#1", vm_only),
     ("Report.FormatRegion#1", vm_only),
     // SaveAs with a stream runs the report and writes its dataset (al-vm reports.rs); SaveAs to a file

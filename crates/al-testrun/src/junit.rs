@@ -33,6 +33,9 @@ pub struct Case<'a> {
     pub stack: String,
     /// Microsoft turns this test off in its own CI (BCApps `src/DisabledTests`). Written as a property in the Runner dialect.
     pub disabled: bool,
+    /// Further properties of the test case, written in the Runner dialect after the others, also for a test that was not
+    /// run (an impact run's change class, ADR-043 step 3).
+    pub properties: Vec<(String, String)>,
 }
 
 /// The tests of one test codeunit.
@@ -135,6 +138,13 @@ pub fn write_with_baseline(
             if c.disabled && dialect == Dialect::Runner {
                 prop_list.push_str("<property name=\"disabled_by_microsoft\" value=\"1\" />");
             }
+            let mut extra = String::new();
+            if dialect == Dialect::Runner {
+                for (name, value) in &c.properties {
+                    extra.push_str(&format!("<property name=\"{}\" value=\"{}\" />", esc(name), esc(value)));
+                }
+            }
+            prop_list.push_str(&extra);
             let props = if prop_list.is_empty() {
                 String::new()
             } else {
@@ -157,10 +167,15 @@ pub fn write_with_baseline(
                 )),
                 (_, Outcome::NotRun(m)) => {
                     // A test that was not run has no assumptions; only the disabled mark can be a property of it.
-                    let np = if c.disabled && dialect == Dialect::Runner {
-                        "<properties><property name=\"disabled_by_microsoft\" value=\"1\" /></properties>"
+                    let mut np_list = String::new();
+                    if c.disabled && dialect == Dialect::Runner {
+                        np_list.push_str("<property name=\"disabled_by_microsoft\" value=\"1\" />");
+                    }
+                    np_list.push_str(&extra);
+                    let np = if np_list.is_empty() {
+                        String::new()
                     } else {
-                        ""
+                        format!("<properties>{np_list}</properties>")
                     };
                     s.push_str(&format!("{head}>{np}<skipped message=\"{}\" /></testcase>\n", esc(m)))
                 }
@@ -396,6 +411,30 @@ mod tests {
     }
 
     #[test]
+    fn further_properties_follow_the_others_also_for_a_test_that_was_not_run() {
+        let (pass, not_run) = (Outcome::Pass, Outcome::NotRun("why".into()));
+        let case = |name: &'static str, outcome| Case {
+            class: "C".into(),
+            name,
+            time: 0.0,
+            outcome,
+            assumptions: &[],
+            stack: String::new(),
+            disabled: true,
+            properties: vec![("impact_class".into(), "newly <refused>".into())],
+        };
+        let suites = [Suite {
+            name: "C".into(),
+            codeunit: 1,
+            cases: vec![case("P", &pass), case("N", &not_run)],
+        }];
+        let x = write(&suites, Dialect::Runner, None, 0.0);
+        let props = "<properties><property name=\"disabled_by_microsoft\" value=\"1\" /><property name=\"impact_class\" value=\"newly &lt;refused&gt;\" /></properties>";
+        assert_eq!(x.matches(props).count(), 2, "{x}");
+        assert!(!write(&suites, Dialect::Oracle, None, 0.0).contains("impact_class"));
+    }
+
+    #[test]
     fn both_dialects_are_what_the_writers_they_replaced_wrote() {
         let texts = [
             "",
@@ -435,6 +474,7 @@ mod tests {
                             texts[(k + 2 * i) % texts.len()].to_string()
                         },
                         disabled: false,
+                        properties: Vec::new(),
                     })
                     .collect(),
             });

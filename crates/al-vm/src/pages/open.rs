@@ -586,7 +586,8 @@ impl Session {
             self.tx.immediate_errors = false;
             inserted?;
         }
-        match self.save_row(st) {
+        let save = self.close_denied_modify(st).and_then(|()| self.save_row(st));
+        match save {
             Err(Signal::Error(e)) if swallow_save_errors => {
                 let key_ctl = self.key_control(st);
                 st.borrow_mut().errors.push((key_ctl, e.message));
@@ -743,7 +744,7 @@ impl Session {
             // LookupMode(true) call does that: Page.RunModal(id, Rec) keeps the line (:180).
             && !(st.borrow().lookup_set && st.borrow().lookup && self.is_list_page(st))
             && !prop_false("Editable")
-            && !prop_false("InsertAllowed"))
+            && !flag_denied(&engine, object, "InsertAllowed")?)
     }
 
     // ---- rows ---------------------------------------------------------------------------

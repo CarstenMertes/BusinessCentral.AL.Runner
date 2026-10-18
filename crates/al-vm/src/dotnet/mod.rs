@@ -608,8 +608,16 @@ impl Session {
         f: &mut Frame,
     ) -> Option<Result<Value, Signal>> {
         let is = |m: &str| member.eq_ignore_ascii_case(m);
+        // A read of the .NET clock moves the one session clock on, as `CurrentDateTime` does (ADR-045).
+        let reads_clock = matches!(d.name.as_str(), "System.DateTime" | "System.DateTimeOffset")
+            && (is("Now") || is("UtcNow") || is("Today"));
+        let at = if reads_clock {
+            self.read_clock_millis()
+        } else {
+            self.now_millis()
+        };
         let ticks = || -> i64 {
-            let Value::DateTime(v) = crate::hostvalues::datetime_of_unix_millis(self.now_millis()) else {
+            let Value::DateTime(v) = crate::hostvalues::datetime_of_unix_millis(at) else {
                 unreachable!("datetime_of_unix_millis builds a DateTime")
             };
             (v - 1) * TICKS_PER_MS

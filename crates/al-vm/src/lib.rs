@@ -77,6 +77,9 @@ pub struct Engine {
     /// Table objects whose rows the install baseline should have created and did not (ADR-013
     /// decision 5): a `Get` that finds nothing in dependency code is not BC's answer for them.
     pub unseeded: std::collections::HashSet<usize>,
+    /// Stored platform tables whose fresh-tenant rows nothing pins (`al_builtins::platform::UNSEEDED_ROWS`):
+    /// unseeded for the tests, but not for install code, which writes them.
+    pub platform_unseeded: std::collections::HashSet<usize>,
     /// Rows of a restored company, read when a session first touches a table (ADR-020). `None`: a
     /// run without test data.
     pub test_data: Option<al_host::testdata::TestData>,
@@ -244,6 +247,17 @@ impl Engine {
                 }
             }
         }
+        let unseeded = program
+            .objects
+            .iter()
+            .enumerate()
+            .filter(|(_, o)| {
+                o.kind == ir::ObjKind::Table
+                    && o.id
+                        .is_some_and(|id| al_builtins::platform::UNSEEDED_ROWS.contains(&id))
+            })
+            .map(|(i, _)| i)
+            .collect();
         let exec = exec::ExecProgram::new(&program);
         Arc::new(Engine {
             program,
@@ -253,6 +267,7 @@ impl Engine {
             target,
             dotnet,
             unseeded: Default::default(),
+            platform_unseeded: unseeded,
             test_data: None,
             unevaluable_init,
             table_facts,

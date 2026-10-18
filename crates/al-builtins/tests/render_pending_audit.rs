@@ -30,7 +30,7 @@ use Kind::*;
 /// `Receiver.Method` and what it does to a pending target.
 const TABLE: &[(&str, Kind)] = &[
     ("BigText.Read", Guard),
-    ("BigText.Write", Refused),
+    ("BigText.Write", Produces),
     ("Blob.CreateInStream", Guard),
     ("Blob.CreateOutStream", Produces),
     ("Blob.Export", Refused),

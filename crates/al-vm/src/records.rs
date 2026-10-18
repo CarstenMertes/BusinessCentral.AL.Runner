@@ -157,8 +157,14 @@ impl Session {
     /// not create the rows BC has there (`Engine::unseeded`, ADR-013 decision 5): the answer would
     /// be "empty" or "fewer rows", which is not BC's. Rows this session wrote itself do not make
     /// the answer BC's, so they are not an exception. Temporary records are private to the session.
+    /// Whether a `Get` that finds nothing, or a scan, on table object `object` is not BC's answer.
+    pub(crate) fn is_unseeded(&self, object: u32) -> bool {
+        let o = object as usize;
+        self.engine.unseeded.contains(&o) || (!self.install_scope && self.engine.platform_unseeded.contains(&o))
+    }
+
     pub(crate) fn unseeded_read(&self, t: &TableDef, temporary: bool, what: &str) -> Result<(), Signal> {
-        if !temporary && self.engine.unseeded.contains(&(t.object as usize)) {
+        if !temporary && self.is_unseeded(t.object) {
             return unsupported(format!(
                 "{what} on {}: BC holds rows here that an install trigger or Company-Initialize creates, and the install baseline could not create them (ADR-013 decision 5)",
                 t.name
@@ -174,7 +180,7 @@ impl Session {
         // initialising a company create. Where the install baseline could not create them
         // (ADR-013 decision 5), a missing row there is not BC's answer, whoever asks (a dependency
         // app, or the tests of the project): refuse rather than report it as one.
-        if !exists && self.engine.unseeded.contains(&(t.object as usize)) {
+        if !exists && self.is_unseeded(t.object) {
             return unsupported(format!(
                 "{} row not found: the rows a dependency app's install and Company-Initialize create could not be created (ADR-013 decision 5)",
                 t.name
@@ -1741,7 +1747,14 @@ impl Session {
                                 _ => pk[n].clone(),
                             };
                         }
-                        self.fail(&t, &ident, false)
+                        // GetLastErrorObject.al:232-255: the exception of a Get without a row.
+                        self.fail(&t, &ident, false).map_err(|s| match s {
+                            Signal::Error(mut e) if e.code == "DB:RecordNotFound" => {
+                                e.exception = al_builtins::native::ExceptionKind::RecordNotFound;
+                                Signal::Error(e)
+                            }
+                            other => other,
+                        })
                     }
                 }
             }

@@ -93,15 +93,20 @@ impl Session {
         let sender = if p.include_sender {
             let o = &engine.program.objects[object];
             match (o.kind, o.rec_slot) {
-                // The sender of a reportextension's event is not pinned (the corpus pins a report's and a tableextension's). The
-                // event runs for subscribers that take no sender; one that asks for it is refused. Microsoft's tests need this:
-                // Serv. Get Source Documents publishes OnAfterServiceLineOnPreDataItem so (Tests-SCM-Service).
+                // The sender of a reportextension's event is the report variable the extension belongs to: the subscriber
+                // calls the report's procedures and the extension's, and sees the state the caller set before the raise
+                // (ReportExtensionSender.al:Sender_IsTheRaisingReportVariable, Sender_TwoReportVariables, Sender_FreshReportVariable).
                 (al_ir::ObjKind::ReportExtension, _) => {
-                    sender_refused = Some(format!(
-                        "{}: IncludeSender on a reportextension (what the subscriber's Sender is, is not pinned)",
-                        r.name
-                    ));
-                    None
+                    match instance.borrow().base.as_ref().and_then(std::rc::Weak::upgrade) {
+                        Some(base) => Some(Value::Codeunit(base)),
+                        None => {
+                            sender_refused = Some(format!(
+                                "{}: IncludeSender on a reportextension that runs without its report (not pinned)",
+                                r.name
+                            ));
+                            None
+                        }
+                    }
                 }
                 (al_ir::ObjKind::Codeunit, _) => Some(Value::Codeunit(instance)),
                 // The sender of a page's event is the page (a `Page` variable), not its Rec: Item Tracking Lines

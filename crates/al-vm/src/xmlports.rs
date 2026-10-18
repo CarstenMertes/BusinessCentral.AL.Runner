@@ -1115,6 +1115,7 @@ impl Session {
                 }
             }
             RtType::Enum(id) => {
+                self.note_enum(*id);
                 let members = self.engine.program.objects[*id as usize].enum_values.clone();
                 let t = text.trim();
                 match members.iter().find(|(_, n)| n.eq_ignore_ascii_case(t)) {
@@ -1170,6 +1171,7 @@ impl Session {
                 }
             }
             RtType::Enum(id) => {
+                self.note_enum(*id);
                 let t = text.trim();
                 let list = match members {
                     Some(m) => m,

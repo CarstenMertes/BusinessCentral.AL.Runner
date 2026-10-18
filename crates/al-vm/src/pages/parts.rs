@@ -482,6 +482,17 @@ impl Session {
         let Some(host) = st.borrow().host.as_ref().and_then(|(h, _)| h.upgrade()) else {
             return Ok(());
         };
+        if host.borrow().open
+            && self.is_list(&host)
+            && self.is_list(st)
+            && self.has_source(&host)
+            && self.has_source(st)
+        {
+            let (a, b) = (self.page_rec(&host), self.page_rec(st));
+            if self.table(&a)?.object == self.table(&b)?.object {
+                return unsupported("a part edit on a list host over the same table (not pinned)");
+            }
+        }
         if !host.borrow().open
             || self.is_list(&host)
             || !self.is_list(st)

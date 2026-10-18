@@ -676,6 +676,11 @@ impl Session {
                 .collect();
             return Ok(String::from_utf16_lossy(&units));
         }
+        if bytes.len() >= 2 && bytes[0] == 0 && bytes[1] == b'<' {
+            return unsupported(
+                "XmlPort import of a UTF-16 big endian document without a byte order mark (not pinned)",
+            );
+        }
         let rest = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(&bytes);
         match std::str::from_utf8(rest) {
             // A document that declares utf-16 in bytes without a UTF-16 byte order mark cannot be read

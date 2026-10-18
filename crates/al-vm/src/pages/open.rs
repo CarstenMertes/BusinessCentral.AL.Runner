@@ -275,11 +275,18 @@ impl Session {
                     .to_string();
                 // An indentation column that is a page variable, or a field that is not an Integer, cannot cut the rows: not pinned, the
                 // rows stay as they were before.
-                if let Some(pos) = table
-                    .fields
-                    .iter()
-                    .position(|f| f.name.eq_ignore_ascii_case(&name) && matches!(f.ty, RtType::Integer))
-                {
+                if let Some(f) = table.fields.iter().find(|f| f.name.eq_ignore_ascii_case(&name)) {
+                    if !matches!(f.ty, RtType::Integer) {
+                        self.mark_closed(st);
+                        return unsupported(
+                            "ShowAsTree over an IndentationColumn that is not an Integer field (not pinned)",
+                        );
+                    }
+                    let pos = table
+                        .fields
+                        .iter()
+                        .position(|g| g.name.eq_ignore_ascii_case(&name))
+                        .expect("found above");
                     rec.borrow_mut().filters.push(al_builtins::filter::FieldFilter {
                         field: pos,
                         expr: al_builtins::filter::FilterExpr::Eq(Value::Integer(0)),
@@ -555,10 +562,15 @@ impl Session {
         // A page that still holds a refused entry drops its unsaved row when it closes (pages/lt-page-controls-aa/AaFieldProps.al:
         // AA_CharAllowed_PageField `stored` and AA_CharAllowed_TableField `stored-after-page`: entries accepted before the refused one
         // are not stored either).
+        // Pinned for a card whose refused entries are all CharAllowed refusals; other pages keep the earlier behavior (the edits are saved), which P119_PageMinMax, P119_PageNumericSetValue and ValueAssign_Number_FromText_And_Decimal rely on.
         if !st.borrow().errors.is_empty() {
-            let mut s = st.borrow_mut();
-            s.draft = false;
-            s.dirty = false;
+            let char_allowed_only =
+                !self.is_list(st) && st.borrow().errors.iter().all(|(_, m)| m.starts_with("The character "));
+            if char_allowed_only {
+                let mut s = st.borrow_mut();
+                s.draft = false;
+                s.dirty = false;
+            }
         }
         // BC's client saves the child forms before the form's own record on a saving close
         // (corpus testpart/TestOkPartRow.al:OkInvoke_HeaderOnModifySeesThePartRowSavedFirst).

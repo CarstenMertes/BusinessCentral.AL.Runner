@@ -358,6 +358,11 @@ impl Session {
         }
         // What was typed into the row the part stands on is saved before it moves on.
         self.save_row(child)?;
+        // The filter `SetSelectionFilter(Rec)` left on the part's own record is gone once the part refreshes with its host
+        // (HiddenPartSelectionFilter.al:SelectionFilter_VisiblePart_FilterAndCount `rec-before=/3` after Next).
+        if std::mem::take(&mut child.borrow_mut().selection_on_rec) {
+            self.page_rec(child).borrow_mut().filters.retain(|f| f.group == LINK_GROUP);
+        }
         let engine = self.engine();
         let page = page_of(&engine, host);
         if let (Some(link), true) = (page.controls[control].part_link.as_ref(), self.has_source(child)) {

@@ -324,7 +324,8 @@ pub(crate) fn is_stmt(k: SyntaxKind) -> bool {
 ///   `.CustomDimensions`: the call form pins getter and storage (errorinfo/TestErrorInfoType.al:
 ///   249-271, :284-307, :313-345; TestErrorInfoErrorType.al:25-45). Nothing sets `RecordId` in
 ///   the corpus (only `Create(.., Record)` does, :360-377): its native raises `Unsupported` when
-///   run, so the assignment is refused when it is reached, not before. `SystemId` has no native.
+///   run, so the assignment is refused when it is reached, not before. `SystemId` assigns and reads
+///   back (errorinfo/lt-errnotif/EnTErrorInfoProps.al:106-115, :259-262).
 /// - `Record.Ascending`, `.Mark`, `.MarkedOnly`: record/TestRecordFind.al:237-284 (`Mark`,
 ///   `MarkedOnly`), handlers/TestPartOwnSortVsSubPageView.al:187 and :300 (`Ascending(false)`),
 ///   handlers/TestPageActionRunPageView.al:134 (`Ascending()`).
@@ -361,6 +362,7 @@ fn is_property_setter(receiver: &str, name: &str) -> bool {
                     | "ErrorType"
                     | "CustomDimensions"
                     | "RecordId"
+                    | "SystemId"
             )
             | ("Record" | "RecordRef", "ReadIsolation" | "SecurityFiltering")
             | ("Record", "FilterGroup" | "Ascending" | "Mark" | "MarkedOnly")

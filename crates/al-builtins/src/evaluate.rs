@@ -97,22 +97,32 @@ fn big_integer(text: &str, number: i64) -> Result<Parsed, Signal> {
     }
     let t = text.trim_matches(' ');
     let exponent_shape = t.bytes().any(|b| b == b'e' || b == b'E')
-        && t.bytes().all(|b| b.is_ascii_digit() || matches!(b, b'e' | b'E' | b'+' | b'-' | b'.'));
+        && t.bytes()
+            .all(|b| b.is_ascii_digit() || matches!(b, b'e' | b'E' | b'+' | b'-' | b'.'));
     if exponent_shape {
-        return unsupported(format!("Evaluate of `{text}` into BigInteger with an exponent (not pinned)"));
+        return unsupported(format!(
+            "Evaluate of `{text}` into BigInteger with an exponent (not pinned)"
+        ));
     }
     if t.bytes().any(|b| b.is_ascii_alphabetic() || matches!(b, b'%' | b'_')) {
         return Ok(Parsed::Rejected);
     }
-    if !t.is_ascii() || t.bytes().any(|b| !(b.is_ascii_digit() || matches!(b, b',' | b'.' | b'+' | b'-' | b' '))) {
-        return unsupported(format!("Evaluate of `{text}` into BigInteger (form not pinned by the corpus)"));
+    if !t.is_ascii()
+        || t.bytes()
+            .any(|b| !(b.is_ascii_digit() || matches!(b, b',' | b'.' | b'+' | b'-' | b' ')))
+    {
+        return unsupported(format!(
+            "Evaluate of `{text}` into BigInteger (form not pinned by the corpus)"
+        ));
     }
     let (negative, rest) = match t.strip_prefix('-') {
         Some(r) => (true, r),
         None => (false, t.strip_prefix('+').map_or(t, |r| r.trim_start_matches(' '))),
     };
     if negative && rest.starts_with(' ') {
-        return unsupported(format!("Evaluate of `{text}` into BigInteger with blanks after the minus sign (not pinned)"));
+        return unsupported(format!(
+            "Evaluate of `{text}` into BigInteger with blanks after the minus sign (not pinned)"
+        ));
     }
     if rest.contains(' ') || rest.contains(['+', '-']) {
         return Ok(Parsed::Rejected);
@@ -122,12 +132,16 @@ fn big_integer(text: &str, number: i64) -> Result<Parsed, Signal> {
         None => (rest, None),
     };
     if int.contains(',') && number == 9 {
-        return unsupported(format!("Evaluate of `{text}` into BigInteger with commas and format number 9 (not pinned)"));
+        return unsupported(format!(
+            "Evaluate of `{text}` into BigInteger with commas and format number 9 (not pinned)"
+        ));
     }
     let int: String = int.chars().filter(|c| *c != ',').collect();
     match frac {
-        Some(f) if f.is_empty() => {
-            return unsupported(format!("Evaluate of `{text}` into BigInteger with a point and no fraction (not pinned)"));
+        Some("") => {
+            return unsupported(format!(
+                "Evaluate of `{text}` into BigInteger with a point and no fraction (not pinned)"
+            ));
         }
         Some(f) if f.contains([',', '.']) => return Ok(Parsed::Rejected),
         Some(f) if f.bytes().any(|b| b != b'0') => return Ok(Parsed::Rejected),
@@ -136,10 +150,12 @@ fn big_integer(text: &str, number: i64) -> Result<Parsed, Signal> {
     if int.is_empty() {
         return Ok(Parsed::Rejected);
     }
-    Ok(match format!("{}{int}", if negative { "-" } else { "" }).parse::<i64>() {
-        Ok(n) => Parsed::Value(Value::BigInteger(n)),
-        Err(_) => Parsed::Rejected,
-    })
+    Ok(
+        match format!("{}{int}", if negative { "-" } else { "" }).parse::<i64>() {
+            Ok(n) => Parsed::Value(Value::BigInteger(n)),
+            Err(_) => Parsed::Rejected,
+        },
+    )
 }
 
 /// A Decimal as `Evaluate` reads it. Number 0 takes `[sign] digits [. digits] [e [sign] digits]` with spaces around it;
@@ -275,7 +291,9 @@ fn boolean(text: &str, number: i64) -> Result<Parsed, Signal> {
             "true" | "1" => Ok(Parsed::Value(Value::Boolean(true))),
             "false" | "0" => Ok(Parsed::Value(Value::Boolean(false))),
             "Yes" | "No" | "" => Ok(Parsed::Rejected),
-            _ => unsupported(format!("Evaluate of `{text}` into Boolean with format number 9 (not pinned)")),
+            _ => unsupported(format!(
+                "Evaluate of `{text}` into Boolean with format number 9 (not pinned)"
+            )),
         };
     }
     // text/TestEvaluate.al: 'true' / 'false'; types/TestFormatBooleanContracts.al:112
@@ -351,7 +369,11 @@ fn date_month_first(text: &str, today: Option<i32>) -> Option<Result<Parsed, Sig
             return Ok(Parsed::Rejected);
         }
         let first = day_from_civil(y, m, 1);
-        let next = if m == 12 { day_from_civil(y + 1, 1, 1) } else { day_from_civil(y, m + 1, 1) };
+        let next = if m == 12 {
+            day_from_civil(y + 1, 1, 1)
+        } else {
+            day_from_civil(y, m + 1, 1)
+        };
         if (d as i32) > next - first {
             return Ok(Parsed::Rejected);
         }
@@ -420,7 +442,9 @@ fn date_month_first(text: &str, today: Option<i32>) -> Option<Result<Parsed, Sig
         && words[2].len() == 4
         && all_digits(words[2])
     {
-        const MONTHS: [&str; 12] = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+        const MONTHS: [&str; 12] = [
+            "jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec",
+        ];
         let m = MONTHS.iter().position(|n| n.eq_ignore_ascii_case(words[1]))? as u32 + 1;
         return Some(ymd(words[2].parse().ok()?, m, words[0].parse().ok()?));
     }
@@ -437,7 +461,9 @@ fn date_month_first(text: &str, today: Option<i32>) -> Option<Result<Parsed, Sig
     None
 }
 
-fn date(text: &str, number: i64, today: Option<i32>, work: Option<i32>) -> Result<Parsed, Signal> {
+/// `month_first` turns on the month-first forms (`date_month_first`) and the stricter closing date, as `Evaluate` reads a Date; a
+/// reader of filter text keeps the forms it had (the filter forms are pinned apart from Evaluate, docs/probes-needed.md).
+fn date(text: &str, number: i64, today: Option<i32>, work: Option<i32>, month_first: bool) -> Result<Parsed, Signal> {
     if number == 9 {
         let t = text.trim_matches(' ');
         if t.is_empty() {
@@ -489,10 +515,10 @@ fn date(text: &str, number: i64, today: Option<i32>, work: Option<i32>) -> Resul
         .filter(|r| r.starts_with(|c: char| c.is_ascii_digit()))
     {
         // The ISO form after the C is no closing date (types/lt-datetime/Evaluate.al:Date_Default_Evaluate `closing`: No).
-        if rest.len() == 10 && rest.as_bytes()[4] == b'-' {
+        if month_first && rest.len() == 10 && rest.as_bytes()[4] == b'-' {
             return Ok(Parsed::Rejected);
         }
-        return Ok(match date(rest, 0, today, work)? {
+        return Ok(match date(rest, 0, today, work, month_first)? {
             Parsed::Value(Value::Date(d, false)) => Parsed::Value(Value::Date(d, true)),
             _ => Parsed::Rejected,
         });
@@ -504,8 +530,10 @@ fn date(text: &str, number: i64, today: Option<i32>, work: Option<i32>) -> Resul
             None => Ok(Parsed::Rejected),
         };
     }
-    if let Some(r) = date_month_first(text, today) {
-        return r;
+    if month_first {
+        if let Some(r) = date_month_first(text, today) {
+            return r;
+        }
     }
     let parts: Vec<&str> = text.split('/').collect();
     let digits = |s: &str, lens: std::ops::RangeInclusive<usize>| {
@@ -742,7 +770,7 @@ fn datetime(text: &str, number: i64) -> Result<Parsed, Signal> {
     }
     if let Some((d, clock)) = t.split_once(' ') {
         if d.contains('/') {
-            return Ok(match (date(d, 0, None, None)?, time(clock, 0)?) {
+            return Ok(match (date(d, 0, None, None, false)?, time(clock, 0)?) {
                 (Parsed::Value(Value::Date(day, _)), Parsed::Value(Value::Time(ms))) => {
                     Parsed::Value(Value::DateTime((i64::from(day) - 1) * 86_400_000 + ms))
                 }
@@ -762,13 +790,13 @@ pub fn read_text(ty: &crate::value::RtType, text: &str) -> Option<Value> {
     // `Format(ClosingDate(D))` is `C` and the date (corpus types/lt-datetime/DateFuncs.al:47 `C12/31/23`,
     // misc/lt-system-functions/RandomFormat.al:432): the closing date of that day.
     if let (T::Date, Some(rest)) = (ty, text.strip_prefix('C')) {
-        return match date(rest, 0, None, None).ok()? {
+        return match date(rest, 0, None, None, false).ok()? {
             Parsed::Value(Value::Date(d, false)) => Some(Value::Date(d, true)),
             _ => None,
         };
     }
     let parsed = match ty {
-        T::Date => date(text, 0, None, None).ok()?,
+        T::Date => date(text, 0, None, None, false).ok()?,
         T::Guid => guid(text).ok()?,
         _ => return None,
     };
@@ -860,7 +888,9 @@ fn text_or_code(c: &mut dyn Ctx, a: &Value, text: &str, number: i64, max: Option
                 return Ok(Parsed::Value(Value::Code(crate::ops::upper_code(kept).into())));
             }
             if code && kept.len() != text.len() {
-                return unsupported("Evaluate into a Code of a text with blanks that is too long even without them (not pinned)");
+                return unsupported(
+                    "Evaluate into a Code of a text with blanks that is too long even without them (not pinned)",
+                );
             }
             let message = format!(
                 "The length of the string is {}, but it must be less than or equal to {m} characters. Value: {}",
@@ -1015,7 +1045,13 @@ fn evaluate_with_max(
         Value::Guid(_) => guid(&text)?,
         // Every number but 9 reads a Date as the default does (types/lt-datetime/Evaluate.al:Date_Other_Formats `fmt 1` to `fmt 8`,
         // `fmt 10`, `fmt -1`; errors/lt-ms-refusals-130/P130EvaluateDate.al:P130_EvaluateDate_EveryFormat_*).
-        Value::Date(..) => date(&text, if number == 9 { 9 } else { 0 }, c.today_day(), c.work_date_day())?,
+        Value::Date(..) => date(
+            &text,
+            if number == 9 { 9 } else { 0 },
+            c.today_day(),
+            c.work_date_day(),
+            true,
+        )?,
         Value::Time(_) => time(&text, number)?,
         Value::DateTime(_) => datetime(&text, number)?,
         // The text is kept as written once it is a form the runtime can calculate with
@@ -1298,13 +1334,16 @@ mod tests {
     // types/lt-datetime/Evaluate.al:Date_Default_Evaluate: the empty text reads as the empty date in format 0 too.
     #[test]
     fn the_empty_text_reads_as_the_empty_date_in_format_0() {
-        assert!(matches!(value(date("", 0, Some(5), None)), Some(Value::Date(0, _))));
+        assert!(matches!(
+            value(date("", 0, Some(5), None, true)),
+            Some(Value::Date(0, _))
+        ));
     }
 
     // codeunit "LT P86 Eval Date"
     #[test]
     fn dates_read_slash_forms_in_format_0_and_only_iso_in_format_9() {
-        let day = |s: &str, n: i64| match value(date(s, n, Some(5), Some(7))) {
+        let day = |s: &str, n: i64| match value(date(s, n, Some(5), Some(7), true)) {
             Some(Value::Date(d, _)) => Some(d),
             _ => None,
         };

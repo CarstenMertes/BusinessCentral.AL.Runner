@@ -641,9 +641,13 @@ impl Session {
             ids::SYSTEM_ENCRYPTIONENABLED_1 => match self.encryption_key {
                 crate::EncryptionKey::Present => Ok(Value::Boolean(true)),
                 crate::EncryptionKey::Deleted => Ok(Value::Boolean(false)),
-                crate::EncryptionKey::Recreated => unsupported("EncryptionEnabled after CreateEncryptionKey (not pinned)"),
+                crate::EncryptionKey::Recreated => {
+                    unsupported("EncryptionEnabled after CreateEncryptionKey (not pinned)")
+                }
             },
-            ids::SYSTEM_ENCRYPTIONKEYEXISTS_1 => Ok(Value::Boolean(self.encryption_key != crate::EncryptionKey::Deleted)),
+            ids::SYSTEM_ENCRYPTIONKEYEXISTS_1 => {
+                Ok(Value::Boolean(self.encryption_key != crate::EncryptionKey::Deleted))
+            }
             // Pinned: a key exists at the start; DeleteEncryptionKey with a key leaves none and EncryptionEnabled No, a second one
             // with no key runs without error; CreateEncryptionKey with no key makes one (session/lt-encryption-key-delete/
             // EncryptionKeyDelete.al:Delete_WithKey_ThenWithout_ThenRestore). Creating while a key exists is not pinned.

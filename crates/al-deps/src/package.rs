@@ -284,6 +284,62 @@ pub fn read_package_with(app: &[u8], vars: &Vars) -> Result<(Manifest, Sources),
     })
 }
 
+/// The packaged resources of a package: `(name relative to the resource folder, content)`, sorted by name.
+///
+/// A compiled `.app` holds them under `resources/`, with the entry names percent-encoded like every other
+/// entry (`Fabrikam%20Invoice.PDF`); the names are decoded once, as for the `.al` entries. A source
+/// archive holds them in the folders its `app.json` names in `resourceFolders`, under their real names.
+pub fn read_resources(app: &[u8], vars: &Vars) -> Result<Vec<(String, Vec<u8>)>, PackageError> {
+    with_archive(app, 0, vars, &mut |zip, _, source_zip| {
+        let mut wanted: Vec<(String, &crate::zip::Entry)> = Vec::new();
+        if source_zip {
+            let json = zip
+                .find("app.json")
+                .map(|e| zip.read(e))
+                .transpose()?
+                .unwrap_or_default();
+            let text = String::from_utf8_lossy(&json);
+            let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
+            let folders: Vec<String> = serde_json::from_str::<serde_json::Value>(text)
+                .ok()
+                .map(|v| {
+                    v["resourceFolders"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|f| f.as_str())
+                        .map(|f| f.trim_start_matches("./").trim_end_matches('/').to_string())
+                        .filter(|f| !f.is_empty())
+                        .collect()
+                })
+                .unwrap_or_default();
+            for e in &zip.entries {
+                for f in &folders {
+                    if let Some(rel) = e.name.strip_prefix(&format!("{f}/")) {
+                        if !rel.is_empty() && !rel.ends_with('/') {
+                            wanted.push((rel.to_string(), e));
+                        }
+                    }
+                }
+            }
+        } else {
+            for e in &zip.entries {
+                if let Some(rel) = e.name.strip_prefix("resources/") {
+                    if !rel.is_empty() && !rel.ends_with('/') {
+                        wanted.push((percent_decode_once(rel), e));
+                    }
+                }
+            }
+        }
+        let mut out = Vec::with_capacity(wanted.len());
+        for (name, e) in wanted {
+            out.push((name, zip.read(e)?));
+        }
+        out.sort();
+        Ok(out)
+    })
+}
+
 /// `%20` to a space, once. Entry names in packages are encoded twice by the packer.
 pub(crate) fn percent_decode_once(name: &str) -> String {
     let b = name.as_bytes();
@@ -382,6 +438,50 @@ mod tests {
         let (_, src) = read_package(&app).unwrap();
         assert_eq!(src[0].0, "src/Azure%20Function/F.al");
         assert_eq!(src[0].1, "codeunit 1 F { }");
+    }
+
+    #[test]
+    fn resources_of_a_compiled_package_are_read_with_their_names_decoded() {
+        let app = app_with(&[
+            ("src/A.al", "codeunit 1 A { }"),
+            ("resources/Images/Item/1896-S.jpg", "jpg"),
+            ("resources/IncomingDocuments/Fabrikam%20Invoice.PDF", "pdf"),
+            ("resources/", ""),
+            ("Translations/x.xlf", "not a resource"),
+        ]);
+        let r = read_resources(&app, &Vars::default()).unwrap();
+        assert_eq!(
+            r,
+            [
+                ("Images/Item/1896-S.jpg".to_string(), b"jpg".to_vec()),
+                ("IncomingDocuments/Fabrikam Invoice.PDF".to_string(), b"pdf".to_vec())
+            ]
+        );
+        let none = app_with(&[("src/A.al", "codeunit 1 A { }")]);
+        assert!(read_resources(&none, &Vars::default()).unwrap().is_empty());
+    }
+
+    #[test]
+    fn resources_of_a_source_archive_come_from_its_resource_folders() {
+        let zip = Builder::new()
+            .add(
+                "app.json",
+                br#"{"id":"aa","name":"S","publisher":"P","version":"1.0.0.0","resourceFolders":[".resources"]}"#,
+                true,
+            )
+            .add("src/A.al", b"codeunit 1 A { }", true)
+            .add(".resources/CRONUS.jpg", b"jpg", true)
+            .add(".resources/sub/a b.txt", b"t", true)
+            .add("other/x.txt", b"no", true)
+            .finish();
+        let r = read_resources(&zip, &Vars::default()).unwrap();
+        assert_eq!(
+            r,
+            [
+                ("CRONUS.jpg".to_string(), b"jpg".to_vec()),
+                ("sub/a b.txt".to_string(), b"t".to_vec())
+            ]
+        );
     }
 
     #[test]

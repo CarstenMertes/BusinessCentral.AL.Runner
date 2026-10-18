@@ -36,6 +36,8 @@ pub enum Virtual {
     PageControlField,
     TimeZone,
     WindowsLanguage,
+    /// Two rows are pinned (platform/lt-platform-tables/PtCloudTables.al:60-76); any other read is refused.
+    LicensePermission,
     NavAppInstalledApp,
     NavAppExtra,
     InstalledApplication,
@@ -112,6 +114,11 @@ pub const REGISTRY: &[(u32, &str, Provider)] = &[
         2_000_000_045,
         "Windows Language",
         Provider::Virtual(Virtual::WindowsLanguage),
+    ),
+    (
+        2_000_000_043,
+        "License Permission",
+        Provider::Virtual(Virtual::LicensePermission),
     ),
     (
         2_000_000_153,

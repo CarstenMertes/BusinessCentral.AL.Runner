@@ -394,3 +394,32 @@ assumption `bitmap-picture-not-drawn`), 7 failed, 5 not run, the numbers of the 
 More refusals may sit behind the first one. Each is a runtime task (a corpus pin is needed first for DWY2Date; the two
 DotNet types need an owner decision on the policy or a native replacement). The two lanes stay refused with the first
 reason in their line. The company-setup roots in `baseline.rs` were not added: they would run a refused step on every run.
+
+### Contoso lanes: second spike (2026-10-18, `contoso-2`)
+
+Changed since the first spike: `NavApp.GetResource` of a dependency app now finds its packaged resources (a compiled `.app` holds
+them under `resources/` with `%20` names, decoded once like the `.al` entry names; a source archive uses the `resourceFolders`
+of its `app.json`); an xmlport field bound as `"Data Exch. Def".Code` (a dot inside the quoted table name) now binds; platform
+table `License Permission` answers its two pinned rows.
+
+WorkDate: the recipe does not set one. BCApps `Invoke-ContosoDemoTool` runs Company-Initialize (codeunit 2), then
+`CreateSetupDemoData` / `CreateAllDemoData` (codeunit 5193) and the tenant data (5691) through OData, so WorkDate is today, as in
+`alrunner` (session/TestSessionFunctions.al:53-65). The demo dates are relative to the Starting Year (today's year minus one), so
+a sales shipment dated in the past gives the message "Shipment Date ... is before work date ..." on real BC as well. The OData
+call ignores the message; a test method does not. The `Unhandled UI` failure of the first spike was a spike artifact: a
+`[MessageHandler]` on the test makes `SalesTransactional` pass. The lanes need a message handler (or UI off) around the roots.
+
+The first spike ran on the CRONUS company (the default). That is the wrong base: CRONUS already holds item attributes, vendors and
+item references, so `Color already exists` and `Vendor Item No. already exists` are collisions with CRONUS data, not runtime bugs.
+The Contoso lanes run on an empty company (`--no-test-data`, as BCApps does). Run that way, with the scratch cuts listed below,
+the real order (all Setup, then Master, Transactional, Historical) stops at, in order:
+
+1. `Windows Language`: the Contoso language setup filters the table by "Abbreviated Name"; only 1031, 1033 and 2057 are pinned.
+   Needs a probe that lists the whole table on real BC.
+2. XmlPort `Imp / Exp Data Exch Def & Map` (1225), imported for 7 data exchange definitions from the Contoso resources:
+   `Encoding = UTF8` (export is pinned by xmlport/W7XmlPortTests.al:345-364, import is not), `MinOccurs` on a `tableelement`,
+   `Occurrence = Optional` on 53 field attributes (no corpus test uses `Occurrence`), `FieldValidate`, `SourceTableView`, and an
+   empty `requestpage` section (refused even when empty). Without the definitions the Bank module fails on a missing
+   `SEPA CAMT` row.
+3. `License Permission` `Codeunit` 410 (above), `Language Selection` (2000000050; PtCloudTables.al pins it, no provider yet),
+   `Media Resources` (2000000182, tenant data), `System.Net.Mail.MailAddress` (policy).

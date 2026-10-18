@@ -854,9 +854,8 @@ fn into_field_ref(c: &mut dyn Ctx, a: &mut [Value], number: i64) -> Result<Value
         None => return unsupported("Evaluate into a FieldRef that is not assigned (not pinned)"),
     };
     let current = target.rec.borrow().fields[target.pos].clone();
-    if !c.ret_used() {
-        return unsupported("Evaluate into a FieldRef with the result unused (not pinned)");
-    }
+    // With the result unused a text that is no value raises the Evaluate error and the field keeps its value (types/
+    // lt-evaluate-recordid/EvaluateRecordIdComposite.al:Evaluate_IntoFieldRef `invalidUnused`).
     let max = match &target.ty {
         crate::value::RtType::Text(m) | crate::value::RtType::Code(m) => *m,
         _ => None,

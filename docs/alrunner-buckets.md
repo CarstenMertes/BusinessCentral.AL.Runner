@@ -316,8 +316,15 @@ The package has fewer rows than the backup (it is the DemoTool's Extended data, 
 that pass on the backup fail on it and the other way round; that is the Legacy lane's data, which is what Microsoft's
 Legacy buckets run on. The two tables the reader used to refuse are now read, and no test of this bucket touches them,
 so the counts did not change. The largest package-only failure is `The Country/Region does not exist ... Code=''` (40
-tests, first: ERM Report Amount in FCY, `AmountInFCYOnDocumentEntriesReport`); it is a lead for the next round, not
-explained yet.
+tests, first: ERM Report Amount in FCY, `AmountInFCYOnDocumentEntriesReport`). Explained (2026-10-18, rerun of the
+bucket: still 40, same text): it is not a gap of the package reader. `ERMFinancialReportsIII.Codeunit.al:1966`
+(`UpdateIntrastatCountryCode`) does `CompanyInformation.Get()` and then `CountryRegion.Get(CompanyInformation."Country/Region Code")`.
+The package (`NAV27.5.W1.ENU.EXTENDED.rapidstart`) holds 68 Country/Region rows but no Company Information table at all, so
+the Company Information row is the one `Company-Initialize` writes, with a blank country. The backup company has the
+demo tool's Company Information row (a country set), which is why the same tests pass there. A company built from this
+package therefore fails these 40 tests on any host that builds it the same way. Whether Microsoft's Legacy lane has a
+Company Information country from some other step is not known here; it needs a probe on real BC (build a company
+from the package and read Company Information."Country/Region Code"). Until then these 40 stay as package-only failures.
 
 ## Microsoft's recipe: `--recipe microsoft` (2026-10-18, branch `ms-recipe-3`)
 

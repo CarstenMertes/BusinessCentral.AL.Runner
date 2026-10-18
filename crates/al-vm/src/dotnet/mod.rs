@@ -4,6 +4,7 @@
 
 pub mod compression;
 mod gettype;
+mod last_error;
 pub mod policy;
 pub mod registry;
 pub mod server_classes;
@@ -544,6 +545,13 @@ impl Session {
         let Value::DotNet(o) = v else { return None };
         Some(match &o.kind {
             DotNetKind::Enum { name, .. } => Ok(name.clone()),
+            DotNetKind::Internal { type_name, .. } if type_name == al_builtins::dotnet_sigs::NULL_EXCEPTION => {
+                Ok("null".into())
+            }
+            // A last-error exception: Format is ToString (GetLastErrorObject.al:85).
+            DotNetKind::Internal { type_name, .. } if last_error::is_exception(type_name) => {
+                last_error::exception_text(o)
+            }
             DotNetKind::Internal { type_name, .. } => unsupported(format!("Format of a runtime-provided {type_name}")),
             DotNetKind::Host { handle, clr_type } => {
                 let shown = format!("{clr_type}.ToString");

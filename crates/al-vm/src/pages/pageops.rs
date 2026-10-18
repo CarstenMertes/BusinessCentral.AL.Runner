@@ -576,7 +576,8 @@ impl Session {
                                     }
                             })
                     };
-                    if !(blank_rec && plain_dst) {
+                    // Pinned for the page of a part only.
+                    if !(blank_rec && plain_dst && st.borrow().host.is_some()) {
                         return unsupported(
                             "Page.SetSelectionFilter of a page on no row of a table that has rows (not pinned)",
                         );

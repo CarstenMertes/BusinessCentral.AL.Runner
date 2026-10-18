@@ -1358,7 +1358,7 @@ fn the_declared_result_types_match_the_registry() {
             // Need streams; tests/gzip.rs runs them.
             "GZipStream" | "CopyTo" | "Dispose" => continue,
             // Need an exception object; tests/host/last_error_object.rs runs them.
-            "Message" | "InnerException" | "GetType" | "ToString" | "FullName" => continue,
+            "Message" | "InnerException" | "GetType" | "ToString" | "FullName" | "GetBaseException" | "Equals" => continue,
             "SetTestTenantEnvironmentType" => vec![Value::Boolean(false)],
             // These raise by design on a tier without a directory; graph_query_without_a_directory_answers_as_probed runs them.
             "GetGroupPage" | "GetGroupInfo" | "FindFirstGroupInfoForDisplayName" | "GetUser" => continue,

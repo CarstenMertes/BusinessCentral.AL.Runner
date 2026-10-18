@@ -1,5 +1,5 @@
 //! `BigText.Write(OutStream)` as the probes of corpus tests/al-language/streams/StTBigText.al pin it
-//! (WriteToStreamAndRead :267-296, WriteReadLargeText :382-400). Only ASCII text on a fresh stream is pinned.
+//! (WriteToStreamAndRead :267-296, WriteReadLargeText :382-400) and streams/lt-bigtext-write/BigTextWriteEdges.al.
 
 use al_test_cli::report::Outcome;
 use al_test_cli::runtime::run_codeunit;
@@ -62,13 +62,30 @@ fn write_of_a_large_text() {
     assert_eq!(r[0].1, Outcome::Pass, "{:?}", r[0]);
 }
 
-// Not pinned: text beyond ASCII (the probe's byte count of 3 for three characters is unexplained) is refused.
+// BigTextWriteEdges.al:Write_NonAscii_DefaultStream: a-umlaut is one byte on a default stream.
 #[test]
-fn write_of_non_ascii_text_is_refused() {
+fn write_of_a_pinned_non_ascii_character_is_one_byte_on_a_default_stream() {
     let r = run(
         "[Test] procedure W() var Rec: Record \"BW Rec\"; Big: BigText; Out: OutStream; T: Text; begin
             Rec.Init(); Rec.Id := 1; Rec.Insert();
             T[1] := 228; Big.AddText(T);
+            Rec.Data.CreateOutStream(Out);
+            Big.Write(Out);
+            Rec.Modify();
+            Rec.CalcFields(Data);
+            if Rec.Data.Length() <> 1 then Error('blob len %1', Rec.Data.Length());
+         end;",
+    );
+    assert_eq!(r[0].1, Outcome::Pass, "{:?}", r[0]);
+}
+
+// A character no probe shows (a CJK character on a default stream) is refused.
+#[test]
+fn write_of_an_unpinned_character_is_refused() {
+    let r = run(
+        "[Test] procedure W() var Rec: Record \"BW Rec\"; Big: BigText; Out: OutStream; T: Text; begin
+            Rec.Init(); Rec.Id := 1; Rec.Insert();
+            T[1] := 20013; Big.AddText(T);
             Rec.Data.CreateOutStream(Out);
             Big.Write(Out);
          end;",
@@ -80,10 +97,9 @@ fn write_of_non_ascii_text_is_refused() {
     );
 }
 
-// Where the stream stands after BigText.Write is not pinned: a further write to the same stream is refused,
-// reading the blob back stays allowed.
+// BigTextWriteEdges.al:WriteText_AfterBigTextWrite_SameStream: a later write goes after the text.
 #[test]
-fn a_write_after_bigtext_write_on_the_same_stream_is_refused() {
+fn a_write_after_bigtext_write_on_the_same_stream_appends() {
     let r = run(
         "[Test] procedure W() var Rec: Record \"BW Rec\"; Big: BigText; Out: OutStream; begin
             Rec.Init(); Rec.Id := 1; Rec.Insert();
@@ -91,14 +107,13 @@ fn a_write_after_bigtext_write_on_the_same_stream_is_refused() {
             Rec.Data.CreateOutStream(Out);
             Big.Write(Out);
             Out.WriteText('def');
+            Rec.Modify();
+            Rec.CalcFields(Data);
+            if Rec.Data.Length() <> 6 then Error('blob len %1', Rec.Data.Length());
          end;
 ",
     );
-    assert!(
-        matches!(&r[0].1, Outcome::NotRun(m) if m.contains("a write after BigText.Write on the same stream (position not pinned)")),
-        "{:?}",
-        r[0]
-    );
+    assert_eq!(r[0].1, Outcome::Pass, "{:?}", r[0]);
     // A new CreateOutStream starts at 0 again, and the blob reads back.
     let r = run(
         "[Test] procedure R() var Rec: Record \"BW Rec\"; Big: BigText; Out: OutStream; Out2: OutStream; begin

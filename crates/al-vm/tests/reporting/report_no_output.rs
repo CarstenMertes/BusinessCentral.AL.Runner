@@ -441,12 +441,8 @@ fn report_no_output_s7_report_inbox() {
 fn report_no_output_s8_and_the_path_controls_are_not_observations() {
     assert_eq!(text("ControlPathAsText"), "out/a.pdf|out/a.pdf|out/a.pdf saved");
     assert_eq!(text("ControlPureStringFunctions"), "a.pdf|OUT/A.PDF|6");
-    // IsPathTemporary answers only the pinned forms (FileTemp.al); this path is none, so it is refused for that reason and not
-    // as an observation of the pending output.
-    assert!(matches!(
-        run("ControlIsPathTemporary"),
-        Err(Signal::Unsupported(why)) if why.contains("IsPathTemporary") && !why.contains(PENDING)
-    ));
+    // A relative path with a subfolder is temporary (FileEraseAndTempPath.al:IsPathTemporary_Paths `relative_subfolder`).
+    assert!(al_testkit::boolean(run("ControlIsPathTemporary")));
     assert!(!al_testkit::boolean(run("ControlOtherPathIsUntouched")));
     assert_eq!(text("ControlPassedToAProcedure"), "out/a.pdf");
     assert_eq!(text("ControlClearLastError"), "");

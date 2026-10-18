@@ -2218,6 +2218,8 @@ pub(crate) mod tests {
             "TextBuilder.AppendVariant#1",
             "System.FormatDecimalField#1",
             "Dialog.ErrorNotLiteral#1",
+            "TextBuilder.AppendFieldValue#1",
+            "Media.ToVariant#1",
         ];
         for id in registered_ids().into_iter().filter(|id| !derived.contains(id)) {
             assert!(ids.iter().any(|i| i == id), "{id} is not a catalog overload id");

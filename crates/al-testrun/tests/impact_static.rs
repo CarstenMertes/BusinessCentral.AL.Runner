@@ -12,6 +12,11 @@ table 50980 "SX Row"
 {
     fields { field(1; Id; Integer) { } field(2; Kind; Enum "SX Kind") { } }
     keys { key(PK; Id) { } }
+
+    procedure Touch()
+    begin
+        Modify();
+    end;
 }
 table 50981 "SX Other"
 {
@@ -137,6 +142,63 @@ codeunit 50986 "SX Tests"
     begin
         if K.Ordinals().Count() = 0 then;
     end;
+
+    [Test]
+    procedure HoldsRunPosting()
+    var
+        R: Codeunit "SX Run Posting";
+    begin
+    end;
+
+    [Test]
+    procedure InsertsRow()
+    var
+        R: Record "SX Row";
+    begin
+        R.Id := 1;
+        R.Insert(true);
+    end;
+
+    [Test]
+    procedure TouchesRow()
+    var
+        R: Record "SX Row";
+    begin
+        if R.Get(1) then
+            R.Touch();
+    end;
+
+    [Test]
+    procedure ValidatesRow()
+    var
+        R: Record "SX Row";
+    begin
+        R.Validate(Id, 3);
+    end;
+
+    [Test]
+    procedure WritesRowRef()
+    var
+        Ref: RecordRef;
+    begin
+        Ref.Open(Database::"SX Row");
+        Ref.Insert();
+    end;
+
+    [Test]
+    procedure WritesGivenRef()
+    var
+        Ref: RecordRef;
+        O: Record "SX Other";
+    begin
+        Ref.GetTable(O);
+        InsertRef(Ref);
+    end;
+
+    local procedure InsertRef(var Ref: RecordRef)
+    begin
+        Ref.Insert();
+    end;
 }
 codeunit 50987 "SX Other Tests"
 {
@@ -164,6 +226,13 @@ tableextension 50991 "SX Row Ext" extends "SX Row"
 enumextension 50992 "SX Kind Ext" extends "SX Kind"
 {
     value(50992; Partner) { }
+}
+codeunit 50994 "SX Row Sub"
+{
+    [EventSubscriber(ObjectType::Table, Database::"SX Row", 'OnAfterInsertEvent', '', false, false)]
+    local procedure RowInserted(var Rec: Record "SX Row")
+    begin
+    end;
 }
 codeunit 50993 "SX Install"
 {
@@ -247,7 +316,8 @@ fn cannot(what: &str) -> Verdict {
 }
 
 #[test]
-fn a_subscriber_is_reached_by_calls_and_by_codeunit_run_on_a_constant_and_not_ruled_out_by_an_id_in_a_variable() {
+fn a_subscriber_is_reached_by_calls_and_by_codeunit_run_on_a_constant_not_by_a_codeunit_variable_alone_and_not_ruled_out_by_an_id_in_a_variable()
+ {
     let (everything, all) = verdicts(BASE);
     assert!(everything.iter().all(Option::is_none), "{everything:?}");
     assert_eq!(
@@ -267,13 +337,44 @@ fn a_table_extension_is_reached_through_records_record_refs_and_pages_of_its_tab
     assert_eq!(
         of(&all, "tableextension \"SX Row Ext\""),
         [
+            ("InsertsRow", &Verdict::Reaches),
             (
                 "OpensAnyRef",
                 &cannot("RecordRef.Open with a table number from a variable")
             ),
             ("OpensCard", &Verdict::Reaches),
             ("OpensRowRef", &Verdict::Reaches),
+            ("TouchesRow", &Verdict::Reaches),
             ("UsesRow", &Verdict::Reaches),
+            ("ValidatesRow", &Verdict::Reaches),
+            (
+                "WritesGivenRef",
+                &cannot("a RecordRef write to a table the code does not name")
+            ),
+            ("WritesRowRef", &Verdict::Reaches),
+        ],
+        "{all:#?}"
+    );
+}
+
+#[test]
+fn table_triggers_and_events_are_reached_only_through_writes_of_the_table() {
+    let (_, all) = verdicts(BASE);
+    assert_eq!(
+        of(&all, "subscriber \"SX Row Sub\".RowInserted"),
+        [
+            ("InsertsRow", &Verdict::Reaches),
+            // A page can insert, modify and delete rows of its source table.
+            ("OpensCard", &Verdict::Reaches),
+            // Through the implicit `Rec` of a table procedure.
+            ("TouchesRow", &Verdict::Reaches),
+            // A validation runs field triggers and the validate events, which a write node stands for.
+            ("ValidatesRow", &Verdict::Reaches),
+            (
+                "WritesGivenRef",
+                &cannot("a RecordRef write to a table the code does not name")
+            ),
+            ("WritesRowRef", &Verdict::Reaches),
         ],
         "{all:#?}"
     );
@@ -286,6 +387,7 @@ fn an_enum_extension_is_reached_through_variables_of_its_enum_and_fields_of_that
         of(&all, "enumextension \"SX Kind Ext\""),
         [
             ("CastsAKindConstant", &Verdict::Reaches),
+            ("InsertsRow", &Verdict::Reaches),
             (
                 "OpensAnyRef",
                 &cannot("RecordRef.Open with a table number from a variable")
@@ -293,7 +395,14 @@ fn an_enum_extension_is_reached_through_variables_of_its_enum_and_fields_of_that
             ("OpensCard", &Verdict::Reaches),
             ("OpensRowRef", &Verdict::Reaches),
             ("ReadsKinds", &Verdict::Reaches),
+            ("TouchesRow", &Verdict::Reaches),
             ("UsesRow", &Verdict::Reaches),
+            ("ValidatesRow", &Verdict::Reaches),
+            (
+                "WritesGivenRef",
+                &cannot("a RecordRef write to a table the code does not name")
+            ),
+            ("WritesRowRef", &Verdict::Reaches),
         ],
         "{all:#?}"
     );
@@ -310,6 +419,12 @@ fn install_code_selects_the_tests_that_use_a_table_it_writes() {
                 &cannot("RecordRef.Open with a table number from a variable")
             ),
             ("UsesOther", &Verdict::Reaches),
+            ("WritesGivenRef", &Verdict::Reaches),
+            // A RecordRef write may go to any table: the ref can be opened anywhere.
+            (
+                "WritesRowRef",
+                &cannot("a RecordRef write to a table the code does not name")
+            ),
         ],
         "{all:#?}"
     );

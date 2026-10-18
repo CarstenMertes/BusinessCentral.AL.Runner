@@ -2,26 +2,36 @@
 //! found from the compiled program instead of from a run.
 //!
 //! The graph's nodes are the routines of the program, one node per object ("the object is used": a record operation
-//! on a table, a page opened, a report run, a codeunit run, an enum's values read), one per event, the `Global
-//! Triggers` write node, and five nodes for what the program does not name: a codeunit, table, page or report whose
-//! id is held in a variable, and a routine that was not compiled. Edges:
+//! on a table, a page opened, a report run, a codeunit run, an enum's values read), one "written" node per table, one
+//! per event, the `Global Triggers` write node, and six nodes for what the program does not name: a codeunit, table,
+//! page or report whose id is held in a variable, a RecordRef write whose table the code does not name, and a routine
+//! that was not compiled. Edges:
 //!
 //! - a routine to what it calls (`Lowered::calls_of`: procedures, interface implementers, what page and report
 //!   variables drive);
 //! - a publisher routine to its event; an event to its subscribers;
-//! - a routine to the object of each record, page, test page, codeunit and enum variable it holds (its locals and its
-//!   object's globals), and to the codeunit, page, report or table a `Codeunit.Run`, `Page.Run`, `Report.Run` or
-//!   `RecordRef.Open` names with a constant id (else to the matching "id in a variable" node);
+//! - a routine to the object of each record, page, test page and enum variable it holds (its locals and its object's
+//!   globals), and to the codeunit, page, report or table a `Codeunit.Run`, `Page.Run`, `Report.Run` or
+//!   `RecordRef.Open` names with a constant id (else to the matching "id in a variable" node). A codeunit variable
+//!   alone runs nothing: its procedures are calls, and `Codeunit.Run` on it is the codeunit's `OnRun`;
+//! - a routine that writes or validates a record to the table's written node (`Insert`, `Modify`, `Delete`,
+//!   `DeleteAll`, `ModifyAll`, `Rename`, `Truncate`, `Validate` on a record variable, the implicit `Rec` included); one
+//!   that writes through a RecordRef or validates a FieldRef to the written node of each table the routine opens by
+//!   constant or takes with `GetTable`, and to the "RecordRef write" node (the ref may come from anywhere);
 //! - a routine that writes a record to the `Global Triggers` write events;
-//! - a table to its triggers, its extensions' triggers, its events, the tables its fields relate to and the enums of
-//!   its fields; a page to its routines, its extensions' routines, its events and its source table; a report to its
-//!   routines, its extensions' routines, its events and the tables of its records; a codeunit to its `OnRun`.
+//! - a table to the tables its fields relate to and the enums of its fields; a table's written node to the table, its
+//!   triggers, its extensions' triggers, its events and the `Global Triggers` write node; a page to its routines, its
+//!   extensions' routines, its events, its record variables and the written node of its source table (a page inserts,
+//!   modifies and deletes rows); a report to its routines, its extensions' routines, its events and the tables of its
+//!   records; an xmlport to its routines and the written nodes of its tables (an import writes them); a query to its
+//!   routines and its tables; a codeunit to its `OnRun`.
 //!
 //! A test *reaches* an impact point when a path from one of its roots (the test, its codeunit's `OnRun`, its handler
-//! functions) leads to the point without passing an "id in a variable" or "not compiled" node, and *cannot rule it
-//! out* when every such path passes one. The graph over-selects (a variable of a table counts as using the table, an
-//! interface call reaches every implementer, a branch that never runs counts); it misses only what no node stands
-//! for: events the platform raises with no static raiser, and setup rows that name an object to run.
+//! functions) leads to the point without passing a node for what the program does not name, and *cannot rule it
+//! out* when every such path passes one. The graph over-selects (a variable of a table counts as using the table, a
+//! validation counts as a write, an interface call reaches every implementer, a branch that never runs counts); it
+//! misses only what no node stands for: events the platform raises with no static raiser, and setup rows that name an
+//! object to run.
 
 use crate::impact_trace::{ImpactPoint, Site};
 use al_builtins::value::RtType;
@@ -43,22 +53,32 @@ pub const GLOBAL_WRITE_EVENTS: [&str; 10] = [
     "ondatabaserename",
 ];
 
-/// The record methods that change the database.
-const WRITES: [&str; 6] = ["Insert", "Modify", "Delete", "DeleteAll", "ModifyAll", "Rename"];
+/// The record methods that change the database (`al_builtins::record_op::RecordOp::writes`).
+const WRITES: [&str; 7] = [
+    "Insert",
+    "Modify",
+    "Delete",
+    "DeleteAll",
+    "ModifyAll",
+    "Rename",
+    "Truncate",
+];
 
 /// The nodes for what the program does not name.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Unnamed {
     Codeunit,
     Table,
+    TableWrite,
     Page,
     Report,
     NotCompiled,
 }
 
-const UNNAMED: [Unnamed; 5] = [
+const UNNAMED: [Unnamed; 6] = [
     Unnamed::Codeunit,
     Unnamed::Table,
+    Unnamed::TableWrite,
     Unnamed::Page,
     Unnamed::Report,
     Unnamed::NotCompiled,
@@ -69,6 +89,7 @@ impl Unnamed {
         match self {
             Unnamed::Codeunit => "Codeunit.Run with an id from a variable",
             Unnamed::Table => "RecordRef.Open with a table number from a variable",
+            Unnamed::TableWrite => "a RecordRef write to a table the code does not name",
             Unnamed::Page => "Page.Run with an id from a variable",
             Unnamed::Report => "Report.Run with an id from a variable",
             Unnamed::NotCompiled => "a routine that was not compiled",
@@ -86,6 +107,8 @@ pub struct Graph {
     events: HashMap<(usize, String), usize>,
     /// The first of the `UNNAMED` nodes.
     unnamed: usize,
+    /// The written node of object `o` is `written + o` (it has edges only for tables).
+    written: usize,
     edges: Vec<Vec<u32>>,
     rev: Vec<Vec<u32>>,
     /// Objects by kind and id.
@@ -124,12 +147,14 @@ impl Graph {
         }
         let global_write = next;
         let unnamed = next + 1;
-        let n = unnamed + UNNAMED.len();
+        let written = unnamed + UNNAMED.len();
+        let n = written + objects;
         let mut g = Graph {
             base,
             routines,
             events,
             unnamed,
+            written,
             edges: vec![Vec::new(); n],
             rev: Vec::new(),
             by_id: HashMap::new(),
@@ -138,11 +163,19 @@ impl Graph {
         // Objects by kind and id, for the ids `Codeunit.Run`, `Page.Run`, `Report.Run` and `RecordRef.Open` name.
         let mut by_id: HashMap<(ObjKind, u32), usize> = HashMap::new();
         let mut by_name: HashMap<(ObjKind, String), usize> = HashMap::new();
+        // The object a page or report extension extends: its routines' `BaseGlobal` places are that object's globals.
+        let mut base_of: HashMap<usize, usize> = HashMap::new();
         for (oi, o) in objs.iter().enumerate() {
             if let Some(id) = o.id {
                 by_id.entry((o.kind, id)).or_insert(oi);
             }
             by_name.entry((o.kind, o.name.to_lowercase())).or_insert(oi);
+            for &e in o.page.iter().flat_map(|p| p.extensions.iter()) {
+                base_of.insert(e, oi);
+            }
+            if let Some(x) = &o.report_ext {
+                base_of.insert(oi, x.base);
+            }
         }
         let mut edges = std::mem::take(&mut g.edges);
         // The events the platform raises to resolve a caption class.
@@ -152,6 +185,7 @@ impl Graph {
             .filter(|((o, _), _)| *o == al_vm::events::CAPTION_CLASS)
             .map(|(_, &n)| n)
             .collect();
+        let table_write = g.unnamed_node(Unnamed::TableWrite) as u32;
         for (oi, o) in objs.iter().enumerate() {
             for (ri, r) in o.routines.iter().enumerate() {
                 let from = g.base[oi] + ri;
@@ -185,6 +219,7 @@ impl Graph {
                     let mut ty = match p {
                         al_ir::Place::Local(i) => &r.locals.get(*i)?.ty,
                         al_ir::Place::Global(i) => &o.globals.get(*i)?.ty,
+                        al_ir::Place::BaseGlobal(i) => &objs[*base_of.get(&oi)?].globals.get(*i)?.ty,
                         _ => return None,
                     };
                     while let RtType::Array(_, inner) = ty {
@@ -192,6 +227,15 @@ impl Graph {
                     }
                     Some(ty)
                 };
+                let type_of = |a: &al_ir::Arg| match a {
+                    al_ir::Arg::Ref(p) => ty_of(p),
+                    al_ir::Arg::Value(al_ir::Expr::Load(p)) => ty_of(p),
+                    _ => None,
+                };
+                // The tables a RecordRef of the routine is opened on by constant or takes with `GetTable`, and
+                // whether the routine writes through a RecordRef.
+                let mut ref_tables: Vec<usize> = Vec::new();
+                let mut ref_writes = false;
                 al_ir::types::for_each_expr_post(&r.body, &mut |e| {
                     // A constant of an enum reads its values (an interface cast of it, a format of it).
                     if let al_ir::Expr::Const(al_ir::Const::Enum(en, _)) = e {
@@ -211,39 +255,66 @@ impl Graph {
                         Some(al_ir::Arg::Value(al_ir::Expr::Const(al_ir::Const::Integer(n)))) => Some(*n as u32),
                         _ => None,
                     };
-                    let receiver_ty = receiver.as_deref().and_then(|a| match a {
-                        al_ir::Arg::Ref(p) => ty_of(p),
-                        al_ir::Arg::Value(al_ir::Expr::Load(p)) => ty_of(p),
-                        _ => None,
-                    });
+                    let receiver_ty = receiver.as_deref().and_then(type_of);
                     let named = |kind: ObjKind, unnamed: Unnamed, out: &mut Vec<u32>| match constant(0) {
                         Some(id) => {
                             if let Some(&t) = by_id.get(&(kind, id)) {
                                 out.push((routines + t) as u32);
+                                return Some(t);
                             }
+                            None
                         }
-                        None => out.push(g.unnamed_node(unnamed) as u32),
+                        None => {
+                            out.push(g.unnamed_node(unnamed) as u32);
+                            None
+                        }
                     };
                     match (class, method) {
                         ("Codeunit", "Run") => match receiver_ty {
                             Some(RtType::Codeunit(c)) => out.push((routines + *c as usize) as u32),
-                            _ if receiver.is_none() => named(ObjKind::Codeunit, Unnamed::Codeunit, out),
+                            _ if receiver.is_none() => {
+                                named(ObjKind::Codeunit, Unnamed::Codeunit, out);
+                            }
                             _ => out.push(g.unnamed_node(Unnamed::Codeunit) as u32),
                         },
-                        ("Page", "Run" | "RunModal") if receiver.is_none() => named(ObjKind::Page, Unnamed::Page, out),
+                        ("Page", "Run" | "RunModal") if receiver.is_none() => {
+                            named(ObjKind::Page, Unnamed::Page, out);
+                        }
                         ("Report", m)
                             if receiver.is_none()
                                 && (m.starts_with("Run")
                                     || m.starts_with("SaveAs")
                                     || matches!(m, "Execute" | "Print" | "RdlcLayout" | "WordLayout")) =>
                         {
-                            named(ObjKind::Report, Unnamed::Report, out)
+                            named(ObjKind::Report, Unnamed::Report, out);
                         }
-                        ("RecordRef", "Open") => named(ObjKind::Table, Unnamed::Table, out),
-                        ("Record" | "RecordRef", m) if WRITES.contains(&m) => out.push(global_write as u32),
+                        ("RecordRef", "Open") => ref_tables.extend(named(ObjKind::Table, Unnamed::Table, out)),
+                        ("RecordRef", "GetTable") => {
+                            if let Some(RtType::Record(t, _)) = args.first().and_then(type_of) {
+                                ref_tables.push(*t as usize);
+                            }
+                        }
+                        ("Record", m) if WRITES.contains(&m) || m == "Validate" => {
+                            if WRITES.contains(&m) {
+                                out.push(global_write as u32);
+                            }
+                            match receiver_ty {
+                                Some(RtType::Record(t, _)) => out.push((g.written + *t as usize) as u32),
+                                _ => out.push(table_write),
+                            }
+                        }
+                        ("RecordRef", m) if WRITES.contains(&m) => {
+                            out.push(global_write as u32);
+                            ref_writes = true;
+                        }
+                        ("FieldRef", "Validate") => ref_writes = true,
                         _ => {}
                     }
                 });
+                if ref_writes {
+                    out.push(table_write);
+                    out.extend(ref_tables.iter().map(|&t| (g.written + t) as u32));
+                }
             }
         }
         // Objects: what using them runs.
@@ -263,21 +334,23 @@ impl Graph {
                         .map(|(r, _)| (g.base[q] + r) as u32),
                 );
             };
-            let record_globals = |q: usize, out: &mut Vec<u32>| {
+            // The tables of the object's record variables: their object nodes, or with `write` their written nodes.
+            let record_globals = |q: usize, write: bool, out: &mut Vec<u32>| {
                 for s in &objs[q].globals {
                     if let Some(t) = slot_object(&s.ty)
                         && objs[t].kind == ObjKind::Table
                     {
-                        out.push((routines + t) as u32);
+                        out.push((if write { g.written } else { routines } + t) as u32);
                     }
                 }
             };
             match o.kind {
                 ObjKind::Table => {
-                    triggers(oi, &mut out);
+                    let mut w = vec![from as u32, global_write as u32];
+                    triggers(oi, &mut w);
                     if let Some(t) = &o.table {
                         for &e in &t.extensions {
-                            triggers(e, &mut out);
+                            triggers(e, &mut w);
                         }
                         for f in &t.fields {
                             for rel in f.relation_table.iter().chain(&f.relation_tables) {
@@ -290,6 +363,7 @@ impl Graph {
                             }
                         }
                     }
+                    edges[g.written + oi] = w;
                 }
                 ObjKind::Page => {
                     all(oi, &mut out);
@@ -298,7 +372,11 @@ impl Graph {
                     for &e in o.page.iter().flat_map(|p| p.extensions.iter()) {
                         all(e, &mut out);
                     }
-                    record_globals(oi, &mut out);
+                    record_globals(oi, false, &mut out);
+                    // A page inserts, modifies and deletes rows of its source table (its `Rec`).
+                    if let Some(RtType::Record(t, _)) = o.rec_slot.and_then(|s| o.globals.get(s)).map(|s| &s.ty) {
+                        out.push((g.written + *t as usize) as u32);
+                    }
                 }
                 ObjKind::Report => {
                     all(oi, &mut out);
@@ -307,11 +385,16 @@ impl Graph {
                             all(e, &mut out);
                         }
                     }
-                    record_globals(oi, &mut out);
+                    record_globals(oi, false, &mut out);
                 }
-                ObjKind::XmlPort | ObjKind::Query => {
+                // An import inserts and modifies the rows of the xmlport's tables.
+                ObjKind::XmlPort => {
                     all(oi, &mut out);
-                    record_globals(oi, &mut out);
+                    record_globals(oi, true, &mut out);
+                }
+                ObjKind::Query => {
+                    all(oi, &mut out);
+                    record_globals(oi, false, &mut out);
                 }
                 ObjKind::Codeunit => {
                     out.extend(
@@ -326,8 +409,8 @@ impl Graph {
             }
             edges[from] = out;
         }
-        // Events: their subscribers. An event of an object is raised when the object is used (table, page and report
-        // events, which the platform raises).
+        // Events: their subscribers. An event of a table is raised when the table is written, one of a page or report
+        // when it is used (the platform raises them).
         for ((object, event), &node) in &g.events {
             for s in registry
                 .subscribers
@@ -340,13 +423,13 @@ impl Graph {
                 }
             }
             if *object < objs.len()
-                && matches!(objs[*object].kind, ObjKind::Table | ObjKind::Page | ObjKind::Report)
+                && let Some(raiser) = g.raiser(objs[*object].kind, *object)
                 && !registry
                     .publishers
                     .values()
                     .any(|p| p.object == *object && &p.event == event)
             {
-                edges[routines + *object].push(node as u32);
+                edges[raiser].push(node as u32);
             }
             if *object == registry.global_key && GLOBAL_WRITE_EVENTS.contains(&event.as_str()) {
                 edges[global_write].push(node as u32);
@@ -354,11 +437,12 @@ impl Graph {
         }
         // What the program does not name: any object of the kind.
         for u in UNNAMED {
-            let kind = match u {
-                Unnamed::Codeunit => ObjKind::Codeunit,
-                Unnamed::Table => ObjKind::Table,
-                Unnamed::Page => ObjKind::Page,
-                Unnamed::Report => ObjKind::Report,
+            let (kind, first) = match u {
+                Unnamed::Codeunit => (ObjKind::Codeunit, routines),
+                Unnamed::Table => (ObjKind::Table, routines),
+                Unnamed::TableWrite => (ObjKind::Table, g.written),
+                Unnamed::Page => (ObjKind::Page, routines),
+                Unnamed::Report => (ObjKind::Report, routines),
                 Unnamed::NotCompiled => continue,
             };
             let node = g.unnamed_node(u);
@@ -366,7 +450,7 @@ impl Graph {
                 .iter()
                 .enumerate()
                 .filter(|(_, o)| o.kind == kind)
-                .map(|(oi, _)| (routines + oi) as u32)
+                .map(|(oi, _)| (first + oi) as u32)
                 .collect();
         }
         for e in &mut edges {
@@ -385,6 +469,16 @@ impl Graph {
         g
     }
 
+    /// The node that raises the platform events of an object: a table's written node, a page's or report's object
+    /// node; `None` for other kinds.
+    fn raiser(&self, kind: ObjKind, object: usize) -> Option<usize> {
+        match kind {
+            ObjKind::Table => Some(self.written_node(object)),
+            ObjKind::Page | ObjKind::Report => Some(self.object_node(object)),
+            _ => None,
+        }
+    }
+
     /// The object of this kind and id.
     pub fn object_of(&self, kind: ObjKind, id: u32) -> Option<usize> {
         self.by_id.get(&(kind, id)).copied()
@@ -395,7 +489,7 @@ impl Graph {
     }
 
     fn is_unnamed(&self, n: usize) -> bool {
-        n >= self.unnamed
+        (self.unnamed..self.written).contains(&n)
     }
 
     pub fn routine_node(&self, object: usize, routine: usize) -> usize {
@@ -404,6 +498,11 @@ impl Graph {
 
     pub fn object_node(&self, object: usize) -> usize {
         self.routines + object
+    }
+
+    /// The node for writes of a table (and validations of its fields).
+    pub fn written_node(&self, object: usize) -> usize {
+        self.written + object
     }
 
     pub fn event_node(&self, object: usize, event: &str) -> Option<usize> {
@@ -476,15 +575,17 @@ impl Graph {
     }
 }
 
-/// The node a key of the impact index (`impact_trace::keys`) stands for: `table` and `write` keys the table, `page`,
-/// `report` and `enum` keys the object, an event its event node, or the object for a table, page or report event no
-/// one subscribes to (using the object raises it). `None`: the graph has no node for it.
+/// The node a key of the impact index (`impact_trace::keys`) stands for: a `table` key the table, a `write` key its
+/// written node, `page`, `report` and `enum` keys the object, an event its event node, or for a table, page or report
+/// event no one subscribes to the node that raises it (a table's written node, a page or report). `None`: the graph has
+/// no node for it.
 pub fn key_node(graph: &Graph, program: &Program, key: &str) -> Option<usize> {
     let (what, rest) = key.split_once(' ')?;
     let object = |kind: ObjKind, id: &str| graph.object_of(kind, id.parse().ok()?);
     let simple = |kind: ObjKind| object(kind, rest).map(|o| graph.object_node(o));
     match what {
-        "table" | "write" => simple(ObjKind::Table),
+        "table" => simple(ObjKind::Table),
+        "write" => object(ObjKind::Table, rest).map(|o| graph.written_node(o)),
         "page" => simple(ObjKind::Page),
         "report" => simple(ObjKind::Report),
         "enum" => simple(ObjKind::Enum),
@@ -498,29 +599,23 @@ pub fn key_node(graph: &Graph, program: &Program, key: &str) -> Option<usize> {
                 ("codeunit", "2000000002") => graph.global_key,
                 _ => object(kind.parse().ok()?, id)?,
             };
-            graph.event_node(o, event).or_else(|| {
-                (o < program.objects.len()
-                    && matches!(
-                        program.objects[o].kind,
-                        ObjKind::Table | ObjKind::Page | ObjKind::Report
-                    ))
-                .then(|| graph.object_node(o))
-            })
+            graph
+                .event_node(o, event)
+                .or_else(|| graph.raiser(program.objects.get(o)?.kind, o))
         }
         _ => None,
     }
 }
 
-/// The object a variable of this type uses: a table, page, test page, codeunit or enum.
+/// The object a variable of this type uses: a table, page, test page or enum. A codeunit variable runs nothing by
+/// itself: its procedures are calls (`Lowered::calls_of`) and `Codeunit.Run` on it is handled where it is written.
 fn slot_object(ty: &RtType) -> Option<usize> {
     let mut ty = ty;
     while let RtType::Array(_, inner) = ty {
         ty = inner;
     }
     match ty {
-        RtType::Record(t, _) | RtType::Page(t) | RtType::TestPage(t) | RtType::Codeunit(t) | RtType::Enum(t) => {
-            Some(*t as usize)
-        }
+        RtType::Record(t, _) | RtType::Page(t) | RtType::TestPage(t) | RtType::Enum(t) => Some(*t as usize),
         _ => None,
     }
 }

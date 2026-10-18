@@ -328,4 +328,9 @@ apps in `tests/fixtures/impact`, including the selection-independence test).
    `--impact-of` until step 3.
 4. "Calls" of a routine are the runs of its first statement; a routine with no statement (empty body) is not seen.
 5. A failure the runner does not trust (an earlier test of the codeunit did not run) is "newly refused"; the report
-   prints the failure text under it.
+   prints the failure text under it. **Changed (untrusted-failure-2, 2026-10-18):** the runner now distrusts a failure
+   only when an earlier test refused before it started can write a table the failing test reads (static reach,
+   subscribers included), or both can draw random numbers. And when the test ran on the "without" side, the report
+   counts an untrusted failure as a failure ("newly failing" or "fails differently"): both sides refuse the same earlier
+   tests, so what those tests did not write cannot be what differs. In the Tests-Resource example (codeunit 136403)
+   the two breakages are "newly failing" again.

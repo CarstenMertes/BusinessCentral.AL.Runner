@@ -79,3 +79,38 @@ fn write_of_non_ascii_text_is_refused() {
         r[0]
     );
 }
+
+// Where the stream stands after BigText.Write is not pinned: a further write to the same stream is refused,
+// reading the blob back stays allowed.
+#[test]
+fn a_write_after_bigtext_write_on_the_same_stream_is_refused() {
+    let r = run(
+        "[Test] procedure W() var Rec: Record \"BW Rec\"; Big: BigText; Out: OutStream; begin
+            Rec.Init(); Rec.Id := 1; Rec.Insert();
+            Big.AddText('abc');
+            Rec.Data.CreateOutStream(Out);
+            Big.Write(Out);
+            Out.WriteText('def');
+         end;
+",
+    );
+    assert!(
+        matches!(&r[0].1, Outcome::NotRun(m) if m.contains("a write after BigText.Write on the same stream (position not pinned)")),
+        "{:?}",
+        r[0]
+    );
+    // A new CreateOutStream starts at 0 again, and the blob reads back.
+    let r = run(
+        "[Test] procedure R() var Rec: Record \"BW Rec\"; Big: BigText; Out: OutStream; Out2: OutStream; begin
+            Rec.Init(); Rec.Id := 1; Rec.Insert();
+            Big.AddText('abc');
+            Rec.Data.CreateOutStream(Out);
+            Big.Write(Out);
+            Rec.Data.CreateOutStream(Out2);
+            Out2.WriteText('xy');
+            Rec.CalcFields(Data);
+            if Rec.Data.Length() = 0 then Error('empty');
+         end;",
+    );
+    assert_eq!(r[0].1, Outcome::Pass, "{:?}", r[0]);
+}

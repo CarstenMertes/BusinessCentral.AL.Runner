@@ -922,9 +922,16 @@ fn in_read(c: &mut dyn Ctx, mut r: Option<&mut Value>, a: &mut [Value]) -> NResu
     Ok(Value::Integer(width as i32))
 }
 
+/// `write_pos` of a buffer that `BigText.Write` filled: where the stream stands afterwards is not pinned, so any further
+/// write through an OutStream on it is refused until `CreateOutStream` sets the position to 0 again.
+const BIGTEXT_SEALED: usize = usize::MAX;
+
 fn out_buf(r: Option<&mut Value>) -> Result<(BlobRef, Encoding), Signal> {
     match r {
         Some(Value::Library(_, h)) => match &*h.borrow() {
+            LibraryValue::OutStream(b, _) if b.borrow().write_pos == BIGTEXT_SEALED => {
+                unsupported("a write after BigText.Write on the same stream (position not pinned)")
+            }
             LibraryValue::OutStream(b, e) => Ok((b.clone(), *e)),
             _ => unsupported("use of an OutStream that was never created"),
         },
@@ -965,6 +972,7 @@ pub(crate) fn write_bigtext(stream: &mut Value, text: &str) -> Result<(), Signal
         return unsupported("BigText.Write to a stream that was written to (not pinned)");
     }
     write_bytes(&b, text.as_bytes());
+    b.borrow_mut().write_pos = BIGTEXT_SEALED;
     Ok(())
 }
 

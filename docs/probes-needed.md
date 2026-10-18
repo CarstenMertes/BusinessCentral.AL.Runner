@@ -941,4 +941,4 @@ Sales/Purchase header pages and tables (about 1,000 tests stop at these shapes o
 
 ## BigText.Write (bigtext-write, 2026-10-18)
 - Pinned (streams/StTBigText.al:WriteToStreamAndRead, :WriteReadLargeText): ASCII text on a fresh OutStream; the blob holds one byte per character and `BigText.Read` gives the text back.
-- Refused, probe wanted: text beyond ASCII (WriteNonAscii shows 3 blob bytes for 3 characters, which no encoding explains), a stream that was written to first, the stream position after the write, and `Write` on a stream created with an explicit encoding.
+- Refused, probe wanted: text beyond ASCII (WriteNonAscii shows 3 blob bytes for 3 characters, which no encoding explains), a stream that was written to first, the stream position after the write (a further write to that stream is refused), and `Write` on a stream created with an explicit encoding.

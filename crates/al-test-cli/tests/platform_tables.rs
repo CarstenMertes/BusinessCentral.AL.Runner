@@ -950,5 +950,8 @@ codeunit 50000 "T" { Subtype = Test;
         passes(&o, t);
     }
     let why = not_run(&o, "TwoExtensions");
-    assert!(why.contains("DeleteAllowed") && why.contains("50015") || why.contains("B4"), "{why}");
+    assert!(
+        why.contains("DeleteAllowed") && why.contains("50015") || why.contains("B4"),
+        "{why}"
+    );
 }

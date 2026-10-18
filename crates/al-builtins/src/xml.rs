@@ -4129,7 +4129,11 @@ pub(crate) fn read_tree(text: &str) -> Result<Result<crate::xmlport::Elem, Optio
         if prefix.is_empty() != ns.is_empty() {
             return Err("namespaces in an XmlPort document".into());
         }
-        let mut out = Elem::new(&if prefix.is_empty() { local.clone() } else { format!("{prefix}:{local}") });
+        let mut out = Elem::new(&if prefix.is_empty() {
+            local.clone()
+        } else {
+            format!("{prefix}:{local}")
+        });
         for a in attrs {
             let (p, l, n, v) = with(&a, |d| match d {
                 XData::Attribute {

@@ -646,13 +646,18 @@ impl Session {
             Err(ReadFailure::Unsupported(why)) => return unsupported(format!("XmlPort import of {why}")),
         };
         if xp.inline_schema {
-            return unsupported("XmlPort import into a port with InlineSchema = true of a document that parses (not pinned)");
+            return unsupported(
+                "XmlPort import into a port with InlineSchema = true of a document that parses (not pinned)",
+            );
         }
         // Only the prefixes the port declares are pinned (YXmlPortProps.al:NodeProperties_Import_NamesPrefixes).
         fn foreign_prefix(e: &Elem, declared: &[(String, String)]) -> bool {
-            e.name.split_once(':').is_some_and(|(p, _)| !declared.iter().any(|(q, _)| q == p))
+            e.name
+                .split_once(':')
+                .is_some_and(|(p, _)| !declared.iter().any(|(q, _)| q == p))
                 || e.attrs.iter().any(|(n, _)| {
-                    n.strip_prefix("xmlns:").is_some_and(|p| !declared.iter().any(|(q, _)| q == p))
+                    n.strip_prefix("xmlns:")
+                        .is_some_and(|p| !declared.iter().any(|(q, _)| q == p))
                 })
                 || e.elements().any(|c| foreign_prefix(c, declared))
         }
@@ -896,9 +901,10 @@ impl Session {
         }
         for (name, value) in &elem.attrs {
             // A declaration of a namespace of the port is no attribute (YXmlPortProps.al:NodeProperties_Import_NamesPrefixes).
-            if name.strip_prefix("xmlns:").is_some_and(|p| {
-                schema.xp().namespaces.iter().any(|(q, u)| q == p && u == value)
-            }) {
+            if name
+                .strip_prefix("xmlns:")
+                .is_some_and(|p| schema.xp().namespaces.iter().any(|(q, u)| q == p && u == value))
+            {
                 continue;
             }
             let Some(a) = Self::xp_child_named(schema, node, name, true) else {
@@ -1680,7 +1686,11 @@ impl Session {
             };
             match al_builtins::xmlport::compact(e) {
                 Some(r) => rows.push_str(&r),
-                None => return unsupported("XmlPort export with InlineSchema of an empty value (how it is written is not pinned)"),
+                None => {
+                    return unsupported(
+                        "XmlPort export with InlineSchema of an empty value (how it is written is not pinned)",
+                    );
+                }
             }
         }
         if rows.is_empty() {
@@ -1800,7 +1810,9 @@ impl Session {
         // NodeProperties_Export_NamesPrefixesAutoCalc: true calculates, false writes the field as it is).
         if !self.table(&rec)?.fields[pos].stored && n.auto_calc != Some(false) {
             if n.auto_calc.is_none() {
-                al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::XmlportExportsFlowfieldCalculated);
+                al_builtins::assumptions::assume(
+                    al_builtins::assumptions::Assumption::XmlportExportsFlowfieldCalculated,
+                );
             }
             self.ret_used = false;
             self.record_op(RecordOp::CalcFields, &rec, &mut [Value::Integer(pos as i32)])?;
@@ -2045,7 +2057,9 @@ fn utf16_declared_utf8(text: String) -> Result<String, Signal> {
         return Ok(text);
     }
     if decl.contains('\n') || decl.contains('\r') || !rest.starts_with('<') {
-        return unsupported("XmlPort import of a UTF-16 document that declares utf-8 with a different layout (error text not pinned)");
+        return unsupported(
+            "XmlPort import of a UTF-16 document that declares utf-8 with a different layout (error text not pinned)",
+        );
     }
     let position = decl.chars().count() + 2 + 2;
     Err(xerr(
@@ -2304,7 +2318,11 @@ impl Sequence {
                 .iter()
                 .map(|&c| {
                     let n = schema.node(c);
-                    match n.ns_prefix.as_deref().and_then(|p| schema.xp().namespaces.iter().find(|(q, _)| q == p)) {
+                    match n
+                        .ns_prefix
+                        .as_deref()
+                        .and_then(|p| schema.xp().namespaces.iter().find(|(q, _)| q == p))
+                    {
                         Some((_, uri)) => format!("'{}' in namespace '{uri}'", n.xml_name),
                         None => format!("'{}'", n.xml_name),
                     }

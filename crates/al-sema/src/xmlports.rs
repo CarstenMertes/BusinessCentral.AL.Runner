@@ -177,7 +177,10 @@ pub fn layout(obj: &ast::Object) -> Layout {
                         out.namespaces
                             .push((crate::scan::unquote_xmlport(prefix), crate::scan::unquote_xmlport(uri)));
                     }
-                    _ => out.run_reasons.push(format!("xmlport namespaces `{}` is not a single prefix = 'uri' pair (not pinned)", value.trim())),
+                    _ => out.run_reasons.push(format!(
+                        "xmlport namespaces `{}` is not a single prefix = 'uri' pair (not pinned)",
+                        value.trim()
+                    )),
                 },
                 _ => out
                     .run_reasons
@@ -386,7 +389,9 @@ pub fn build(cx: &Context, mut reasons: Vec<String>) -> ir::XmlPort {
                 .property(i, "MinOccurs")
                 .is_some_and(|v| v.trim().eq_ignore_ascii_case("zero")),
             width: layout.property(i, "Width").and_then(|v| v.trim().parse().ok()),
-            ns_prefix: layout.property(i, "NamespacePrefix").map(|v| crate::scan::unquote_xmlport(&v)),
+            ns_prefix: layout
+                .property(i, "NamespacePrefix")
+                .map(|v| crate::scan::unquote_xmlport(&v)),
             auto_calc: layout.property(i, "AutoCalcField").and_then(|v| bool_prop(&v)),
             triggers,
         };
@@ -525,13 +530,20 @@ pub fn build(cx: &Context, mut reasons: Vec<String>) -> ir::XmlPort {
     {
         let used: Vec<&str> = nodes.iter().filter_map(|n| n.ns_prefix.as_deref()).collect();
         for (prefix, _) in &layout.namespaces {
-            if !nodes.iter().any(|n| n.kind == ir::XmlNodeKind::Field && n.ns_prefix.as_deref() == Some(prefix.as_str())) {
-                run_reasons.push(format!("xmlport namespace `{prefix}` that no field element uses (not pinned)"));
+            if !nodes
+                .iter()
+                .any(|n| n.kind == ir::XmlNodeKind::Field && n.ns_prefix.as_deref() == Some(prefix.as_str()))
+            {
+                run_reasons.push(format!(
+                    "xmlport namespace `{prefix}` that no field element uses (not pinned)"
+                ));
             }
         }
         for u in used {
             if !layout.namespaces.iter().any(|(p, _)| p == u) {
-                run_reasons.push(format!("NamespacePrefix `{u}` is not a declared namespace (not pinned)"));
+                run_reasons.push(format!(
+                    "NamespacePrefix `{u}` is not a declared namespace (not pinned)"
+                ));
             }
         }
     }

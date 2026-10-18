@@ -87,7 +87,10 @@ fn the_export_writes_the_schema_inside_the_root() {
 fn other_shapes_are_refused() {
     for t in ["DecimalIsRefused", "AttributeIsRefused"] {
         match outcome(t) {
-            Outcome::NotRun(why) => assert!(why.to_lowercase().contains("inlineschema") || why.contains("inline"), "{t}: {why}"),
+            Outcome::NotRun(why) => assert!(
+                why.to_lowercase().contains("inlineschema") || why.contains("inline"),
+                "{t}: {why}"
+            ),
             other => panic!("{t}: {other:?}"),
         }
     }

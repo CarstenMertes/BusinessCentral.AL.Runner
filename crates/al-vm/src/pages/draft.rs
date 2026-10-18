@@ -18,7 +18,10 @@ impl Session {
                 return unsupported("New() on a page without an id denied by InsertAllowed (the text is not pinned)");
             };
             return Err(error_code(
-                format!("New method failed because Insert is not allowed. Page = {}, Id = {id}.", o.name),
+                format!(
+                    "New method failed because Insert is not allowed. Page = {}, Id = {id}.",
+                    o.name
+                ),
                 "DB:ClientInsertDenied",
             ));
         }
@@ -279,7 +282,9 @@ impl Session {
         }
         // Only a close with a changed row on a page that does not allow modify is pinned (see `close_denied_modify`).
         if flag_denied(&self.engine(), st.borrow().object as usize, "ModifyAllowed")? {
-            return unsupported("saving a changed row on a page whose ModifyAllowed is false, other than at Close (not pinned)");
+            return unsupported(
+                "saving a changed row on a page whose ModifyAllowed is false, other than at Close (not pinned)",
+            );
         }
         // corpus handlers/TestPageTriggerEvents.al (ModifyRecordEvent_RunsAfterThePagesOwnOnModifyRecordTrigger)
         let keep = self.page_trigger_answer(st, "onmodifyrecord", vec![])?;

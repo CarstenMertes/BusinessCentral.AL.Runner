@@ -316,5 +316,60 @@ The package has fewer rows than the backup (it is the DemoTool's Extended data, 
 that pass on the backup fail on it and the other way round; that is the Legacy lane's data, which is what Microsoft's
 Legacy buckets run on. The two tables the reader used to refuse are now read, and no test of this bucket touches them,
 so the counts did not change. The largest package-only failure is `The Country/Region does not exist ... Code=''` (40
-tests, first: ERM Report Amount in FCY, `AmountInFCYOnDocumentEntriesReport`); it is a lead for the next round, not
-explained yet.
+tests, first: ERM Report Amount in FCY, `AmountInFCYOnDocumentEntriesReport`). Explained (2026-10-18, rerun of the
+bucket: still 40, same text): it is not a gap of the package reader. `ERMFinancialReportsIII.Codeunit.al:1966`
+(`UpdateIntrastatCountryCode`) does `CompanyInformation.Get()` and then `CountryRegion.Get(CompanyInformation."Country/Region Code")`.
+The package (`NAV27.5.W1.ENU.EXTENDED.rapidstart`) holds 68 Country/Region rows but no Company Information table at all, so
+the Company Information row is the one `Company-Initialize` writes, with a blank country. The backup company has the
+demo tool's Company Information row (a country set), which is why the same tests pass there. A company built from this
+package therefore fails these 40 tests on any host that builds it the same way. Whether Microsoft's Legacy lane has a
+Company Information country from some other step is not known here; it needs a probe on real BC (build a company
+from the package and read Company Information."Country/Region Code"). Until then these 40 stay as package-only failures.
+
+## Microsoft's recipe: `--recipe microsoft` (2026-10-18, branch `ms-recipe-3`)
+
+`alrunner test <Tests-*.Source.zip> ... --recipe microsoft` runs the buckets the way BCApps' CI does.
+
+1. The BCApps files come from `releases/<major>.<minor>` of github.com/microsoft/BCApps (MIT), fetched with `git`
+   (shallow, no file contents, only `src/DisabledTests`, `build/projects`, `build/scripts`) into
+   `<cache dir>/bcapps/<major>.<minor>/` once. The release is `--bc-version` (major.minor), else the build of the tests.
+   `--bcapps DIR` names a checkout instead. `--no-download` reads only the cache. `ALRUNNER_BCAPPS_URL` replaces the
+   GitHub address (a mirror).
+   Measured 2026-10-18: `releases/27.x` and `releases/28.x` do not have the BaseApp test recipe at all (no `Test Apps W1`
+   project, no `TestConfiguration.json`, no `src/DisabledTests`); `releases/29.0` is the first that does. A release
+   without it uses `releases/29.0`, and the run prints that. Disabled tests are matched by codeunit id and method
+   name, so entries for tests a 27.5 artifact lacks do nothing.
+2. The lane of a test codeunit: a test app in `TestConfiguration.json` (`LegacyTests-Bucket1`, `-Bucket2`) is Legacy,
+   whatever the codeunit says. For any other app the AL property `TestType` of the codeunit decides:
+   `UnitTest`, `IntegrationTest`, none or `Uncategorized`; `AITest` is in no build mode and is left out.
+3. Company per lane: Legacy runs `--company-data package` (company name from the settings, CRONUS International Ltd.);
+   UnitTest runs without demo data (Company-Initialize and the installs only). IntegrationTest and Uncategorized need
+   Microsoft's Contoso Demo Tool (`CreateSetupDemoData`, `CreateAllDemoData`, then the tenant data codeunit 5691, which also
+   creates the Web Service rows). The runner does not run it yet, so those lanes print `NOT RUN` with the reason and the
+   exit code is 7.
+4. Microsoft's disabled tests are skipped (`--parity`) and counted per lane. Each lane has its own summary and, with
+   `--junit FILE`, its own `FILE.<lane>.xml`.
+
+Company name per lane (2026-10-18, `ms-recipe-4`): a lane without a restored company sets the run's company name
+(`TestArgs.company_name`, `al_testrun::host::set_company_name`), so `CompanyName()` answers `Empty Company` in the UnitTest lane
+(and `My Company` once the Contoso lanes run). The name is part of the baseline cache key. Legacy answers the company of
+the package.
+
+### Contoso lanes: spike result (2026-10-18)
+
+The Contoso Coffee Demo Dataset app (`Microsoft_Contoso Coffee Demo Dataset_<build>.app`, source zip in the artifact)
+resolves as a dependency of an ordinary test app, and its code compiles without a static refusal. A scratch test app with
+one test per module and level (16 modules x Setup/Master/Transactional/Historical, calling each module codeunit's
+`Create<Level>Data`) shows where the run stops. Ranked:
+
+1. `DotNet new System.Drawing.Bitmap` (refused by policy: needs the Windows drawing stack), reached from `Foundation Module`
+   `CreateSetupData` -> `Create Company Information`.CreateSetupCompany (CreateCompanyInformation.Codeunit.al:76) ->
+   Base App `O365 Brand Color`.CreateDefaultBrandColors/MakePicture (O365BrandColor.Table.al:124). This is the first step of
+   `CreateSetupDemoData`, so it blocks both lanes and hides what follows (13 further tests fail only because the Foundation
+   data is missing).
+2. `builtin System.DWY2Date#1 is not implemented`: 7 tests (for example `Bank Module` `CreateHistoricalData`).
+3. `DotNet new System.Net.Mail.MailAddress` (refused by policy: touches the network): `CRM Module` `CreateMasterData`.
+
+More refusals may sit behind the first one. Each is a runtime task (a corpus pin is needed first for DWY2Date; the two
+DotNet types need an owner decision on the policy or a native replacement). The two lanes stay refused with the first
+reason in their line. The company-setup roots in `baseline.rs` were not added: they would run a refused step on every run.

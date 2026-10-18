@@ -247,6 +247,9 @@ al-deps        dependency apps: .alpackages, Microsoft artifact feed, cache, pac
 
 - `apps.rs` (128): Reads the APPs given on the command line (folder, `*.Source.zip`, `.app`) and builds the project the dependency resolution works for. Entry: `load`, `combined_project`.
 - `args.rs` (262): Command-line parsing and the `--help` text of `alrunner`. Entry: `parse`, `HELP`.
+- `bcapps.rs` (330): Where the Microsoft recipe files come from: a sparse `git` checkout of BCApps `releases/<major>.<minor>` kept in `<cache>/bcapps/<major>.<minor>/`; a release without the BaseApp test recipe (before 29.0) uses `releases/29.0`. Entry: `resolve`, `git_fetch`, `has_recipe`.
+- `recipe.rs` (290): BCApps' settings as lanes (Legacy, UnitTest, Integration, Uncategorized): which company each test codeunit gets. Pure; reads `settings.json` and `TestConfiguration.json`. Entry: `Recipe::load`, `Lane`, `plan`.
+- `recipe_run.rs` (330): `alrunner test --recipe microsoft`: one run per lane with the lane's company and Microsoft's disabled tests skipped, then a by-lane summary. Entry: `test`, `lane_args`.
 - `testdata.rs` (300): Which demo backup a run restores: disk, cache, download, other build; or why test data is off (ADR-020). Entry: `locate`, `Where`, `Located`.
 - `impact.rs` (505): `alrunner test --impact-of APP --impact all` (ADR-043 step 1): both runs, the change class of each test, the extension routines it entered (from coverage counts), the report and exit code. Entry: `run`, `classify`, `Routines`, `diff`, `report`.
 - `main.rs` (51): The `alrunner` binary: runs on a thread with a large stack, maps results to exit codes. Entry: `main`.

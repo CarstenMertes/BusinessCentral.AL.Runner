@@ -132,13 +132,19 @@ fn disabled_line(
     d: &al_testrun::disabled::DisabledTests,
     results: &[&TestResult],
     found: &[Found],
+    selection: &Selection,
     parity: bool,
 ) -> String {
     let list = format!("{} entries of {} files", d.entries(), d.files());
     if parity {
         let skipped: usize = found
             .iter()
-            .map(|f| f.tests.iter().filter(|t| d.is_disabled(f.id, t)).count())
+            .map(|f| {
+                f.tests
+                    .iter()
+                    .filter(|t| selection.picks(f.id, t) && d.is_disabled(f.id, t))
+                    .count()
+            })
             .sum();
         return format!("Disabled by Microsoft: {skipped} tests not run (--parity; {list})");
     }
@@ -593,6 +599,7 @@ fn test_inner(a: &TestArgs, mut warm: Option<&mut WarmCtx>, collect: Option<&mut
     };
     let server_url_set = server_url.is_some();
     al_testrun::host::set_server_url(server_url);
+    al_testrun::host::set_company_name(a.company_name.clone());
     if let Some(dir) = &a.files_dir {
         al_testrun::host::set_files_dir(dir.clone());
     }
@@ -1432,7 +1439,19 @@ fn test_inner(a: &TestArgs, mut warm: Option<&mut WarmCtx>, collect: Option<&mut
         }
     }
     if let Some(d) = &disabled {
-        say!("{}", disabled_line(d, &results, &found, a.parity));
+        say!(
+            "{}",
+            disabled_line(
+                d,
+                &results,
+                &found,
+                &Selection {
+                    parity: None,
+                    ..selection.clone()
+                },
+                a.parity
+            )
+        );
     }
     if let Some(w) = &dotnet_warning {
         say!("{w}");
@@ -1623,5 +1642,35 @@ mod country_tests {
             assert!(!should_choose_test_data(&args(country, false), false, false));
             assert!(!should_choose_test_data(&args(country, false), true, true));
         }
+    }
+}
+
+#[cfg(test)]
+mod disabled_line_tests {
+    use super::*;
+
+    #[test]
+    fn the_parity_count_covers_only_the_selected_codeunits() {
+        let mut d = al_testrun::disabled::DisabledTests::default();
+        d.add_file(r#"[{"codeunitId":1,"method":"*"},{"codeunitId":2,"method":"*"}]"#)
+            .unwrap();
+        let found = vec![
+            Found {
+                app: 0,
+                id: 1,
+                tests: vec!["A".into(), "B".into()],
+            },
+            Found {
+                app: 0,
+                id: 2,
+                tests: vec!["C".into()],
+            },
+        ];
+        let sel = Selection {
+            codeunits: vec![1],
+            ..Selection::default()
+        };
+        let line = disabled_line(&d, &[], &found, &sel, true);
+        assert!(line.starts_with("Disabled by Microsoft: 2 tests not run"), "{line}");
     }
 }

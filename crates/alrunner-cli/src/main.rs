@@ -2,10 +2,13 @@
 
 mod apps;
 mod args;
+mod bcapps;
 mod capture;
 mod coverage;
 mod impact;
 mod output;
+mod recipe;
+mod recipe_run;
 mod run;
 mod serve;
 mod style;
@@ -152,7 +155,7 @@ fn real_main() -> ExitCode {
                 ExitCode::from(2)
             }
         },
-        Command::Test(a) => match run::test(&a) {
+        Command::Test(a) => match if a.recipe { recipe_run::test(&a) } else { run::test(&a) } {
             Ok(code) => ExitCode::from(code),
             Err(e) => {
                 eprintln!("error: {e}");

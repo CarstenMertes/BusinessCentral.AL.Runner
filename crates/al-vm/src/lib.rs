@@ -734,6 +734,7 @@ impl Session {
                     auto_calc: Vec::new(),
                     load: Default::default(),
                     touched: false,
+                    assigned: false,
                     globals: Default::default(),
                 })))
             }

@@ -579,6 +579,9 @@ pub struct RecordState {
     /// AL code has written a field of the buffer. BC builds the buffer of a record variable on
     /// the first write, and evaluates the `InitValue`s only then (record/TestDateTimeInitValue.Codeunit.al).
     pub touched: bool,
+    /// AL code assigned a field since the last `Init` or `Clear`, even to its own default value; `AreFieldsLoaded` on a
+    /// record nothing was fetched into reads it (record/lt-arefieldsloaded-default).
+    pub assigned: bool,
     /// The table's and its extensions' global variables of this record variable (ADR-021).
     pub globals: TableGlobals,
 }

@@ -9,6 +9,7 @@ pub mod corpus;
 pub mod coverage;
 pub mod drift;
 pub mod insight;
+pub mod language_catalog;
 pub mod mnc;
 pub mod oracle;
 pub mod output;

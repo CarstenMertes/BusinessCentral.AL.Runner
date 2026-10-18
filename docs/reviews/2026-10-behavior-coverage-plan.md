@@ -1,5 +1,7 @@
 # Behavior coverage map: design note (Accepted; built, with the amendment that catalogs are runtime-known union Microsoft-used)
 
+Update 2026-10-18 (lane `language-catalog`): both maps now also measure against the AL language catalog (`docs/language-catalog.json`: every method overload, trigger, trigger event, property, statement keyword and attribute that the AL language server of BC 27-29 offers in probe files), with the states pinned, implemented, refused and unknown. Data types are in the catalog but not measured yet. Operators are not in the catalog: the language server does not list them.
+
 Task: extend `--coverage-map` beyond builtin overloads (1074 of 1729 pinned) so the corpus writer gets a gap list for the rest of the language. Status: design only, nothing built.
 
 ## Decision needed

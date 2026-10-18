@@ -954,9 +954,12 @@ codeunit 50000 "T" { Subtype = Test;
         why.contains("DeleteAllowed") && why.contains("50015") || why.contains("B4"),
         "{why}"
     );
+}
+
 /// A column of a platform row whose value nothing pins is unknown: a dynamic read of it (FieldRef.Value, Format, a filter on
-/// it, TransferFields into another type, a read or a filter on a copy) is refused and names the table and the field, while the other columns, FindSet and
-/// Count of the same rows run, and a value written into the buffer reads back. "Type Name" (9) of the Field table is pinned
+/// it, TransferFields into another type, a read or a filter on a copy) is refused and names the table and the field, while
+/// the other columns, FindSet and Count of the same rows run, a copy can be stored, and a value written into the buffer
+/// reads back. "Type Name" (9) of the Field table is pinned
 /// for a Text field only (record/PZFieldObsoleteRows.al:47, `Text30`); for the Integer field it is unknown.
 #[test]
 fn an_unknown_column_of_a_platform_row_is_refused_where_it_is_read_dynamically() {

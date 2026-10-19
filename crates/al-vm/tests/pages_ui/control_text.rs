@@ -215,3 +215,93 @@ fn a_control_caption_over_a_field_caption_class_is_refused() {
     let r = al_testkit::run_in(CAPTION_SRC, "C", "CaptionOverClass");
     assert!(matches!(r, Err(Signal::Unsupported(_))), "{r:?}");
 }
+
+const UNPINNED_SRC: &str = r#"
+table 69960 "CT Un Row"
+{
+    fields { field(1; K; Integer) { } field(2; Ev; Integer) { CaptionClass = 'CT,Field'; } }
+    keys { key(PK; K) { } }
+}
+codeunit 69961 "CT Un Log"
+{
+    SingleInstance = true;
+    [EventSubscriber(ObjectType::Codeunit, Codeunit::"Caption Class", 'OnResolveCaptionClass', '', true, true)]
+    local procedure OnResolve(CaptionArea: Text; CaptionExpr: Text; Language: Integer; var Caption: Text; var Resolved: Boolean)
+    begin
+        if CaptionArea <> 'CT' then exit;
+        Caption := 'resolved:' + CaptionExpr;
+        Resolved := true;
+    end;
+}
+page 69962 "CT Un List"
+{
+    PageType = List; SourceTable = "CT Un Row"; ApplicationArea = All; UsageCategory = None;
+    layout
+    {
+        area(Content)
+        {
+            repeater(R)
+            {
+                field(K; Rec.K) { }
+                field(FromVariable; Rec.K) { CaptionClass = 'CT,' + Suffix; }
+                field(Ev; Rec.Ev) { }
+            }
+        }
+    }
+    actions { area(Processing) { action(Change) { ApplicationArea = All; trigger OnAction() begin Suffix := 'Changed'; end; } } }
+    var Suffix: Text;
+}
+codeunit 69963 C
+{
+    local procedure Seed()
+    var R: Record "CT Un Row";
+    begin
+        R.K := 1; R.Insert(); R.K := 2; R.Insert();
+    end;
+    procedure SameTextAgain(): Text
+    var P: TestPage "CT Un List";
+    begin
+        Seed();
+        P.OpenView();
+        P.Next();
+        exit(P.FromVariable.Caption());
+    end;
+    procedure ChangedWithoutFill(): Text
+    var P: TestPage "CT Un List";
+    begin
+        Seed();
+        P.OpenView();
+        P.Change.Invoke();
+        exit(P.FromVariable.Caption());
+    end;
+    procedure FieldClassTwice(): Text
+    var P: TestPage "CT Un List";
+    begin
+        Seed();
+        P.OpenView();
+        exit(P.Ev.Caption() + '|' + P.Ev.Caption());
+    end;
+}
+"#;
+
+fn refused(routine: &str) {
+    let r = al_testkit::run_in(UNPINNED_SRC, "C", routine);
+    assert!(matches!(r, Err(Signal::Unsupported(_))), "{routine}: {r:?}");
+}
+
+#[test]
+fn a_caption_class_expression_that_gives_the_same_text_at_a_later_fill_is_refused() {
+    // Whether BC raises OnResolveCaptionClass again is not pinned (misc/W2CaptionClass.al:174-178 pins a changed text only).
+    refused("SameTextAgain");
+}
+
+#[test]
+fn a_caption_class_expression_read_after_it_changed_without_a_fill_is_refused() {
+    refused("ChangedWithoutFill");
+}
+
+#[test]
+fn a_second_read_of_a_field_caption_class_that_raises_the_event_is_refused() {
+    // XTablePropsTests.al:483-487 pins one read only.
+    refused("FieldClassTwice");
+}

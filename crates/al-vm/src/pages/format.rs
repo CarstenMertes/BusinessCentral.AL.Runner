@@ -479,6 +479,12 @@ impl Session {
             if let Some(caption) = cached {
                 return Ok(caption);
             }
+            // A class text that changed since the page last filled: whether BC resolves it at the read is not pinned.
+            if raises_resolve(&c) && st.borrow().control_captions.iter().any(|(i, _, _)| *i == idx) {
+                return unsupported(
+                    "Caption() of a CaptionClass expression that changed since the page filled (whether BC resolves it again is not pinned)",
+                );
+            }
             return self.caption_class_text(st, &c);
         }
         let own_caption = match ctl.prop("caption") {
@@ -502,6 +508,17 @@ impl Session {
                 return unsupported(
                     "a control Caption over its source field's CaptionClass (which one BC shows is not pinned)",
                 );
+            }
+            if raises_resolve(&c) {
+                // One read is pinned (XTablePropsTests.al:483-487); whether a second read raises the event again is not.
+                if st.borrow().control_captions.iter().any(|(i, _, _)| *i == idx) {
+                    return unsupported(
+                        "a second Caption() of a field CaptionClass that raises OnResolveCaptionClass (whether BC raises it again is not pinned)",
+                    );
+                }
+                let caption = self.caption_class_text(st, &c)?;
+                st.borrow_mut().control_captions.push((idx, c, caption.clone()));
+                return Ok(caption);
             }
             return self.caption_class_text(st, &c);
         }
@@ -527,6 +544,13 @@ impl Session {
             .iter()
             .any(|(i, t, _)| *i == idx && t == text)
         {
+            // A later fill with the same class text: whether BC raises OnResolveCaptionClass again is not pinned
+            // (misc/W2CaptionClass.al:174-178 pins a changed text only).
+            if raises_resolve(text) {
+                return unsupported(
+                    "a CaptionClass that gives the same text at a later fill (whether BC resolves it again is not pinned)",
+                );
+            }
             return Ok(());
         }
         let caption = self.caption_class_text(st, text)?;
@@ -833,6 +857,14 @@ impl Session {
 }
 
 /// The text of the `ENU = '...'` entry of a `...ML` property value.
+/// The class text goes to OnResolveCaptionClass (see `caption_class_text`): not area 3, not a numeric or empty area, and with a comma.
+fn raises_resolve(text: &str) -> bool {
+    match text.split_once(',') {
+        Some((area, _)) => area != "3" && !area.is_empty() && area.trim().parse::<u32>().is_err(),
+        None => false,
+    }
+}
+
 fn enu_entry(ml: &str) -> Option<String> {
     let low = ml.to_ascii_lowercase();
     let at = low.find("enu")?;

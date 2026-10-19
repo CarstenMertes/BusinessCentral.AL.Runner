@@ -267,6 +267,10 @@ pub fn parse_control_text(
 ) -> Result<Value, ParseError> {
     use crate::value::RtType as T;
     let t = text.trim();
+    // Only the upper-case closing mark is pinned (pages/lt-page-presentation-properties/P119ReportFields.al:174).
+    if matches!(ty, T::Date) && f.closing_dates && t.strip_prefix('c').is_some_and(|r| r.contains('/')) {
+        return Err(ParseError::Unsupported);
+    }
     parse_typed(text, t, ty, f, enum_by_text).ok_or(match ty {
         T::Text(_)
         | T::Code(_)
@@ -495,6 +499,17 @@ mod tests {
         let v = parse_control_text("C12/31/2025", &crate::value::RtType::Date, &f, &|_, _| None);
         assert!(matches!(v, Ok(Value::Date(x, true)) if x == d), "{v:?}");
         assert_eq!(t(&Value::Date(d, true), &f), "C12/31/2025");
+    }
+
+    // Only the upper-case mark is pinned (P119ReportFields.al:174): a lower-case `c` is refused, not rejected.
+    #[test]
+    fn a_lower_case_closing_mark_is_refused() {
+        let f = ControlFormat {
+            closing_dates: true,
+            ..Default::default()
+        };
+        let v = parse_control_text("c12/31/2025", &crate::value::RtType::Date, &f, &|_, _| None);
+        assert!(matches!(v, Err(ParseError::Unsupported)), "{v:?}");
     }
 
     // handlers/TestPageFieldFormats_Tests.al Value_Decimal_TwoPlaces / NoDecimalPlaces

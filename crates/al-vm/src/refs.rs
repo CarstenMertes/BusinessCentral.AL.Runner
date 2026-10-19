@@ -1291,6 +1291,15 @@ impl Session {
                 Ok(Some((true, members)))
             }
             RtType::Option(names) => {
+                // A table field's OptionCaptionML gives the captions of the session language (record/lt-x-table-props/
+                // XTablePropsTests.al:219-232); the runtime does not read it, so the captions are refused rather than
+                // taken from OptionCaption or the member names.
+                if self.field_property(t, pos, "OptionCaptionML").is_some() {
+                    return unsupported(format!(
+                        "OptionCaptionML of option field {} is not supported",
+                        t.fields[pos].name
+                    ));
+                }
                 let captions: Vec<String> = match self.field_property(t, pos, "OptionCaption") {
                     Some(v) => match crate::recmeta::string_literal(&v) {
                         Some(list) => list.split(',').map(str::to_string).collect(),

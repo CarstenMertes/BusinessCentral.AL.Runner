@@ -535,7 +535,10 @@ impl Session {
             return Ok(());
         }
         if let Value::List(l) = &coll {
-            f.locals[site.ver as usize] = Value::BigInteger(l.borrow().version as i64);
+            // The version and the unpinned reads, in one slot: version in the high half, reads in the low half.
+            let b = l.borrow();
+            f.locals[site.ver as usize] =
+                Value::BigInteger(((b.version as i64) << 32) | (b.unpinned_reads & 0xFFFF_FFFF) as i64);
             f.locals[site.watch as usize] = coll.clone();
         } else {
             f.locals[site.watch as usize] = Value::Null;
@@ -566,13 +569,21 @@ impl Session {
             return Err(Signal::Unsupported("a foreach loop that is not set up".into()));
         };
         if let (Value::List(l), Value::BigInteger(v)) = (&f.locals[site.watch as usize], &f.locals[site.ver as usize]) {
-            if l.borrow().version as i64 != *v {
+            let (ver, reads) = (*v >> 32, *v & 0xFFFF_FFFF);
+            if l.borrow().version as i64 & 0xFFFF_FFFF != ver & 0xFFFF_FFFF {
                 return Err(Signal::Error(Box::new(al_builtins::native::AlError {
                     message: "Collection was modified; enumeration operation may not execute.".into(),
                     code: "AL:InvalidOperation".into(),
                     call_stack: String::new(),
                     ..Default::default()
                 })));
+            }
+            // Only IndexOf is pinned as a read inside the loop (misc/lt-u-obsolete-pending/UObsoletePending.al:35-36).
+            if (l.borrow().unpinned_reads & 0xFFFF_FFFF) as i64 != reads {
+                return Err(Signal::Unsupported(
+                    "a List method other than IndexOf read the list inside a foreach over it (whether BC counts it as a change is not pinned)"
+                        .into(),
+                ));
             }
         }
         let item = match &f.locals[site.items as usize] {

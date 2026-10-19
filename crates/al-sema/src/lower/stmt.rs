@@ -24,6 +24,7 @@ impl Lowerer<'_> {
         self.locals.clear();
         self.local_labels.clear();
         self.local_textconsts.clear();
+        self.local_var_attrs.clear();
         self.tys.clear();
         self.tys_on = true;
         let mut locals = Vec::new();
@@ -70,7 +71,11 @@ impl Lowerer<'_> {
             let ty = v.type_ref().map(|t| Ty::from_type_ref(&t)).unwrap_or(Ty::Unknown);
             let label = v.type_ref().as_ref().and_then(label_text);
             let refusal = v.type_ref().as_ref().and_then(textconst_refusal);
+            let attrs = var_attribute_names(&v);
             for n in v.names() {
+                if !attrs.is_empty() {
+                    self.local_var_attrs.insert(n.to_lowercase(), attrs.clone());
+                }
                 if let Some(l) = &label {
                     self.local_labels.insert(n.to_lowercase(), l.clone());
                 }
@@ -208,6 +213,18 @@ impl Lowerer<'_> {
         let Some(f) = self.members[table].fields.iter().find(|f| f.id == field) else {
             return Ok(value);
         };
+        // OptionCaptionML gives the captions of the session language (record/lt-x-table-props/XTablePropsTests.al:219-228);
+        // it is not read, so Format of such a field is refused rather than formatted from another list.
+        if matches!(f.ty, Ty::Option(_))
+            && f.properties
+                .iter()
+                .any(|(k, _)| k.eq_ignore_ascii_case("OptionCaptionML"))
+        {
+            return Err(format!(
+                "Format of option field {} with OptionCaptionML is not supported",
+                f.name
+            ));
+        }
         let (Ty::Option(names), Some((_, text))) = (
             &f.ty,
             f.properties
@@ -594,6 +611,15 @@ impl Lowerer<'_> {
                 Some(m) => vec![m, s],
                 None => vec![s],
             },
+            // A statement that uses a variable whose attribute is not supported refuses when it runs, not the whole
+            // routine: Base Application declares such variables in routines whose other paths run (`var_attr_refusal`).
+            Err(e) if self.run_refusals.contains(&e) => {
+                let s = ir::Stmt::Expr(ir::Expr::Refused(e));
+                match self.mark(n) {
+                    Some(m) => vec![m, s],
+                    None => vec![s],
+                }
+            }
             Err(e) => {
                 self.reasons.push(e);
                 Vec::new()
@@ -1102,6 +1128,27 @@ impl Lowerer<'_> {
         }
     }
 
+    /// Why a use of the variable `name` is refused for an attribute of its declaration: `[RunOnClient]` (BC raises
+    /// DotNetFromAlNotSupported, al-language-onprem-dotnet/lt-ac/AcDnAttributes.al:145-146) and `[WithEvents]` (the
+    /// `trigger Variable::Event` handlers run when the object raises the event, AcDnAttributes.al:50, :86) are not
+    /// implemented, and running the variable without them would be silently wrong.
+    pub(crate) fn var_attr_refusal(&self, name: &str, local: bool) -> Option<String> {
+        let attrs = if local {
+            self.local_var_attrs.get(name)
+        } else {
+            self.global_var_attrs.get(name)
+        }?;
+        attrs.iter().find_map(|a| match a.as_str() {
+            "runonclient" => Some(format!(
+                "variable `{name}` has the attribute RunOnClient, which is not supported"
+            )),
+            "withevents" => Some(format!(
+                "variable `{name}` has the attribute WithEvents: its event triggers are not supported"
+            )),
+            _ => None,
+        })
+    }
+
     pub(crate) fn place(&mut self, n: &SyntaxNode) -> L<ir::Place> {
         match n.kind() {
             SyntaxKind::ParenExpr => self.place(&n.children().next().ok_or("empty parentheses")?),
@@ -1122,6 +1169,16 @@ impl Lowerer<'_> {
                 Ok(ir::Place::Index(Box::new(base), idx))
             }
             _ => match self.res(n) {
+                Some(Res::Local(name)) if self.var_attr_refusal(name, true).is_some() => {
+                    let why = self.var_attr_refusal(name, true).unwrap_or_default();
+                    self.run_refusals.insert(why.clone());
+                    Err(why)
+                }
+                Some(Res::Global(name)) if !self.in_request_page && self.var_attr_refusal(name, false).is_some() => {
+                    let why = self.var_attr_refusal(name, false).unwrap_or_default();
+                    self.run_refusals.insert(why.clone());
+                    Err(why)
+                }
                 Some(Res::Local(name)) => self
                     .locals
                     .get(name)

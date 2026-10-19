@@ -610,6 +610,21 @@ impl VarDecl {
     pub fn type_ref(&self) -> Option<TypeRef> {
         children(&self.0, TypeRef::cast).next()
     }
+    /// The attributes written before the declaration (`[RunOnClient] B: DotNet X;`): siblings of it in the
+    /// `var` section, nearest last.
+    pub fn attributes(&self) -> Vec<Attribute> {
+        let mut out = Vec::new();
+        let mut at = self.0.prev_sibling();
+        while let Some(n) = at {
+            match Attribute::cast(n.clone()) {
+                Some(a) => out.push(a),
+                None => break,
+            }
+            at = n.prev_sibling();
+        }
+        out.reverse();
+        out
+    }
 }
 
 impl TypeRef {
@@ -1042,6 +1057,11 @@ tableextension 50100 Ext extends "Sales Header" { fields { field(50100; F; Integ
             r.local_var_decls().map(|v| v.names()).collect::<Vec<_>>(),
             vec![vec!["R".to_string()], vec!["L".to_string()]]
         );
+        let attrs = |v: VarDecl| v.attributes().iter().map(|a| a.name()).collect::<Vec<_>>();
+        assert_eq!(attrs(o.var_decls().next().unwrap()), vec!["NonDebuggable".to_string()]);
+        let mut locals = r.local_var_decls();
+        assert_eq!(attrs(locals.next().unwrap()), vec!["SecurityFiltering".to_string()]);
+        assert!(attrs(locals.next().unwrap()).is_empty());
     }
 
     #[test]

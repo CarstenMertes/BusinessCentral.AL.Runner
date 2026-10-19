@@ -312,10 +312,12 @@ impl Session {
             .is_some_and(|s| s.handlers.iter().any(|h| h.kind == UiKind::HttpClient))
     }
 
-    /// Counts the bound `[HttpClientHandler]` as executed without running it.
-    pub(crate) fn mark_http_handler_fired(&mut self) {
-        if let Some(s) = self.ui_state.scope.as_mut() {
-            for h in s.handlers.iter_mut().filter(|h| h.kind == UiKind::HttpClient) {
+    /// Counts the bound `[HttpClientHandler]`s as run, so the end of the test does not report them unexecuted: before BC 29 a
+    /// request under BlockOutboundRequests raises without calling the handler and the test still passes
+    /// (al-language-onprem/session/PZHttpBlock.al:46-59, Handler_UnderBlockOutboundRequests_StillAnswers on BC 27 and 28).
+    pub(crate) fn http_handlers_count_as_run(&mut self) {
+        if let Some(scope) = self.ui_state.scope.as_mut() {
+            for h in scope.handlers.iter_mut().filter(|h| h.kind == UiKind::HttpClient) {
                 h.fired = true;
             }
         }

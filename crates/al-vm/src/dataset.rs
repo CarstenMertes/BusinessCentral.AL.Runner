@@ -143,6 +143,8 @@ pub(crate) struct Header {
     pub company_block: bool,
     /// The first company address line: the name of the Company Information record.
     pub company_line1: String,
+    /// The second line: the Address of the Company Information record when it is the only address field set.
+    pub company_line2: String,
 }
 
 /// The language and format region of the session. Only en-US is pinned.
@@ -219,7 +221,11 @@ impl Header {
                     out,
                     6,
                     &format!("CompanyAddressLine{n}"),
-                    if n == 1 { &self.company_line1 } else { "" },
+                    match n {
+                        1 => &self.company_line1,
+                        2 => &self.company_line2,
+                        _ => "",
+                    },
                 )?;
             }
             for (name, caption) in [

@@ -149,7 +149,7 @@ pub enum Gate {
     /// Under `TestHttpRequestPolicy = BlockOutboundRequests` an `[HttpClientHandler]` answers the request from BC 29; before,
     /// the request raises the unhandled-request error as if no handler were bound, and the unused handler does not fail the test
     /// (al-language-onprem/session/PZHttpBlock.al:43-58 passes on BC 27 and 28: oracle/27/junit-onprem.xml:430, oracle/28/junit-onprem.xml:445).
-    HttpHandlerUnderBlockOutboundRequestsFrom29,
+    HttpHandlerUnderBlockOutboundFrom29,
     /// `HttpHeaders.Add` with a name of blanks raises `InvalidHeader:Format` from BC 29 and `InvalidHeader:Argument` on BC 28
     /// (network/lt-http/HttpHeaders.al:304-308).
     HttpBlankHeaderNameIsFormatFrom29,
@@ -201,7 +201,7 @@ impl Gate {
         Gate::Base64TextIsWindows1252From28,
         Gate::TestFieldTypedValueTexts,
         Gate::FileDownloadWithoutClientFrom28,
-        Gate::HttpHandlerUnderBlockOutboundRequestsFrom29,
+        Gate::HttpHandlerUnderBlockOutboundFrom29,
         Gate::HttpBlankHeaderNameIsFormatFrom29,
         Gate::HttpHeaderNameRulesProbedFrom28,
     ];
@@ -232,7 +232,7 @@ impl Gate {
             | Gate::DataSourceAndTestHandlerContextFrom29
             | Gate::IsolatedStorageIsolationLevelOverloadsFrom29
             | Gate::RecordIsDirtyFrom29
-            | Gate::HttpHandlerUnderBlockOutboundRequestsFrom29
+            | Gate::HttpHandlerUnderBlockOutboundFrom29
             | Gate::HttpBlankHeaderNameIsFormatFrom29 => 29,
             Gate::ReportSaveAsDataItemIdentity
             | Gate::FeatureKeyListChangedFrom28
@@ -587,7 +587,7 @@ impl Gate {
                     lines: "486,532,538,544",
                 },
             ],
-            Gate::HttpHandlerUnderBlockOutboundRequestsFrom29 => &[Evidence {
+            Gate::HttpHandlerUnderBlockOutboundFrom29 => &[Evidence {
                 file: "../al-language-onprem/session/PZHttpBlock.al",
                 lines: "54-57",
             }],

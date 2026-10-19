@@ -10,9 +10,9 @@ The catalog of each area is what the AL language server offers in probe files (`
 
 | Area | Items | Pinned | Pinned % | Implemented | Implemented % | Refused | Unknown | MS-used unpinned |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| attributes | 42 | 32 | 76.2% | 26 | 61.9% | 0 | 16 | 2 |
+| attributes | 42 | 32 | 76.2% | 28 | 66.7% | 0 | 14 | 2 |
 | events | 23 | 16 | 69.6% | 22 | 95.7% | 0 | 1 | 0 |
-| properties | 720 | 662 | 91.9% | 549 | 76.2% | 18 | 153 | 4 |
+| properties | 720 | 662 | 91.9% | 551 | 76.5% | 18 | 151 | 4 |
 | syntax | 16 | 16 | 100.0% | 16 | 100.0% | 0 | 0 | 0 |
 | triggers | 128 | 128 | 100.0% | 116 | 90.6% | 3 | 9 | 0 |
 
@@ -22,11 +22,11 @@ Left out: 293 presentation-only properties (Caption, ToolTip, ApplicationArea, .
 
 | Owner | Items | Pinned | Pinned % | Implemented | Implemented % | Refused | Unknown | MS-used unpinned |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| (code) | 42 | 32 | 76.2% | 26 | 61.9% | 0 | 16 | 2 |
+| (code) | 42 | 32 | 76.2% | 28 | 66.7% | 0 | 14 | 2 |
 
 #### attributes: unpinned items by owner
 
-- **(code)** (10 of 42): `InDataSet` unknown; `InherentPermissions` implemented, MS 100; `Native` unknown, MS 25; `RequiredPending` unknown, BC 29; `RequiredPermissions` unknown; `RunOnClient` unknown; `SecurityFiltering` implemented; `SuppressDispose` unknown; `TestDataSource` unknown, BC 29; `WithEvents` unknown
+- **(code)** (10 of 42): `InDataSet` unknown; `InherentPermissions` implemented, MS 100; `Native` unknown, MS 25; `RequiredPending` unknown, BC 29; `RequiredPermissions` unknown; `RunOnClient` implemented; `SecurityFiltering` implemented; `SuppressDispose` unknown; `TestDataSource` unknown, BC 29; `WithEvents` implemented
 
 ### events per owner
 
@@ -49,7 +49,7 @@ Left out: 293 presentation-only properties (Caption, ToolTip, ApplicationArea, .
 | Entitlement | 5 | 5 | 100.0% | 2 | 40.0% | 0 | 3 | 0 |
 | EnumType | 9 | 9 | 100.0% | 8 | 88.9% | 0 | 1 | 0 |
 | EnumValue | 4 | 4 | 100.0% | 4 | 100.0% | 0 | 0 | 0 |
-| Field | 46 | 46 | 100.0% | 35 | 76.1% | 0 | 11 | 0 |
+| Field | 46 | 46 | 100.0% | 36 | 78.3% | 0 | 10 | 0 |
 | FieldGroup | 3 | 3 | 100.0% | 3 | 100.0% | 0 | 0 | 0 |
 | FieldModify | 8 | 7 | 87.5% | 6 | 75.0% | 0 | 2 | 0 |
 | Interface | 5 | 5 | 100.0% | 5 | 100.0% | 0 | 0 | 0 |
@@ -67,7 +67,7 @@ Left out: 293 presentation-only properties (Caption, ToolTip, ApplicationArea, .
 | PageCustomAction | 13 | 13 | 100.0% | 6 | 46.2% | 0 | 7 | 0 |
 | PageCustomizationObject | 10 | 10 | 100.0% | 6 | 60.0% | 0 | 4 | 0 |
 | PageExtension | 14 | 13 | 92.9% | 12 | 85.7% | 0 | 2 | 0 |
-| PageField | 46 | 45 | 97.8% | 32 | 69.6% | 0 | 14 | 0 |
+| PageField | 46 | 45 | 97.8% | 33 | 71.7% | 0 | 13 | 0 |
 | PageFileUploadAction | 10 | 10 | 100.0% | 6 | 60.0% | 0 | 4 | 0 |
 | PageFixed | 16 | 9 | 56.2% | 9 | 56.2% | 0 | 7 | 0 |
 | PageGrid | 16 | 10 | 62.5% | 9 | 56.2% | 0 | 7 | 0 |
@@ -179,7 +179,7 @@ An item is **pinned** when it occurs in a corpus file in a routine that static r
 | Platform and system events | 123 | 37 | 17 | 0 | 0 |
 | Statements and expressions | 64 | 60 | 58 | 0 | 0 |
 | Method attributes | 34 | 32 | 13 | 2 | 1 |
-| Runtime error sites (text pinned) | 71 | 71 | - | 0 | - |
+| Runtime error sites (text pinned) | 72 | 72 | - | 0 | - |
 
 Presentation-only properties (Caption, ToolTip, ApplicationArea, ... ) are left out of the property catalog.
 
@@ -453,6 +453,7 @@ Presentation-only properties (Caption, ToolTip, ApplicationArea, ... ) are left 
 
 | Group | Name | MS uses | Runtime reads | Corpus uses (not reached) |
 |---|---|---:|---|---:|
+| codeunit | `CaptionClassTranslate` | 0 | yes | 0 |
 | codeunit | `ChangeCompany` | 0 | yes | 0 |
 | codeunit | `CustomDocumentMergerEx` | 0 | yes | 0 |
 | codeunit | `GetDatabaseTableTriggerSetup` | 0 | yes | 0 |
@@ -466,11 +467,12 @@ Presentation-only properties (Caption, ToolTip, ApplicationArea, ... ) are left 
 | codeunit | `OnDatabaseInsert` | 0 | yes | 0 |
 | codeunit | `OnDatabaseModify` | 0 | yes | 0 |
 | codeunit | `OnDatabaseRename` | 0 | yes | 0 |
+| codeunit | `OnDocumentReady` | 0 | yes | 0 |
 | codeunit | `OnGlobalRename` | 0 | yes | 0 |
 | codeunit | `OnInstallAppPerCompany` | 0 | yes | 0 |
+| codeunit | `SubstituteReport` | 0 | yes | 0 |
 | codeunit | `ApplicationReportMergeStrategy` | 0 | no | 0 |
 | codeunit | `AutoFormatTranslate` | 0 | no | 0 |
-| codeunit | `CaptionClassTranslate` | 0 | no | 0 |
 | codeunit | `ConfirmPrivacyNoticeApproval` | 0 | no | 0 |
 | codeunit | `CustomizeChart` | 0 | no | 0 |
 | codeunit | `FetchReportLayoutByCode` | 0 | no | 0 |
@@ -514,7 +516,6 @@ Presentation-only properties (Caption, ToolTip, ApplicationArea, ... ) are left 
 | codeunit | `OnCopilotSystemActionInvokedProperties` | 0 | no | 0 |
 | codeunit | `OnDocumentDownload` | 0 | no | 0 |
 | codeunit | `OnDocumentPrintReady` | 0 | no | 0 |
-| codeunit | `OnDocumentReady` | 0 | no | 0 |
 | codeunit | `OnEditInExcelWithStructuredFilter` | 0 | no | 0 |
 | codeunit | `OnGlobalDelete` | 0 | no | 0 |
 | codeunit | `OnGlobalInsert` | 0 | no | 0 |
@@ -537,7 +538,6 @@ Presentation-only properties (Caption, ToolTip, ApplicationArea, ... ) are left 
 | codeunit | `SelectReportLayoutUI` | 0 | no | 0 |
 | codeunit | `SetNotificationStatus` | 0 | no | 0 |
 | codeunit | `SetupPrinters` | 0 | no | 0 |
-| codeunit | `SubstituteReport` | 0 | no | 0 |
 | codeunit | `WordDocumentMergerAppMode` | 0 | no | 0 |
 
 ## Statements and expressions: unpinned items (4)
@@ -556,7 +556,7 @@ Presentation-only properties (Caption, ToolTip, ApplicationArea, ... ) are left 
 | procedure | `InherentPermissions` | 100 | yes | 0 |
 | procedure | `Native` | 25 | no | 0 |
 
-## Runtime error sites without a corpus test (0 of 71; 0 have too little fixed text to match)
+## Runtime error sites without a corpus test (0 of 72; 0 have too little fixed text to match)
 
 A site is pinned when a corpus string literal holds the message text. Codes are not matched. Sites with a computed message are not listed.
 

@@ -4466,6 +4466,7 @@
 67726 SaveAs_ParametersWithoutDataItems_KeepsTheTableView
 67726 SaveAs_RecordRef_ReplacesOrIntersectsTheTableView
 67726 SaveAs_WriteInOnPostReport_SurvivesARollback
+67730 RunRequestPage_OrderOfReportAndRequestPageTriggers
 67730 Run_Cancel_TriggersThatRun
 67730 Run_OrderOfReportAndRequestPageTriggers
 67730 Run_SetTableViewOfTheCaller_BeforeTheHandler
@@ -5588,6 +5589,8 @@
 69304 Editable_FalseAndTrueFromActions
 69304 Editable_FalseFromOnAfterGetCurrRecord
 69304 Editable_TrueOnAPageThatIsNotEditable
+69304 List_ActionDeletesTheOnlyRow_ThenUpdates
+69304 List_ActionDeletesTheOnlyRow_WithoutUpdate
 69304 List_BufferLeftByOnAfterGetRecord_WhileTheRowIsUnchanged
 69304 List_UpdateFalse_KeepsTheUnsavedEdit
 69304 TempSourcePage_ReadWriteLikeAStoredOne
@@ -6147,6 +6150,7 @@
 69776 Setup_AsInTheContainer_NoCurrency
 69780 MovedFromMovedTo_TableExtensionFields_AreUsable
 69780 MovedFromMovedTo_Tables_AreUsable
+69799 Pending_CodeunitInterfaceEnum_StillRun
 69799 Pending_PageAndControls_StillOpen
 69800 CodeAssign_UpperAndTrim
 69800 ErrorText_SetsCodeDialog
@@ -6371,6 +6375,10 @@
 69817 UseTemporary_DataItem
 69820 Dialog_OpenUpdateClose
 69852 ChangeCompany_RecordChangeCompanyDoesNotRaiseTheSystemActionEvent
+69852 ChangeVarArguments_XmlSaveAs_First
+69852 ChangeVarArguments_XmlSaveAs_Fourth
+69852 ChangeVarArguments_XmlSaveAs_Second
+69852 ChangeVarArguments_XmlSaveAs_Third
 69852 GlobalTriggers_InsertWithoutTrigger_DoesNotAskOrRaise
 69852 GlobalTriggers_MaskFifteenAndAllSetupFlagsFalse_RowB
 69852 GlobalTriggers_MaskFifteenAndAllSetupFlagsTrue_Arguments_RowD
@@ -6382,7 +6390,9 @@
 69852 GlobalTriggers_SubscriberChangesTheRecordItIsHanded_RowI
 69852 GlobalTriggers_SubscriberLeavesDefaults_RowA
 69852 InSession_NothingRaisesTheOtherEvents
+69852 SaveAs_Xml_RaisedEvents
 69852 StartSession_IsRefusedInATestSession
+69852 SubstituteReport_SubscriberChangesTheReport
 69886 Bad_Date
 69886 Bad_Decimal
 69886 Bad_Int
@@ -6851,6 +6861,8 @@
 70176 ViewModeEmptyListInsertViaRec
 70177 BufferEditOfOnAfterGetRecordOnACard
 70177 CardOpenWithAndWithoutUpdateInOnOpenPage
+70177 ListLosesOnlyRowDeleteNoUpdate
+70177 ListLosesOnlyRowDeleteWithUpdate
 70177 ListModifyWithAndWithoutUpdate
 70177 ListOpenWithAndWithoutUpdateInOnOpenPage
 70177 UpdateKeepsUnsavedEditOfTheRow
@@ -7001,6 +7013,8 @@
 70266 P147_Urp_PreSetFalse_RunWithoutRequestPage
 70268 P147_Urp_ProcSetFalse_RunWithoutRequestPage
 70270 P147_Urp_InitGet_RunWithoutRequestPage
+70272 P147_Urp_PreGet_RunWithoutRequestPage
+70274 P147_Urp_ProcGet_RunWithoutRequestPage
 70279 P147_AutoIncrement_Rename_ErrorAfterObserve
 70279 P147_AutoIncrement_Rename_RelativeText
 70296 P115_ExtensionField_Editable
@@ -7298,9 +7312,13 @@
 70526 SetLoadFields_FindSetModify
 70526 SetLoadFields_ModifyKeepsOthers
 70526 SetLoadFields_ModifyOtherField
+70535 OtherFormats_NoLayout
 70535 Rows_ColumnBoundToVariable
+70535 Rows_SkipAndBreak
 70535 StaticSaveAs_WithParametersString
 70535 TemporaryDataItem
+70535 TriggerError_InPreReport
+70535 TriggerOrder
 70537 CreateDateTime_ClosingDate
 70537 Date2DWY_IsoWeekAcrossYears
 70538 BaseDates_ClosingAndOmitted
@@ -7344,6 +7362,7 @@
 70556 FieldTable_TypeColumn
 70556 TableMetadata_Columns
 70583 NoRP_Getter_PerVariable_AndAfterRun_AndClear
+70583 NoRP_Static_Run_RunModal_ShowNoPage
 70583 NoRP_UseTrue_Execute
 70583 NoRP_UseTrue_NoHandler_Run
 70583 NoRP_UseTrue_NoHandler_RunModal
@@ -7351,6 +7370,7 @@
 70583 NoRP_UseTrue_ThenFalse_Run
 70583 WithRP_NoHandler_Run_Default
 70583 WithRP_UseFalse_RunRequestPage
+70583 WithRP_UseFalse_Run_RunModal_Execute
 70598 CalcFields_Property_CalculatesTheFlowField
 70598 Link_ChildSetsOwnFilters_InPreDataItem
 70598 Link_TwoFields_FiltersPerParentRow
@@ -7360,7 +7380,9 @@
 70604 LinkReference_Grandparent
 70613 Culture_FormatRegion_ChangesFormat
 70613 Members_SaveAs
+70629 One_Extension_FullOrder_Execute_And_SaveAs
 70629 One_Extension_FullOrder_Run
+70629 One_Extension_Variable_RunTwice_ExtensionGlobals
 70629 One_Extension_ViewsBeforeBasePreReport
 70629 Two_Extensions_TriggerOrder
 70645 Controls_NoHandler_UseRequestPageFalse_Defaults
@@ -7391,6 +7413,7 @@
 70679 Formats_NoLayout_ExcelHtmlXml
 70679 Formats_NoLayout_PdfWord
 70679 NotProcessingOnly_NoLayout_Run_RunModal_Execute
+70679 ReportFormat_Ordinals
 70679 Xml_ProcessingOnly_Dataset_Shape
 70690 Instance_Guarded_PendingWrite_Raises_LastError
 70690 Static_Guarded_FailingPayload_LastError_AndRows
@@ -8742,6 +8765,7 @@
 71659 P119_ShowAsCardFields
 71661 P119_LabelCaptionAndValue
 71661 P119_LabelVisible
+71663 P119_HideValue
 71667 P119_NeighboursOfUploadAction
 71670 P119_NeighbourOfUserControl
 71672 P119_PageFieldValues
@@ -11102,9 +11126,12 @@
 73813 Run_SetTableView_NoMatch_Order
 73813 Run_SetTableView_Order
 73813 Run_Siblings_Order
+73813 SaveAs_NestedItems_Order
+73813 SaveAs_Siblings_Order
 73813 VariableExecute_Order
 73813 VariableRunModal_UseRequestPageFalse_Order
 73813 VariableRun_Order
+73813 VariableRun_Twice_InitReportEachTime
 73825 Break_InAfterGetRecord
 73825 CurrReport_Members_SaveAs
 73825 Execute_And_SaveAs_Quit
@@ -11131,6 +11158,7 @@
 73838 SetTableView_WrongTable_Error
 73850 AssertEquals_PassAndFail
 73850 Cancel_TriggersOrder
+73850 Execute_WithoutParameters_UsesDefaults
 73850 NoHandler_VariableRunModal_Error
 73850 OK_TriggersOrder
 73850 OnValidate_RunsOnSetValue
@@ -11140,6 +11168,7 @@
 73850 SetValue_AllTypes_ReachTheReport
 73850 SetValue_OptionByNumberAndText
 73850 UseRequestPageFalse_RunDoesNotShowPage
+73850 UseRequestPageFalse_VariableRun_NoHandlerNeeded
 73850 UseRequestPageTrue_DeclaredFalse_ShowsPage
 73850 UseRequestPageTrue_OverridesDeclaredFalse
 73850 UseRequestPage_GetterSetter
@@ -12350,6 +12379,7 @@
 76220 ZCustModifyAllowed
 76220 ZCustPromotedActionCategories_ActionUnchanged
 76360 ZCaptionClass_LiteralAndResolved
+76360 ZHideValue_TrueAndFalse
 76360 ZLookupPageId_OpensTargetPage
 76360 ZLookupPageId_PlainControlHasNoLookup
 76360 ZPresentationControls_Read
@@ -12418,6 +12448,8 @@
 78107 Validate_BlankFirst
 78107 Validate_BlankNotFirst
 78107 Validate_Third
+78200 Execute_WithReportHandler
+78200 Run_UseRequestPageFalse
 78200 Run_UseRequestPageFalseReport_NoHandlerCall
 78200 TestRequestPage_SetFilterEmpty_ClearsFilter
 78200 TestRequestPage_SetFilterEmpty_OnUntouchedFilter

@@ -55,10 +55,24 @@ pub struct Registry {
     /// no code for (`Program::uncompiled_subscribers`, and subscribers whose publisher cannot be
     /// told apart from another object of the same name). Raising such an event is refused.
     pub missing: HashMap<(usize, String), Vec<Missing>>,
+    /// (lower-case platform codeunit, lower-case event) -> subscribers of platform events the runtime does not raise:
+    /// `UI Helper Triggers`. Where BC raises such an event, the runtime refuses (`Registry::unraised_subscriber`).
+    pub unraised: HashMap<(String, String), Vec<Unraised>>,
     /// Publisher object -> (object, routine) of every subscriber of any of its events: `subscribers` grouped by
     /// object, built at the first [`Registry::subscribers_of`]. The registry does not change once the engine holds it
     /// (ADR-001).
     by_publisher: std::sync::OnceLock<HashMap<usize, Vec<(usize, usize)>>>,
+}
+
+/// A subscriber of a platform event the runtime does not raise.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Unraised {
+    /// Where it is declared, for the refusal text.
+    pub subscriber: String,
+    /// The objects through which a test can see that it ran: its own codeunit and the SingleInstance codeunits its codeunit
+    /// or routine holds a variable of (the corpus fixtures log there, events/lt-platform-events-v/PeVFixtures.al:133,
+    /// events/lt-global-triggers-statements/P114GlobalTriggerEvents.al:31).
+    pub witnesses: Vec<usize>,
 }
 
 /// A subscriber that is declared and not compiled.
@@ -79,6 +93,7 @@ impl Default for Registry {
             has_global_triggers: false,
             unavailable_global: Default::default(),
             missing: HashMap::new(),
+            unraised: HashMap::new(),
             by_publisher: Default::default(),
         }
     }
@@ -244,9 +259,35 @@ impl Registry {
                                         element: String::new(),
                                     });
                             }
+                            if kind == ObjKind::Codeunit && target.eq_ignore_ascii_case("UI Helper Triggers") {
+                                let mut witnesses = vec![oi];
+                                for slot in o.globals.iter().chain(&r.locals) {
+                                    if let al_builtins::value::RtType::Codeunit(c) = slot.ty {
+                                        let c = c as usize;
+                                        if program.objects.get(c).is_some_and(|x| {
+                                            x.properties.iter().any(|(k, v)| {
+                                                k.eq_ignore_ascii_case("SingleInstance")
+                                                    && v.trim().eq_ignore_ascii_case("true")
+                                            })
+                                        }) && !witnesses.contains(&c)
+                                        {
+                                            witnesses.push(c);
+                                        }
+                                    }
+                                }
+                                reg.unraised
+                                    .entry((target.to_ascii_lowercase(), event.clone()))
+                                    .or_default()
+                                    .push(Unraised {
+                                        subscriber: format!("{} \"{}\".{}", o.kind, o.name, r.name),
+                                        witnesses,
+                                    });
+                            }
                             if kind == ObjKind::Codeunit
                                 && target.eq_ignore_ascii_case("Reporting Triggers")
-                                && event == "customdocumentmergerex"
+                                && al_ir::RAISED_REPORTING_EVENTS
+                                    .iter()
+                                    .any(|e| e.eq_ignore_ascii_case(event.as_str()))
                             {
                                 reg.subscribers
                                     .entry((REPORTING_TRIGGERS, event.clone()))
@@ -362,6 +403,45 @@ impl Registry {
 
     /// Whether any subscriber (manual or not) listens to `event` of `object`, or one that is
     /// declared but not compiled would.
+    /// A subscriber of platform event `event` (lower case, `None`: any event) of codeunit `publisher` (lower case) that the
+    /// runtime does not raise and that test codeunit `test` can see: the test codeunit is the subscriber's codeunit or holds a
+    /// variable of one of its witnesses (`Unraised::witnesses`). A test that names none of them cannot tell whether the event
+    /// ran, unless the subscriber changes what the raising statement does (decided without owner review, 2026-10-19:
+    /// refusing every caption translation of the corpus for one logging fixture would stop corpus cases that cannot see it).
+    pub fn unraised_subscriber(
+        &self,
+        publisher: &str,
+        event: Option<&str>,
+        test: Option<&ir::Object>,
+        test_index: Option<usize>,
+    ) -> Option<(&str, &str)> {
+        let sees = |u: &Unraised| {
+            match (test, test_index) {
+            (Some(t), Some(ti)) => {
+                u.witnesses.contains(&ti)
+                    || t.globals
+                        .iter()
+                        .chain(t.routines.iter().flat_map(|r| r.locals.iter()))
+                        .any(|s| matches!(s.ty, al_builtins::value::RtType::Codeunit(c) if u.witnesses.contains(&(c as usize))))
+            }
+            // Outside a test run (a unit test of the runtime) every subscriber counts.
+            _ => true,
+        }
+        };
+        let mut found: Vec<(&str, &str)> = self
+            .unraised
+            .iter()
+            .filter(|((p, e), _)| p == publisher && event.is_none_or(|want| e == want))
+            .flat_map(|((_, e), subs)| {
+                subs.iter()
+                    .filter(|u| sees(u))
+                    .map(move |u| (e.as_str(), u.subscriber.as_str()))
+            })
+            .collect();
+        found.sort();
+        found.into_iter().next()
+    }
+
     pub fn is_subscribed(&self, object: usize, event: &str) -> bool {
         self.subscribers
             .get(&(object, event.to_string()))

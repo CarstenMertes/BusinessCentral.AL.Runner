@@ -140,6 +140,9 @@ pub(crate) struct ReportState {
     /// (report/TestProbeReportContracts.al:RequestPage_TableWriteInsideHandler).
     pub(crate) request_only_page: bool,
     pub(crate) report_executed: Vec<std::rc::Weak<RefCell<Instance>>>,
+    /// Report variables a `SaveAs` was called on: a second `SaveAs` on one whose first ended before it was marked
+    /// executed is refused (what BC does then is not pinned).
+    pub(crate) report_save_tried: Vec<std::rc::Weak<RefCell<Instance>>>,
     /// Report variables a procedure of the caller initialized before their run (`SetParameters` and the like).
     pub(crate) prepared: Vec<std::rc::Weak<RefCell<Instance>>>,
     /// For each report body running, innermost last: whether `CurrReport.Preview()` is pinned to be

@@ -74,14 +74,13 @@ pub fn members(name: &str) -> Option<&'static [&'static str]> {
         // The members in the order the documentation lists them (TransactionType option type); the
         // ordinals are not pinned and nothing may print them as numbers.
         "transactiontype" => Some(&["UpdateNoLocks", "Update", "Snapshot", "Browse", "Report"]),
-        // The members in the order the documentation lists them. The corpus names Xml, Pdf and Html
-        // (handlers/TestReportSaveAsDatasetContracts.al) and never prints or compares the number,
-        // so the ordinals are not pinned and nothing may print them.
         // The report layout kinds, in the documentation's order. A documentation-only assumption: no corpus
         // test names the members or pins an ordinal, so nothing may print the number (docs/probes-needed.md,
         // "ReportLayoutType"). Base Application compares it with `ReportLayoutType::Word` and `::RDLC`.
         "reportlayouttype" => Some(&["RDLC", "Word", "Excel", "Custom"]),
-        "reportformat" => Some(&["Pdf", "Word", "Excel", "Html", "Xml"]),
+        // The platform's ordinals (misc/lt-probes-needed-2/PnBReportSaveAs.al:392-396 OtherFormats_NoLayout): Excel 1, Pdf 2,
+        // Word 3, Xml 4, Html 5. Ordinal 0 has no name AL can use.
+        "reportformat" => Some(&["", "Excel", "Pdf", "Word", "Xml", "Html"]),
         "errortype" => Some(&["Client", "Internal"]),
         // The members in the documentation's order (HttpRequestType option type). A handler formats the value
         // (`Get`, `Head`: session/PZHttpHandler.al on the staging branch); the ordinals are not pinned and nothing may

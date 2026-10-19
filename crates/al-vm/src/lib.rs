@@ -835,6 +835,7 @@ impl Session {
                     assigned: false,
                     inserted: false,
                     dirty_base: None,
+                    last_modify: None,
                     globals: Default::default(),
                 })))
             }

@@ -25,6 +25,7 @@ mod scm_service_41;
 mod set_view_adhoc;
 mod set_view_caption;
 mod sql_data_type;
+mod stale_buffer;
 mod table_globals;
 mod temp_sums_by_ref;
 mod temp_tables;

@@ -1646,6 +1646,38 @@ impl Session {
                             ..Default::default()
                         })));
                     }
+                    // The buffer still holds what its own last Modify wrote and a rollback undid that write: the Modify answers
+                    // true and writes nothing, so the row keeps what the rollback restored (StaleBuffer.al:76-86); a buffer
+                    // changed since writes the whole row (:167-168). The triggers, events and database triggers of such a
+                    // Modify are not pinned: refused when there are any.
+                    let own_image = {
+                        let r = rec.borrow();
+                        !r.temporary
+                            && version(&mine) > version(&theirs)
+                            && r.last_modify
+                                .as_ref()
+                                .is_some_and(|img| version(&img[i]) == version(&mine))
+                    };
+                    if own_image {
+                        let img = rec.borrow().last_modify.clone().expect("checked");
+                        if Session::modify_changes_nothing(&t, &img, rec) {
+                            let mut trigger = run && self.table_trigger(&t, "OnModify").is_some();
+                            for n in ["OnBeforeModify", "OnModify", "OnAfterModify"] {
+                                trigger |= run && !self.ext_triggers(&t, n).is_empty();
+                            }
+                            if trigger
+                                || self.listened(&t, "onbeforemodifyevent", None)?
+                                || self.listened(&t, "onaftermodifyevent", None)?
+                                || self.global_enabled(&t, GlobalOp::Modify)?
+                            {
+                                return unsupported(format!(
+                                    "a Modify of a {} buffer that its own rolled-back write left, with triggers or events: not pinned",
+                                    t.name
+                                ));
+                            }
+                            return Ok(Value::Boolean(true));
+                        }
+                    }
                 }
                 // Modify never changes the stored SystemId, whatever the buffer carries
                 // (corpus record/TestRecordSystemId.al:176-215, :285-330).
@@ -1726,6 +1758,27 @@ impl Session {
                 {
                     WriteOutcome::Done => {
                         Self::clear_blob_written(rec);
+                        if !rec.borrow().temporary {
+                            let image = rec.borrow().fields.clone();
+                            rec.borrow_mut().last_modify = Some(image);
+                        }
+                        // The Modify that stores a Media field's new media removes the Tenant Media row of the one it held
+                        // (record/lt-ar-records/ArRecordProbes.al:141-143). Only a media replaced by another is pinned; a
+                        // cleared field and a temporary record keep it.
+                        if let (Some(old), false) = (stored_row.as_deref(), rec.borrow().temporary) {
+                            for (i, f) in t.fields.iter().enumerate() {
+                                if !matches!(f.ty, RtType::Library(al_builtins::library_kind::LibraryKind::Media)) {
+                                    continue;
+                                }
+                                if let (Value::Guid(was), Value::Guid(now)) = (&old[i], &row[i])
+                                    && was != now
+                                    && *was != [0; 16]
+                                    && *now != [0; 16]
+                                {
+                                    self.media.objects.borrow_mut().remove(was);
+                                }
+                            }
+                        }
                         // A Blob a Modify of a temporary record persisted does not survive a later Rename
                         // (streams/TestBlobRenameIsolation.al:TempBlob_CommittedWrite_Rename_SameInstanceReGet_LosesBlobValue);
                         // one written after the Insert and never modified does.
@@ -1764,17 +1817,19 @@ impl Session {
                 }
                 let temporary = rec.borrow().temporary;
                 self.coverage_cleared(&t, temporary, &filters);
+                // The platform asks for the table's Global Triggers setup, as the first write to the table, before it looks
+                // for rows: a row the setup subscriber inserts is deleted (events/W4GlobalTriggers.al:327, :341), and a table
+                // with no row asks too (session/TestEnvironmentUserTenantContracts.al:289-290, `GtTable.DeleteAll()` on an
+                // empty table). A temporary record is not pinned and stays as it was.
+                if !temporary {
+                    self.global_setup_asked(&t)?;
+                }
                 let n = self
                     .store_for(rec)
                     .count(&cx, &t, &filters)
                     .map_err(|e| Signal::Unsupported(format!("{e}")))?;
-                // No row, no trigger and no event. The platform still asks for the table's Global
-                // Triggers setup, as the first write to the table (session/TestEnvironmentUserTenantContracts.al:289-290,
-                // `GtTable.DeleteAll()` on an empty table). A temporary record is not pinned and stays as it was.
+                // No row, no trigger and no event.
                 if n == 0 {
-                    if !temporary {
-                        self.global_setup_asked(&t)?;
-                    }
                     return Ok(Value::Null);
                 }
                 let events =
@@ -2493,6 +2548,28 @@ impl Session {
                                     )
                                 )
                         };
+                        // A FlowField whose value depends on the row (a `field()` condition) sorts the rows by that value and is
+                        // reported as the key (record/lt-set-current-key/SetCurrentKeyFlowFieldOrder.al:109-113), against the
+                        // FlowField without conditions above (W4SortKeys.al:471). The deciding rule is not pinned: refused.
+                        if let Some(&p) = wanted.iter().find(|&&p| {
+                            let f = &schema.fields[p];
+                            f.calc_refusal.is_some()
+                                || f.calc.as_ref().is_some_and(|c| {
+                                    c.conds.iter().any(|k| {
+                                        matches!(
+                                            k.value,
+                                            al_ir::CalcValue::Field(_)
+                                                | al_ir::CalcValue::UpperLimit(_)
+                                                | al_ir::CalcValue::FieldFilter(_)
+                                        )
+                                    })
+                                })
+                        }) {
+                            return unsupported(format!(
+                                "SetCurrentKey on the FlowField {}, whose value depends on the row: whether it orders the rows is not pinned (probe wanted)",
+                                t.fields[p].name
+                            ));
+                        }
                         if wanted.iter().all(|&p| unordered(p)) {
                             let mut r = rec.borrow_mut();
                             r.key = 0;

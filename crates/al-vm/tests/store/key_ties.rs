@@ -102,3 +102,42 @@ fn unpinned_requests_on_a_following_primary_key_field_are_refused() {
         assert!(matches!(r, Err(Signal::Unsupported(_))), "{routine}: {r:?}");
     }
 }
+
+const FLOW: &str = r#"
+table 69994 "KT Owner"
+{
+    fields
+    {
+        field(1; Id; Integer) { }
+        field(2; Cnt; Integer) { FieldClass = FlowField; CalcFormula = count("KT Line" where(OwnerId = field(Id))); }
+        field(3; All; Integer) { FieldClass = FlowField; CalcFormula = count("KT Line"); }
+    }
+    keys { key(PK; Id) { } }
+}
+table 69995 "KT Line" { fields { field(1; Id; Integer) { } field(2; OwnerId; Integer) { } } keys { key(PK; Id) { } } }
+codeunit 69996 C
+{
+    procedure ByRowFlowField()
+    var Owner: Record "KT Owner";
+    begin
+        Owner.SetCurrentKey(Cnt);
+    end;
+
+    procedure ByConstantFlowField(): Text
+    var Owner: Record "KT Owner";
+    begin
+        Owner.SetCurrentKey(All);
+        exit(Owner.CurrentKey());
+    end;
+}
+"#;
+
+// records/W4SortKeys.al:459, :471: a FlowField whose value is the same for every row is accepted and the key stays the primary
+// key. record/lt-set-current-key/SetCurrentKeyFlowFieldOrder.al:109-113 sorts by a FlowField that depends on the row and reports
+// it as the key: the rule that tells the two apart is not pinned, so that one is refused.
+#[test]
+fn set_current_key_on_a_flow_field_that_depends_on_the_row_is_refused() {
+    assert_eq!(text(al_testkit::run_in(FLOW, "C", "ByConstantFlowField")), "Id");
+    let r = al_testkit::run_in(FLOW, "C", "ByRowFlowField");
+    assert!(matches!(r, Err(Signal::Unsupported(_))), "{r:?}");
+}

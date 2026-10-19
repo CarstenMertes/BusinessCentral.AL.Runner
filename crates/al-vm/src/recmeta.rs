@@ -1376,6 +1376,7 @@ impl Session {
                     marks: Vec::new(),
                     marked_only: false,
                     position: None,
+                    last_modify: None,
                     globals: shared.share(),
                     ..r.clone()
                 }

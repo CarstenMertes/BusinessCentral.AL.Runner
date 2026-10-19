@@ -87,12 +87,14 @@ impl Session {
             ids::SYSTEM_RANDOMIZE_1 => match args.first() {
                 // `new Random(seed)` (ALSystemNumeric.ALRandomize(int)); the sequence is .NET's.
                 Some(Value::Integer(seed)) => {
+                    self.reseeded_in_test = true;
                     self.rng = al_host::random::NetRandom::new(*seed);
                     Ok(Value::Null)
                 }
                 // BC seeds from the clock, so two calls give different sequences. Here the seed is
                 // the host's plus a count, which differs per call and repeats per run (ADR-009).
                 None => {
+                    self.reseeded_in_test = true;
                     self.unseeded_randomizes = self.unseeded_randomizes.wrapping_add(1);
                     let seed = self.host.random_seed.wrapping_add(self.unseeded_randomizes);
                     self.rng = al_host::random::NetRandom::new(seed);
@@ -178,6 +180,9 @@ impl Session {
             other => return unsupported(format!("Random with {}", other.describe())),
         };
         self.random_draws += 1;
+        if !self.reseeded_in_test {
+            self.inherited_draws += 1;
+        }
         Ok(Value::Integer(self.rng.next_below(bound) + 1))
     }
 

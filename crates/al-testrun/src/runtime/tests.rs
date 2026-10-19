@@ -1712,6 +1712,49 @@ fn a_test_that_runs_an_assumed_path_is_marked_and_the_marks_do_not_leak_to_the_n
     assert_eq!(of("RunsNoneAfterTheOneThatDid"), None, "{hits:?}");
 }
 
+const QUERY_AFTER_LAST_ROW: &str = r#"
+table 60160 "QA Row" { fields { field(1; Id; Integer) { } } keys { key(PK; Id) { Clustered = true; } } }
+query 60160 "QA Query" { elements { dataitem(R; "QA Row") { column(Id; Id) { } } } }
+codeunit 60161 T
+{
+    Subtype = Test;
+    [Test]
+    procedure FilterAfterTheEndThenRead()
+    var Row: Record "QA Row"; Q: Query "QA Query";
+    begin
+        Row.Id := 1; Row.Insert();
+        Q.Open();
+        while Q.Read() do;
+        Q.SetRange(Id, 1);
+        asserterror if Q.Read() then;
+    end;
+    [Test]
+    procedure FilterAfterTheEndThenOpen()
+    var Row: Record "QA Row"; Q: Query "QA Query";
+    begin
+        Row.Id := 1; Row.Insert();
+        Q.Open();
+        while Q.Read() do;
+        Q.SetRange(Id, 1);
+        Q.Open();
+        if not Q.Read() then Error('no row');
+    end;
+}"#;
+
+// A filter set after the last row and the Read that raises are pinned (errors/lt-ms-refusals-131/
+// P131QuerySetRangeAfterRead.al:154-170); only the Open after the last row rests on query-closed-after-last-row.
+#[test]
+fn only_an_open_after_the_last_row_is_flagged() {
+    let hits = assumptions_of(QUERY_AFTER_LAST_ROW);
+    let of = |n: &str| hits.iter().find(|(t, _)| t == n).map(|(_, h)| h.clone());
+    assert_eq!(of("FilterAfterTheEndThenRead"), None, "{hits:?}");
+    assert_eq!(
+        of("FilterAfterTheEndThenOpen"),
+        Some(vec!["query-closed-after-last-row"]),
+        "{hits:?}"
+    );
+}
+
 // The lowering can mark a statement as resting on an assumption (`Lowerer::assume`, `Stmt::Assume`): the test is flagged only when the
 // statement runs. The last user of that path, `chained-array-index`, is retired (misc/lt-chained-array-index/ChainedArrayIndex.al pins it), so no registered assumption
 // is marked at compile time and the test that drove it with that id is gone. The next lowering-level assumption adds one back.

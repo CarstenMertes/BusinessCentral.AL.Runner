@@ -743,6 +743,7 @@ impl Session {
                 flow_unwind: None,
                 request_only_page: false,
                 report_executed: Vec::new(),
+                report_save_tried: Vec::new(),
                 prepared: Vec::new(),
                 report_preview_pinned: Vec::new(),
                 set_view_filters: Vec::new(),

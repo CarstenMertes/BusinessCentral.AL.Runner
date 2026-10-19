@@ -547,6 +547,23 @@ Not an assumption: overload resolution prefers the overload whose parameter type
 
 Next blockers in Tests-SCM that nobody owns and that need a probe: `Clear` of an Enum variable (51 tests), `Page.RunModal` with a field argument (61), a ModalPage handler that takes a `Page` (50), the Item Category Card's part pages (`TestPage is not open` from `CurrPage.Attributes.Page.LoadAttributes`, 8 tests that now fail), `FindFirst`/`FindLast` on an empty set (error text, 133), `Field` with `ObsoleteState = Moved` (104), the report property `WordMergeDataItem` (49). Asked in corpus #646, corpus #652.
 
+## Report runs and SaveAs (lane-reports, 2026-10-19)
+
+Refused until a probe pins them, unless the row says otherwise. Code: `crates/al-vm/src/reports.rs`.
+
+| What is not pinned | Today | Probe wanted |
+|---|---|---|
+| `Report.RunModal(id, true)` on a report that declares `UseRequestPage = false` (only `Report.Run(id, true)` is pinned, PnH2UseRp.al:347) | REFUSED | The static RunModal form with RequestWindow true and false on that report, with and without a RequestPageHandler |
+| `CurrReport.UseRequestPage()` inside a static `Report.RunModal(id, false)` (pinned for `Report.Run(id, false)` only, P147UseRequestPagePreGet.al:79) | the getter is REFUSED | The getter in OnPreReport of a static RunModal with RequestWindow false |
+| `UseRequestPage()` after an `Execute` of a variable whose `UseRequestPage` was set (pinned only for a variable never set: false, PnH2UseRp.al:389) | the getter is REFUSED | `Rpt.UseRequestPage(true)` / `(false)`, `Rpt.Execute('')`, then the getter |
+| `GetLastErrorText` / `GetLastErrorCode` after a used `SaveAs` of a report without a layout that failed in a trigger (only `false` and no error are pinned, PnBReportSaveAs.al:412) | both REFUSED | The two texts after `Ok := Rep.SaveAs(..)` with an `Error` in OnPreReport |
+| `GetLastErrorCode` after a second `SaveAs` on one variable (the text "The object has been run. Use the function CLEAR(Report)." is pinned, PnBReportSaveAs.al:387) | REFUSED | The code |
+| `SubstituteReport` and `OnDocumentReady` on an Xml `SaveAs` other than the pinned one (static form, empty parameters, no record, a stream, a report with an RDLC layout: PeVTests.al:432, :483, :513): the variable form, a parameters string, a record, a file, another layout, a processing-only report; and on `Run`, `RunModal`, `Execute` | NOT raised (as before) | PeVTests.al's subscribers on each of these calls |
+| `SubstituteReport` arguments RequestPageXml (passed empty) and RecordRef (passed unopened) of the pinned SaveAs | passed as stated, not refused (no subscriber in the corpus reads them) | A subscriber that logs `RequestPageXml` and `RecordRef.Number` |
+| `OnDocumentReady`: ObjectPayload, the content of DocumentStream, a TargetStream written without Success, a substitute report without an RDLC layout or that no report declares | REFUSED | A subscriber that logs the payload keys and the first bytes of DocumentStream |
+| The company address lines 2 to 8 of the BC 29 dataset header (AhDatasetHeader.al:98-151 pins them; the country address format is not built) | REFUSED when Company Information has Address 2, City, Post Code, County or Country/Region Code set. Address alone is written as line 2 (documentation-only: Address is line 2 in every pinned variant, AhDatasetHeader.al:120-124, but Address alone is not observed) | Address alone, and the address format built for the rest |
+| The Xml dataset of `LT PnB Rep` on BC 29 has 113 lines, the runtime writes 107 (PnBReportSaveAs.al:138, :179, Header_RawBytes, Header_Lines, SecondSaveAs_OnOneVariable); the header elements and the first 24 data lines match | fails | A full dump of that dataset on BC 29, line by line |
+
 ## Assumptions in force (generated from the registry)
 
 Owner rule of 2026-10-15 (CLAUDE.md hard rule 3): behavior a Microsoft test needs may be implemented before its probe, and every test that passes through such behavior is reported as a FLAGGED pass. The registry is `crates/al-builtins/src/assumptions.rs`; each code path marks its entry when it runs. This table is generated from it (do not edit it by hand: `UPDATE_ASSUMPTIONS_DOC=1 cargo test -p al-builtins assumptions` rewrites it). `alrunner test --top-assumptions` ranks the entries by flagged passes, `--list-assumptions` prints them with the hit counts of the last run. When a probe pins an entry, delete it from the registry; the compiler names every place that still marks it.

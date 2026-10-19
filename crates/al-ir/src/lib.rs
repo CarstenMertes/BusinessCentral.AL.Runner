@@ -68,6 +68,10 @@ pub enum PlatformPublisher {
     FilterHelperTriggers,
 }
 
+/// The events of `Reporting Triggers` the runtime raises: `CustomDocumentMergerEx` for a custom layout, and
+/// `SubstituteReport` and `OnDocumentReady` around an Xml `SaveAs` (events/lt-platform-events-v/PeVTests.al:432).
+pub const RAISED_REPORTING_EVENTS: [&str; 3] = ["CustomDocumentMergerEx", "SubstituteReport", "OnDocumentReady"];
+
 /// The events of `Filter Helper Triggers` the runtime raises (MakeDateFilter, MakeIntFilter and MakeTimeFilter:
 /// events/lt-platform-triggers/PtObserve.al) or refuses to raise (MakeDateTimeFilter).
 pub const RAISED_FILTER_EVENTS: [&str; 4] = [

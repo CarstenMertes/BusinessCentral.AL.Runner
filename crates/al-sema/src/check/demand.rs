@@ -92,6 +92,8 @@ pub(super) struct State {
     reporting_triggers: bool,
     /// The `MakeDateFilter` subscribers are reached (code that sets filters is compiled).
     filter_helper: bool,
+    /// The `SubstituteReport` and `OnDocumentReady` subscribers are reached (code that calls `SaveAs` is compiled).
+    save_as_events: bool,
     /// Bits per object kind: the catalog tables that list the objects of that kind are used, and
     /// every object of the kind is compiled to its shape (`touch_object_catalog`).
     catalogs: u8,
@@ -115,6 +117,7 @@ impl State {
             caption_class: false,
             reporting_triggers: false,
             filter_helper: false,
+            save_as_events: false,
             catalogs: 0,
         }
     }
@@ -747,6 +750,30 @@ impl Checker<'_> {
                     .event
                     .eq_ignore_ascii_case("CustomDocumentMergerEx")
                 {
+                    self.reach_subscriber(o, k);
+                }
+            }
+        }
+    }
+
+    /// Object `i` calls `SaveAs`: an Xml `SaveAs` raises the platform's `SubstituteReport` and `OnDocumentReady`
+    /// (events/lt-platform-events-v/PeVTests.al:432), so their subscribers are reached.
+    pub(super) fn reach_save_as_events_if_used(&self, i: usize) {
+        if self.demand.borrow().is_none() {
+            return;
+        }
+        if !ast::text_contains_ignore_case(self.ws.object_ast(i).syntax(), "saveas") {
+            return;
+        }
+        let first = self.demand.borrow_mut().as_mut().is_some_and(|st| {
+            let first = !st.save_as_events;
+            st.save_as_events = true;
+            first
+        });
+        if first {
+            for (o, k) in self.ws.reporting_triggers_subscribers() {
+                let event = &self.ws.objects[o].subscribers[k].event;
+                if event.eq_ignore_ascii_case("SubstituteReport") || event.eq_ignore_ascii_case("OnDocumentReady") {
                     self.reach_subscriber(o, k);
                 }
             }
@@ -1393,9 +1420,9 @@ pub fn uncompiled_subscriber_sites(ws: &Workspace, active: &dyn Fn(usize) -> boo
         }
     }
     for (so, si) in ws.reporting_triggers_subscribers() {
-        if ws.objects[so].subscribers[si]
-            .event
-            .eq_ignore_ascii_case("CustomDocumentMergerEx")
+        if al_ir::RAISED_REPORTING_EVENTS
+            .iter()
+            .any(|e| ws.objects[so].subscribers[si].event.eq_ignore_ascii_case(e))
         {
             add(None, ir::PlatformPublisher::ReportingTriggers, so, si);
         }

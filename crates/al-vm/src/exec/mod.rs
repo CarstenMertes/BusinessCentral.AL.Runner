@@ -397,6 +397,9 @@ pub(crate) struct BuiltinSite {
     pub arg_regs: Vec<u16>,
     pub args: Vec<ir::Arg>,
     pub ret_used: bool,
+    /// A registered native whose receiver and arguments are all values (nothing is written back) and that has no
+    /// special handling in `run_builtin`: it runs on the short path (`Session::run_plain_builtin`).
+    pub plain: bool,
 }
 
 pub(crate) enum AuxSite {

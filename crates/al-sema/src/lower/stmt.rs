@@ -96,10 +96,13 @@ impl Lowerer<'_> {
                 self.qcp_ret = Some((l, flag));
             }
         }
+        self.hidden_base = locals.len();
+        self.hidden_locals.clear();
         let mut body = match r.body() {
             Some(b) => self.stmts_of(&b),
             None => Vec::new(),
         };
+        locals.append(&mut self.hidden_locals);
         if qcp {
             // A Boolean OnQueryClosePage that reaches its end without a value lets the page close
             // (pages/lt-query-close-page-result/QcrNamedBranches.al:OnQueryClosePage_NamedTrueIfFlagFlagFalseHandlerOk_Observed and its siblings).
@@ -397,35 +400,84 @@ impl Lowerer<'_> {
         out
     }
 
+    /// A call or other expression used as a statement. A try function called as a statement behaves like a normal method
+    /// (doc: TryFunction attribute), so its errors propagate.
+    fn expr_stmt(&mut self, e: &SyntaxNode) -> L<ir::Stmt> {
+        self.expr(e).map(|e| match e {
+            ir::Expr::Builtin { id, receiver, args, .. } => ir::Stmt::Expr(ir::Expr::Builtin {
+                id,
+                receiver,
+                args,
+                ret_used: false,
+            }),
+            ir::Expr::Call {
+                object,
+                routine,
+                instance,
+                args,
+                ..
+            } => ir::Stmt::Expr(ir::Expr::Call {
+                object,
+                routine,
+                instance,
+                args,
+                try_call: false,
+            }),
+            e => ir::Stmt::Expr(e),
+        })
+    }
+
     pub(crate) fn stmt_plain(&mut self, n: &SyntaxNode) -> Vec<ir::Stmt> {
         use SyntaxKind::*;
         let kids: Vec<SyntaxNode> = n.children().collect();
         let r = match n.kind() {
             Block => return self.stmts_of(n),
-            // A try function called as a statement behaves like a normal method
-            // (doc: TryFunction attribute), so its errors propagate.
-            ExprStmt => self.expr(&kids[0]).map(|e| match e {
-                ir::Expr::Builtin { id, receiver, args, .. } => ir::Stmt::Expr(ir::Expr::Builtin {
-                    id,
-                    receiver,
-                    args,
-                    ret_used: false,
-                }),
-                ir::Expr::Call {
-                    object,
-                    routine,
-                    instance,
-                    args,
-                    ..
-                } => ir::Stmt::Expr(ir::Expr::Call {
-                    object,
-                    routine,
-                    instance,
-                    args,
-                    try_call: false,
-                }),
-                e => ir::Stmt::Expr(e),
-            }),
+            ExprStmt => {
+                // A call that passes `CurrFieldNo` to a `var` parameter: the callee works on a local that holds its value, and
+                // what the local holds afterwards becomes the record's CurrFieldNo (record/lt-curr-field-no/CurrFieldNoVarParam.al:
+                // 103-106, :117; a copy of it is not the property, :128).
+                let outer = self.curr_field_args.replace(Vec::new());
+                let lowered = self.expr_stmt(&kids[0]);
+                let args = std::mem::replace(&mut self.curr_field_args, outer).unwrap_or_default();
+                match lowered {
+                    Ok(call) if !args.is_empty() => {
+                        let mut out: Vec<ir::Stmt> = self.mark(n).into_iter().collect();
+                        let builtin = |id: &str, rec: usize, args: Vec<ir::Arg>, used: bool| -> L<ir::Expr> {
+                            Ok(ir::Expr::Builtin {
+                                id: super::call::builtin_id(id)?,
+                                receiver: Some(Box::new(ir::Arg::Ref(ir::Place::Global(rec)))),
+                                args,
+                                ret_used: used,
+                            })
+                        };
+                        let mut after = Vec::new();
+                        for &(tmp, rec) in &args {
+                            match (
+                                builtin("Record.CurrFieldNo#1", rec, Vec::new(), true),
+                                builtin(
+                                    "Record.SetCurrFieldNo#1",
+                                    rec,
+                                    vec![ir::Arg::Value(ir::Expr::Load(ir::Place::Local(tmp)))],
+                                    false,
+                                ),
+                            ) {
+                                (Ok(get), Ok(set)) => {
+                                    out.push(ir::Stmt::Assign(ir::Place::Local(tmp), get));
+                                    after.push(ir::Stmt::Expr(set));
+                                }
+                                (Err(e), _) | (_, Err(e)) => {
+                                    self.reasons.push(e);
+                                    return Vec::new();
+                                }
+                            }
+                        }
+                        out.push(call);
+                        out.extend(after);
+                        return out;
+                    }
+                    other => other,
+                }
+            }
             AssignStmt => self.assign(n, &kids),
             IfStmt => {
                 let else_at = sig_tokens(n)
@@ -882,6 +934,33 @@ impl Lowerer<'_> {
             );
             return Ok(ir::Stmt::Assign(place, guarded));
         }
+        // `B := A` of two interface variables raises when A holds no implementation (codeunit/lt-enums-interfaces/OjT71047.al:
+        // 250-251). A Variant into an Integer raises TypeConversion:Overflow for a BigInteger or Duration beyond its range
+        // (types/lt-variant/VaTConvert.al:183-184; types/lt-filter-enum-relation-duration-guid/D_Duration.al:226).
+        if matches!(op_kind, Some(SyntaxKind::Assign) | None) && !variant_into_text_field {
+            let checked = match (&target_ty, self.ty_ref(&kids[1])) {
+                (Ty::Object(ObjKind::Interface, _), Ty::Object(ObjKind::Interface, _)) => {
+                    Some("Interface.AssertAssigned#1")
+                }
+                (Ty::Integer, Ty::Variant) => Some("Variant.IntoInteger#1"),
+                _ => None,
+            };
+            if let Some(id) = checked {
+                let value = match id {
+                    "Interface.AssertAssigned#1" => self.convert_to(&target_ty, self.ty_ref(&kids[1]), value)?,
+                    _ => value,
+                };
+                return Ok(ir::Stmt::Assign(
+                    place,
+                    ir::Expr::Builtin {
+                        id: super::call::builtin_id(id)?,
+                        receiver: None,
+                        args: vec![ir::Arg::Value(value)],
+                        ret_used: true,
+                    },
+                ));
+            }
+        }
         let value = match op_kind {
             _ if variant_into_text_field => value,
             Some(SyntaxKind::Assign) | None => self.convert_to(&target_ty, self.ty_ref(&kids[1]), value)?,
@@ -975,9 +1054,9 @@ impl Lowerer<'_> {
 
     /// The argument for a `var` parameter: the variable it names. Base Application passes the implicit
     /// `CurrFieldNo` to event publishers that declare `var CallingFieldNo: Integer` (`Sales Header`,
-    /// `OnBeforeShouldSearchForCustomerByName`). `CurrFieldNo` is no variable, so the callee gets a copy of its
-    /// value and what it assigns to its parameter stays there. Whether BC writes the assignment back to
-    /// `CurrFieldNo` is not pinned (docs/probes-needed.md).
+    /// `OnBeforeShouldSearchForCustomerByName`). `CurrFieldNo` is no variable: in a call statement the callee gets a
+    /// local that holds its value, and what it assigns comes back to `CurrFieldNo` after the call (record/lt-curr-field-no/
+    /// CurrFieldNoVarParam.al:103-106, :117). In a call inside an expression it is refused.
     pub(crate) fn by_var_arg(&mut self, a: &SyntaxNode) -> L<ir::Arg> {
         // `this` in a report, passed to a `var` parameter of the report's type: the parameter holds the running
         // report (see `expr` for the assumption).
@@ -994,7 +1073,22 @@ impl Lowerer<'_> {
                 if a.kind() == SyntaxKind::NameRef
                     && a.text().to_string().trim().eq_ignore_ascii_case("CurrFieldNo") =>
             {
-                Ok(ir::Arg::Value(self.expr(a)?))
+                let rec = self
+                    .rec_slot
+                    .ok_or("CurrFieldNo outside code that has an implicit Rec")?;
+                let Some(args) = self.curr_field_args.as_mut() else {
+                    return Err(
+                        "CurrFieldNo passed to a var parameter of a call inside an expression is not lowered (the write-back is pinned for a call statement only)"
+                            .into(),
+                    );
+                };
+                let tmp = self.hidden_base + self.hidden_locals.len();
+                args.push((tmp, rec));
+                self.hidden_locals.push(ir::Slot {
+                    name: "__currfieldno".into(),
+                    ty: RtType::Integer,
+                });
+                Ok(ir::Arg::Ref(ir::Place::Local(tmp)))
             }
             Err(e) => Err(e),
         }

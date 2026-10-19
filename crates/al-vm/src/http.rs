@@ -64,7 +64,17 @@ impl Session {
 
     pub(crate) fn http_send_impl(&mut self, request: HttpOutgoing) -> Result<TestHttpResponseState, Signal> {
         let policy = self.http_policy;
-        let bound = self.has_http_handler();
+        // Before BC 29 a handler does not answer under BlockOutboundRequests: the request raises as if none were bound, and
+        // the test does not fail for a handler that never ran (al-language-onprem/session/PZHttpBlock.al:54-57 passes on
+        // BC 27 and 28 with the error).
+        let mut bound = self.has_http_handler();
+        if bound
+            && policy == Some("BlockOutboundRequests")
+            && !self.has(al_version::Gate::HttpHandlerUnderBlockOutboundRequestsFrom29)
+        {
+            self.mark_http_handler_fired();
+            bound = false;
+        }
         if !bound {
             return match policy {
                 Some(p @ ("BlockOutboundRequests" | "AllowOutboundFromHandler")) => raise(

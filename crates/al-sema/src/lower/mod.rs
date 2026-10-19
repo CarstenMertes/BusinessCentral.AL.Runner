@@ -198,6 +198,12 @@ pub(crate) struct Lowerer<'a> {
     ret_ty: Option<RtType>,
     /// While an OnQueryClosePage with a named Boolean return is lowered: its return local and the local that notes an assignment to it.
     qcp_ret: Option<(usize, usize)>,
+    /// Locals the lowering adds to the routine being lowered (after its declared ones, from `hidden_base`).
+    hidden_locals: Vec<ir::Slot>,
+    hidden_base: usize,
+    /// While a call statement is lowered: the `CurrFieldNo` arguments it passes to `var` parameters, as (the local that
+    /// stands in for it, the slot of the implicit Rec). `None` elsewhere.
+    curr_field_args: Option<Vec<(usize, usize)>>,
     /// The declared return type of the routine being lowered (an interface result converts in `exit`).
     ret_decl: Option<Ty>,
     /// The routine nodes of every object, numbered as `routine_at` numbers them.

@@ -221,6 +221,11 @@ pub fn normalize_uri(input: &str) -> Result<String, bool> {
         };
     }
     let scheme = scheme.to_ascii_lowercase();
+    // `http:` and `https:` with nothing after the colon are no uri (misc/lt-probes-needed-4/PnD06_SetRequestUri.al:65-66);
+    // a web scheme followed by something other than `//` is not measured.
+    if matches!(scheme.as_str(), "http" | "https") && !rest.starts_with("//") {
+        return Err(!rest.is_empty());
+    }
     let Some(after) = rest.strip_prefix("//") else {
         // mailto:a@b.c, javascript:alert(1): kept as written.
         return Ok(format!("{scheme}:{rest}"));
@@ -991,6 +996,17 @@ fn headers_add(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
     let name = text(a, 0)?;
     let (value, secret) = text_or_secret(a, 1)?;
     let ret_used = c.ret_used();
+    // A name of blanks is a format error from BC 29 and an argument error on BC 28 (network/lt-http/HttpHeaders.al:304-308);
+    // BC 27 is not probed.
+    if !name.is_empty()
+        && name.chars().all(char::is_whitespace)
+        && !c.gate(al_version::Gate::HttpBlankHeaderNameIsFormatFrom29)
+    {
+        if !c.gate(al_version::Gate::HttpHeaderNameRulesProbedFrom28) {
+            return unsupported("HttpHeaders.Add with a name of blanks on a major older than the probed ones");
+        }
+        return header_error("Argument");
+    }
     let added = with_bag(r.as_deref(), |b| add_header(b, &name, &value, secret))?;
     match added {
         Ok(()) => Ok(Value::Boolean(true)),
@@ -1156,8 +1172,9 @@ fn write_from_stream(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) ->
 
 /// `ReadAs(var Text)` gives the body back, UTF-8 decoded; a content nobody wrote to reads as an empty text and
 /// answers true (misc/W4XmlJsonHttp.al:ReadAs_FreshContent); the content a request has when none was set answers
-/// false and leaves the text (network/lt-http/HttpRequest.al:FreshRequestContent).
-fn read_as(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
+/// false and leaves the text (network/lt-http/HttpRequest.al:FreshRequestContent); called as a statement on that content
+/// it raises `NotInitialized` (misc/W4XmlJsonHttp.al:343, RequestWithoutContent_ReadAs).
+fn read_as(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
     let (data, uninit, charset) = with_content(r, |s| {
         let charset = s
             .headers
@@ -1194,6 +1211,12 @@ fn read_as(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
         (s.data.clone(), s.uninitialized, charset)
     })?;
     if uninit {
+        if !c.ret_used() {
+            return raise(
+                "Microsoft.Dynamics.Nav.Runtime.NavHttpContent variable not initialized.",
+                "NotInitialized",
+            );
+        }
         return Ok(Value::Boolean(false));
     }
     // The body is read with the charset of the Content-Type header (lt-http-header-rules/P87ContentType.al:ReadAsIgnoresCharsetHeader,
@@ -1861,6 +1884,17 @@ mod tests {
         ] {
             assert_eq!(normalize_uri(bad), Err(false), "{bad}");
         }
+    }
+
+    #[test]
+    fn a_web_scheme_with_nothing_after_the_colon_is_no_uri() {
+        // misc/lt-probes-needed-4/PnD06_SetRequestUri.al:65-67: `http:`, `https:` and `http://` are invalid.
+        for bad in ["http:", "https:", "http://"] {
+            assert_eq!(normalize_uri(bad), Err(false), "{bad}");
+        }
+        // mailto:a@b.c stays as written (:70); `http:x` is not measured.
+        assert_eq!(normalize_uri("mailto:a@b.c").as_deref(), Ok("mailto:a@b.c"));
+        assert_eq!(normalize_uri("http:x"), Err(true));
     }
 
     #[test]

@@ -15847,7 +15847,7 @@
         "code": "AL:Format",
         "file": "crates/al-builtins/src/http.rs",
         "generic": false,
-        "line": 397,
+        "line": 402,
         "pinned": true,
         "site": "network/lt-http/HttpRequest.al:73",
         "template": "The format of the HTTP method is invalid."
@@ -15896,6 +15896,15 @@
         "pinned": true,
         "site": "session/W5NavAppResources.al:31",
         "template": "A resource matching '%' could not be found in app '%'."
+      },
+      {
+        "code": "InvalidOperation",
+        "file": "crates/al-builtins/src/native.rs",
+        "generic": false,
+        "line": 696,
+        "pinned": true,
+        "site": "codeunit/TestInterfaceRuntimeContracts.al:85",
+        "template": "Interface not initialized"
       },
       {
         "code": "AL:DivideByZero",
@@ -16027,7 +16036,7 @@
         "code": "InvalidStreamData",
         "file": "crates/al-builtins/src/stream.rs",
         "generic": false,
-        "line": 908,
+        "line": 913,
         "pinned": true,
         "site": "lt-file-type/FileReadSeek.al:114",
         "template": "Invalid data encountered in stream, unable to read text."
@@ -16036,7 +16045,7 @@
         "code": "DateInvalid",
         "file": "crates/al-builtins/src/stream.rs",
         "generic": false,
-        "line": 940,
+        "line": 945,
         "pinned": true,
         "site": "errors/lt-ms-refusals-131/P131EvalScalars.al:376",
         "template": "The date is not valid."
@@ -16045,7 +16054,7 @@
         "code": "ALSystemString",
         "file": "crates/al-builtins/src/textfns.rs",
         "generic": false,
-        "line": 482,
+        "line": 492,
         "pinned": true,
         "site": "errors/lt-ms-refusals-136/P136Text.al:113",
         "template": "Incorrect use of the where parameter."
@@ -16054,7 +16063,7 @@
         "code": "AL:Overflow",
         "file": "crates/al-builtins/src/textfns.rs",
         "generic": false,
-        "line": 882,
+        "line": 892,
         "pinned": true,
         "site": "errors/lt-error-handling/ErTRuntimeErrors.al:97",
         "template": "Arithmetic operation resulted in an overflow."
@@ -16261,7 +16270,7 @@
         "code": "RecordNotOpened",
         "file": "crates/al-vm/src/refs.rs",
         "generic": false,
-        "line": 169,
+        "line": 179,
         "pinned": true,
         "site": "errors/lt-ms-refusals-131/P131RecordRefGet.al:183",
         "template": "The record is not open."
@@ -16270,7 +16279,7 @@
         "code": "RecordNotOpened",
         "file": "crates/al-vm/src/refs.rs",
         "generic": false,
-        "line": 296,
+        "line": 306,
         "pinned": true,
         "site": "errors/lt-ms-refusals-131/P131RecordRefGet.al:183",
         "template": "The record is not open."
@@ -16279,7 +16288,7 @@
         "code": "RecordAlreadyOpened",
         "file": "crates/al-vm/src/refs.rs",
         "generic": false,
-        "line": 326,
+        "line": 336,
         "pinned": true,
         "site": "recordref/lt-recordref-fieldref-members/P92Open.al:168",
         "template": "The record is already open."
@@ -16288,7 +16297,7 @@
         "code": "RecordNotOpened",
         "file": "crates/al-vm/src/refs.rs",
         "generic": false,
-        "line": 608,
+        "line": 618,
         "pinned": true,
         "site": "errors/lt-ms-refusals-131/P131RecordRefGet.al:183",
         "template": "The record is not open."
@@ -16297,7 +16306,7 @@
         "code": "IndexOutOfBounds",
         "file": "crates/al-vm/src/refs.rs",
         "generic": false,
-        "line": 857,
+        "line": 867,
         "pinned": true,
         "site": "collections/lt-array-rows/ArrayRows.al:185",
         "template": "Index out of bounds."
@@ -16306,7 +16315,7 @@
         "code": "DB:KeyNotFound",
         "file": "crates/al-vm/src/refs.rs",
         "generic": false,
-        "line": 877,
+        "line": 887,
         "pinned": true,
         "site": "recordref/TestRecordRefKeyIndexSetRecFilterContracts.al:103",
         "template": "The % table does not have an active key at index %."
@@ -16315,7 +16324,7 @@
         "code": "KeyRef.{other}",
         "file": "crates/al-vm/src/refs.rs",
         "generic": false,
-        "line": 972,
+        "line": 982,
         "pinned": true,
         "site": "collections/lt-array-rows/ArrayRows.al:185",
         "template": "Index out of bounds"
@@ -16324,7 +16333,7 @@
         "code": "NotInitialized",
         "file": "crates/al-vm/src/refs.rs",
         "generic": false,
-        "line": 992,
+        "line": 1002,
         "pinned": true,
         "site": "misc/lt-probes-needed-4/PnD05_UnassignedFieldRef.al:42",
         "template": "Microsoft.Dynamics.Nav.Runtime.NavFieldRef variable not initialized."
@@ -16342,7 +16351,7 @@
         "code": "MissingUIHandler",
         "file": "crates/al-vm/src/ui.rs",
         "generic": false,
-        "line": 440,
+        "line": 449,
         "pinned": true,
         "site": "controls/W2PageVariableInit.al:288",
         "template": "Unhandled UI: % %"
@@ -16351,7 +16360,7 @@
         "code": "MissingUIHandler",
         "file": "crates/al-vm/src/ui.rs",
         "generic": false,
-        "line": 468,
+        "line": 477,
         "pinned": true,
         "site": "controls/W2PageVariableInit.al:288",
         "template": "Unhandled UI: % %"
@@ -16375,8 +16384,8 @@
         "template": "Invalid expression of type: table view.%%"
       }
     ],
-    "pinned": 70,
-    "sites": 70
+    "pinned": 71,
+    "sites": 71
   },
   "language": {
     "bc": "27-29",

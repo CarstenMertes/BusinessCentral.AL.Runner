@@ -74,5 +74,6 @@ fn last_index_of_start_index_may_be_one_past_the_end() {
         ),
         "7,6,10"
     );
-    assert_eq!(text("T := ''; exit(Format(T.LastIndexOf('', 1)));"), "2");
+    // On an empty text the empty text is found at 1 (Search1.Codeunit.al:351, LastIndexOf_StartIndex_Empty).
+    assert_eq!(text("T := ''; exit(Format(T.LastIndexOf('', 1)));"), "1");
 }

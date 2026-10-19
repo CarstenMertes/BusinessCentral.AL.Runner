@@ -312,6 +312,15 @@ impl Session {
             .is_some_and(|s| s.handlers.iter().any(|h| h.kind == UiKind::HttpClient))
     }
 
+    /// Counts the bound `[HttpClientHandler]` as executed without running it.
+    pub(crate) fn mark_http_handler_fired(&mut self) {
+        if let Some(s) = self.ui_state.scope.as_mut() {
+            for h in s.handlers.iter_mut().filter(|h| h.kind == UiKind::HttpClient) {
+                h.fired = true;
+            }
+        }
+    }
+
     /// Runs the bound `[HttpClientHandler]` with the request and a fresh response; `None` when the test has none.
     /// Returns the handler's answer and the response as it left it.
     pub(crate) fn dispatch_http_handler(

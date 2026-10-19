@@ -178,6 +178,16 @@ fn last_index_of(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NRe
     // The empty text is found one past the start index (`'abcabcabc'.LastIndexOf('', 5) = 6`).
     let ascii = st.is_ascii() && sb.is_ascii();
     let len = if ascii { st.len() } else { u16s(&st).len() };
+    // On an empty text a start index of 0 or 1 finds nothing, and the empty text at 1
+    // (text/lt-text-instance/Search1.Codeunit.al:351,353,355: `E.LastIndexOf('', 1) = 1`, `('a', 1) = 0`, `('a', 0) = 0`,
+    // no error). `E.LastIndexOf('', 0)` is not pinned.
+    if len == 0 && a.len() > 1 && matches!(int(a, 1)?, 0 | 1) {
+        return match (sb.is_empty(), int(a, 1)?) {
+            (false, _) => Ok(Value::Integer(0)),
+            (true, 1) => Ok(Value::Integer(1)),
+            _ => unsupported("LastIndexOf('', 0) on an empty text (not pinned)"),
+        };
+    }
     let start = if a.len() > 1 {
         let n = int(a, 1)?;
         if n < 1 || n as usize > len + 1 {

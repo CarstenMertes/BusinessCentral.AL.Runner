@@ -825,13 +825,17 @@ fn in_read(c: &mut dyn Ctx, mut r: Option<&mut Value>, a: &mut [Value]) -> NResu
         let (taken, count) = with_in(r, |s| {
             let unit = s.enc.unit();
             let rest = s.rest();
-            // At the end of the stream the Text is emptied and the result is 0, no error
-            // (misc/lt-probes-needed-3/PnC20JsonStreams.al:312-318, `pastEnd`).
+            // At the end of the stream the Text is emptied, no error. The result is 0 on a stream of the default encoding
+            // (misc/lt-probes-needed-3/PnC20JsonStreams.al:312-318, `pastEnd`) and 1 on a UTF-8 one (misc/lt-probes-needed-5/
+            // PnE04Streams.al:89 and :113, `atEnd`).
             if rest.is_empty() {
-                return Ok((String::new(), 0));
+                return Ok((String::new(), usize::from(s.enc == Encoding::Utf8)));
             }
             let end = rest.chunks_exact(unit).position(|u| u.iter().all(|b| *b == 0));
-            if used && (end.is_none() || unit != 1) {
+            // On a UTF-8 stream a text with no zero byte after it counts one more than its bytes as well: `hello` is 6
+            // (PnE04Streams.al:111, ReadText_Utf8_NoTerminator).
+            let utf8_unterminated = end.is_none() && s.enc == Encoding::Utf8;
+            if used && ((end.is_none() && !utf8_unterminated) || unit != 1) {
                 return unsupported(
                     "the result of InStream.Read into a Text without a zero terminator or on a UTF-16 stream (not pinned)",
                 );
@@ -840,6 +844,7 @@ fn in_read(c: &mut dyn Ctx, mut r: Option<&mut Value>, a: &mut [Value]) -> NResu
                 Some(e) => (e * unit, (e + 1) * unit),
                 None => (rest.len(), rest.len()),
             };
+            let counted = consumed + usize::from(utf8_unterminated);
             let body = &rest[..body_len];
             if !s.enc.decode_pinned(body)
                 || (!s.enc.decode(body).is_ascii() && !matches!(s.enc, Encoding::Windows | Encoding::MsDos))
@@ -849,7 +854,7 @@ fn in_read(c: &mut dyn Ctx, mut r: Option<&mut Value>, a: &mut [Value]) -> NResu
                 );
             }
             s.pos += consumed;
-            Ok((s.enc.decode(body), consumed))
+            Ok((s.enc.decode(body), counted))
         })?;
         a[0] = match a[0] {
             Value::Code(_) => Value::Code(taken.into()),

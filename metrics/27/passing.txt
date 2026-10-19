@@ -4742,6 +4742,7 @@
 68072 ForeachJsonArray_SimpleValues
 68073 ReadAs_FreshContent
 68073 RequestContent_IsCopyOrReference
+68073 RequestWithoutContent_ReadAs
 68073 WriteFromInStream_NonAsciiBytes
 68073 WriteFromText_HeadersAndRoundTrip
 68075 GetOrOpen_Pattern_OfDataTypeManagement
@@ -5197,6 +5198,7 @@
 68552 ErrorInfoCallstack_OfAnErrorCreatedAndNotRaised
 68554 ReadText_AfterWriteOfAText_EmptyAndCode
 68554 ReadText_AfterWriteOfAText_ZeroTerminator
+68554 ReadText_AfterWriteText_NoTerminator
 68556 Ascending_AssignmentAndCall
 68556 ErrorInfo_CustomDimensionsAssignmentAndCall
 68556 ErrorInfo_MembersAsAssignmentAndCall
@@ -6585,6 +6587,7 @@
 70000 IndexOf_StartIndex_EmptyAndLiteral
 70000 LastIndexOf_Basic
 70000 LastIndexOf_StartIndex
+70000 LastIndexOf_StartIndex_Empty
 70000 StartsWith_EndsWith
 70001 P146_Abs_Duration_DateTimeDifference
 70001 P146_Abs_Duration_ResultFormats
@@ -7368,6 +7371,7 @@
 70655 RecordFromVariant_IsCopy_Result
 70655 RecordFromVariant_OpenedNoCurrentRow_Result
 70655 RecordFromVariant_SameTable_Result
+70657 FieldRefSetValue_NumberOnCodeAndText_Result
 70657 FieldRefValue_ToText_Result
 70657 TextBuilderAppend_VariantNumber_Result
 70657 VariantToCode_Numbers_Result
@@ -7961,6 +7965,8 @@
 70906 P170_TimePlusMinusDecimal_Whole
 70907 P170_TimePlusMinusBigInteger
 70909 P170_CurrFieldNo_CopyIsNotTheProperty
+70909 P170_CurrFieldNo_PassedToVarParameter_CalleeAssigns
+70909 P170_CurrFieldNo_PassedToVarParameter_InValidate
 70910 P170_And_LocalNameAndAttribute
 70910 P170_And_PositionAndLastInsideConjunction
 70910 P170_And_QuotesInsideLiterals
@@ -8081,6 +8087,7 @@
 71032 Is_Empty_Variant
 71032 Is_Record_RecordRef_FieldRef
 71032 Is_Streams_Notification
+71033 BigIntegerVariant_To_Integer
 71033 DecimalVariant_To_Integer
 71033 Enum_Variant_To_Integer_Text
 71034 Arithmetic_After_Conversion
@@ -8132,6 +8139,7 @@
 71051 Enum_ImplementationSelection
 71051 PassInterface_ToProcedure
 71051 Uninitialized_AfterClear
+71051 Uninitialized_AssignedFromUninitialized
 71051 Uninitialized_Call
 71051 VarParameter_ThroughInterface
 71059 Run_AsserterrorOnErrorStatement
@@ -9309,6 +9317,7 @@
 72037 Assigned_FromEmptyTable_ForComparison
 72037 Unassigned_ReadMembersForReference
 72038 SetRequestUri_Relative
+72038 SetRequestUri_SchemeOnlyAndOddSchemes
 72038 SetRequestUri_SecondCallReplaces
 72043 ObjectId_FromCurrReport_Captioned
 72043 ObjectId_FromCurrReport_NoCaption
@@ -9723,6 +9732,8 @@
 72521 LargerAndEqualArray_VarParameter
 72521 SmallerArray_ByValue
 72521 SmallerArray_VarParameter
+72525 ReadText_Utf8_NoTerminator
+72525 ReadText_Utf8_WithTerminator
 72540 DataItemLink_ParentAndGrandparent
 72540 MethodSum_OverFlowFields_Read
 72540 QueryWithAboutProperties_ReadsRows
@@ -9745,6 +9756,7 @@
 72581 ReportLayoutType_Members
 72601 ReadAs_FreshContent
 72601 RequestContent_IsItACopy
+72601 RequestWithoutContent
 72601 WriteFromText_NonAscii
 72601 WriteFromText_ThenReadAndHeaders
 72611 Argument_And_Exit_TakeTheOrdinal
@@ -9784,6 +9796,7 @@
 72691 Duration_To_BigInteger_Decimal
 72691 Duration_To_Integer_BeyondRange
 72691 Duration_To_Integer_InRange
+72691 Duration_Via_Variant
 72691 TimeMinusTime_To_Integer
 72692 Duration_Arithmetic
 72692 Duration_Format
@@ -9800,6 +9813,7 @@
 72716 P161_SetAscending_Single_ReadBack
 72716 P161_SetAscending_Single_ResetAndFilters
 72717 P161_FreshInstance_DefaultReads
+72717 P161_FreshInstance_FormatText
 72717 P161_Init_ThenClear
 72718 P161_CodeCoverageLog_EnableOnly
 72718 P161_CodeCoverageLog_MultiSessionCombinations
@@ -11652,6 +11666,7 @@
 74313 Run_ExportXmlportAsImport
 74314 JsonObject_ReadFromStream_OtherShapes
 74315 JsonValue_ReadFromStream_ContainersAndEdges
+74316 ReadText_AtTheEndOfTheStream
 74319 SetCurrentKey_PrimaryKeyOrderForComparison
 74320 Format_CommaStrings_Dat
 74320 Format_CommaStrings_DecNeg
@@ -12030,6 +12045,7 @@
 74796 Duplicate_WithoutOnInsert_InsertNoArg_Used
 74796 Duplicate_WithoutOnInsert_InsertTrue_Unused
 74796 Duplicate_WithoutOnInsert_InsertTrue_Used
+74799 Columns_Schema
 74803 GetParent_GetDocument_States
 74803 Remove_FirstMiddleLast
 74806 GetDocument_ReturnsTheSameInstance

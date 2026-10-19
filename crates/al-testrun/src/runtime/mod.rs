@@ -273,11 +273,15 @@ pub struct Phases {
     /// A lean run met a routine the lean compile had left out, so the tests ran again on the complete compile; the
     /// outcomes are the second run's.
     pub lean_redone: bool,
+    /// How many times the apps were compiled for the run: 2 when a compile without the baseline was thrown away
+    /// because the rule said "may observe", or when a lean run ran again.
+    pub compiles: usize,
 }
 
 impl Phases {
-    /// One line for `--timings` about a lean compile, `None` when the compile was complete from the start.
-    pub fn lean_line(&self) -> Option<String> {
+    /// One line for `--timings` about a lean compile or a compile that was done twice, `None` when there was one
+    /// complete compile.
+    pub fn compile_line(&self) -> Option<String> {
         match (self.lean, self.lean_redone) {
             (_, true) => Some(
                 "compile: lean, and a selected test met an object the lean compile left out, so the tests ran again on the complete compile"
@@ -286,6 +290,10 @@ impl Phases {
             (Some((out, all)), false) => Some(format!(
                 "compile: lean, {out} of {all} workspace objects left out (no selected test names them)"
             )),
+            (None, false) if self.compiles > 1 => Some(
+                "compile: twice, the compile without the install baseline was thrown away (a selected test may observe the baseline)"
+                    .into(),
+            ),
             (None, false) => None,
         }
     }

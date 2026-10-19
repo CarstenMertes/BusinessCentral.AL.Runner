@@ -98,6 +98,8 @@ pub struct Compiled {
     pub(crate) compile_time: std::time::Duration,
     /// The compile is lean (`al_sema::check::Roots::lean`): (workspace objects it left out, workspace objects).
     pub(crate) lean: Option<(usize, usize)>,
+    /// How many compiles it took (`Phases::compiles`).
+    pub(crate) compiles: usize,
     /// What the incremental update needs, when the compile used the dependency cache (`update_files`).
     pub(crate) incr: Option<Incr>,
 }
@@ -124,7 +126,9 @@ impl Compiled {
     /// The apps of the compile in the order the caller gave them, with their kinds: what another compile of the same
     /// run starts from. A file of a lazily read app that was not read yet is read when that compile needs it.
     pub(crate) fn into_apps(self) -> (Vec<al_sema::workspace::AppSource>, Vec<al_sema::AppKind>) {
-        let Compiled { mut ws, lowered, order, .. } = self;
+        let Compiled {
+            mut ws, lowered, order, ..
+        } = self;
         let apps = std::mem::take(&mut ws.apps);
         let kinds = std::mem::take(&mut ws.kinds);
         retire((ws, lowered));

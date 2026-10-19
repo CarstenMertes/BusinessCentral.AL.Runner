@@ -1286,7 +1286,30 @@ Changes:
    test that reads a single-instance codeunit the install code changed saw another value than in the complete run
    (`al-testrun/tests/lean_selection.rs`).
 4. **`Database.CompanyName` is pure for the rule** (`observe.rs`, `PURE_DATABASE`): it answers the company the host gave
-   the session, never a row (al-vm `sessionops.rs`). `tools/baseline_rule_check.sh run`: 0 differences.
+   the session, never a row (al-vm `sessionops.rs`). `tools/baseline_rule_check.sh run`: 0 differences; 440 of 2545
+   test codeunits (BC 29) run without the baseline in that check.
+5. **The lean compile is tried only when what the tests name looks free of data** (`observe::lean_closure_looks_pure`):
+   a name such as `Record`, `Page` or `Session` in the code of a named workspace object means the demand reaches the
+   dependency apps and the rule says "may observe" after it, so the apps go straight to the compile with the baseline
+   (from the same load when there is no compile cache). `Phases::compiles` counts the compiles; `--timings` says when
+   there were two.
+
+Results (BC 29, Microsoft apps, `perf stat` instructions, load about 5):
+
+| selection | before | after |
+|---|---|---|
+| `--codeunit 74712` (pure) | 177.5 G, 10.2 s | 17.7 G, 1.3 s |
+| `--codeunit 60079` (names a helper that deletes rows) | about 10 s, two compiles | about 5.5 s, one compile |
+| `--codeunit 60198` (records, needs the baseline) | 91.5 G | 91.6 G |
+| full run | 163.3 G | 163.3 G |
+
+The 385 corpus codeunits the rule calls pure and whose own text looks pure, each run alone: 372 lean, none ran again,
+1,692 cases, 0 outcomes that differ from the full run. Full runs BC 29 and 27 (with the suites): 0 outcome differences.
+
+Not changed: a selection that needs the baseline still compiles about 98,000 Base Application routines, because
+Company-Initialize reaches them by activation (for example the table Price List Header raises the enum Price Source
+Type, whose implementations run `Page.RunModal` on lookup pages, whose actions run the posting codeunits). That is
+about 90 G, half of a full run.
 
 ## Amendment 2026-10-15 (owner decision, branch `source-lookup`): a package without source is not found
 

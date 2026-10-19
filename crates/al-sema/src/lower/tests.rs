@@ -384,10 +384,18 @@ fn lean_leaves_out_the_workspace_objects_no_selected_test_names() {
             let refusals: Vec<&String> = l.unsupported[oi].iter().flatten().collect();
             !refusals.is_empty() && refusals.iter().all(|why| why.as_str() == crate::check::LEFT_OUT)
         });
-        assert_eq!(by_reason, ids(&|oi| l.left_out[oi]), "Lowered::left_out names the same objects");
+        assert_eq!(
+            by_reason,
+            ids(&|oi| l.left_out[oi]),
+            "Lowered::left_out names the same objects"
+        );
         by_reason
     };
-    assert_eq!(compile(false), Vec::<u32>::new(), "without lean every object beside the tests compiles");
+    assert_eq!(
+        compile(false),
+        Vec::<u32>::new(),
+        "without lean every object beside the tests compiles"
+    );
     assert_eq!(
         compile(true),
         vec![50110, 50111, 50112, 50113],

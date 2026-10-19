@@ -55,7 +55,8 @@ pub struct CheckResult {
 
 /// Why a routine of an object a lean compile left out (`Roots::lean`) does not run. A run that meets it was compiled for
 /// less than it needs: the runner compiles completely and runs the tests again.
-pub const LEFT_OUT: &str = "not compiled: the compile for the selected tests left this object out, as no selected test names it";
+pub const LEFT_OUT: &str =
+    "not compiled: the compile for the selected tests left this object out, as no selected test names it";
 
 /// The routine offset of a [`CheckResult::panicked`] entry that covers every routine of the object.
 pub const ANY_ROUTINE: usize = usize::MAX;
@@ -390,12 +391,23 @@ fn check_workers() -> usize {
         .clamp(1, 32)
 }
 
-/// The workspace objects a lean compile leaves out (`Roots::lean`): every one the selected test codeunits (`keep`) do not
-/// name, directly or through the objects they name. A name is an identifier or quoted identifier that is a workspace
-/// object's name, or an integer literal that is a workspace object's id, anywhere in a named object's text: a superset of
-/// what its code and properties can refer to (as in `unreached_routines`). The extensions of a named object, and the
-/// object a named extension extends, are named with it. Dependency objects are not decided here: the demand does that.
+/// The workspace objects a lean compile leaves out (`Roots::lean`): the ones [`lean_named`] does not name. Dependency
+/// objects are not decided here: the demand does that.
 fn lean_left_out(ws: &Workspace, keep: &[(usize, u32)]) -> Vec<bool> {
+    lean_named(ws, keep)
+        .into_iter()
+        .enumerate()
+        .map(|(oi, named)| !ws.is_dependency(oi) && !named)
+        .collect()
+}
+
+/// Per object: a workspace object the selected test codeunits (`keep`, app index and id) name, directly or through the
+/// objects they name; what a lean compile compiles of the workspace (`Roots::lean`). A name is an identifier or quoted
+/// identifier that is a workspace object's name, or an integer literal that is a workspace object's id, anywhere in a
+/// named object's text: a superset of what its code and properties can refer to (as in `unreached_routines`). The
+/// extensions of a named object, and the object a named extension extends, are named with it. Dependency objects are
+/// `false`.
+pub fn lean_named(ws: &Workspace, keep: &[(usize, u32)]) -> Vec<bool> {
     let n = ws.objects.len();
     let mut by_name: HashMap<String, Vec<usize>> = HashMap::default();
     let mut by_id: HashMap<u32, Vec<usize>> = HashMap::default();
@@ -440,7 +452,7 @@ fn lean_left_out(ws: &Workspace, keep: &[(usize, u32)]) -> Vec<bool> {
             }
         }
     }
-    (0..n).map(|oi| !ws.is_dependency(oi) && !named[oi]).collect()
+    named
 }
 
 /// The procedures of the workspace's normal codeunits that no root names (`Roots::reach_only`). The

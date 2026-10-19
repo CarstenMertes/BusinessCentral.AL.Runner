@@ -61,6 +61,17 @@ codeunit 60104 CounterTests
 }
 "#;
 
+/// A test whose own text names no data, and a helper of the workspace that reads a row.
+const HELPER_TESTS: &str = r#"
+codeunit 60106 "Row Helper" { procedure Seeded(): Boolean var R: Record Row; begin exit(R.Get(1)); end; }
+codeunit 60105 HelperTests
+{
+    Subtype = Test;
+    var H: Codeunit "Row Helper";
+    [Test] procedure SeesTheInstalledRowThroughTheHelper() begin if not H.Seeded() then Error('no row'); end;
+}
+"#;
+
 /// A workspace codeunit BC's test runner runs by id around every test method (`runner_reset.rs`): no test names it.
 const RUNNER_CODEUNIT: &str = r#"
 codeunit 130301 "Reset State Before Test Run" { trigger OnRun() begin end; }
@@ -132,14 +143,15 @@ fn a_pure_selection_compiles_only_the_workspace_objects_its_tests_name() {
         assert_eq!(outcome(rt, "Fails"), Outcome::Fail("on purpose".into()));
         // Of the 8 workspace objects, the two other test codeunits are not selected and the 5 beside the tests are
         // named by no selected test.
-        assert_eq!(rt.phases.lean, Some((5, 8)), "{:?}", rt.phases.lean_line());
+        assert_eq!(rt.phases.lean, Some((5, 8)), "{:?}", rt.phases.compile_line());
         assert!(!rt.phases.lean_redone);
+        assert_eq!(rt.phases.compiles, 1);
         assert!(
             rt.phases
-                .lean_line()
+                .compile_line()
                 .is_some_and(|l| l.starts_with("compile: lean, 5 of 8 workspace objects left out")),
             "{:?}",
-            rt.phases.lean_line()
+            rt.phases.compile_line()
         );
     });
 }
@@ -157,7 +169,7 @@ fn a_lean_selection_gets_the_outcome_of_the_complete_run_when_install_code_count
     });
     both(&main, &[60104], |rt| {
         assert!(rt.phases.baseline_skipped, "{:?}", rt.phases.baseline_why);
-        assert_eq!(outcome(rt, "StartsFresh"), Outcome::Pass, "{:?}", rt.phases.lean_line());
+        assert_eq!(outcome(rt, "StartsFresh"), Outcome::Pass, "{:?}", rt.phases.compile_line());
         assert!(rt.phases.lean.is_some());
     });
 }
@@ -178,16 +190,29 @@ fn a_selection_that_needs_the_baseline_is_compiled_completely() {
 fn a_lean_run_that_meets_a_routine_it_left_out_runs_again_on_the_complete_compile() {
     let main = format!("{BESIDE}{TESTS}{RUNNER_CODEUNIT}");
     both(&main, &[60101], |rt| {
-        assert!(rt.phases.lean_redone, "{:?}", rt.phases.lean_line());
+        assert!(rt.phases.lean_redone, "{:?}", rt.phases.compile_line());
         assert_eq!(rt.phases.lean, None, "the run that counts is the complete one");
+        assert_eq!(rt.phases.compiles, 2);
         assert_eq!(outcome(rt, "Adds"), Outcome::Pass);
         assert_eq!(outcome(rt, "Fails"), Outcome::Fail("on purpose".into()));
         assert!(
             rt.phases
-                .lean_line()
+                .compile_line()
                 .is_some_and(|l| l.contains("ran again on the complete compile")),
             "{:?}",
-            rt.phases.lean_line()
+            rt.phases.compile_line()
         );
+    });
+}
+
+/// The helper a test names touches data: a compile without the baseline would reach the dependency apps and be thrown
+/// away when the rule says "may observe", so it is not tried and the apps are compiled once.
+#[test]
+fn a_selection_whose_helper_reads_a_table_is_compiled_once() {
+    let main = format!("{BESIDE}{TESTS}{HELPER_TESTS}");
+    both(&main, &[60105], |rt| {
+        assert!(!rt.phases.baseline_skipped);
+        assert_eq!(rt.phases.compiles, 1);
+        assert_eq!(outcome(rt, "SeesTheInstalledRowThroughTheHelper"), Outcome::Pass);
     });
 }

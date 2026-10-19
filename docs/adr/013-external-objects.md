@@ -1297,3 +1297,51 @@ Pageworks.Test/ Pageworks/`, load 16 to 21:
 | Tests | 1 013: 61 passed, 0 failed, 952 not run | 1 013: 82 passed, 9 failed, 922 not run |
 | Top refusal | 651 `codeunit <name> is outside the workspace` | 372 the same (the removed test libraries), 286 `[Native] ... no AL body` |
 | Time | 0.24 s | 2.8 s warm; 25 to 35 s on a cold compile cache |
+
+## The test runner's steps around each test method (2026-10-19, branch `per-test-reset`)
+
+BC runs every test method through Microsoft's Test Runner app (`TestFramework/TestRunner/Test Runner.Source.zip`, BC 27.5).
+Around each test method (not the test codeunit's OnRun) it runs code that no test names:
+
+1. `Test Runner - Mgt`.PlatformBeforeTestRun runs codeunit 131006 "Permissions Mock" when it exists: the mock starts, or
+   stops if it is started (`TestRunnerMgt.Codeunit.al:104-105`, `:198-208`).
+2. Its event OnBeforeTestMethodRun reaches "ALTestRunner Reset Environment".BeforeTestMethod
+   (`ALTestRunnerResetEnvironment.Codeunit.al:23-33`): ClearLastError, ApplicationArea(''), then codeunit 130301 "Reset
+   State Before Test Run" when it exists (`:48-52`), codeunit 130302 "Set State Test Run" when it exists and the method's
+   TestPermissions is not Disabled (`:54-62`), and codeunit 132553 "Block Changes to System Tables" when it exists
+   (`:65-75`).
+3. The test method runs.
+4. PlatformAfterTestRun runs codeunit 131006 again (`TestRunnerMgt.Codeunit.al:127`).
+
+130301 and 130302 are in Tests-TestLibraries, 131006 in Permissions Mock, 132553 in Prevent Metadata Updates. 130301 runs
+`LibraryRandom.SetSeed(1)` (so every test method starts from `Randomize(1)`), starts the permissions mock with no set and
+clears the temporary notification context. 130302 narrows the session to "D365 Full Access", so a test whose TestPermissions
+is not Disabled is refused when 130302 is loaded (permissions are not enforced, ADR-027).
+
+**As built.** `al-testrun/src/runtime/runner_reset.rs` does steps 1, 2 and 4 in this order: our runner replaces the Test
+Runner app, as it already did for ClearLastError and ApplicationArea. Each codeunit is Microsoft's own code from the
+compiled apps, run by id like the runner's `Codeunit.Run` ("exists" is the runner's `AllObj` check: a codeunit with that id
+in the loaded apps). The demand-driven check reaches their OnRun as roots (`check/demand.rs`, `TEST_RUNNER_CODEUNITS`), and
+the baseline rule (`observe.rs`) counts what they reach as the test's. A step that is refused or fails refuses the test,
+and a later failure of the codeunit is then not trusted (the step may have changed shared state). The TestPermissions
+passed is the method's attribute unless it is InheritFromTestCodeunit, else the codeunit's property, else Restrictive (AL
+Runner v2, `AlRunner/TestRunnerMgtEvents.cs:164-169`, read from the platform; not pinned by the corpus).
+
+`PermissionTestHelper` (the platform object behind the mock) is a registry type (ADR-014): its constructor, `Clear` and
+`Dispose` do nothing, because with no set assigned the user's own permissions apply (corpus
+`permissions/TestPermissionsMockEnforcement.al:74-97`) and every access is granted here. `AddEffectivePermissionSet`
+is refused when it runs.
+
+**Not done.** The Test Runner app's events are not raised, so its other subscribers do not run. In BC 27.5 they are the
+Test Runner app's own: per-test code coverage (off unless the suite asks for it) and the data-driven test input and output
+codeunits ("Test Input", "Test Output", used by the AI Test Toolkit); the Performance Toolkit subscribes to
+OnAfterTestMethodRun. No Base Application test app depends on the Test Runner app, so none of its tests can use them. The reset after each test codeunit
+(130453.AfterTestMethod: WorkDate back to its value at the start of the run) needs nothing here: each codeunit runs on a
+session of its own.
+
+### Decided without owner review (2026-10-19)
+
+- The runner does the steps natively and runs only the four codeunits as Microsoft's code. Running the Test Runner app itself
+  would need its suite tables and the event with a `Test Method Line`; the steps are short and cited line by line.
+- The order is the source's: 131006 before ClearLastError and ApplicationArea, then 130301, 130302, 132553; 131006 again
+  after the method's transaction ended.

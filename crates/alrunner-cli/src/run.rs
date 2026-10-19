@@ -1170,6 +1170,9 @@ fn test_inner(a: &TestArgs, mut warm: Option<&mut WarmCtx>, collect: Option<&mut
         if let Some(line) = p.baseline_line() {
             eprintln!("{line}");
         }
+        if let Some(line) = p.compile_line() {
+            eprintln!("{line}");
+        }
         if let Some(cost) = test_data.as_ref().and_then(|(d, _)| d.provider.cost()) {
             eprintln!("test data: {cost}");
         }

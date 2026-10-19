@@ -121,6 +121,10 @@ const PURE_SYSTEM: &[&str] = &[
     "WorkDate",
 ];
 
+/// The methods of `Database` that answer from the session, not from a row: `CompanyName` is the company the host gave
+/// the session when it started (al-vm sessionops.rs), whatever the install code wrote.
+const PURE_DATABASE: &[&str] = &["CompanyName"];
+
 /// Methods of `Guid` that only convert a value.
 const PURE_GUID: &[&str] = &["ToText"];
 
@@ -242,6 +246,47 @@ const DATA_WORDS: &[&str] = &[
     "session",
     "codeunit.run",
 ];
+
+/// The names in code that make a lean compile unlikely to stay small (`lean_closure_looks_pure`): [`DATA_WORDS`] as
+/// whole names, with the other handle types.
+const DATA_NAMES: &[&str] = &[
+    "record",
+    "recordref",
+    "fieldref",
+    "keyref",
+    "recordid",
+    "query",
+    "page",
+    "testpage",
+    "testrequestpage",
+    "report",
+    "xmlport",
+    "isolatedstorage",
+    "numbersequence",
+    "createguid",
+    "database",
+    "dotnet",
+    "session",
+];
+
+/// [`text_looks_pure`] for what a lean compile compiles (`al_sema::check::lean_named`): `false` when the code of a
+/// workspace object the selected tests (`only`: app and id, in program order) name, directly or through what it names,
+/// holds one of [`DATA_NAMES`]. Such a lean compile reaches the dependency apps through the demand, costs as
+/// much as the complete one, and the rule then says "may observe". Comments and texts are not read. Like
+/// `text_looks_pure`, a wrong answer costs time, never an outcome.
+pub fn lean_closure_looks_pure(ws: &al_sema::Workspace, only: &[(usize, u32)]) -> bool {
+    let named = al_sema::check::lean_named(ws, only);
+    !(0..ws.objects.len()).filter(|&oi| named[oi]).any(|oi| {
+        ws.object_ast(oi).syntax().descendants_with_tokens().any(|e| {
+            e.as_token().is_some_and(|t| {
+                matches!(
+                    t.kind(),
+                    al_syntax::SyntaxKind::Ident | al_syntax::SyntaxKind::QuotedIdent
+                ) && DATA_NAMES.iter().any(|w| t.text().eq_ignore_ascii_case(w))
+            })
+        })
+    })
+}
 
 /// A cheap look at the source of the selected test codeunits (`only`: their app and id; `None`:
 /// every file of every workspace app) before anything is compiled: `false` when a word shows that
@@ -570,6 +615,7 @@ fn builtin(id: &str) -> Check {
     let ok = match receiver {
         "System" => PURE_SYSTEM.iter().any(|m| m.eq_ignore_ascii_case(name)),
         "Guid" => PURE_GUID.iter().any(|m| m.eq_ignore_ascii_case(name)),
+        "Database" => PURE_DATABASE.iter().any(|m| m.eq_ignore_ascii_case(name)),
         r => PURE_RECEIVERS.iter().any(|p| p.eq_ignore_ascii_case(r)),
     };
     if ok {
@@ -645,6 +691,44 @@ mod tests {
 
     const TABLE: &str = "table 60900 S { fields { field(1; K; Code[10]) { } } keys { key(PK; K) { } } }\n";
 
+    /// The pre-check of a lean selection reads the code of every workspace object the selected tests name, not only
+    /// the tests' own: a helper with a record makes the lean compile not worth trying (its demand reaches the
+    /// dependency apps and the rule says "may observe" after it). Comments and texts do not count, and neither does
+    /// code no selected test names.
+    #[test]
+    fn the_lean_pre_check_reads_the_code_the_tests_name() {
+        let looks = |helper: &str| {
+            let ws = al_sema::Workspace::load(
+                vec![AppSource {
+                    id: "a".into(),
+                    name: "a".into(),
+                    dependencies: vec![],
+                    files: vec![(
+                        "f.al".into(),
+                        format!(
+                            "{TABLE}{helper}
+                            codeunit 60002 T {{ Subtype = Test; var H: Codeunit H; [Test] procedure P() begin H.Go(); end; }}"
+                        ),
+                    )],
+                }],
+                &Default::default(),
+            );
+            lean_closure_looks_pure(&ws, &[(0, 60002)])
+        };
+        assert!(looks("codeunit 60001 H { procedure Go() begin Message('x'); end; }"));
+        assert!(!looks(
+            "codeunit 60001 H { procedure Go() var R: Record S; begin R.DeleteAll(); end; }"
+        ));
+        assert!(looks(
+            "codeunit 60001 H { // the record of it
+                procedure Go() begin Message('a report'); end; }"
+        ));
+        assert!(looks(
+            "codeunit 60001 H { procedure Go() begin end; }
+            codeunit 60003 Other { procedure X() var R: Record S; begin R.DeleteAll(); end; }"
+        ));
+    }
+
     /// BC's test runner runs codeunits 131006, 130301, 130302 and 132553 around every test method when they exist
     /// (runtime/runner_reset.rs): what they reach counts as the test's.
     #[test]
@@ -673,6 +757,18 @@ mod tests {
         };
         assert_eq!(verdict(&mock(""), &["T"]), None);
         assert!(verdict(&mock("H.AddEffectivePermissionSet('X');"), &["T"]).is_some_and(|w| w.contains(".NET")));
+    }
+
+    /// `CompanyName` answers the company the session works in, which the host gives it when it starts (al-vm
+    /// sessionops.rs `cx.company`), never a row the install code wrote. The corpus's Probe Observer scrubs it from
+    /// every observed value (_fixtures/ProbeObserver.Codeunit.al:81-83), so most of the corpus's tests call it.
+    #[test]
+    fn the_company_name_of_the_session_cannot_observe_the_baseline() {
+        let src = "codeunit 60001 Scrubber { procedure Scrub(V: Text): Text begin
+                if CompanyName() <> '' then V := V.Replace(CompanyName(), '<Company>'); exit(V); end; }
+            codeunit 60002 T { Subtype = Test; var S: Codeunit Scrubber;
+                [Test] procedure P() begin if S.Scrub('x') <> 'x' then Error('x'); end; }";
+        assert_eq!(verdict(src, &["T"]), None);
     }
 
     #[test]

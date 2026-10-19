@@ -113,8 +113,22 @@ impl CorpusRuntime {
         suites: &[SuiteRun],
         opts: &RunOptions,
     ) -> Result<CorpusRuntime, String> {
-        let compiled = Self::compile_suites(apps, kinds, manifests, symbols, target, suites, opts)?;
-        let rt = Self::run_compiled(&compiled, target, dotnet, opts);
+        let compiled = Self::compile_suites_with(apps, kinds, manifests, symbols, target, suites, opts, true)?;
+        let rt = Self::run_compiled(&compiled, target, dotnet.clone(), opts);
+        // A lean compile left out the workspace objects no selected test names (`Roots::lean`). A run that met one of
+        // their routines was compiled for less than it needs: the apps are compiled completely and the tests run again,
+        // so the outcomes are the complete compile's.
+        if compiled.lean.is_some() && rt.met_left_out() {
+            let lean_time = rt.phases.compile + rt.phases.tests;
+            let (apps, kinds) = compiled.into_apps();
+            let compiled = Self::compile_suites_with(apps, kinds, manifests, symbols, target, suites, opts, false)?;
+            let mut rt = Self::run_compiled(&compiled, target, dotnet, opts);
+            rt.phases.lean_redone = true;
+            rt.phases.compile += lean_time;
+            rt.phases.compiles += 1;
+            retire(compiled);
+            return Ok(rt);
+        }
         // The workspace and the lowered program are big: dropping them takes as long as lowering
         // a tenth of the corpus, and nothing waits for it.
         retire(compiled);
@@ -132,6 +146,23 @@ impl CorpusRuntime {
         target: Option<&al_version::Target>,
         suites: &[SuiteRun],
         opts: &RunOptions,
+    ) -> Result<Compiled, String> {
+        Self::compile_suites_with(apps, kinds, manifests, symbols, target, suites, opts, false)
+    }
+
+    /// [`compile_suites`](Self::compile_suites); with `lean`, selected tests that are free of data are compiled without
+    /// the workspace objects they do not name (`al_sema::check::Roots::lean`). Only a caller that runs the tests again
+    /// on a complete compile when they meet what was left out (`CorpusRuntime::met_left_out`) may ask for it.
+    #[allow(clippy::too_many_arguments)]
+    fn compile_suites_with(
+        apps: Vec<al_sema::workspace::AppSource>,
+        kinds: Vec<al_sema::AppKind>,
+        manifests: &[Manifest],
+        symbols: &BTreeSet<String>,
+        target: Option<&al_version::Target>,
+        suites: &[SuiteRun],
+        opts: &RunOptions,
+        lean: bool,
     ) -> Result<Compiled, String> {
         // AL_NO_BASELINE=1 leaves the install baseline out (to measure what it costs).
         let baseline_wanted =
@@ -243,12 +274,16 @@ impl CorpusRuntime {
         // Selected tests that look free of data are compiled first the way the demand-driven path
         // does it, without the baseline's roots and without the compile cache: that touches only what
         // the tests reach (a few routines), where the cache decodes every dependency object and the
-        // demand-driven compile with the baseline reaches 421 routines of Base Application. If the rule
+        // demand-driven compile with the baseline reaches 98,000 routines of Base Application. With `lean`
+        // the workspace objects no selected test names are left out of it too (`Roots::lean`). If the rule
         // (`observe.rs`) then says the tests cannot observe the baseline, that is the compile. If it says
         // they may, the apps go on to the compile they would have had. `--require-compile-cache` (CI:
         // the measured run must be a hit) never takes this path.
         let mut compile_cache_skipped = false;
         let mut weighed = false;
+        let mut compiles = 1;
+        // The workspace a lean pre-check loaded and found not worth a lean compile, for the compile that follows.
+        let mut preloaded: Option<(al_sema::Workspace, std::time::Duration)> = None;
         let mut compiled: Option<(al_sema::Workspace, Lowered)> = None;
         let require_cache = opts.compile_cache.as_ref().is_some_and(|c| c.require);
         let mut source_index: Option<&'static str> = None;
@@ -285,30 +320,55 @@ impl CorpusRuntime {
                 }
             };
             let load = started.elapsed();
-            // Without the baseline's roots, and without the workspace's procedures no selected test names:
-            // a helper beside the tests that touches tables must not pull the dependency apps in.
-            let first_roots = al_sema::check::Roots {
-                baseline: false,
-                reach_only: true,
-                ..roots.clone()
-            };
-            let (mut ws, lowered) = al_sema::lower::compile_loaded(ws, load, &catalog, first_roots);
-            let selected = selected_tests(&lowered, suites, &only);
-            weighed = true;
-            baseline_note = crate::observe::may_observe_baseline(&lowered, &selected);
-            baseline = baseline_note.is_some();
-            if baseline {
-                // Back to the apps as they were; a file not read yet is read when the compile that
-                // follows needs it.
-                let _ = filled;
-                apps = std::mem::take(&mut ws.apps);
-                kinds = kinds_again;
-                retire((ws, lowered));
+            // A lean compile is tried only when the code it would compile looks free of data too: when what the
+            // tests name reads a table, the demand reaches the dependency apps, the compile costs as much as the
+            // complete one, and the rule says "may observe" after it. The apps then go straight to the compile
+            // with the baseline; without the compile cache it starts from this load.
+            if lean
+                && !only
+                    .as_deref()
+                    .is_none_or(|keep| crate::observe::lean_closure_looks_pure(&ws, keep))
+            {
+                if use_cache {
+                    let mut ws = ws;
+                    apps = std::mem::take(&mut ws.apps);
+                    kinds = kinds_again;
+                    retire(ws);
+                } else {
+                    preloaded = Some((ws, load));
+                    apps = Vec::new();
+                    kinds = Vec::new();
+                }
             } else {
-                compile_cache_skipped = use_cache;
-                compiled = Some((ws, lowered));
-                apps = Vec::new();
-                kinds = Vec::new();
+                // Without the baseline's roots, and without the workspace's procedures no selected test names:
+                // a helper beside the tests that touches tables must not pull the dependency apps in. Lean, also
+                // without the workspace objects no selected test names: the corpus's tables, pages, listeners and
+                // install code reach most of Base Application through the demand (98 000 of its 155 000 routines).
+                let first_roots = al_sema::check::Roots {
+                    baseline: false,
+                    reach_only: true,
+                    lean,
+                    ..roots.clone()
+                };
+                let (mut ws, lowered) = al_sema::lower::compile_loaded(ws, load, &catalog, first_roots);
+                let selected = selected_tests(&lowered, suites, &only);
+                weighed = true;
+                baseline_note = crate::observe::may_observe_baseline(&lowered, &selected);
+                baseline = baseline_note.is_some();
+                if baseline {
+                    // Back to the apps as they were; a file not read yet is read when the compile that
+                    // follows needs it.
+                    let _ = filled;
+                    apps = std::mem::take(&mut ws.apps);
+                    kinds = kinds_again;
+                    retire((ws, lowered));
+                    compiles += 1;
+                } else {
+                    compile_cache_skipped = use_cache;
+                    compiled = Some((ws, lowered));
+                    apps = Vec::new();
+                    kinds = Vec::new();
+                }
             }
         }
         let (ws, mut lowered, cache_report, layers) = match compiled {
@@ -334,10 +394,16 @@ impl CorpusRuntime {
                     (ws, lowered, report, layers)
                 }
                 None => {
-                    fill_all(&mut apps);
-                    let started = std::time::Instant::now();
-                    let ws = al_sema::Workspace::load_apps_symbols(apps, kinds, symbols, &dep_symbols, Vec::new());
-                    let load = started.elapsed();
+                    let (ws, load) = match preloaded.take() {
+                        Some(loaded) => loaded,
+                        None => {
+                            fill_all(&mut apps);
+                            let started = std::time::Instant::now();
+                            let ws =
+                                al_sema::Workspace::load_apps_symbols(apps, kinds, symbols, &dep_symbols, Vec::new());
+                            (ws, started.elapsed())
+                        }
+                    };
                     // Without a weighed answer, weigh on the compiled program, which has the baseline's
                     // roots: the rule only looks at what the tests reach.
                     let (ws, lowered) = al_sema::lower::compile_loaded(ws, load, &catalog, roots.clone());
@@ -421,6 +487,12 @@ impl CorpusRuntime {
         }
         let opts_only = only;
         let compile_time = compile_started.elapsed();
+        // (left out, all) of the workspace objects, when the compile that runs the tests is lean.
+        let lean = {
+            let all = lowered.dependency.iter().filter(|d| !**d).count();
+            let out = lowered.left_out.iter().filter(|l| **l).count();
+            (out > 0).then_some((out, all))
+        };
         Ok(Compiled {
             ws,
             lowered,
@@ -434,6 +506,8 @@ impl CorpusRuntime {
             compile_cache_skipped,
             source_index,
             compile_time,
+            lean,
+            compiles,
             incr: layers.map(|layers| Incr {
                 layers,
                 roots,
@@ -465,6 +539,8 @@ impl CorpusRuntime {
             compile_cache_skipped,
             source_index,
             compile_time: compile_phase,
+            lean,
+            compiles,
             incr: _,
         } = compiled;
         let (baseline_wanted, baseline, compile_cache_skipped, source_index) =
@@ -979,6 +1055,9 @@ impl CorpusRuntime {
                 compile_cache_skipped,
                 source_index,
                 slowest: codeunit_times,
+                lean: *lean,
+                lean_redone: false,
+                compiles: *compiles,
             },
             details,
             results: list,
@@ -992,6 +1071,15 @@ impl CorpusRuntime {
 }
 
 impl CorpusRuntime {
+    /// Whether a test met a routine a lean compile left out (`al_sema::check::LEFT_OUT`): refused for it, before it
+    /// started (its static calls) or while it ran, also inside the test runner's codeunits.
+    pub(crate) fn met_left_out(&self) -> bool {
+        self.results.iter().any(|r| match &r.outcome {
+            Outcome::NotRun(why) | Outcome::Fail(why) => why.contains(al_sema::check::LEFT_OUT),
+            Outcome::Pass => false,
+        })
+    }
+
     /// With `RunOptions::impact_trace`: the keys that `TestResult::impact` numbers.
     pub fn impact_keys(&self) -> &[String] {
         &self.impact_keys

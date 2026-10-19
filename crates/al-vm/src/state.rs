@@ -34,9 +34,6 @@ pub(crate) struct TxState {
     pub(crate) immediate_errors: bool,
     /// Try functions on the call stack (Truncate is refused inside them).
     pub(crate) try_depth: usize,
-    /// `SessionInformation.SqlStatementsExecuted` (bit 0) and `SqlRowsRead` (bit 1) were read in the running test method:
-    /// only one read is pinned (see `sessionops.rs`).
-    pub(crate) sql_counters_read: u8,
 }
 
 /// Handler functions and notifications of the running test method.

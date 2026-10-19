@@ -1,8 +1,10 @@
 # ADR-046: The install code of the app under test runs in the install baseline; several companies only as an opt-in
 
-- Status: Accepted (owner, 2026-10-19, with the `--companies` flag)
-- Date: 2026-10-19
+- Status: Accepted; amendment 1 Accepted (owner, 2026-10-19)
+- Date: 2026-10-19 (accepted by the owner, 2026-10-19, with the `--companies` flag); amendment 1 2026-10-19
 - Amends: ADR-013 decision 5 (items 1 and 2) and its section "Install baseline and Global Triggers as built"
+- Amendment 1 (Accepted by the owner 2026-10-19, section "Amendment 1" below) replaces the object-order rule of decision 3 and decision 8 with
+  what the corpus probes P1 and P3 to P8 pinned. Where the two disagree, amendment 1 wins.
 
 ## Context
 
@@ -114,7 +116,8 @@ company of the test session = Yes] but was []") and `EventLog_RowsWrittenBeforeT
 
    `CompanyName()` is the company being installed in 2, 3 and 4a, and empty in the per-database part. Within 4a and 4b
    the routines run in object order, as today (the order between an install codeunit's trigger and a subscriber is
-   probe P6). Each routine commits when it ends (as today). Step 4 changes today's grouping of all workspace apps into
+   probe P6; **replaced by amendment 1, A2**: the order is not object order, and a test that can see it is refused).
+   Each routine commits when it ends (as today). Step 4 changes today's grouping of all workspace apps into
    one per app.
 
 4. **In the default mode, a test that observes another company is refused at run time** (`Signal::Unsupported`, with
@@ -167,7 +170,8 @@ company of the test session = Yes] but was []") and `EventLog_RowsWrittenBeforeT
    install codeunits; the subscribers and the opt-in companies join that function.
 
 8. **One session for every root**, as today; the test session does not see its SingleInstance state (fact 6). Whether
-   BC uses one session per company is probe P8.
+   BC uses one session per company is probe P8. **Replaced by amendment 1, A4**: one session per app, and its
+   SingleInstance state starts again in each company and in the per-database part.
 
 ### How the corpus run gets the opt-in
 
@@ -297,6 +301,287 @@ items 1 to 3 ask related questions for install codeunits.
 - **P9. Which companies exist in each lane of Microsoft's CI** (Legacy, UnitTest, IntegrationTest, Uncategorized)? Not
   a corpus probe: read it from BCApps' AL-Go setup or a run on a Windows container. Until then the recipe lanes run in
   the default mode.
+
+## Amendment 1 (Accepted, 2026-10-19): what the probes pinned
+
+Owner decisions, 2026-10-19:
+
+1. Amendment 1 is accepted.
+2. Company Triggers in the install session (A4 item 4): raise `OnCompanyOpen` and `OnCompanyOpenCompleted` to the
+   subscribers of EVERY installed app now. This is a flagged assumption (CLAUDE.md rule 3), registered in the runtime
+   assumption registry when built, id `install_company_triggers_all_apps`. Probe Q3 confirms it later; if Q3
+   disagrees, Q3 wins and the code changes.
+3. Dependency apps (Microsoft's apps) get the same rule as the app under test (A2): the order is unknown, so a test
+   that can observe it is refused, whatever this costs. Step A still reports the count of affected routine pairs and
+   Microsoft tests.
+
+Corpus writer BF answered P1 and P3 to P8 (corpus issue 661). The tests pass on real BC 27.5, 28.5 and 29.0, 7 of 7
+per leg (corpus branch `al-runtime-rs-staging-bf` at `3a91496`, CI runs 39227416374, 39227450187, 39227481098). The
+results are the same on all three majors, except two Base Application row counts (`#if BC28PLUS`). The submodule and
+oracle bump that brings these files is a precondition of every build step below.
+
+File names used in this section, all in the corpus:
+
+- `BfTests` = `tests/al-language/install/lt-bf-install-probes/BfInstallTests.al` (codeunit 81257)
+- `BfFix` = `tests/al-language/install/lt-bf-install-probes/BfInstallFixtures.al`
+- `BfDep` = `tests/al-language-internals-fixture/LTBFInstallSubs.al` (in the fixture app, which the main app depends on)
+- `BfOpen` = `tests/al-language/events/lt-bf-company-open/BfCompanyOpenTests.al` (fixtures in `BfCompanyOpenFixtures.al`)
+
+"Install routine" means one `OnInstallAppPerCompany` or `OnInstallAppPerDatabase` trigger of an install codeunit, or
+one subscriber to those events of "Extension Triggers". "Part" means the per-company code in one company, or the
+per-database code.
+
+The probe app: three install routines of the main app log every call into the shared AutoIncrement table "LT BF
+Install Log" (`BfFix:16-36`): "LT BF Z Subs" (81253, subscriber, `BfFix:149-165`), "LT BF Install Late" (81254, install
+codeunit, `BfFix:167-184`) and "LT BF A Subs" (81255, subscriber, `BfFix:186-202`). Each row holds `CompanyName()`,
+`SessionId()`, the execution context, a call counter of a SingleInstance codeunit, the fixture app's SingleInstance
+counter, and how many Company Triggers calls the session saw (`BfFix:66-86`). The fixture app has one subscriber
+codeunit that logs the same way into its own table (`BfDep:28-55`). `BfTests:196-241` sorts the rows that all install
+code wrote by `SystemRowVersion`, one counter for the whole database, which gives the run order across tables.
+
+### A1. Pinned facts
+
+1. **Companies (P1).** The corpus CI database has two companies, in key order "CRONUS International Ltd." (the
+   session company, `Evaluation Company` = Yes) and "My Company" (`Evaluation Company` = No). `Display Name` is empty for
+   both (`BfTests:47-64`). Checked in the main job only; the OnPrem jobs were not probed.
+2. **What "My Company" holds (P3).** No Company Information (79), General Ledger Setup (98) or Source Code Setup (242)
+   row; 2 Report Selections (77) rows; No. Series (308) 0 rows on 27 and 1 row on 28 and 29. The session company holds
+   1, 1, 1, 70 or 71, 118 or 119 (`BfTests:74-95`). The counts inside the app's own install code are the same
+   (`BfTests:125-135`, the `Info` column). So `Company-Initialize` did not run in "My Company", but some dependency code
+   did write rows there.
+3. **Subscribers run only at their own app's install (P4).** The fixture app's subscriber wrote 3 rows: session company,
+   other company, per-database (`BfTests:148-170`). It did not run again when the main app was installed.
+4. **One app's install ends before the next app's begins (P5).** All 3 fixture rows come before every main app row in
+   `SystemRowVersion` order (`BfTests:239`).
+5. **Order inside one app (P6).** In each company the main app's install routines ran in this order (`BfTests:239`,
+   rows of one company also `BfTests:125-137`):
+
+   | Position | Routine | Kind | Object id |
+   |---|---|---|---|
+   | 1 | "LT V Subs" | subscriber | 69851 |
+   | 2 | "LT BF Z Subs" | subscriber | 81253 |
+   | 3 | "LT BF Install Late" | install codeunit | 81254 |
+   | 4 | "LT BF A Subs" | subscriber | 81255 |
+   | 5 | "Install StartSession Probe" | install codeunit | 60445 |
+   | 6 | "Install Seeder" | install codeunit | 60618 |
+   | 7 | "BEI Installer" | install codeunit | 60894 |
+
+   The same order repeats in the other company. The per-database part runs the routines that have one in the same
+   order: "LT V Subs", "LT BF Z Subs", "LT BF Install Late", "LT BF A Subs", "Install Seeder" (`BfTests:138-140`,
+   `:239`). One company finishes before the next starts; the per-database part runs last. Two install codeunits are
+   not in the table because they write nothing: "ALT Install Probe" (60838) and "ALT Quoted Install Probe" (60828),
+   both with empty triggers (`tests/al-language/_fixtures/ALTInstallProbe.al`, `ALTQuotedInstallProbe.al`).
+6. **The per-database part (P7).** `CompanyName()` is empty there, in subscribers and in install codeunit triggers
+   (`BfTests:138-140`, the "blank" tag). `IsEmpty` and `FindFirst` of a per-company table fail with `You must choose a
+   company before you can access the "LT BF Per Company Row" table.` and `GetLastErrorCode` `DB:Ok` (`BfTests:138-139`,
+   reads in `BfFix:89-146`). `DB:Ok` is an odd code for an error. By the owner's rule for results that may be a bug of
+   BC on Linux containers, it is checked on the Windows nightly before any code relies on it; the error text is used
+   either way.
+7. **Sessions and execution context (P8).** All 9 rows of the main app's install carry one `SessionId()`; it is not the
+   test session; the fixture app's install ran in another session, also one for all its rows (`BfTests:142-144`,
+   `:168`). The execution context is `Install` in every row, subscribers included (`BfTests:125-140`, `:164-166`).
+8. **SingleInstance state (P8).** In the install session a SingleInstance codeunit starts again from its initial state
+   in each company and in the per-database part: the counter is 1, 2, 3 in each company and 1, 2, 3 in the per-database
+   part (`BfTests:125-140`; codeunit `BfFix:51-63`). Within one company the state carries from one install routine to
+   the next. The fixture app's SingleInstance counter reads 0 inside the main app's install (`BfTests:125-140`, the
+   `fixture counter` column), consistent with a separate session.
+9. **Company Triggers in the install session (P8).** The main app's subscribers to `OnCompanyOpen` and
+   `OnCompanyOpenCompleted` (`BfCompanyOpenFixtures.al:51-71`) ran in the install session: every per-company row of the
+   main app sees 2 calls, and the per-database rows see 0 (`BfTests:125-140`, the `company open calls` column). Since
+   the counter restarts per company (fact 8), both events are raised once in each company, before the logged routines
+   run there, and not in the per-database part.
+10. **Company Triggers in the test session.** `OnCompanyOpen` then `OnCompanyOpenCompleted`, once each, in the test
+    session, before the first test of the codeunit; inside the subscribers `CompanyName()` is the session company, the
+    execution context `Normal`, the client type `Web` and `GuiAllowed` Yes (`BfOpen:19-38`). A second test of the same
+    codeunit does not raise them again (`BfOpen:40-50`). This agrees with `PeVTests.al:297`.
+
+### A2. The order inside one app is not known: tests that can see it are refused
+
+This replaces "in object order" in decision 3 and the reading of fact 4 as an object-id order.
+
+**Verdict on the rule.** Fact 5 is not ascending object id: 60445, 60618 and 60894 run after 81255. Each candidate
+was checked against the 7 per-company and 5 per-database rows:
+
+| Candidate rule | Fits fact 5? |
+|---|---|
+| Ascending object id; also the pinned order of ordinary events (below) | No: 60445 runs after 81255 |
+| Descending object id | No: 69851 runs before 81253 |
+| Ascending object name | No: "LT BF Z Subs" runs before "LT BF A Subs" |
+| Grouped by kind (all subscribers first, or all install codeunits first) | No: 81254 runs between 81253 and 81255 |
+| File order in the compiled app (`src/` entries of the `.app`) | No: that order is Seeder, StartSession, BEI, "LT V Subs", then the three BF codeunits |
+| Codeunit order in `SymbolReference.json` of the `.app` | No: the same order as the file order |
+| Ascending object id, starting at 69851 and wrapping around | Fits, but the start point is chosen from the data. Not a rule |
+| Descending object name (ordinal or ignoring case) | Fits all 12 rows |
+
+The `.app` checked is writer BF's local compile with AL 30 beta (`~/.cache/corpus-writer/bf/t29.app`), not the CI
+artifact. The CI compile may order files differently.
+
+Descending object name is the only fixed rule found that fits. It is not adopted, for three reasons:
+
+- It was found after looking at the data, among about eight candidates, with 7 routines.
+- It disagrees with the order of ordinary events, which the corpus pins as ascending codeunit id within one app:
+  `record/TestTableEventSequenceContracts.al:456-471` (68154, 68155, 68156), `events/TestProbeEventContracts.al:668-680`
+  (69806 "PA Ev Subs" before 69807 "PA Ev Subs Other Id": descending name would put 69807 first),
+  `misc/lt-probes-needed-3/PnC01Events.al:143-166` (71073 to 71076, manual codeunits in id order) and
+  `handlers/ProbeEventSubscriberOrder.al:146-164`. So install code would need its own rule. That is possible, but
+  nothing pins it.
+- Hard rule 3: a rule nobody pinned is a guess.
+
+The runtime today follows the pinned order for ordinary events: `al-vm/src/events.rs:304-318` sorts the subscribers of
+one event by codeunit, and within a codeunit by procedure name; `al-vm/src/dispatch.rs:366-368` then sorts the targets
+by codeunit id, with no app in the key. Install codeunits run in program order (`runtime/blocked.rs:8-38`). Probe Q1
+asks the question that would prove the install rule; probe Q2 asks the order across apps (owner's hypothesis: app id).
+
+**Decision.** Within one app and one part, the runtime runs install routines in a fixed order of its own (program
+order, as today) and refuses every test that can see that order. A test sees it through:
+
+- **a. A table that two or more install routines of the same app and part write.** AutoIncrement ids, which insert
+  of a key wins, and what a later routine finds all depend on the order. The table joins `Engine::unseeded`, so a read
+  whose answer depends on its rows is refused at run time (the rule of item 4c).
+- **b. A table that one install routine reads and another of the same app and part writes.** Every table the reading
+  routine writes joins `Engine::unseeded`.
+- **c. A SingleInstance codeunit that two or more install routines of the same app and part use.** Its state carries
+  between them within one company (fact 8). Every table those routines write joins `Engine::unseeded`.
+- **d. `SystemRowVersion` of a row that an install routine wrote,** in an app with two or more install routines in
+  that part. It orders rows across tables (`BfTests:8-9`). A read of `SystemRowVersion`, `SystemCreatedAt` or
+  `SystemModifiedAt` of such a row raises `Signal::Unsupported`.
+
+Items a to c are found before anything runs, from the static closures of the routines (`tables_written`, the tables
+read, and the SingleInstance codeunits reached), the same analysis as item 4c. They apply to the apps under test.
+Today's corpus has no case they refuse: the install routines of the main app write disjoint tables, and "ALT Install
+Probe" and "ALT Quoted Install Probe" write nothing. Item d also refuses `InstallCodeunit_PerDatabaseAndPerCompany_OrderAndCount`
+(corpus branch `al-runtime-rs-staging-av`, `tests/al-language/install/lt-av-install-order/AvInstallOrder.al:16-69`)
+once it lands, although that test only compares per-company rows with the per-database row, an order that is pinned
+(fact 5). This is accepted: the runtime cannot tell which rows a test compares. That case is not in the baseline.
+
+**Decided (owner, 2026-10-19):** dependency apps (Microsoft's apps) get the same refusals a to d, whatever they cost.
+Step A still counts the pairs of install routines of one dependency app that a to c flag, and the Microsoft tests the
+refusal stops, and reports both numbers.
+
+When probe Q1 pins a rule, a later amendment replaces the refusals a to d with that order.
+
+### A3. Across apps (P4, P5)
+
+- One app's whole install (every company, then the per-database part) ends before the next app's install begins
+  (fact 4). This confirms step 4's "one app complete before the next".
+- Apps are installed in dependency order. The corpus pins this only for one dependency pair (the fixture app before
+  the main app). The CI also publishes them in that order (corpus `ci.yml:207-208`), so the corpus cannot tell
+  dependency order from publish order. Both give the same order for every run the runner makes.
+- An app's "Extension Triggers" subscribers run only at its own install (fact 3). Option 5 stays rejected.
+
+### A4. Sessions, SingleInstance state and Company Triggers of the install run
+
+This replaces decision 8.
+
+1. **One install session per app**, apart from the test session (fact 7). Each app under test gets its own session for
+   its install. Its `SessionId()` differs from the test session's and from every other app's install session.
+2. **SingleInstance state starts again** at the start of each company and at the start of the per-database part
+   (fact 8), in the default mode as well (the per-database part no longer sees the per-company state). Within one
+   company it carries from one install routine to the next.
+3. **Execution context `Install`** in subscribers and in install codeunit triggers (fact 7). This is already true for
+   install codeunit triggers (`install/TestInstallEnvVisible_Tests.al`).
+4. **Company Triggers in the install session.** The install session raises `OnCompanyOpen` and then
+   `OnCompanyOpenCompleted` in each company, before that company's install routines, and not in the per-database part
+   (fact 9). Pinned only for subscribers of the app being installed. Whether a dependency app's subscribers run there
+   is probe Q3. **Decided (owner, 2026-10-19):** raise the two events to every subscriber of every installed app,
+   Microsoft's apps included, as a flagged assumption with id `install_company_triggers_all_apps` in the runtime
+   assumption registry. A test whose baseline passes through it is reported as a flagged pass. When probe Q3 lands,
+   it wins; the code changes if it disagrees. Step A still reports how many dependency-app subscribers to the two
+   events exist and which tables they write.
+5. **Company Triggers in the test session** (fact 10) stay a separate additive change. It is no longer waiting on a
+   probe. Not pinned: whether they are raised once per test session or once per test codeunit (the corpus runs the
+   tests of one codeunit in one session).
+
+### A5. Per-database code (P7)
+
+`CompanyName()` is empty there (decision 3 already says so; now pinned by fact 6). A read of a per-company table there
+fails with the text of fact 6. The runtime raises that error with that text, so `GetLastErrorText` is answered. The
+code is answered `DB:Ok` only after the Windows check of fact 6; until then a read of `GetLastErrorCode` after this
+error is refused. A write to a per-company table in per-database code is not pinned: an error there cannot be caught,
+so a probe app would not install (`BfTests:24-25`). It stays refused (`Signal::Unsupported`).
+
+### A6. Companies under the opt-in (P1, P3)
+
+- Step B sets `companies = ["CRONUS International Ltd.", "My Company"]` in `oracle/oracle.toml`, citing
+  `BfTests:60-62`. It applies to the main corpus job. The OnPrem jobs were not probed; their suites run in the default
+  mode until a probe shows their companies.
+- The seeded Company rows (step 1) hold the pinned field values: `Evaluation Company` Yes for the session company, No
+  for "My Company", `Display Name` empty for both (`BfTests:60-61`). Other fields of the Company table stay refused
+  until pinned.
+- Decision 5 stays: under the opt-in, a dependency app's per-company table in another company is refused. P3 now says
+  what "My Company" holds: the rows of fact 2, without `Company-Initialize`. A later amendment may answer those
+  tables if the runtime runs the dependency apps' per-company install code in "My Company" (without
+  `Company-Initialize`) and gets exactly the counts of fact 2. That is a measurement for after step B, not part of
+  this amendment.
+- P2 (session company first, or key order) is still open: in this CI the session company also sorts first.
+
+### A7. Build order and expected outcomes
+
+- **Step A** no longer waits for a probe (P4, P6 and P7 are answered), only for the submodule and oracle bump. It
+  adds A2 (refusals a to d), A4 items 1 to 3, A4 item 4 (all apps' subscribers, flagged assumption `install_company_triggers_all_apps`), and A5.
+- **Step B** no longer waits for a probe (P1 and P8 are answered), only for the bump. It adds A6.
+- Expected outcomes of `BfTests`:
+
+  | Test | Default mode | Opt-in (step B) |
+  |---|---|---|
+  | `Companies_OfTheDatabase_NamesInKeyOrder` | not run (item 4a) | passes |
+  | `Companies_BaseTableRows_ReadFromATest` | not run (item 4a) | not run (decision 5) |
+  | `InstallLog_RowsOfThisApp_InIdOrder` | not run (A2 a) | not run (A2 a) |
+  | `FixtureLog_RowsOfTheDependencyApp_InIdOrder` | not run (item 4c) | passes (A4 items 1 and 2) |
+  | `InstallOrder_AllInstallRows_InSystemRowVersionOrder` | not run (A2 d) | not run (A2 d) |
+
+  The two `BfOpen` tests need the Company Triggers change of A4 item 5.
+
+### A8. Still not pinned
+
+- The order rule inside one app (probe Q1) and across apps for one event (probe Q2).
+- Whether dependency apps' Company Triggers subscribers run in the install session (probe Q3).
+- P2 (order of companies: session company first, or key order) and P9 (companies in Microsoft's CI lanes).
+- The companies of the OnPrem jobs' databases, and the Windows nightly for P1.
+- `GetLastErrorCode` `DB:Ok` of fact 6 on Windows.
+- A write to a per-company table in per-database code.
+- Company Triggers in the test session: once per session or once per test codeunit.
+
+### A9. Probe questions for a corpus writer: the subscriber and install order
+
+Install code must never fail (`check-install-triggers.py`). Each probe logs with `if Insert() then;` into a
+`DataPerCompany = false` AutoIncrement table, as `BfFix` does, and orders rows across tables by `SystemRowVersion`.
+New subscribers need no allow-list change; a new install codeunit does.
+
+- **Q1. The rule inside one app, for install events and for an ordinary event.** Add four or five subscriber codeunits
+  to the main app. Each subscribes to `OnInstallAppPerCompany`, `OnInstallAppPerDatabase` and one ordinary
+  integration event that a test raises. Choose ids, names, namespaces and files so that every candidate predicts a
+  different order. For example (the writer picks free ids):
+
+  | Codeunit | Id | Name | Namespace | File, position in file |
+  |---|---|---|---|---|
+  | P | lowest | "LT BG M Subs" | none | folder `b-order`, 2nd |
+  | Q | 2nd | "LT BG b Subs" (lower-case b) | none | folder `a-order`, 1st |
+  | R | 3rd | "LT BG C Subs" | none | folder `b-order`, 1st |
+  | S | 4th | "LT BG A Subs" | `Zzz.Probe` | folder `a-order`, 2nd |
+  | T | highest | "LT BG Y Subs" | none | folder `c-order`, 1st |
+
+  Predictions: ascending id P Q R S T; descending id T S R Q P; descending name, ordinal: Q T P R S (lower-case
+  sorts after upper-case); descending name ignoring case: T P R Q S; descending full name with namespace: S first;
+  file order: Q S R P T (or another order, read from the CI `.app`). The ordinary event shows whether ordinary events
+  and install events use the same rule (pinned: ascending id for ordinary events). The names "LT BG …" sort after
+  "LT BF …" and the existing rows of fact 5 give more points for free. Also save the CI-built `.app` of the run, so
+  its file and symbol order can be compared.
+- **Q2. The order across apps for one event (owner's hypothesis: app id).** One ordinary integration event,
+  published in the fixture app, with subscribers in the fixture app and in the main app. Choose codeunit ids so that
+  codeunit id order and app order disagree: a main app subscriber with an id above 61099 (the fixture app's range is
+  61000 to 61099) and one below 61000. The two existing app ids already separate two ways of comparing a GUID: as text,
+  `a1b2c3d4-…` (main) sorts before `f1e2d3c4-…` (fixture); SQL Server `uniqueidentifier` order compares the last group
+  first, and `ba9876543210` (fixture) sorts before `ef1234567890` (main); so does the byte order of `Guid.ToByteArray`
+  (`c4…` before `d4…`). Dependency order also puts the fixture app first. So two apps can show "text order" against
+  "the other three". Separating byte order, SQL order and dependency order needs a third app whose id is chosen for
+  it, for example a new small corpus app that depends on the fixture app, with an id that sorts first as text and
+  last as `uniqueidentifier`. The OnPrem app (`3f8c1a52-…-5ea70b93d418`) cannot separate text order from reverse
+  dependency order (both put it first). It also runs in separate jobs.
+- **Q3. Company Triggers of a dependency app in the install session.** A subscriber to `OnCompanyOpen` in the fixture
+  app increments a SingleInstance counter of the fixture app; the main app's install routines log that counter (as
+  `BfFix:82` logs the fixture counter). A test also counts how often the fixture app's subscriber ran during the
+  fixture app's own install. This decides A4 item 4.
 
 ## Options considered
 

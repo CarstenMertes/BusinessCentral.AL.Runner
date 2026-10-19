@@ -15,6 +15,20 @@ fn unsupported<T>(what: String) -> Result<T, Signal> {
     Err(Signal::Unsupported(what))
 }
 
+/// [`convert`] with a value of the plain type it goes into handled here: what every argument, return value and typed
+/// assignment of ordinary code meets, without the call. The same result as `convert` (a Decimal of more than 18
+/// significant digits takes `convert`'s path, which keeps 18).
+#[inline]
+pub fn convert_plain(v: Value, t: &RtType) -> Result<Value, Signal> {
+    match (&v, t) {
+        (Value::Integer(_), RtType::Integer)
+        | (Value::BigInteger(_), RtType::BigInteger)
+        | (Value::Boolean(_), RtType::Boolean) => Ok(v),
+        (Value::Decimal(d), RtType::Decimal) if d.mantissa().unsigned_abs() <= 999_999_999_999_999_999 => Ok(v),
+        _ => convert(v, t),
+    }
+}
+
 /// Converts `v` for storing in a slot of type `t`.
 pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
     use RtType as T;
@@ -1460,6 +1474,51 @@ mod tests {
                         }
                         (got, want) => panic!("{a} {op:?} {b}: got {got:?}, want {want:?}"),
                     }
+                }
+            }
+        }
+    }
+
+    /// Regression guard (a fast path, no new behavior): `convert_plain`, which call arguments, return values and typed
+    /// assignments go through, gives what `convert` gives: the value, its scale, and the 18 significant digits a
+    /// longer Decimal keeps (types/lt-expression-operators-literals/ExpressionLiteralsRisky.al:P195_Literal_DecimalTwentyDigits).
+    #[test]
+    fn convert_plain_gives_what_convert_gives() {
+        use std::str::FromStr;
+        let d = |s: &str| Value::Decimal(Decimal::from_str(s).unwrap());
+        let values = [
+            Value::Integer(0),
+            Value::Integer(i32::MIN),
+            Value::BigInteger(i64::MAX),
+            Value::Boolean(true),
+            Value::Null,
+            d("2.50"),
+            d("-0.000"),
+            d("999999999999999999"),
+            d("-999999999999999999"),
+            d("1000000000000000000"),
+            d("123456789012345.12345"),
+            d("-12345678901234567890.5"),
+            Value::Text("7".into()),
+        ];
+        let types = [
+            RtType::Integer,
+            RtType::BigInteger,
+            RtType::Decimal,
+            RtType::Boolean,
+            RtType::Text(None),
+            RtType::Variant,
+        ];
+        for v in &values {
+            for t in &types {
+                let (got, want) = (convert_plain(v.clone(), t), convert(v.clone(), t));
+                match (&got, &want) {
+                    (Ok(Value::Decimal(g)), Ok(Value::Decimal(w))) => {
+                        assert_eq!((g, g.scale()), (w, w.scale()), "{v:?} into {t:?}")
+                    }
+                    (Ok(g), Ok(w)) => assert_eq!(format!("{g:?}"), format!("{w:?}"), "{v:?} into {t:?}"),
+                    (Err(g), Err(w)) => assert_eq!(format!("{g:?}"), format!("{w:?}"), "{v:?} into {t:?}"),
+                    _ => panic!("{v:?} into {t:?}: got {got:?}, want {want:?}"),
                 }
             }
         }

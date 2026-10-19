@@ -1300,6 +1300,10 @@ impl Session {
     /// A `Trap()` set on a TestPage that belongs to a routine ends with the routine; one set through
     /// a `var` parameter belongs to the caller (corpus handlers/TestPageTrapScope_Tests.al:1-15).
     pub(crate) fn end_trap_scope(&mut self, frame: &crate::Frame, params: usize, by_var: &[bool]) {
+        // Every call ends here; without a trap there is nothing to look at.
+        if self.pages.traps.is_empty() {
+            return;
+        }
         for trap in self.pages.traps.clone() {
             // The trap ends with the last variable holding the page. A by-var parameter hands its page
             // back to the caller, and a page another variable still holds keeps the trap alive (corpus

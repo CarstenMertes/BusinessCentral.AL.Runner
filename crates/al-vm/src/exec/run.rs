@@ -270,7 +270,7 @@ impl Session {
                     set(&mut f.locals[d as usize], v);
                 }
                 Op::Convert { d, a, t } => {
-                    let v = ops::convert(take(f, a, nl), &chunk.types[t as usize])?;
+                    let v = ops::convert_plain(take(f, a, nl), &chunk.types[t as usize])?;
                     set(&mut f.locals[d as usize], v);
                 }
                 Op::CapHit { p } => self.cap_stmt_hit(p),
@@ -367,7 +367,11 @@ impl Session {
                     set(&mut f.locals[d as usize], v);
                 }
                 Op::Builtin { s, d } => {
-                    let v = self.run_builtin(&chunk.builtins[s as usize], f, nl)?;
+                    let site = &chunk.builtins[s as usize];
+                    let v = match (site.plain, site.native) {
+                        (true, Some(native)) => self.run_plain_builtin(site, native, f, nl)?,
+                        _ => self.run_builtin(site, f, nl)?,
+                    };
                     set(&mut f.locals[d as usize], v);
                 }
                 Op::CharAt { d, a, b } => self.op_char_at(f, d, a, b, nl)?,
@@ -728,7 +732,7 @@ impl Session {
     #[inline(never)]
     fn run_call(&mut self, site: &CallSite, f: &mut Frame, nl: u16) -> Result<Value, Signal> {
         let instance = site.instance.map(|r| take(f, r, nl));
-        let mut values = Vec::with_capacity(site.arg_regs.len());
+        let mut values = self.spare_vec(site.arg_regs.len());
         for &r in &site.arg_regs {
             values.push(take(f, r, nl));
         }
@@ -761,10 +765,54 @@ impl Session {
         self.dotnet_apply(site.ty, recv, values, places, &site.op, f)
     }
 
+    /// A builtin whose operands are all values (`BuiltinSite::plain`): what `run_builtin` does for it, without the
+    /// write-back of by-reference operands and the special cases, which it has none of.
+    #[inline(never)]
+    fn run_plain_builtin(
+        &mut self,
+        site: &BuiltinSite,
+        native: al_builtins::native::NativeFn,
+        f: &mut Frame,
+        nl: u16,
+    ) -> Result<Value, Signal> {
+        let mut recv = site.receiver.map(|r| take(f, r, nl));
+        // No operands need no vector (an empty one does not allocate).
+        let mut values = if site.arg_regs.is_empty() {
+            Vec::new()
+        } else {
+            self.spare_vec(site.arg_regs.len())
+        };
+        for &r in &site.arg_regs {
+            values.push(take(f, r, nl));
+        }
+        self.ret_used = site.ret_used;
+        let result = native(self, recv.as_mut(), &mut values);
+        // In the order `run_native` lets go of them: the receiver, then the operands.
+        drop(recv);
+        self.return_vec(values);
+        result.map_err(|e| Self::name_builtin_refusal(site, e))
+    }
+
+    /// A refusal about a text argument names the builtin that refused it.
+    #[cold]
+    #[inline(never)]
+    fn name_builtin_refusal(site: &BuiltinSite, e: Signal) -> Signal {
+        match e {
+            Signal::Unsupported(m) if m.starts_with("text argument ") => {
+                Signal::Unsupported(format!("{}: {m}", site.id.name()))
+            }
+            other => other,
+        }
+    }
+
     #[inline(never)]
     fn run_builtin(&mut self, site: &BuiltinSite, f: &mut Frame, nl: u16) -> Result<Value, Signal> {
         let recv = site.receiver.map(|r| take(f, r, nl));
-        let mut values = Vec::with_capacity(site.arg_regs.len());
+        let mut values = if site.arg_regs.is_empty() {
+            Vec::new()
+        } else {
+            self.spare_vec(site.arg_regs.len())
+        };
         for &r in &site.arg_regs {
             values.push(take(f, r, nl));
         }
@@ -887,12 +935,7 @@ impl Session {
         if let (Some(row), Some(ir::Arg::Ref(p)), Ok(_)) = (copy_array_row_back, site.args.first(), &result) {
             self.write(p, row, f)?;
         }
-        result.map_err(|e| match e {
-            // Name the builtin whose argument was not the text it takes.
-            Signal::Unsupported(m) if m.starts_with("text argument ") => {
-                Signal::Unsupported(format!("{}: {m}", site.id.name()))
-            }
-            other => other,
-        })
+        // Name the builtin whose argument was not the text it takes.
+        result.map_err(|e| Self::name_builtin_refusal(site, e))
     }
 }

@@ -76,7 +76,7 @@ impl Session {
         if let (Some(ir::Arg::Ref(p)), Some(v)) = (receiver, recv) {
             self.write(p, v, f)?;
         }
-        for (a, v) in args.iter().zip(values) {
+        for (a, v) in args.iter().zip(values.drain(..)) {
             if let ir::Arg::Ref(p) = a {
                 let v = if class == al_builtins::builtin_id::Class::InStreamRead {
                     self.fit_stream_read(p, v, f)?
@@ -86,6 +86,7 @@ impl Session {
                 self.write(p, v, f)?;
             }
         }
+        self.return_vec(values);
         Ok(ret)
     }
 
@@ -548,11 +549,13 @@ impl Session {
             (Ok((_, finals)), true) => (Value::Boolean(true), finals),
             (r, _) => r?,
         };
-        for (a, v) in args.iter().zip(finals) {
+        let mut finals = finals;
+        for (a, v) in args.iter().zip(finals.drain(..)) {
             if let ir::Arg::Ref(p) = a {
                 self.write_back(p, v, f)?;
             }
         }
+        self.return_vec(finals);
         Ok(ret)
     }
 

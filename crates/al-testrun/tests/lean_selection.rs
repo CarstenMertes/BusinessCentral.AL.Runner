@@ -169,7 +169,12 @@ fn a_lean_selection_gets_the_outcome_of_the_complete_run_when_install_code_count
     });
     both(&main, &[60104], |rt| {
         assert!(rt.phases.baseline_skipped, "{:?}", rt.phases.baseline_why);
-        assert_eq!(outcome(rt, "StartsFresh"), Outcome::Pass, "{:?}", rt.phases.compile_line());
+        assert_eq!(
+            outcome(rt, "StartsFresh"),
+            Outcome::Pass,
+            "{:?}",
+            rt.phases.compile_line()
+        );
         assert!(rt.phases.lean.is_some());
     });
 }

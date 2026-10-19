@@ -107,6 +107,22 @@ impl Session {
             ..self.control_format(st, idx)?
         };
         let arg = args.first().cloned().unwrap_or(Value::Null);
+        // An Integer on a control bound to an Enum page variable whose value of that ordinal has a blank caption (all spaces)
+        // selects that value, although its caption text trims to '' and the empty text is refused
+        // (controls/W2ValueControls.al:Enum_VariableControl_OtherSpellings `empty`). Assumption testpage-setvalue-blank-enum-member:
+        // Tests-ERM ERM Budget (134922) and ERM Budget UI (134927) call `Budget.GLAccCategory.SetValue(0)` in Initialize on page
+        // 113 Budget, a control over `GLAccCategoryFilter: Enum "G/L Account Category"` whose value 0 is `" "` with Caption ' ';
+        // the 47 tests pass on real BC. Only that shape: a table-field control and a text argument keep the caption lookup.
+        let mut blank_enum = None;
+        if let (Value::Integer(_), RtType::Enum(_), ir::Binding::Var(_) | ir::Binding::BaseVar(_)) =
+            (&arg, &ty, &ctl.binding)
+        {
+            let converted = ops::convert(arg.clone(), &ty)?;
+            let shown = self.control_text(st, idx, &converted)?;
+            if !shown.is_empty() && shown.trim().is_empty() {
+                blank_enum = Some(converted);
+            }
+        }
         let text = match &arg {
             Value::Text(t) | Value::Code(t) => t.clone(),
             // A whole number handed to a text or code control is its digits (WhseItemTrackingPageHandler of SCM RTAM Item Tracking-II sets
@@ -251,7 +267,14 @@ impl Session {
                 }
             }
         }
-        let parsed = match al_builtins::pagefmt::parse_control_text(&text, &ty, &fmt, &by_text) {
+        let parsed = match blank_enum {
+            Some(v) => {
+                al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::TestPageSetValueBlankEnumMember);
+                Ok(v)
+            }
+            None => al_builtins::pagefmt::parse_control_text(&text, &ty, &fmt, &by_text),
+        };
+        let parsed = match parsed {
             Ok(v) => v,
             Err(al_builtins::pagefmt::ParseError::Invalid) => {
                 let mut msg = format!("Your entry of '{text}' is not an acceptable value for '{caption}'.");
@@ -811,8 +834,15 @@ impl Session {
                     Some(_) => unsupported(format!("TestField.{m} of a computed property")),
                 }
             }
-            PageMethod::Editable => Ok(Value::Boolean(self.control_editable(st, idx)?)),
-            PageMethod::Enabled => Ok(Value::Boolean(self.control_enabled(st, idx)?)),
+            // A field of a part also answers what its part control says (see `part_field_gate`).
+            PageMethod::Editable => match self.part_field_gate(st, true)? {
+                Some(b) => Ok(Value::Boolean(b)),
+                None => Ok(Value::Boolean(self.control_editable(st, idx)?)),
+            },
+            PageMethod::Enabled => match self.part_field_gate(st, false)? {
+                Some(b) => Ok(Value::Boolean(b)),
+                None => Ok(Value::Boolean(self.control_enabled(st, idx)?)),
+            },
             PageMethod::Visible => Ok(Value::Boolean(self.control_visible(st, idx)?)),
             PageMethod::Invoke => self.action_invoke(st, idx),
             PageMethod::DrillDown | PageMethod::AssistEdit | PageMethod::Lookup => self.control_navigate(st, idx, m),

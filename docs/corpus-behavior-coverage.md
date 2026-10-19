@@ -12,7 +12,7 @@ The catalog of each area is what the AL language server offers in probe files (`
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
 | attributes | 42 | 25 | 59.5% | 26 | 61.9% | 0 | 16 | 5 |
 | events | 23 | 16 | 69.6% | 22 | 95.7% | 0 | 1 | 0 |
-| properties | 720 | 494 | 68.6% | 544 | 75.6% | 20 | 156 | 78 |
+| properties | 720 | 494 | 68.6% | 547 | 76.0% | 18 | 155 | 78 |
 | syntax | 16 | 16 | 100.0% | 16 | 100.0% | 0 | 0 | 0 |
 | triggers | 128 | 112 | 87.5% | 116 | 90.6% | 3 | 9 | 0 |
 
@@ -54,7 +54,7 @@ Left out: 293 presentation-only properties (Caption, ToolTip, ApplicationArea, .
 | FieldModify | 8 | 1 | 12.5% | 6 | 75.0% | 0 | 2 | 0 |
 | Interface | 5 | 1 | 20.0% | 5 | 100.0% | 0 | 0 | 4 |
 | Key | 11 | 11 | 100.0% | 8 | 72.7% | 0 | 3 | 0 |
-| Page | 46 | 39 | 84.8% | 38 | 82.6% | 0 | 8 | 7 |
+| Page | 46 | 39 | 84.8% | 39 | 84.8% | 0 | 7 | 7 |
 | PageAction | 14 | 14 | 100.0% | 11 | 78.6% | 0 | 3 | 0 |
 | PageActionArea | 3 | 0 | 0.0% | 3 | 100.0% | 0 | 0 | 0 |
 | PageActionGroup | 6 | 3 | 50.0% | 5 | 83.3% | 0 | 1 | 3 |
@@ -82,7 +82,7 @@ Left out: 293 presentation-only properties (Caption, ToolTip, ApplicationArea, .
 | PermissionSet | 8 | 4 | 50.0% | 8 | 100.0% | 0 | 0 | 0 |
 | PermissionSetExtension | 2 | 2 | 100.0% | 2 | 100.0% | 0 | 0 | 0 |
 | Profile | 8 | 4 | 50.0% | 6 | 75.0% | 0 | 2 | 0 |
-| Query | 24 | 13 | 54.2% | 21 | 87.5% | 3 | 0 | 5 |
+| Query | 24 | 13 | 54.2% | 22 | 91.7% | 2 | 0 | 5 |
 | QueryColumn | 6 | 3 | 50.0% | 6 | 100.0% | 0 | 0 | 0 |
 | QueryDataItem | 3 | 3 | 100.0% | 3 | 100.0% | 0 | 0 | 0 |
 | QueryFilter | 4 | 1 | 25.0% | 4 | 100.0% | 0 | 0 | 0 |
@@ -92,7 +92,7 @@ Left out: 293 presentation-only properties (Caption, ToolTip, ApplicationArea, .
 | ReportExtension | 3 | 3 | 100.0% | 3 | 100.0% | 0 | 0 | 0 |
 | ReportExtensionModify | 2 | 2 | 100.0% | 2 | 100.0% | 0 | 0 | 0 |
 | ReportLayout | 12 | 9 | 75.0% | 12 | 100.0% | 0 | 0 | 0 |
-| RequestPage | 22 | 17 | 77.3% | 21 | 95.5% | 1 | 0 | 1 |
+| RequestPage | 22 | 17 | 77.3% | 22 | 100.0% | 0 | 0 | 1 |
 | Table | 24 | 17 | 70.8% | 17 | 70.8% | 0 | 7 | 3 |
 | TableExtension | 4 | 0 | 0.0% | 3 | 75.0% | 0 | 1 | 0 |
 | XmlPort | 26 | 22 | 84.6% | 24 | 92.3% | 2 | 0 | 4 |
@@ -113,7 +113,7 @@ Left out: 293 presentation-only properties (Caption, ToolTip, ApplicationArea, .
 - **FieldGroup** (3 of 3): `ObsoleteReason` implemented; `ObsoleteState` implemented; `ObsoleteTag` implemented
 - **FieldModify** (7 of 8): `BlankZero` implemented; `CaptionClass` implemented; `ClosingDates` unknown; `MaskType` unknown; `OptionCaption` implemented; `OptionCaptionML` implemented; `Width` implemented
 - **Interface** (4 of 5): `ObsoleteReason` implemented, MS 3; `ObsoleteState` implemented, MS 3; `ObsoleteTag` implemented, MS 3; `Scope` implemented, MS 4
-- **Page** (7 of 46): `ContextSensitiveHelpPage` implemented, MS 36; `DataAccessIntent` implemented, MS 2; `HelpLink` unknown, MS 7; `IsPreview` unknown, MS 1; `ObsoleteReason` implemented, MS 37; `ObsoleteState` implemented, MS 37; `ObsoleteTag` implemented, MS 37
+- **Page** (7 of 46): `ContextSensitiveHelpPage` implemented, MS 36; `DataAccessIntent` implemented, MS 2; `HelpLink` implemented, MS 7; `IsPreview` unknown, MS 1; `ObsoleteReason` implemented, MS 37; `ObsoleteState` implemented, MS 37; `ObsoleteTag` implemented, MS 37
 - **PageActionArea** (3 of 3): `ObsoleteReason` implemented; `ObsoleteState` implemented; `ObsoleteTag` implemented
 - **PageActionGroup** (3 of 6): `ObsoleteReason` implemented, MS 42; `ObsoleteState` implemented, MS 42; `ObsoleteTag` implemented, MS 42
 - **PageActionModify** (1 of 3): `InFooterBar` unknown
@@ -137,7 +137,7 @@ Left out: 293 presentation-only properties (Caption, ToolTip, ApplicationArea, .
 - **PageView** (3 of 7): `ObsoleteReason` implemented; `ObsoleteState` implemented; `ObsoleteTag` implemented
 - **PermissionSet** (4 of 8): `ExcludedPermissionSets` implemented; `ObsoleteReason` implemented; `ObsoleteState` implemented; `ObsoleteTag` implemented
 - **Profile** (4 of 8): `ObsoleteReason` implemented; `ObsoleteState` implemented; `ObsoleteTag` implemented; `ProfileDescriptionML` unknown
-- **Query** (11 of 24): `ContextSensitiveHelpPage` implemented; `EntityCaption` implemented; `EntityCaptionML` refused; `EntitySetCaption` implemented; `EntitySetCaptionML` refused; `HelpLink` refused; `InherentEntitlements` implemented, MS 6; `InherentPermissions` implemented, MS 6; `ObsoleteReason` implemented, MS 1; `ObsoleteState` implemented, MS 1; `ObsoleteTag` implemented, MS 1
+- **Query** (11 of 24): `ContextSensitiveHelpPage` implemented; `EntityCaption` implemented; `EntityCaptionML` refused; `EntitySetCaption` implemented; `EntitySetCaptionML` refused; `HelpLink` implemented; `InherentEntitlements` implemented, MS 6; `InherentPermissions` implemented, MS 6; `ObsoleteReason` implemented, MS 1; `ObsoleteState` implemented, MS 1; `ObsoleteTag` implemented, MS 1
 - **QueryColumn** (3 of 6): `ObsoleteReason` implemented; `ObsoleteState` implemented; `ObsoleteTag` implemented
 - **QueryFilter** (3 of 4): `ObsoleteReason` implemented; `ObsoleteState` implemented; `ObsoleteTag` implemented
 - **Report** (11 of 36): `DefaultHeaderFooterPart` implemented, BC 29; `DefaultThemePart` implemented, BC 29; `EnableExternalAssemblies` implemented; `ExcelLayout` implemented; `InherentEntitlements` implemented, MS 1; `InherentPermissions` implemented, MS 1; `ObsoleteReason` implemented, MS 18; `ObsoleteState` implemented, MS 18; `ObsoleteTag` implemented, MS 18; `RDLCLayout` implemented, MS 338; `WordLayout` implemented, MS 2
@@ -205,7 +205,7 @@ An item is **pinned** when it occurs in a corpus file in a routine that static r
 | Dimension | Catalog | Pinned | Used by Microsoft | Microsoft-used and unpinned | of those, runtime does not read |
 |---|---:|---:|---:|---:|---:|
 | Triggers per object kind | 170 | 154 | 128 | 12 | 12 |
-| Object properties per object kind | 1240 | 587 | 1074 | 653 | 538 |
+| Object properties per object kind | 1240 | 587 | 1074 | 653 | 537 |
 | Platform and system events | 123 | 37 | 17 | 0 | 0 |
 | Statements and expressions | 64 | 60 | 58 | 0 | 0 |
 | Method attributes | 30 | 25 | 13 | 5 | 3 |
@@ -286,9 +286,9 @@ Presentation-only properties (Caption, ToolTip, ApplicationArea, ... ) are left 
 | report/labels | `PostingDateCaption` | 8 | no | 0 |
 | table | `MovedTo` | 8 | no | 0 |
 | table/field | `Locked` | 8 | no | 0 |
+| page | `HelpLink` | 7 | yes | 0 |
 | page/actionref | `Visible` | 7 | yes | 0 |
 | page/label | `Enabled` | 7 | yes | 0 |
-| page | `HelpLink` | 7 | no | 0 |
 | enum | `ObsoleteReason` | 6 | yes | 0 |
 | enum | `ObsoleteState` | 6 | yes | 0 |
 | enum | `ObsoleteTag` | 6 | yes | 0 |

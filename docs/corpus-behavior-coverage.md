@@ -12,7 +12,7 @@ The catalog of each area is what the AL language server offers in probe files (`
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
 | attributes | 42 | 32 | 76.2% | 26 | 61.9% | 0 | 16 | 2 |
 | events | 23 | 16 | 69.6% | 22 | 95.7% | 0 | 1 | 0 |
-| properties | 720 | 580 | 80.6% | 544 | 75.6% | 20 | 156 | 4 |
+| properties | 720 | 580 | 80.6% | 547 | 76.0% | 20 | 153 | 4 |
 | syntax | 16 | 16 | 100.0% | 16 | 100.0% | 0 | 0 | 0 |
 | triggers | 128 | 128 | 100.0% | 116 | 90.6% | 3 | 9 | 0 |
 
@@ -44,7 +44,7 @@ Left out: 293 presentation-only properties (Caption, ToolTip, ApplicationArea, .
 | Owner | Items | Pinned | Pinned % | Implemented | Implemented % | Refused | Unknown | MS-used unpinned |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
 | AllPageCustomization | 6 | 6 | 100.0% | 3 | 50.0% | 0 | 3 | 0 |
-| Codeunit | 17 | 14 | 82.4% | 12 | 70.6% | 0 | 5 | 0 |
+| Codeunit | 17 | 14 | 82.4% | 15 | 88.2% | 0 | 2 | 0 |
 | ControlAddInObject | 19 | 17 | 89.5% | 3 | 15.8% | 0 | 16 | 0 |
 | Entitlement | 5 | 5 | 100.0% | 2 | 40.0% | 0 | 3 | 0 |
 | EnumType | 9 | 8 | 88.9% | 8 | 88.9% | 0 | 1 | 0 |
@@ -104,7 +104,7 @@ Left out: 293 presentation-only properties (Caption, ToolTip, ApplicationArea, .
 
 #### properties: unpinned items by owner
 
-- **Codeunit** (3 of 17): `RequiredTestIsolation` unknown; `TestHandlers` unknown, BC 29; `TestType` unknown
+- **Codeunit** (3 of 17): `RequiredTestIsolation` implemented; `TestHandlers` unknown, BC 29; `TestType` unknown
 - **ControlAddInObject** (2 of 19): `MaximumHeight` unknown; `MaximumWidth` unknown
 - **EnumType** (1 of 9): `AssignmentCompatibilityReason` unknown
 - **Field** (7 of 46): `DateFormula` implemented; `MaskType` unknown; `OptionCaptionML` implemented; `SignDisplacement` unknown; `SqlDataType` unknown; `SqlTimestamp` unknown; `Width` implemented

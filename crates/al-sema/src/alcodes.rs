@@ -1336,7 +1336,10 @@ mod tests {
                 files: vec![("s.al".into(), platform.to_string())],
             },
         ];
-        let kinds = vec![crate::workspace::AppKind::Workspace, crate::workspace::AppKind::Dependency];
+        let kinds = vec![
+            crate::workspace::AppKind::Workspace,
+            crate::workspace::AppKind::Dependency,
+        ];
         let ws = Workspace::load_apps(apps, kinds, &Default::default());
         let m = crate::members::build(&ws);
         crate::check::check(&ws, &m, &Catalog::load())

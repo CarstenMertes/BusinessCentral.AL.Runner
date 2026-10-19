@@ -605,7 +605,7 @@ mod run;
 mod runner_reset;
 #[cfg(test)]
 mod tests;
-mod written;
+pub(crate) mod written;
 
 pub use self::blocked::*;
 pub use self::cache::*;

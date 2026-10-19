@@ -146,6 +146,9 @@ impl Session {
                 self.control_text(st, idx, &converted)?.into()
             }
         };
+        if let RtType::Enum(id) = &ty {
+            self.note_enum(*id);
+        }
         let enum_engine = engine.clone();
         let by_text = move |id: u32, t: &str| {
             let o = &enum_engine.program.objects[id as usize];
@@ -741,11 +744,14 @@ impl Session {
                 let engine = self.engine();
                 let members: Vec<i32> = match self.control_type(st, idx, &current) {
                     Some(RtType::Option(names)) => (0..names.len() as i32).collect(),
-                    Some(RtType::Enum(id)) => engine.program.objects[id as usize]
-                        .enum_values
-                        .iter()
-                        .map(|(v, _)| *v)
-                        .collect(),
+                    Some(RtType::Enum(id)) => {
+                        self.note_enum(id);
+                        engine.program.objects[id as usize]
+                            .enum_values
+                            .iter()
+                            .map(|(v, _)| *v)
+                            .collect()
+                    }
                     _ => return unsupported(format!("TestField.{m} on a control that is not an option")),
                 };
                 if m == PageMethod::OptionCount {

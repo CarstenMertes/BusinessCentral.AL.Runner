@@ -468,12 +468,12 @@ pub(crate) fn run_codeunit_core(
         let outcome = match outcome {
             Outcome::Fail(m) if !unfinished.is_empty() => {
                 let engine = session.engine.clone();
-                let index = reach_index.get_or_insert_with(|| ReachIndex::new(&engine, lowered));
-                let mine = reach_facts(&engine, lowered, index, object, r);
+                let index = reach_index.get_or_insert_with(|| ReachIndex::new(&engine.events, lowered));
+                let mine = reach_facts(&engine.events, lowered, index, object, r);
                 let found = unfinished.iter_mut().find_map(|u| {
                     let facts = u
                         .facts
-                        .get_or_insert_with(|| reach_facts(&engine, lowered, index, object, u.routine));
+                        .get_or_insert_with(|| reach_facts(&engine.events, lowered, index, object, u.routine));
                     match u.ended {
                         Ended::Failed => (drew && facts.random()).then(|| {
                             format!(

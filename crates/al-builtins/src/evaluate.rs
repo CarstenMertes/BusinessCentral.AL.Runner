@@ -1046,17 +1046,31 @@ fn into_field_ref(c: &mut dyn Ctx, a: &mut [Value], number: i64) -> Result<Value
         None => return unsupported("Evaluate into a FieldRef that is not assigned (not pinned)"),
     };
     let current = target.rec.borrow().fields[target.pos].clone();
-    // With the result unused a text that is no value raises the error of the type and leaves the field (types/lt-evaluate-recordid/
-    // EvaluateRecordIdComposite.al:Evaluate_IntoFieldRef `invalidUnusedErr`, an Integer field); the other types are not pinned.
-    if !c.ret_used() && !matches!(target.ty, crate::value::RtType::Integer) {
-        return unsupported("Evaluate into a FieldRef with the result unused (pinned for an Integer field only)");
+    // With the result unused a text that is no value raises the error of the type and leaves the field, as for a variable
+    // (types/lt-evaluate-recordid/EvaluateRecordIdComposite.al:Evaluate_IntoFieldRef `invalidUnusedErr`, an Integer field;
+    // errors/lt-ms-refusals-128/N582EvalFieldRefUnused.al:71-169: Decimal, Date, Boolean, Code, Text, an Option without an
+    // OptionCaption and Integer). The other types are not pinned.
+    if !c.ret_used() {
+        use crate::value::RtType as T;
+        let pinned = match &target.ty {
+            T::Integer | T::Decimal | T::Date | T::Boolean | T::Code(_) | T::Text(_) => true,
+            T::Option(_) => !target.option_caption,
+            _ => false,
+        };
+        if !pinned {
+            return unsupported(format!(
+                "Evaluate into a FieldRef of type {} with the result unused (not pinned)",
+                target.ty.describe()
+            ));
+        }
     }
     let max = match &target.ty {
         crate::value::RtType::Text(m) | crate::value::RtType::Code(m) => *m,
         _ => None,
     };
     let mut tmp = vec![current, a[1].clone(), Value::Integer(number as i32)];
-    let ok = evaluate_with_max(c, &mut tmp, !target.option_caption, max, false)?;
+    // A Date field names any text in the date error, letters too (N582EvalFieldRefUnused.al:92, `abc`).
+    let ok = evaluate_with_max(c, &mut tmp, !target.option_caption, max, true)?;
     if matches!(ok, Value::Boolean(true)) {
         let v = crate::ops::convert(tmp.swap_remove(0), &target.ty)?;
         target.rec.borrow_mut().fields[target.pos] = v;

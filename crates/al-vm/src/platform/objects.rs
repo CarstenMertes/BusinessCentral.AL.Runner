@@ -231,6 +231,22 @@ pub(crate) fn declared_caption(caption: Option<&str>, caption_ml: Option<&str>, 
     Ok(name.to_string())
 }
 
+/// The entry for language code `lang` (`ENU`, `DEU`) of an ML property such as `SummaryML = ENU = 'x', DEU = 'y'`: `Ok(None)` when it has
+/// none, `Err` when the property is not a list of literals.
+pub(crate) fn ml_entry(ml: &str, lang: &str) -> Result<Option<String>, String> {
+    for part in split_outside_quotes(ml) {
+        let Some((code, text)) = part.trim().split_once('=') else {
+            return Err(format!("`{ml}` is not a list of language = text entries"));
+        };
+        if code.trim().eq_ignore_ascii_case(lang) {
+            return string_lit(text.trim())
+                .map(Some)
+                .ok_or_else(|| format!("`{ml}`: the {lang} entry is not a literal"));
+        }
+    }
+    Ok(None)
+}
+
 /// `a='x,y',b='z'` split at the commas outside single quotes.
 fn split_outside_quotes(s: &str) -> Vec<&str> {
     let (mut out, mut start, mut quoted) = (Vec::new(), 0, false);

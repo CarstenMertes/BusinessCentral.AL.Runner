@@ -89,9 +89,10 @@ impl Session {
         by_ordinal: &[(i32, usize)],
         unknown: Option<usize>,
     ) -> Result<Value, Signal> {
-        let Value::Enum(_, ordinal) = value else {
+        let Value::Enum(id, ordinal) = value else {
             return Err(Signal::Unsupported(format!("enum cast of {}", value.describe())));
         };
+        self.note_enum(id);
         let object = match by_ordinal.iter().find(|(o, _)| *o == ordinal) {
             Some((_, c)) => *c,
             // An ordinal the enum does not declare and no UnknownValueImplementation to answer for

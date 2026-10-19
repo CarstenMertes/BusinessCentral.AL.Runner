@@ -138,6 +138,7 @@ impl Session {
                 None => Ok(Value::Integer(self.global_language)),
                 Some(Value::Integer(n)) if *n > 0 => {
                     self.global_language = *n;
+                    self.events.event_stats.language.set(*n);
                     Ok(Value::Null)
                 }
                 other => unsupported(format!(

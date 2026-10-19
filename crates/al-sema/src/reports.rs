@@ -110,6 +110,8 @@ pub struct Layout {
     pub output: Vec<String>,
     /// The `Caption` property when it is a text literal.
     pub caption: Option<String>,
+    /// The `FormatRegion` property (a text literal).
+    pub format_region: Option<String>,
     /// The request page's `AboutTitle` and `AboutText` when they are text literals.
     pub about_title: Option<String>,
     pub about_text: Option<String>,
@@ -287,6 +289,7 @@ pub fn layout(obj: &ast::Object) -> Layout {
         reasons: Vec::new(),
         output: Vec::new(),
         caption: None,
+        format_region: None,
         about_title: None,
         about_text: None,
         default_layout: default_layout(obj),
@@ -322,6 +325,14 @@ pub fn layout(obj: &ast::Object) -> Layout {
                     .push(format!("UseRequestPage = {} is not understood", value.trim())),
             },
             "transactiontype" => out.transaction_type = Some(value.trim().to_ascii_lowercase()),
+            // The culture of the dataset a SaveAs Xml writes and of `Format` in its triggers
+            // (report/lt-y-report-props/YReportPropsTests.al:34-148); the run checks which regions are pinned.
+            "formatregion" => match text_literal(&value) {
+                Some(r) => out.format_region = Some(r),
+                None => out
+                    .reasons
+                    .push(format!("FormatRegion = {} is not a text literal", value.trim())),
+            },
             n if INERT_OBJECT_PROPERTIES.contains(&n) => {}
             // Rendering-only: how the report prints. `PreviewMode` belongs to the Base Application's
             // G/L Register (handlers/TestReportDatasetHelpLink.al runs its SaveAs).
@@ -1069,6 +1080,7 @@ pub fn build(cx: &Context, obj: &ast::Object, mut reasons: Vec<String>) -> ir::R
         output: layout.output.clone(),
         unsupported: reasons,
         caption: layout.caption.clone(),
+        format_region: layout.format_region.clone(),
         about_title: layout.about_title.clone(),
         about_text: layout.about_text.clone(),
         layout: layout.default_layout,

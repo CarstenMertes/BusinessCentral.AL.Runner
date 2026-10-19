@@ -13,7 +13,7 @@
 
 use super::mat::Entry;
 use super::objects::{Catalog, al_sema_platform_app_id, ident, prop, string_lit, truthy};
-use super::{Providers, blank, ids, option, pos};
+use super::{Providers, blank, ids, option, pos, unknown};
 use al_builtins::describe::Describe;
 use al_builtins::value::{RtType, Value};
 use al_data::TableDef;
@@ -55,7 +55,7 @@ pub(super) fn layout_list_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
             r[pos(t, 5)] = Value::Guid(pkg);
             // The app that owns the report (the layout is published with it; probe batch 5).
             r[pos(t, 11)] = Value::Guid(c.owner(o));
-            match layout_row(&c, o, l, t, &mut r) {
+            match layout_row(&c, o, l, t, &mut r, p.language()) {
                 Ok(()) => out.push(Entry::ok(r)),
                 Err(why) => {
                     let mut k = blank(t);
@@ -76,40 +76,51 @@ fn layout_row(
     l: &al_ir::LayoutDecl,
     t: &TableDef,
     r: &mut al_data::Row,
+    language: i32,
 ) -> Result<(), String> {
     let what = || format!("layout '{}' of report '{}'", l.name, o.name);
-    // Dynamic reads (RecordRef) of a layout without Subtype get Default and blank, which no case pins; static reads of the columns are refused (not in PINNED_COLUMNS).
     // BC 29: "Layout Subtype" (19), HeaderFooterPart (20), ThemePart (21)
-    // (report/lt-y-report-props/YReportParts.al:75). The enum is Default 0, HeaderFooter 1, Theme 2, Body 3. A layout that
-    // declares none reads the column defaults (Default and blank); the corpus pins only layouts that declare them.
+    // (report/lt-y-report-props/YReportParts.al:75-80). The enum is HeaderFooter 1, Theme 2, Body 3; the parts a layout
+    // does not declare are blank. The corpus pins only layouts that declare a Subtype: for one that declares none the
+    // three columns stay unknown (a read through a RecordRef is refused, the rest of the row reads), and static reads of
+    // them are refused where they are lowered (not in PINNED_COLUMNS).
     if t.fields.iter().any(|f| f.id == 19) {
-        let subtype = match lprop(l, "Subtype").map(ident) {
-            None => 0,
-            Some(s) if s.eq_ignore_ascii_case("HeaderFooter") => 1,
-            Some(s) if s.eq_ignore_ascii_case("Theme") => 2,
-            Some(s) if s.eq_ignore_ascii_case("Body") => 3,
-            Some(s) => return Err(format!("{}: Subtype `{s}` is not pinned", what())),
-        };
-        r[pos(t, 19)] = match &t.fields[pos(t, 19)].ty {
-            RtType::Enum(e) => Value::Enum(*e, subtype),
-            other => return Err(format!("field 19 is a {}, not an enum", other.describe())),
-        };
-        for (id, name) in [(20, "HeaderFooterPart"), (21, "ThemePart")] {
-            let Some(v) = lprop(l, name) else { continue };
-            let part = ident(v);
-            // The value is the id of the declaring app, `::` and the layout's name; only a layout of the same object is pinned.
-            if !o.layouts.iter().any(|x| x.name.eq_ignore_ascii_case(&part)) {
-                return Err(format!(
-                    "{}: {name} `{part}` is not a layout of the same object (not pinned)",
-                    what()
-                ));
+        'subtype: {
+            let subtype = match lprop(l, "Subtype").map(ident) {
+                None => {
+                    for id in [19, 20, 21] {
+                        r[pos(t, id)] = unknown(t, id, &format!("{}, which declares no Subtype", what()));
+                    }
+                    break 'subtype;
+                }
+                Some(s) if s.eq_ignore_ascii_case("HeaderFooter") => 1,
+                Some(s) if s.eq_ignore_ascii_case("Theme") => 2,
+                Some(s) if s.eq_ignore_ascii_case("Body") => 3,
+                Some(s) => return Err(format!("{}: Subtype `{s}` is not pinned", what())),
+            };
+            r[pos(t, 19)] = match &t.fields[pos(t, 19)].ty {
+                RtType::Enum(e) => Value::Enum(*e, subtype),
+                other => return Err(format!("field 19 is a {}, not an enum", other.describe())),
+            };
+            for (id, name) in [(20, "HeaderFooterPart"), (21, "ThemePart")] {
+                // A part the layout does not declare is blank (YReportParts.al:80).
+                r[pos(t, id)] = Value::default_for(&t.fields[pos(t, id)].ty);
+                let Some(v) = lprop(l, name) else { continue };
+                let part = ident(v);
+                // The value is the id of the declaring app, `::` and the layout's name; only a layout of the same object is pinned.
+                if !o.layouts.iter().any(|x| x.name.eq_ignore_ascii_case(&part)) {
+                    return Err(format!(
+                        "{}: {name} `{part}` is not a layout of the same object (not pinned)",
+                        what()
+                    ));
+                }
+                let app = c
+                    .apps
+                    .get(o.app as usize)
+                    .filter(|a| !a.id.eq_ignore_ascii_case(al_sema_platform_app_id()))
+                    .ok_or_else(|| format!("{}: the app that declares it is not known", what()))?;
+                r[pos(t, id)] = Value::Text(format!("{}::{part}", app.id.to_ascii_lowercase()).into());
             }
-            let app = c
-                .apps
-                .get(o.app as usize)
-                .filter(|a| !a.id.eq_ignore_ascii_case(al_sema_platform_app_id()))
-                .ok_or_else(|| format!("{}: the app that declares it is not known", what()))?;
-            r[pos(t, id)] = Value::Text(format!("{}::{part}", app.id.to_ascii_lowercase()).into());
         }
     }
     let format = lprop(l, "Type").ok_or_else(|| format!("{}: no Type", what()))?;
@@ -132,8 +143,40 @@ fn layout_row(
             .take(250)
             .collect(),
     );
+    // `SummaryML`: the entry of the session's language, ENU when it has none (report/lt-y-report-props/YReportPropsTests.al:
+    // SummaryML_English, SummaryML_German, SummaryML_FrenchFallsBack); other languages are not pinned.
+    let summary_ml = match lprop(l, "SummaryML") {
+        None => None,
+        Some(ml) => {
+            let code = match language {
+                1033 => "ENU",
+                1031 => "DEU",
+                1036 => "FRA",
+                n => {
+                    return Err(format!(
+                        "{}: SummaryML in language {n} (only 1033, 1031 and 1036 are pinned)",
+                        what()
+                    ));
+                }
+            };
+            let entry = super::objects::ml_entry(ml, code).map_err(|e| format!("{}: SummaryML {e}", what()))?;
+            match entry {
+                Some(e) => Some(e),
+                None if code == "FRA" => {
+                    super::objects::ml_entry(ml, "ENU").map_err(|e| format!("{}: SummaryML {e}", what()))?
+                }
+                None => {
+                    return Err(format!(
+                        "{}: SummaryML without a {code} entry (the fallback is not pinned)",
+                        what()
+                    ));
+                }
+            }
+        }
+    };
     r[pos(t, 10)] = Value::Text(
         literal("Summary")?
+            .or(summary_ml)
             .unwrap_or_else(|| l.name.clone())
             .chars()
             .take(250)
@@ -220,6 +263,57 @@ pub(super) fn report_metadata_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
                 })
                 .unwrap_or_default();
             r[col] = Value::Text(name.into());
+        }
+        // EnableExternalImages (6), the paper sources (12-14), FormatRegion (24) and ExcelLayoutMultipleDataSheets (25) are the
+        // properties as declared (report/lt-y-report-props/YReportPropsTests.al:34-160: `EnableExternalImages=Yes`, `PaperSourceFirstPage=1`
+        // for Upper, 2 for Lower, 3 for Middle, `FormatRegion=de-DE`, `ExcelLayoutMultipleDataSheets=Yes`; 0, No and blank when not declared).
+        // Another paper source is not pinned: the row is refused.
+        let mut unpinned = None;
+        for (col, name) in [(6, "EnableExternalImages"), (25, "ExcelLayoutMultipleDataSheets")] {
+            if t.fields.iter().any(|f| f.id == col) {
+                if let Value::Boolean(_) = r[pos(t, col)] {
+                    r[pos(t, col)] = Value::Boolean(prop(o, name).is_some_and(truthy));
+                }
+            }
+        }
+        for (col, name) in [
+            (12, "PaperSourceFirstPage"),
+            (13, "PaperSourceDefaultPage"),
+            (14, "PaperSourceLastPage"),
+        ] {
+            let Some(v) = prop(o, name) else { continue };
+            let n = match ident(v).to_ascii_lowercase().as_str() {
+                "upper" => 1,
+                "lower" => 2,
+                "middle" => 3,
+                other => {
+                    unpinned = Some(format!(
+                        "report '{}': {name} = {other} (only Upper, Lower and Middle are pinned)",
+                        o.name
+                    ));
+                    continue;
+                }
+            };
+            if t.fields.iter().any(|f| f.id == col) {
+                match &r[pos(t, col)] {
+                    Value::Integer(_) => r[pos(t, col)] = Value::Integer(n),
+                    Value::Option(_, m) => r[pos(t, col)] = Value::Option(n, m.clone()),
+                    Value::Enum(e, _) => r[pos(t, col)] = Value::Enum(*e, n),
+                    other => unpinned = Some(format!("report '{}': column {col} is a {}", o.name, other.describe())),
+                }
+            }
+        }
+        if t.fields.iter().any(|f| f.id == 24) {
+            if let Some(v) = prop(o, "FormatRegion") {
+                match string_lit(v) {
+                    Some(region) => r[pos(t, 24)] = Value::Text(region.into()),
+                    None => unpinned = Some(format!("report '{}': FormatRegion = {v}", o.name)),
+                }
+            }
+        }
+        if let Some(why) = unpinned {
+            out.push(Entry::poisoned(key, why));
+            continue;
         }
         // BC 29: DefaultHeaderFooterPartName (30) and DefaultThemePartName (31) are the layout names the properties give
         // (report/lt-y-report-props/YReportParts.al:65); blank when the report declares none.
@@ -317,8 +411,9 @@ fn join(ids: &[u32]) -> String {
 
 /// Report Data Items: "Report ID" (1), "Data Item ID" (2), Name (3), "Request Filter Fields" (4),
 /// "Related Table ID" (5), "Indentation Level" (6), "Sorting Fields" (7), "Data Item Table View" (8).
-/// The id is not a declaration ordinal (TestReportMetadataColumns.al:200-232, which only needs
-/// the ids of two items to differ and not to be 1 and 2): it is the position times ten.
+/// The id is the absolute value of the 32-bit FNV-1a hash of the item's name in UTF-16 (little endian), read as a signed
+/// number: `A` 1792377636, `D` 120712215 (|-120712215|), `Kid` 1167510851, `Src` 1369927887 (misc/lt-probes-needed-3/PnC21Metadata.al:
+/// 201-249), and the rows come in the order of the ids: Rw, Rw3, Rw2 (report/lt-y-report-props/YReportPropsTests.al:272).
 pub(super) fn report_data_item_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
     let engine = p.engine();
     let c = Catalog::new(&engine);
@@ -341,7 +436,16 @@ pub(super) fn report_data_item_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
             continue;
         };
         for (n, item) in rep.items.iter().enumerate() {
-            let item_id = (n as i32 + 1) * 10;
+            let Some(item_id) = data_item_id(&item.name) else {
+                let mut k = blank(t);
+                k[pos(t, 1)] = Value::Integer(id as i32);
+                out.push(Entry::poisoned_prefix(
+                    k,
+                    1,
+                    format!("data item '{}' of report '{}': its id is not pinned", item.name, o.name),
+                ));
+                continue;
+            };
             let mut key = blank(t);
             key[pos(t, 1)] = Value::Integer(id as i32);
             key[pos(t, 2)] = Value::Integer(item_id);
@@ -381,6 +485,18 @@ pub(super) fn report_data_item_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
         }
     }
     out
+}
+
+/// `Data Item ID`: see `report_data_item_rows`. `None` for the one hash whose absolute value overflows (not pinned).
+fn data_item_id(name: &str) -> Option<i32> {
+    let mut h: u32 = 0x811c_9dc5;
+    for unit in name.encode_utf16() {
+        for b in unit.to_le_bytes() {
+            h ^= u32::from(b);
+            h = h.wrapping_mul(0x0100_0193);
+        }
+    }
+    (h as i32).checked_abs()
 }
 
 fn data_item_row(
@@ -495,5 +611,23 @@ mod tests {
         );
         assert!(view_segments("sorting(a").is_err());
         assert!(view_segments("nonsense").is_err());
+    }
+}
+
+#[cfg(test)]
+mod data_item_id_tests {
+    // misc/lt-probes-needed-3/PnC21Metadata.al:204-249.
+    #[test]
+    fn the_data_item_id_is_the_fnv_hash_of_the_name() {
+        let ids: Vec<i32> = ["A", "B", "C", "D", "E", "Kid", "Src"]
+            .iter()
+            .map(|n| super::data_item_id(n).unwrap())
+            .collect();
+        assert_eq!(
+            ids,
+            [
+                1792377636, 589499809, 1227196426, 120712215, 758408832, 1167510851, 1369927887
+            ]
+        );
     }
 }

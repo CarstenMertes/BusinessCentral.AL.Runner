@@ -190,7 +190,7 @@ pub(crate) struct ReachIndex {
 }
 
 impl ReachIndex {
-    pub fn new(engine: &Engine, lowered: &Lowered) -> ReachIndex {
+    pub fn new(events: &al_vm::events::Registry, lowered: &Lowered) -> ReachIndex {
         let objs = &lowered.program.objects;
         let mut by_id = HashMap::new();
         let mut extensions: HashMap<(ObjKind, u32), Vec<usize>> = HashMap::new();
@@ -210,7 +210,7 @@ impl ReachIndex {
         }
         let mut subscribers: HashMap<usize, Vec<(usize, usize)>> = HashMap::new();
         let mut global_triggers = Vec::new();
-        for ((po, _), subs) in &engine.events.subscribers {
+        for ((po, _), subs) in &events.subscribers {
             let is_global_triggers = *po == al_vm::events::GLOBAL_TRIGGERS
                 || objs
                     .get(*po)
@@ -233,14 +233,14 @@ impl ReachIndex {
 
 /// The reach facts of routine `routine` of `object`.
 pub(crate) fn reach_facts(
-    engine: &Engine,
+    events: &al_vm::events::Registry,
     lowered: &Lowered,
     index: &ReachIndex,
     object: usize,
     routine: usize,
 ) -> ReachFacts {
     let mut walk = Walk {
-        engine,
+        events,
         lowered,
         index,
         out: ReachFacts::default(),
@@ -258,7 +258,7 @@ pub(crate) fn reach_facts(
 }
 
 struct Walk<'a> {
-    engine: &'a Engine,
+    events: &'a al_vm::events::Registry,
     lowered: &'a Lowered,
     index: &'a ReachIndex,
     out: ReachFacts,
@@ -404,9 +404,8 @@ impl Walk<'_> {
             }
         }
         // The event this routine publishes, when it is a publisher.
-        if let Some(p) = self.engine.events.publishers.get(&(o, r)) {
+        if let Some(p) = self.events.publishers.get(&(o, r)) {
             for sub in self
-                .engine
                 .events
                 .subscribers
                 .get(&(p.object, p.event.clone()))

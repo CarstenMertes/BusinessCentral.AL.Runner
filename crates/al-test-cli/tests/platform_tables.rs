@@ -1123,3 +1123,115 @@ codeunit 50000 "T" { Subtype = Test;
         "{why}"
     );
 }
+
+/// CodeUnit Metadata TestType (9) and RequiredTestIsolation (10) read the codeunit's declared properties; a test
+/// codeunit without them reads UnitTest and None (codeunit/lt-x-object-props/XObjectProps.al:255-256, :267-268, :279).
+#[test]
+fn codeunit_metadata_reads_the_declared_test_type_and_isolation() {
+    let o = outcomes(
+        r#"codeunit 50001 "Int" { Subtype = Test; TestType = IntegrationTest; RequiredTestIsolation = Disabled; }
+codeunit 50002 "Unc" { Subtype = Test; TestType = Uncategorized; RequiredTestIsolation = Codeunit; }
+codeunit 50003 "Ai" { Subtype = Test; TestType = AITest; RequiredTestIsolation = Function; }
+codeunit 50004 "Def" { Subtype = Test; }
+codeunit 50000 "T" { Subtype = Test;
+  local procedure Facts(Id: Integer): Text var M: Record "CodeUnit Metadata"; begin
+    M.Get(Id); exit(Format(M.TestType) + '|' + Format(M.RequiredTestIsolation) + '|' + Format(M.TestType, 0, 2) + '|' + Format(M.RequiredTestIsolation, 0, 2)); end;
+  [Test] procedure Integration() begin if Facts(50001) <> 'IntegrationTest|Disabled|2|1' then Error('%1', Facts(50001)); end;
+  [Test] procedure Uncategorized() begin if Facts(50002) <> 'Uncategorized|Codeunit|3|2' then Error('%1', Facts(50002)); end;
+  [Test] procedure AiTest() begin if Facts(50003) <> 'AITest|Function|4|3' then Error('%1', Facts(50003)); end;
+  [Test] procedure Defaults() begin if Facts(50004) <> 'UnitTest|None|1|0' then Error('%1', Facts(50004)); end; }"#,
+    );
+    for t in ["Integration", "Uncategorized", "AiTest", "Defaults"] {
+        passes(&o, t);
+    }
+}
+
+/// Field.OptimizeForTextSearch (62) is the declared property of a Text field (lt-ak-fulltext/LtAkFulltext.al:119,
+/// :122); the property on another type is pinned by no test, so a read of it is refused.
+#[test]
+fn field_optimize_for_text_search_reads_the_declared_property_of_a_text_field() {
+    let o = outcomes(
+        r#"table 50001 "Thing" { fields { field(1; "No."; Integer) { } field(2; Txt; Text[30]) { OptimizeForTextSearch = true; }
+  field(3; Plain; Text[30]) { } field(4; Cd; Code[20]) { OptimizeForTextSearch = true; } }
+  keys { key(PK; "No.") { Clustered = true; } } }
+codeunit 50000 "T" { Subtype = Test;
+  [Test] procedure Declared() var F: Record Field; begin F.Get(50001, 2); if not F.OptimizeForTextSearch then Error('declared'); end;
+  [Test] procedure NotDeclared() var F: Record Field; begin F.Get(50001, 3); if F.OptimizeForTextSearch then Error('plain'); end;
+  [Test] procedure OnCode() var F: Record Field; begin F.Get(50001, 4); if F.OptimizeForTextSearch then; end; }"#,
+    );
+    passes(&o, "Declared");
+    passes(&o, "NotDeclared");
+    let why = not_run(&o, "OnCode");
+    assert!(why.contains("OptimizeForTextSearch"), "{why}");
+}
+
+/// AllObj holds one more row per table than the runtime lists (metadata/lt-all-obj-namespace/AllObjNamespace.al:101:
+/// a table, a codeunit and a page in one namespace count 4), most likely its TableData row, whose columns no test
+/// pins. A read that may land on such a row is refused; one filtered to another object type is answered.
+#[test]
+fn an_all_obj_read_that_may_land_on_a_table_data_row_is_refused() {
+    let o = outcomes(
+        r#"table 50001 "Thing" { fields { field(1; "No."; Integer) { } } keys { key(PK; "No.") { Clustered = true; } } }
+codeunit 50000 "T" { Subtype = Test;
+  [Test] procedure TableTypeCounts() var A: Record AllObj; begin A.SetRange("Object Type", A."Object Type"::Table); A.SetRange("Object ID", 50001); if A.Count() <> 1 then Error('%1', A.Count()); end;
+  [Test] procedure AnyTypeCount() var A: Record AllObj; begin A.SetRange("Object ID", 50001); if A.Count() = 0 then; end; }"#,
+    );
+    passes(&o, "TableTypeCounts");
+    let why = not_run(&o, "AnyTypeCount");
+    assert!(why.contains("TableData"), "{why}");
+}
+
+/// The test session's own Session row: Login Type "Username and Password" (ordinal 2), and "Application Name" the
+/// Active Session "Client Type" of the web client (session/W6SessionTimeZone.al:22-23, session/W5SessionFacts.al:135,
+/// session/TestSessionVirtualTable.al:166).
+#[test]
+fn the_session_row_is_a_web_client_session_logged_in_by_user_name_and_password() {
+    let o = outcomes(
+        r#"codeunit 50000 "T" { Subtype = Test;
+  [Test] procedure LoginType() var S: Record Session; begin S.SetRange("My Session", true); S.FindFirst();
+    if Format(S."Login Type") <> 'Username and Password' then Error('%1', S."Login Type");
+    if Format(S."Login Type", 0, 2) <> '2' then Error('ordinal'); end;
+  [Test] procedure ClientType() var A: Record "Active Session"; begin A.Get(ServiceInstanceId(), SessionId());
+    if A."Client Type" <> A."Client Type"::"Web Client" then Error('%1', A."Client Type"); end; }"#,
+    );
+    passes(&o, "LoginType");
+    passes(&o, "ClientType");
+}
+
+/// Code Coverage Tests Run "Method ID" is one number for every test procedure, not below 1000: 469735107
+/// (codeunit/PWCodeCoverageRows.al:308; coverage/W6CodeCoverageIds.al:105-107, :139, :168).
+#[test]
+fn code_coverage_tests_run_method_id_is_the_one_number_of_a_test_procedure() {
+    let o = outcomes(
+        r#"codeunit 50000 "T" { Subtype = Test;
+  procedure Initialize() var C: Record "Code Coverage"; R: Record "Code Coverage Tests Run"; L: Record "Code Coverage Test Lookup"; begin CodeCoverageLog(false, false); C.DeleteAll(); R.DeleteAll(); L.DeleteAll(); end;
+  [Test] procedure One() begin if StrLen('x') = 0 then Error('x'); end;
+  [Test] procedure Two() begin if StrLen('xyz') = 0 then Error('x'); end;
+  [Test] procedure Ids()
+  var R: Record "Code Coverage Tests Run"; A: Integer;
+  begin Initialize();
+    CodeCoverageLog(true, false); One(); Two(); CodeCoverageLog(false, false);
+    R.SetRange("Object ID", 50000); R.SetRange("Method Name", 'One'); R.FindFirst(); A := R."Method ID";
+    R.SetRange("Method Name", 'Two'); R.FindFirst();
+    if (A <> 469735107) or (R."Method ID" <> A) then Error('%1 %2', A, R."Method ID");
+  end; }"#,
+    );
+    passes(&o, "Ids");
+}
+
+/// Published Application.Description (15) holds the manifest's description (onprem
+/// session/PZPublishedApplicationColumns.al:55, :59). The runtime does not keep the description of an app yet, so a read
+/// of the column is refused rather than answered blank; the other columns read as before.
+#[test]
+fn published_application_description_is_refused_until_the_manifest_text_is_kept() {
+    let o = outcomes_app(
+        "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+        r#"codeunit 50000 "T" { Subtype = Test;
+  [Test] procedure Name() var A: Record "Published Application"; begin A.SetRange(ID, 'a1b2c3d4-e5f6-7890-abcd-ef1234567890'); A.FindFirst(); if A.Name <> 'main' then Error('%1', A.Name); end;
+  [Test] procedure Description() var A: Record "Published Application"; begin A.SetRange(ID, 'a1b2c3d4-e5f6-7890-abcd-ef1234567890'); A.FindFirst(); A.CalcFields(Description); if A.Description.HasValue() then; end; }"#,
+        al_sema::check::Roots::default(),
+    );
+    passes(&o, "Name");
+    let why = not_run(&o, "Description");
+    assert!(why.contains("Description"), "{why}");
+}

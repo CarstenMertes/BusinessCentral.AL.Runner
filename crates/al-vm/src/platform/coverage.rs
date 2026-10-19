@@ -334,9 +334,17 @@ impl Session {
         out
     }
 
+    /// The "Method ID" of a Test Lookup row: the routine's index plus one. Kept, not pinned: the corpus pins one
+    /// literal (31658110, codeunit/PWCodeCoverageRows.al:309) and that it differs from the test's own Tests Run id
+    /// (codeunit/TestCodeCoveragePerTest.al:121), not the rule (docs/probes-needed.md).
     fn method_id(routine: usize) -> Value {
         Value::Integer(routine as i32 + 1)
     }
+
+    /// The "Method ID" of a Tests Run row: one number for every test procedure (codeunit/PWCodeCoverageRows.al:308;
+    /// coverage/W6CodeCoverageIds.al:105-107 for four tests of different bodies, :139 not below 1000, :168 the same in
+    /// two recordings).
+    const TEST_METHOD_ID: i32 = 469_735_107;
 
     fn lookup_rows(&self, t: &TableDef) -> Vec<Row> {
         let program = &self.engine.program;
@@ -368,7 +376,7 @@ impl Session {
                 let mut r = super::blank(t);
                 r[super::pos(t, 1)] = Value::Integer(i as i32 + 1);
                 r[super::pos(t, 2)] = Value::Integer(o.id? as i32);
-                r[super::pos(t, 3)] = Self::method_id(ri);
+                r[super::pos(t, 3)] = Value::Integer(Self::TEST_METHOD_ID);
                 r[super::pos(t, 4)] = Value::Text(o.routines[ri].name.clone().into());
                 if let Some(m) = self.module_of_app(o.app as usize) {
                     r[super::pos(t, 5)] = Value::Guid(m.id);

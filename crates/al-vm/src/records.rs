@@ -1151,8 +1151,11 @@ impl Session {
         let cx = self.cx_for(rec, &t)?;
         let mut stored: Option<Vec<Value>> = None;
         for &pos in positions {
-            let Value::Blob(buf) = rec.borrow().fields[pos].clone() else {
-                return unsupported("CalcFields of a Blob field that holds no Blob");
+            let buf = match rec.borrow().fields[pos].clone() {
+                Value::Blob(buf) => buf,
+                // A platform row's column no corpus test pins: its own reason.
+                Value::Unknown(why) => return unsupported(why.to_string()),
+                _ => return unsupported("CalcFields of a Blob field that holds no Blob"),
             };
             // A temporary record's row that was never inserted has no stored content: CalcFields empties a Blob a stream
             // wrote (P94XpDelim.al:Export_NothingDeclared exports into such a Blob and reads back nothing). A Blob of a row read

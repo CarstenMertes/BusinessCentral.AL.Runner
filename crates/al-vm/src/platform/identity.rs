@@ -8,8 +8,7 @@
 //! that belongs to no session finds nothing (TestSessionVirtualTable.al "GetOnAConnectionIdThat
 //! IsNoSession", TestActiveSessionTable.al "GetOnASessionIdThatIsNoSession").
 //!
-//! Columns no test reads keep the type default, as AL Runner does ("Server Instance Name",
-//! "Login Type", "Database Name"). "Client Computer Name" is not in `PINNED_COLUMNS`: the row holds it
+//! Columns no test reads keep the type default, as AL Runner does ("Server Instance Name"). "Client Computer Name" is not in `PINNED_COLUMNS`: the row holds it
 //! unknown, so a read is refused (it is the test runner's, TestActiveSessionHostColumnsContracts.al:9).
 
 use super::{Ident, blank, option, pos};
@@ -29,6 +28,7 @@ fn client_type_ordinal(t: al_host::ClientType) -> (i32, &'static str) {
     match t {
         al_host::ClientType::Background => (5, "Background"),
         al_host::ClientType::Web => (7, "Web Client"),
+        al_host::ClientType::Windows => (0, "Windows Client"),
     }
 }
 
@@ -55,6 +55,12 @@ pub(super) fn session_row(t: &TableDef, i: &Ident) -> Row {
     r[pos(t, 6)] = Value::Date((i.login_millis.div_euclid(MS_PER_DAY) + unix_epoch_day()) as i32, false);
     r[pos(t, 16)] = Value::Text(DATABASE_NAME.into());
     r[pos(t, 17)] = Value::Text(client_type_ordinal(i.client_type).1.into());
+    // "Login Type": the web client session of the tests logs in by user name and password (session/
+    // W6SessionTimeZone.al:22-23). Another client type's login is not pinned: unknown.
+    r[pos(t, 18)] = match i.client_type {
+        al_host::ClientType::Web => option(t, 18, 2),
+        _ => super::unknown(t, 18, "a session that is not a web client session"),
+    };
     r[pos(t, 19)] = Value::Text(i.host_name.clone().into());
     r
 }

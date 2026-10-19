@@ -229,12 +229,13 @@ fn global_language_can_be_assigned_like_a_property() {
 
 #[test]
 fn client_types_are_callable() {
-    // session/TestSessionExtended.al:21,31.
+    // The test session is a web client session whose default client type is Windows
+    // (session/W5SessionFacts.al:135-138; callable: session/TestSessionExtended.al:21,31).
+    assert!(truth("C: ClientType;", "Session.CurrentClientType() = ClientType::Web"));
     assert!(truth(
         "C: ClientType;",
-        "Session.CurrentClientType() = ClientType::Background"
+        "Session.DefaultClientType() = ClientType::Windows"
     ));
-    assert!(truth("C: ClientType;", "Session.DefaultClientType() = ClientType::Web"));
 }
 
 // ---------------------------------------------------------------- system field stamps

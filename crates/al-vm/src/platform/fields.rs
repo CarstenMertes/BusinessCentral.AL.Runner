@@ -230,6 +230,20 @@ fn field_row(
             }
         };
     }
+    // OptimizeForTextSearch: the declared property of a Text field, false where it is not declared
+    // (lt-ak-fulltext/LtAkFulltext.al:119, :122). Declared on another type it is pinned by no test: unknown.
+    if let Some(col) = t.fields.iter().position(|x| x.id == 62) {
+        if let Some(v) = fprop("OptimizeForTextSearch") {
+            r[col] = match &f.ty {
+                RtType::Text(_) => Value::Boolean(truthy(v)),
+                _ => super::unknown(
+                    t,
+                    62,
+                    &format!("{}, which declares OptimizeForTextSearch on a non-Text field", what()),
+                ),
+            };
+        }
+    }
     // OptionString: the member names of an option or enum field, comma-joined (TestFieldEnumTypeVirtualTable.al:19-47).
     let option_string = match &f.ty {
         RtType::Option(m) => m.join(","),

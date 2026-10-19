@@ -59,6 +59,7 @@ impl Clock for FixedClock {
 pub enum ClientType {
     Background,
     Web,
+    Windows,
 }
 
 impl ClientType {
@@ -67,6 +68,7 @@ impl ClientType {
         match self {
             ClientType::Background => "Background",
             ClientType::Web => "Web",
+            ClientType::Windows => "Windows",
         }
     }
 }
@@ -256,13 +258,14 @@ impl Identity for AlRunnerIdentity {
     fn time_zone(&self) -> String {
         "UTC".into()
     }
-    /// `MiscPatches.ALSession_GetALCurrentClientType`.
+    /// The oracle's tests run in a web client session (session/W5SessionFacts.al:135, :137); AL Runner's
+    /// `Background` is superseded.
     fn current_client_type(&self) -> ClientType {
-        ClientType::Background
-    }
-    /// Not set by AL Runner; the service tier's default client is the web client.
-    fn default_client_type(&self) -> ClientType {
         ClientType::Web
+    }
+    /// The oracle's tier names Windows (session/W5SessionFacts.al:136, :138).
+    fn default_client_type(&self) -> ClientType {
+        ClientType::Windows
     }
 }
 
@@ -668,6 +671,6 @@ mod tests {
     fn host_is_deterministic_by_default() {
         let h = Host::default();
         assert_eq!(h.clock.now_utc_millis(), DEFAULT_INSTANT_MILLIS);
-        assert_eq!(h.identity.current_client_type(), ClientType::Background);
+        assert_eq!(h.identity.current_client_type(), ClientType::Web);
     }
 }

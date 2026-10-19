@@ -915,6 +915,9 @@ AL Runner v2. Decision 9 above is unchanged except for the `SessionId()` row, wh
    so starts at today again, which is what the Test Runner's reset after each codeunit gives.
 5. **`Session.CurrentClientType()` is `Background` (AL Runner) and `DefaultClientType()` is
    `Web`.** AL Runner does not set the second. Nothing in the corpus reads either value.
+   Superseded 2026-10-19 by the corpus pins (CLAUDE.md rule 3): the oracle's tests run in a web client session,
+   so `CurrentClientType()` is `Web` and `DefaultClientType()` is `Windows` (session/W5SessionFacts.al:135-138), and
+   the Session row's "Login Type" is "Username and Password" (session/W6SessionTimeZone.al:22-23).
 6. **`CompanyName()` is `My Company`** (decision 9), replacing the placeholder `CRONUS`.
    There is still no Company row: the Company table is outside the workspace.
 7. **Temporary records are not stamped** with `SystemCreatedAt/By` and `SystemModifiedAt/By`.

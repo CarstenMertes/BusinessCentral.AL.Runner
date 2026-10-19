@@ -47,6 +47,10 @@ pub struct ControlFormat {
     pub work_date: Option<i32>,
     /// Today's date as a day number, for the shorthand `t` (session/W5WorkDateShorthand.al).
     pub today: Option<i32>,
+    /// `ClosingDates = true` on the control or the source field: a closing date shows as `C12/31/2025`
+    /// (record/lt-x-table-props/XTablePropsTests.al:523-524, pageext/lt-z-modify-controls/ZModifyControls.al:290-291).
+    /// Without it a closing date shows its plain day.
+    pub closing_dates: bool,
 }
 
 /// `2 : 2`, `0 : 5` or `3` as (min, max) places.
@@ -226,9 +230,10 @@ pub fn control_text(v: &Value, f: &ControlFormat, enum_caption: &dyn Fn(u32, i32
         },
         Value::Enum(id, o) => enum_caption(*id, *o),
         Value::Date(0, _) | Value::Time(0) | Value::DateTime(0) => String::new(),
-        Value::Date(day, _) => {
+        Value::Date(day, closing) => {
             let (y, m, d) = crate::format::civil_from_day(*day);
-            format!("{m}/{d}/{y}")
+            let mark = if *closing && f.closing_dates { "C" } else { "" };
+            format!("{mark}{m}/{d}/{y}")
         }
         Value::Time(t) => time_text(*t),
         Value::DateTime(ms) => {
@@ -262,6 +267,10 @@ pub fn parse_control_text(
 ) -> Result<Value, ParseError> {
     use crate::value::RtType as T;
     let t = text.trim();
+    // Only the upper-case closing mark is pinned (pages/lt-page-presentation-properties/P119ReportFields.al:174).
+    if matches!(ty, T::Date) && f.closing_dates && t.strip_prefix('c').is_some_and(|r| r.contains('/')) {
+        return Err(ParseError::Unsupported);
+    }
     parse_typed(text, t, ty, f, enum_by_text).ok_or(match ty {
         T::Text(_)
         | T::Code(_)
@@ -345,6 +354,13 @@ fn parse_typed(
                 Value::Date(f.work_date?, false)
             } else if matches!(t.to_ascii_lowercase().as_str(), "t" | "today") {
                 Value::Date(f.today?, false)
+            } else if let Some(rest) = t.strip_prefix('C').filter(|r| f.closing_dates && r.contains('/')) {
+                // A ClosingDates control takes back the closing date it shows, `C12/31/2025`
+                // (pages/lt-page-presentation-properties/P119ReportFields.al:174, :257-258).
+                match parse_typed(rest, rest, ty, f, enum_by_text)? {
+                    Value::Date(d, false) if d != 0 => Value::Date(d, true),
+                    _ => return None,
+                }
             } else {
                 // The ISO spelling, else `M/D/Y` as the control shows it; a two-digit year is
                 // read as 1930-2029, as Evaluate does.
@@ -469,6 +485,31 @@ mod tests {
             decimal_places: Some((min, max)),
             ..Default::default()
         }
+    }
+
+    // pages/lt-page-presentation-properties/P119ReportFields.al:174, :257-258: a closing date set on a ClosingDates control
+    // reads back as `C12/31/2025`.
+    #[test]
+    fn a_closing_dates_control_reads_back_the_closing_date_it_shows() {
+        let f = ControlFormat {
+            closing_dates: true,
+            ..Default::default()
+        };
+        let d = crate::format::day_from_civil(2025, 12, 31);
+        let v = parse_control_text("C12/31/2025", &crate::value::RtType::Date, &f, &|_, _| None);
+        assert!(matches!(v, Ok(Value::Date(x, true)) if x == d), "{v:?}");
+        assert_eq!(t(&Value::Date(d, true), &f), "C12/31/2025");
+    }
+
+    // Only the upper-case mark is pinned (P119ReportFields.al:174): a lower-case `c` is refused, not rejected.
+    #[test]
+    fn a_lower_case_closing_mark_is_refused() {
+        let f = ControlFormat {
+            closing_dates: true,
+            ..Default::default()
+        };
+        let v = parse_control_text("c12/31/2025", &crate::value::RtType::Date, &f, &|_, _| None);
+        assert!(matches!(v, Err(ParseError::Unsupported)), "{v:?}");
     }
 
     // handlers/TestPageFieldFormats_Tests.al Value_Decimal_TwoPlaces / NoDecimalPlaces

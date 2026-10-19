@@ -4122,7 +4122,7 @@
           "ms_uses": 25,
           "name": "ClosingDates",
           "pinned": true,
-          "runtime_reads": false,
+          "runtime_reads": true,
           "site": "pages/lt-page-presentation-properties/P119Table.al:24"
         },
         {
@@ -4198,6 +4198,15 @@
           "site": "misc/lt-probes-needed-8/PnH3Link.al:194"
         },
         {
+          "corpus_uses": 1,
+          "group": "report/field",
+          "ms_uses": 22,
+          "name": "ClosingDates",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "pages/lt-page-presentation-properties/P119ReportFields.al:54"
+        },
+        {
           "corpus_uses": 2,
           "group": "reportextension/column",
           "ms_uses": 22,
@@ -4205,15 +4214,6 @@
           "pinned": true,
           "runtime_reads": true,
           "site": "pages/lt-report-page-properties/04-reportext-includecaption.al:39"
-        },
-        {
-          "corpus_uses": 1,
-          "group": "report/field",
-          "ms_uses": 22,
-          "name": "ClosingDates",
-          "pinned": true,
-          "runtime_reads": false,
-          "site": "pages/lt-page-presentation-properties/P119ReportFields.al:54"
         },
         {
           "corpus_uses": 5,
@@ -5189,6 +5189,15 @@
         },
         {
           "corpus_uses": 1,
+          "group": "page/field",
+          "ms_uses": 6,
+          "name": "ClosingDates",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "pages/lt-page-presentation-properties/P119PageNumeric.al:26"
+        },
+        {
+          "corpus_uses": 1,
           "group": "page/usercontrol",
           "ms_uses": 6,
           "name": "Visible",
@@ -5332,15 +5341,6 @@
           "site": "pages/lt-report-page-properties/07-controladdin-recreate.al:11"
         },
         {
-          "corpus_uses": 1,
-          "group": "page/field",
-          "ms_uses": 6,
-          "name": "ClosingDates",
-          "pinned": true,
-          "runtime_reads": false,
-          "site": "pages/lt-page-presentation-properties/P119PageNumeric.al:26"
-        },
-        {
           "corpus_uses": 2,
           "group": "page/field",
           "ms_uses": 6,
@@ -5456,6 +5456,15 @@
           "pinned": true,
           "runtime_reads": true,
           "site": "misc/lt-u-obsolete-pending/UObsoleteObjects.al:29"
+        },
+        {
+          "corpus_uses": 3,
+          "group": "page/cuegroup",
+          "ms_uses": 4,
+          "name": "CuegroupLayout",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "pages/lt-ab-group-properties/ABLayouts.al:21"
         },
         {
           "corpus_uses": 2,
@@ -5600,15 +5609,6 @@
           "pinned": true,
           "runtime_reads": false,
           "site": "pages/lt-report-page-properties/07-controladdin-images.al:10"
-        },
-        {
-          "corpus_uses": 3,
-          "group": "page/cuegroup",
-          "ms_uses": 4,
-          "name": "CuegroupLayout",
-          "pinned": true,
-          "runtime_reads": false,
-          "site": "pages/lt-ab-group-properties/ABLayouts.al:21"
         },
         {
           "corpus_uses": 0,
@@ -12091,6 +12091,15 @@
           "site": "pageext/lt-z-modify-controls/ZModifyControls.al:85"
         },
         {
+          "corpus_uses": 1,
+          "group": "pageextension/modify",
+          "ms_uses": 0,
+          "name": "ClosingDates",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "pageext/lt-z-modify-controls/ZModifyControls.al:87"
+        },
+        {
           "corpus_uses": 13,
           "group": "pageextension/modify",
           "ms_uses": 0,
@@ -12919,6 +12928,15 @@
           "site": "record/lt-x-table-props/XTableObjects.al:73"
         },
         {
+          "corpus_uses": 2,
+          "group": "tableextension/modify",
+          "ms_uses": 0,
+          "name": "ClosingDates",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "record/lt-x-table-props/XTableObjects.al:75"
+        },
+        {
           "corpus_uses": 1,
           "group": "tableextension/modify",
           "ms_uses": 0,
@@ -13498,15 +13516,6 @@
           "corpus_uses": 1,
           "group": "pageextension/modify",
           "ms_uses": 0,
-          "name": "ClosingDates",
-          "pinned": true,
-          "runtime_reads": false,
-          "site": "pageext/lt-z-modify-controls/ZModifyControls.al:87"
-        },
-        {
-          "corpus_uses": 1,
-          "group": "pageextension/modify",
-          "ms_uses": 0,
           "name": "Importance",
           "pinned": true,
           "runtime_reads": false,
@@ -13790,15 +13799,6 @@
           "pinned": true,
           "runtime_reads": false,
           "site": "record/lt-x-table-props/XTableObjects.al:64"
-        },
-        {
-          "corpus_uses": 2,
-          "group": "tableextension/modify",
-          "ms_uses": 0,
-          "name": "ClosingDates",
-          "pinned": true,
-          "runtime_reads": false,
-          "site": "record/lt-x-table-props/XTableObjects.al:75"
         }
       ],
       "pinned": 796
@@ -19452,7 +19452,7 @@
         "pinned": true,
         "scope": "",
         "site": "pages/lt-page-presentation-properties/P119Table.al:24",
-        "state": "unknown"
+        "state": "implemented"
       },
       {
         "area": "properties",
@@ -20067,7 +20067,7 @@
         "pinned": true,
         "scope": "",
         "site": "record/lt-x-table-props/XTableObjects.al:75",
-        "state": "unknown"
+        "state": "implemented"
       },
       {
         "area": "properties",
@@ -21687,7 +21687,7 @@
         "pinned": true,
         "scope": "",
         "site": "pageext/lt-z-modify-controls/ZModifyControls.al:87",
-        "state": "unknown"
+        "state": "implemented"
       },
       {
         "area": "properties",
@@ -21957,7 +21957,7 @@
         "pinned": true,
         "scope": "",
         "site": "pages/lt-ab-group-properties/ABLayouts.al:21",
-        "state": "unknown"
+        "state": "implemented"
       },
       {
         "area": "properties",
@@ -22857,7 +22857,7 @@
         "pinned": true,
         "scope": "",
         "site": "pages/lt-page-presentation-properties/P119PageNumeric.al:26",
-        "state": "unknown"
+        "state": "implemented"
       },
       {
         "area": "properties",
@@ -23592,7 +23592,7 @@
         "pinned": false,
         "scope": "",
         "site": null,
-        "state": "unknown"
+        "state": "implemented"
       },
       {
         "area": "properties",
@@ -23832,7 +23832,7 @@
         "pinned": false,
         "scope": "",
         "site": null,
-        "state": "unknown"
+        "state": "implemented"
       },
       {
         "area": "properties",
@@ -24072,7 +24072,7 @@
         "pinned": false,
         "scope": "",
         "site": null,
-        "state": "unknown"
+        "state": "implemented"
       },
       {
         "area": "properties",
@@ -24777,7 +24777,7 @@
         "pinned": false,
         "scope": "",
         "site": null,
-        "state": "unknown"
+        "state": "implemented"
       },
       {
         "area": "properties",

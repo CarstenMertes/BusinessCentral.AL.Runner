@@ -318,6 +318,9 @@ pub struct PageState {
     /// `Visible` of each control as it was when the page opened (the property is frozen then,
     /// corpus handlers/TestPageControlPropertyLiveness_Tests.al:56).
     pub frozen_visible: Vec<bool>,
+    /// The caption each control's CaptionClass resolved to when the page filled: (control index, class text, caption).
+    /// `Caption()` reads it without raising OnResolveCaptionClass again (corpus misc/W2CaptionClass.al:113-116).
+    pub control_captions: Vec<(usize, String, String)>,
     /// Primary keys of the rows a repeater page has populated (its window).
     pub window: Vec<WindowRow>,
     /// The window holds the rows from the first row of the view on, with none missing: the page
@@ -351,6 +354,10 @@ pub struct PageState {
     pub focus_in_row: bool,
     /// Validation errors the client holds: (control index, stored text).
     pub errors: Vec<(usize, String)>,
+    /// The controls among `errors` whose refusal was an error of an AL trigger (the table's or the control's OnValidate),
+    /// not one of the client's own checks, with the trigger's message: Close validates those again
+    /// (pages/lt-ah-pages/AhPageTests.al:155-159).
+    pub trigger_errors: Vec<(usize, String)>,
     /// The started line's insert was refused and the client moved on without raising
     /// (corpus handlers/TestPageFailedInsert_Tests.al:1-30): `refused` keeps the line, `pending`
     /// is the line left behind by Previous()/First(), whose insert fails again at Close().
@@ -464,6 +471,7 @@ impl PageState {
             draft: false,
             dirty: false,
             frozen_visible: Vec::new(),
+            control_captions: Vec::new(),
             window: Vec::new(),
             window_from_start: false,
             window_eof: false,
@@ -477,6 +485,7 @@ impl PageState {
             focus: None,
             focus_in_row: false,
             errors: Vec::new(),
+            trigger_errors: Vec::new(),
             refused: false,
             close_error: false,
             selection: None,

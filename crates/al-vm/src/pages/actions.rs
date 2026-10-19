@@ -47,9 +47,9 @@ impl Session {
     /// pageextensiontrigger/TestModifiedControlValidateTriggers_Tests.al: AModifyBlocksOnDrillDownRunsForTheModifiedControl,
     /// AModifyBlocksOnLookupRunsForTheModifiedControl, ABaseControlsOwnOnAssistEditRuns,
     /// AModifyBlocksOnAssistEditRunsForTheModifiedControl, OnAssistEditIsRaisedOnlyForTheControlItWasCalledOn).
-    /// A DrillDown on a control with no trigger raises a fixed platform error (handlers/TestPageFieldDrillDown_Tests.al:
-    /// FieldDrillDownWithNoTriggerIsRefused). What AssistEdit and Lookup do without a trigger (a table
-    /// relation's lookup page) is not modelled.
+    /// A DrillDown or AssistEdit on a control with no trigger raises a fixed platform error (handlers/TestPageFieldDrillDown_Tests.al:
+    /// FieldDrillDownWithNoTriggerIsRefused), unless a DrillDown has a `DrillDownPageId` to open; a Lookup without a
+    /// trigger goes to [`field_lookup`](Self::field_lookup).
     pub(super) fn control_navigate(&mut self, st: &St, idx: usize, method: PageMethod) -> Result<Value, Signal> {
         let engine = self.engine();
         let ctl = &page_of(&engine, st).controls[idx];
@@ -69,12 +69,56 @@ impl Session {
             .into_iter()
             .chain(added.into_iter().map(|(e, r)| (Some(e), r)))
             .collect();
+        let lit = |p: &str| match ctl.prop(p) {
+            Some(ir::PropVal::Lit(v)) => Some(v.trim().trim_matches('"').to_string()),
+            _ => None,
+        };
+        let drill_page = lit("drilldownpageid");
+        if method == PageMethod::DrillDown {
+            // `DrillDown = false` refuses the drill-down before any trigger runs, for a control of the page and of a page
+            // extension alike (pageext/lt-u-page-props/UPageProps.al:113-127, `base_off`, `ext_off`).
+            if lit("drilldown").is_some_and(|v| v.eq_ignore_ascii_case("false")) {
+                // Pinned on pages only; on a request page it waits for a probe (docs/probes-needed.md).
+                if self.is_request_page(st) {
+                    return unsupported(format!(
+                        "TestRequestPage DrillDown on control {} with DrillDown = false on a request page (not pinned; probe wanted: its error text and code, and whether OnDrillDown runs)",
+                        ctl.name
+                    ));
+                }
+                return Err(error_code(
+                    "The NavDrilldownAction method is not supported.",
+                    "MethodNotSupported",
+                ));
+            }
+            if !found.is_empty() && drill_page.is_some() {
+                return unsupported(format!(
+                    "TestField.DrillDown on control {} with both an OnDrillDown trigger and a DrillDownPageId (not pinned)",
+                    ctl.name
+                ));
+            }
+        }
         let (owner, routine) = match found.as_slice() {
             [one] => *one,
             [] if method == PageMethod::DrillDown => {
-                return Err(error("The NavDrilldownAction method is not supported."));
+                if let Some(target) = drill_page {
+                    return self.drill_down_page(st, idx, &target);
+                }
+                // No trigger and no page: a fixed platform error with the code MethodNotSupported
+                // (report/lt-bj-request-drilldown/BjRequestDrillDown.al:226-227, UPageProps.al:122-123).
+                return Err(error_code(
+                    "The NavDrilldownAction method is not supported.",
+                    "MethodNotSupported",
+                ));
             }
             [] if method == PageMethod::Lookup => return self.field_lookup(st, idx),
+            // AssistEdit with no trigger: a fixed platform error, also on a control with a LookupPageId or over a table
+            // relation (pages/lt-page-editability-width-lookups/P115Lookups.al:182-190, lookups/W2Lookups.al:569, :593).
+            [] if method == PageMethod::AssistEdit => {
+                return Err(error_code(
+                    "The NavAssistEditAction method is not supported.",
+                    "MethodNotSupported",
+                ));
+            }
             [] => return unsupported(format!("TestField.{method} on a control with no {name} trigger")),
             _ => {
                 return unsupported(format!(
@@ -117,7 +161,17 @@ impl Session {
                     _ => Ok(Value::Null),
                 })
         } else {
-            self.owner_routine(st, owner, routine).map(|_| Value::Null)
+            let r = self.owner_routine(st, owner, routine).map(|_| Value::Null);
+            match r {
+                // An Error() of OnDrillDown comes out of the TestPage call with the test framework's prefix on its code
+                // (UPageProps.al:120-121, :124-125 `TestWrapped:Dialog`). Other codes, and errors of OnAssistEdit, are not
+                // pinned and keep their code.
+                Err(Signal::Error(mut e)) if method == PageMethod::DrillDown && e.code == "Dialog" => {
+                    e.code = "TestWrapped:Dialog".into();
+                    Err(Signal::Error(e))
+                }
+                other => other,
+            }
         };
         if result.is_err() {
             st.borrow_mut().refresh = false;
@@ -158,17 +212,25 @@ impl Session {
         let Some(field) = self.control_field(st, idx) else {
             return unsupported("TestField.Lookup on a control that is not bound to a table field");
         };
-        // A TableRelation on the page control opens the lookup page of that relation (pages/lt-page-editability-width-lookups/
-        // P115Lookups.al:120-122, P113Lookups.al:268); the client reads only the table field's relation, so it refuses.
-        {
+        let (ctl_relation, ctl_page, ctl_name) = {
             let engine = self.engine();
             let c = &page_of(&engine, st).controls[idx];
-            if c.prop("tablerelation").is_some() {
-                return unsupported(format!(
-                    "Lookup on control {} with its own TableRelation: the test client does not read a control-level relation",
-                    c.name
-                ));
-            }
+            let lit = |p: &str| match c.prop(p) {
+                Some(ir::PropVal::Lit(v)) => Some(v.trim().to_string()),
+                _ => None,
+            };
+            (lit("tablerelation"), lit("lookuppageid"), c.name.clone())
+        };
+        if let Some(text) = ctl_relation {
+            return self.control_relation_lookup(st, idx, &field, &text, ctl_page.as_deref());
+        }
+        // A control LookupPageId over a field with no relation: the Lookup raises nothing, needs no handler and leaves the
+        // value (pageext/lt-z-modify-controls/ZModifyControls.al:435-452, the property set by a modify block). Over a
+        // field with a TableRelation, which page opens is not pinned.
+        if ctl_page.is_some() && field.relation {
+            return unsupported(format!(
+                "Lookup on control {ctl_name} with a LookupPageId over a field with a TableRelation (which page opens is not pinned)"
+            ));
         }
         if let Some((object, routine)) = field.on_lookup {
             let rec = self.page_rec(st);
@@ -238,6 +300,123 @@ impl Session {
                 "Lookup over a TableRelation with a where() clause (the lookup page's filter is not pinned)",
             );
         }
+        self.lookup_through_page(st, idx, &field, page_object, arm.field)
+    }
+
+    /// `Lookup()` on a control with its own `TableRelation` (and no OnLookup): the lookup page opens modally and the pick
+    /// writes the relation's field. The page is the control's `LookupPageId` (pages/lt-page-editability-width-lookups/
+    /// P115Lookups.al:108-124 P115_Lookup_PageIdAndRelation_OK: the related table has none; a pick writes `Descr`, the
+    /// relation's field) or else the related table's `LookupPageId` (pages/lt-page-autoformat-lookups/P113Lookups.al:253-270
+    /// P113_LK_LookupWithPageRelation). Not pinned, so refused: a where() or conditional relation, a control relation over
+    /// a field with its own relation or OnLookup, two different pages, a table with only a DrillDownPageId or no page.
+    fn control_relation_lookup(
+        &mut self,
+        st: &St,
+        idx: usize,
+        field: &ir::Field,
+        text: &str,
+        ctl_page: Option<&str>,
+    ) -> Result<Value, Signal> {
+        if field.relation || field.on_lookup.is_some() {
+            return unsupported(
+                "Lookup on a control with its own TableRelation over a field with a TableRelation or an OnLookup of its own (which one wins is not pinned)",
+            );
+        }
+        let Some((table_name, field_name)) = simple_relation(text) else {
+            return unsupported(format!(
+                "Lookup on a control whose own TableRelation `{text}` is not a plain Table.Field (a where() or conditional control relation is not pinned)"
+            ));
+        };
+        let engine = self.engine();
+        let names =
+            |o: &al_ir::Object, n: &str| o.name.eq_ignore_ascii_case(n) || o.id.is_some_and(|i| i.to_string() == n);
+        let tables: Vec<usize> = (0..engine.program.objects.len())
+            .filter(|&i| {
+                let o = &engine.program.objects[i];
+                o.is_kind(al_ir::ObjKind::Table) && o.table.is_some() && names(o, &table_name)
+            })
+            .collect();
+        let [table] = tables.as_slice() else {
+            return unsupported(format!(
+                "Lookup on a control whose own TableRelation names table {table_name}, which is not one table of the workspace"
+            ));
+        };
+        let table_obj = &engine.program.objects[*table];
+        let pos = match &field_name {
+            None => None,
+            Some(n) => {
+                let Some(p) = table_obj
+                    .table
+                    .as_ref()
+                    .and_then(|t| t.fields.iter().position(|f| f.name.eq_ignore_ascii_case(n)))
+                else {
+                    return unsupported(format!(
+                        "Lookup on a control whose own TableRelation names field {n}, which table {table_name} does not have"
+                    ));
+                };
+                Some(p)
+            }
+        };
+        let table_page = table_obj
+            .properties
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case("LookupPageId"))
+            .map(|(_, v)| v.trim().trim_matches('"').to_string());
+        let ctl_page = ctl_page.map(|p| p.trim_matches('"').to_string());
+        let find_page = |n: &str| {
+            engine
+                .program
+                .objects
+                .iter()
+                .position(|o| o.is_kind(al_ir::ObjKind::Page) && names(o, n))
+        };
+        let wanted = match (&ctl_page, &table_page) {
+            (Some(c), Some(t)) if find_page(c) != find_page(t) => {
+                return unsupported(format!(
+                    "Lookup on a control whose LookupPageId {c} differs from the LookupPageId {t} of the related table (which one opens is not pinned)"
+                ));
+            }
+            (Some(c), _) => c.clone(),
+            (None, Some(t)) => t.clone(),
+            (None, None) => {
+                return unsupported(format!(
+                    "Lookup on a control with its own TableRelation to table {table_name}, which has no LookupPageId, and no LookupPageId on the control (not pinned)"
+                ));
+            }
+        };
+        let Some(page_object) = find_page(&wanted) else {
+            if names_uncompiled_page(&engine, &wanted) {
+                return unsupported(format!(
+                    "the lookup page {wanted} belongs to a dependency app and was not compiled (no code the workspace reaches uses it)"
+                ));
+            }
+            return unsupported(format!("the lookup page {wanted} names no page of the workspace"));
+        };
+        let source_table = engine.program.objects[page_object]
+            .properties
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case("SourceTable"))
+            .map(|(_, v)| v.trim().trim_matches('"').to_string());
+        if !source_table.is_some_and(|t| names(table_obj, &t)) {
+            return unsupported(format!(
+                "Lookup through page {wanted}, whose source table is not the related table {table_name} (not pinned)"
+            ));
+        }
+        self.lookup_through_page(st, idx, field, page_object, pos)
+    }
+
+    /// The lookup page of a relation opens modally on a blank field and a confirmed pick is written back through the
+    /// control: `pos` is the related field (`None`: the first primary key field). Pinned for a table field's relation
+    /// (handlers/TestPageFieldRelationLookup_Tests.al:104, :122, :142) and a control's own relation (P115Lookups.al:108-124,
+    /// P113Lookups.al:253-270).
+    fn lookup_through_page(
+        &mut self,
+        st: &St,
+        idx: usize,
+        field: &ir::Field,
+        page_object: usize,
+        pos: Option<usize>,
+    ) -> Result<Value, Signal> {
         let current = self.control_value(st, idx)?;
         if !Self::same_values(
             std::slice::from_ref(&current),
@@ -259,7 +438,7 @@ impl Session {
         }
         let picked = self.page_rec(&related);
         let table_def = self.table(&picked)?;
-        let pos = arm.field.unwrap_or(table_def.keys[0][0]);
+        let pos = pos.unwrap_or(table_def.keys[0][0]);
         let value = picked.borrow().fields[pos].clone();
         st.borrow_mut().refresh = false;
         // The control's OnAfterLookup(Selected: RecordRef) runs with the picked row before the value is written, so Rec still holds
@@ -288,6 +467,58 @@ impl Session {
             }
         }
         self.control_set_value(st, idx, &mut [value])?;
+        Ok(Value::Null)
+    }
+
+    /// `TestField.DrillDown` on a control with a `DrillDownPageId` and no OnDrillDown trigger: that page opens non-modally
+    /// and a `PageHandler` answers it; the control keeps its value (pages/lt-page-autoformat-lookups/P113Lookups.al:300-314
+    /// P113_LK_DrilldownNonModal, a page of another table; pageext/lt-page-ext-properties/PageExtDrillDownPageId.al:64-79,
+    /// the property set by a page extension's modify block). On a request page nothing opens and nothing is raised
+    /// (report/lt-bj-request-drilldown/BjRequestDrillDown.al:7-9, :223-231). Which rows the page shows and the row it
+    /// opens on are not pinned (both probes have one row in the target table), so a target table with more rows, or a
+    /// field with a relation, is refused.
+    fn drill_down_page(&mut self, st: &St, idx: usize, target: &str) -> Result<Value, Signal> {
+        if self.is_request_page(st) {
+            return Ok(Value::Null);
+        }
+        let engine = self.engine();
+        let ctl = &page_of(&engine, st).controls[idx];
+        if ctl.prop("tablerelation").is_some() || self.control_field(st, idx).is_some_and(|f| f.relation) {
+            return unsupported(format!(
+                "DrillDown through the DrillDownPageId of control {} over a TableRelation (the filter of the page that opens is not pinned)",
+                ctl.name
+            ));
+        }
+        let page_object = engine.program.objects.iter().position(|o| {
+            o.is_kind(al_ir::ObjKind::Page)
+                && (o.name.eq_ignore_ascii_case(target) || o.id.is_some_and(|i| i.to_string() == target))
+        });
+        let Some(page_object) = page_object else {
+            if names_uncompiled_page(&engine, target) {
+                return unsupported(format!(
+                    "the DrillDownPageId of control {} is page {target}, which belongs to a dependency app and was not compiled (no code the workspace reaches uses it)",
+                    ctl.name
+                ));
+            }
+            return unsupported(format!(
+                "the DrillDownPageId {target} of control {} names no page of the workspace",
+                ctl.name
+            ));
+        };
+        let related = Rc::new(RefCell::new(PageState::closed(page_object as u32)));
+        self.page_instance(&related)?;
+        if self.has_source(&related) {
+            let probe = Rc::new(RefCell::new(self.page_rec(&related).borrow().clone()));
+            let rows = self.record_op(RecordOp::Count, &probe, &mut [])?;
+            if !matches!(rows, Value::Integer(n) if n <= 1) {
+                return unsupported(format!(
+                    "DrillDown through DrillDownPageId {target} onto a table with more than one row (the filter and the first row of the page that opens are not pinned)"
+                ));
+            }
+        }
+        st.borrow_mut().refresh = false;
+        self.run_page_ui(&related, None, false)?;
+        self.run_refresh(st)?;
         Ok(Value::Null)
     }
 
@@ -1127,5 +1358,37 @@ impl Session {
             self.torn_down_on_error(st, r)?;
         }
         Ok(())
+    }
+}
+
+/// A `TableRelation` of the plain shape `Table` or `Table.Field` (each name bare or in double quotes): the table and
+/// field names. Any other shape (`where`, `if`, `filter`) gives `None`.
+fn simple_relation(text: &str) -> Option<(String, Option<String>)> {
+    let mut names = Vec::new();
+    let mut rest = text.trim();
+    loop {
+        let (name, after) = if let Some(r) = rest.strip_prefix('"') {
+            let end = r.find('"')?;
+            (r[..end].to_string(), &r[end + 1..])
+        } else {
+            let end = rest
+                .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+                .unwrap_or(rest.len());
+            if end == 0 {
+                return None;
+            }
+            (rest[..end].to_string(), &rest[end..])
+        };
+        names.push(name);
+        let after = after.trim_start();
+        if after.is_empty() {
+            break;
+        }
+        rest = after.strip_prefix('.')?.trim_start();
+    }
+    match names.as_slice() {
+        [t] => Some((t.clone(), None)),
+        [t, f] => Some((t.clone(), Some(f.clone()))),
+        _ => None,
     }
 }

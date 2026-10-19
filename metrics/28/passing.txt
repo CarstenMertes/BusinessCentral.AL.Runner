@@ -5322,6 +5322,8 @@
 68678 TwoExtensions_EditableAndEnabled
 68678 TwoExtensions_OptionCaption
 68678 TwoExtensions_Visible
+68692 AssistEdit_NoTrigger
+68692 AssistEdit_OnRelationField
 68692 ControlOnLookup_ReturnsFalse
 68692 ControlOnLookup_ReturnsTrue_EmptyField
 68692 ControlOnLookup_ReturnsTrue_FieldWithValue
@@ -5842,6 +5844,7 @@
 69560 FeatureKey_RowsPerId_PerMeasuredVersion
 69592 PageExt_ActionStates
 69592 PageExt_DecimalPlacesAndAutoFormat
+69592 PageExt_DrillDownOnAndOff
 69592 PageExt_FieldAndGroupStates
 69592 PageExt_PartStates
 69592 PageIntent_ApiPageOpenEditKeepsReadOnly
@@ -7010,9 +7013,11 @@
 70201 ClearRecordWithEnumFields
 70202 GetWithInteger
 70202 GetWithOtherEnum
+70212 P115_AssistEdit_OnFieldsWithoutTrigger
 70212 P115_AssistEdit_Trigger
 70212 P115_AssistEdit_WithLookupPageId
 70212 P115_Lookup_OnAssistEditField_NoLookupTarget
+70212 P115_Lookup_PageIdAndRelation_OK
 70221 P115_Width_Card_ValuesNotTruncated
 70221 P115_Width_List
 70232 P144_Dec_Precision
@@ -9156,6 +9161,7 @@
 71852 P112_Run_AssistEdit
 71852 P112_Run_Cancel
 71852 P112_Run_DrillDown
+71852 P112_Run_FieldsWithoutTrigger
 71852 P112_Run_Instance_AssistEdit
 71852 P112_Run_SetValueThenTriggers
 71866 P112_Drill_ExtensionField
@@ -9672,6 +9678,7 @@
 72363 P123_RunPageLink
 72363 P123_RunPageMode
 72363 P123_RunPageView
+72374 P123_DrillDownPageIdFromExtension
 72378 P123_ExtensionViewDeclaredOnly
 72381 P123_LockedCaptionInExtension
 72410 P106_Run_LiteralNumbers
@@ -10483,9 +10490,11 @@
 73095 P113_LK_CaseInsensitive
 73095 P113_LK_ConditionalRelation_Filtered
 73095 P113_LK_ConditionalRelation_Match
+73095 P113_LK_LookupWithPageRelation
 73095 P113_LK_NoRelationOnTheTable
 73095 P113_LK_UnknownValue
 73095 P113_LK_ValidValue
+73096 P113_LK_DrilldownNonModal
 73102 P113_MA_ActionsAreVisible
 73102 P113_MA_ActionsInvoke
 73102 P113_MA_ActionsWithoutSelectedRow
@@ -12503,6 +12512,8 @@
 76220 ZCustInsertAllowed
 76220 ZCustModifyAllowed
 76220 ZCustPromotedActionCategories_ActionUnchanged
+76360 ZAssistEdit_TriggerFires
+76360 ZBlankZero_TestPageText
 76360 ZCaptionClass_LiteralAndResolved
 76360 ZClosingDates_ValueAndStored
 76360 ZHideValue_TrueAndFalse
@@ -12883,6 +12894,7 @@
 81450 B_NextTest_LastErrorIsEmpty
 81450 C_TrapsAnErrorForTheNextCodeunit
 81451 FirstTest_LastErrorIsEmpty
+81666 RequestPage_DrillDownPageId
 81891 Areas_OpenEdit
 81891 Areas_OpenNew
 81891 Areas_OpenView

@@ -151,7 +151,13 @@ impl Session {
         // A page is opened by the client side of the test runner, which is what the error names
         // (errors/lt-last-error-and-events/P70_06RunModalField.al:RunModal_UnknownPageId: Page.RunModal and Page.Run of
         // an unknown id, and of id 0).
-        let caller = if kind == "Page" { "Test Runner - Mgt" } else { caller };
+        // Inside a try function the page error names the outermost object as the other kinds do (platform/
+        // lt-xmlport-session-navapp-cookie/P94PageRun.al:211 Run_UnknownPage, misc/W5MissingObject.al:52 `run_missing_page`).
+        let caller = if kind == "Page" && self.tx.try_depth == 0 {
+            "Test Runner - Mgt"
+        } else {
+            caller
+        };
         let major = self.engine.target.as_ref().map_or(29, |t| t.bc.major);
         al_error_code(
             &format!(

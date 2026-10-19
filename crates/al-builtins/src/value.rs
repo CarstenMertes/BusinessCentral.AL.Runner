@@ -359,6 +359,10 @@ pub struct PageState {
     pub pending: Option<Vec<Value>>,
     /// Opened by AL code (`Page.RunModal`, `Page.Run`) and answered by a handler, not by the test.
     pub modal: bool,
+    /// Whether the last run of this variable was modal (`None` before the first run): a second non-modal Run runs OnInit again.
+    pub last_run_modal: Option<bool>,
+    /// The rows of a tree (a repeater with ShowAsTree) expanded with `Expand(true)`, by primary key.
+    pub expanded: Vec<Vec<Value>>,
     pub lookup: bool,
     /// The `Action` the page closed with, once it has.
     pub result: Option<String>,
@@ -475,6 +479,8 @@ impl PageState {
             selection: None,
             pending: None,
             modal: false,
+            last_run_modal: None,
+            expanded: Vec::new(),
             lookup: false,
             result: None,
             trapping: false,

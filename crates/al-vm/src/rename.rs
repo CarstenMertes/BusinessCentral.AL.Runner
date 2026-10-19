@@ -61,7 +61,10 @@ impl Session {
                 for arm in arms {
                     match arm.table {
                         Some(a) if a == t.object as usize => {
-                            if arm.conditions.iter().any(|c| c.filter) {
+                            // A `Field = filter(<> X)` arm is pinned (record/lt-table-relation-arms/TableRelationArms.al:208
+                            // Rename_FollowsOnlyTheArmsThatApply: the rows the filter takes follow the rename, the others
+                            // stay); any other filter form is the assumption.
+                            if arm.conditions.iter().any(|c| c.filter && !single_not_equal(&c.value)) {
                                 al_builtins::assumptions::assume(
                                     al_builtins::assumptions::Assumption::RenameFollowsFilterConditionArms,
                                 );
@@ -239,5 +242,15 @@ impl Session {
             }
         }
         Ok(())
+    }
+}
+
+/// Whether a `filter(...)` condition's text is one `<> value` (no `&`, `|`, range or wildcard).
+fn single_not_equal(v: &al_ir::Const) -> bool {
+    match v {
+        al_ir::Const::Text(t) => t.trim().strip_prefix("<>").is_some_and(|rest| {
+            !rest.trim().is_empty() && !rest.contains(['&', '|', '.', '<', '>', '=', '*', '?', '@', '(', ')'])
+        }),
+        _ => false,
     }
 }

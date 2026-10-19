@@ -57,3 +57,32 @@ fn a_codeunit_is_found_by_id_as_the_first_object_in_program_order() {
     assert_eq!(engine.compiled_codeunit(Some(8)), None);
     assert_eq!(engine.compiled_codeunit(Some(10)), Some(6));
 }
+
+/// `Engine::derived`: data a crate above the VM works out from the engine's program once, shared by every session and
+/// worker thread of the engine.
+#[test]
+fn derived_data_is_made_once_per_engine_and_type() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    struct Count(usize);
+    struct Other;
+    let made = AtomicUsize::new(0);
+    let make = || Count(made.fetch_add(1, Ordering::Relaxed) + 1);
+    let engine = Engine::new(Program::default(), Vec::new());
+    let a = engine.derived(make);
+    let b = engine.derived(make);
+    assert!(Arc::ptr_eq(&a, &b));
+    assert_eq!((a.0, made.load(Ordering::Relaxed)), (1, 1));
+    // Another type has a slot of its own.
+    let _ = engine.derived(|| Other);
+    assert_eq!(engine.derived(make).0, 1);
+    // Another engine makes its own.
+    let other = Engine::new(Program::default(), Vec::new());
+    assert_eq!(other.derived(make).0, 2);
+    // Threads share the one value.
+    let engine2 = engine.clone();
+    let from_thread = std::thread::spawn(move || engine2.derived(|| Count(99)).0)
+        .join()
+        .unwrap();
+    assert_eq!(from_thread, 1);
+}

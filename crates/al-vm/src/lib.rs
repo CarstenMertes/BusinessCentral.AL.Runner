@@ -113,6 +113,8 @@ pub struct Engine {
     codeunits: std::collections::HashMap<Option<u32>, CodeunitsWithId>,
     /// Per object, the provider of a virtual platform table, found when the first session is made (`platform/mod.rs`).
     pub(crate) served_tables: std::sync::OnceLock<Arc<[Option<al_builtins::platform::Virtual>]>>,
+    /// What crates above the VM work out from this engine's program once, by type (see [`Engine::derived`]).
+    derived: std::sync::Mutex<std::collections::HashMap<std::any::TypeId, Arc<dyn std::any::Any + Send + Sync>>>,
 }
 
 /// The codeunit objects with one id, first in program order.
@@ -307,6 +309,7 @@ impl Engine {
             positions_by_object: Default::default(),
             codeunits,
             served_tables: Default::default(),
+            derived: Default::default(),
         })
     }
 
@@ -319,6 +322,20 @@ impl Engine {
     /// The first codeunit with this id in program order, compiled or a shell of a dependency app that was not compiled.
     pub fn codeunit_object(&self, id: Option<u32>) -> Option<usize> {
         self.codeunits.get(&id).and_then(|c| c.any)
+    }
+
+    /// The value of type `T` made from this engine's program, made by `make` the first time it is asked for and shared
+    /// by every session and thread of the engine after that: for data that depends on the program alone (al-testrun's
+    /// index of the static reach). `make` must not ask the engine for derived data itself.
+    pub fn derived<T: std::any::Any + Send + Sync>(&self, make: impl FnOnce() -> T) -> Arc<T> {
+        let mut slots = self.derived.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let slot = slots
+            .entry(std::any::TypeId::of::<T>())
+            .or_insert_with(|| Arc::new(make()) as Arc<dyn std::any::Any + Send + Sync>)
+            .clone();
+        drop(slots);
+        slot.downcast::<T>()
+            .expect("a derived value is stored under its own type")
     }
 }
 

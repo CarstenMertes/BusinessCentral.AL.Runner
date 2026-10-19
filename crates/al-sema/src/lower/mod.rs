@@ -167,6 +167,9 @@ pub(crate) struct Lowerer<'a> {
     /// Declared text of Label variables, by lowercase name; reads lower to that constant.
     global_labels: HashMap<String, String>,
     local_labels: HashMap<String, String>,
+    /// The Label-typed variables declared `TextConst`, by lowercase name (a Label and a TextConst share `Ty::Label`).
+    global_textconsts: std::collections::HashSet<String>,
+    local_textconsts: std::collections::HashSet<String>,
     /// The record of each `with` statement being lowered, by the start offset of the statement.
     with_places: HashMap<usize, ir::Place>,
     reasons: Vec<String>,

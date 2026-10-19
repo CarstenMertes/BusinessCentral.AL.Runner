@@ -64,9 +64,11 @@ impl Session {
 
     pub(crate) fn http_send_impl(&mut self, request: HttpOutgoing) -> Result<TestHttpResponseState, Signal> {
         let policy = self.http_policy;
-        // Before BC 29 a handler does not answer under BlockOutboundRequests: the request raises as if none were bound, and
-        // the test does not fail for a handler that never ran (al-language-onprem/session/PZHttpBlock.al:54-57 passes on
-        // BC 27 and 28 with the error).
+        // Before BC 29 a handler does not answer under BlockOutboundRequests: the request raises as if none were bound
+        // (al-language-onprem/session/PZHttpBlock.al:55, the `#else` branch of Handler_UnderBlockOutboundRequests_StillAnswers).
+        // The test does not fail for a handler that never ran: that test, with `[HandlerFunctions('Handler')]` (:44) and the
+        // error expected, passes on real BC 27 and 28 (oracle/27/junit-onprem.xml:430, oracle/28/junit-onprem.xml:445). So the
+        // bound handler counts as executed.
         let mut bound = self.has_http_handler();
         if bound
             && policy == Some("BlockOutboundRequests")

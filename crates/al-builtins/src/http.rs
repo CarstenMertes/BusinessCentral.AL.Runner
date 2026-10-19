@@ -1171,11 +1171,18 @@ fn write_from_stream(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) ->
 }
 
 /// `ReadAs(var Text)` gives the body back, UTF-8 decoded; a content nobody wrote to reads as an empty text and
-/// answers true (misc/W4XmlJsonHttp.al:ReadAs_FreshContent); the content a request has when none was set answers
-/// false and leaves the text (network/lt-http/HttpRequest.al:FreshRequestContent); called as a statement on that content
-/// it raises `NotInitialized` (misc/W4XmlJsonHttp.al:343, RequestWithoutContent_ReadAs).
+/// answers true (misc/W4XmlJsonHttp.al:ReadAs_FreshContent). On the content a request has when none was set, three shapes are
+/// pinned:
+/// - `Req.Content.ReadAs(Txt)` with its result used answers false and leaves the text (network/lt-http/HttpRequest.al:220,
+///   FreshRequestContent);
+/// - `Req.Content.ReadAs(Txt)` as a statement raises `NotInitialized` (misc/lt-probes-needed-5/PnE12HttpContent.al:205,
+///   RequestWithoutContent, under asserterror);
+/// - a copy of it in a variable (`Content := Req.Content`), called as a statement, raises `NotInitialized`
+///   (misc/W4XmlJsonHttp.al:342-343, RequestWithoutContent_ReadAs, through a TryFunction).
+///
+/// A copy with the result used is refused. Probe wanted (docs/probes-needed.md).
 fn read_as(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
-    let (data, uninit, charset) = with_content(r, |s| {
+    let (data, uninit, copied, charset) = with_content(r, |s| {
         let charset = s
             .headers
             .borrow()
@@ -1208,16 +1215,19 @@ fn read_as(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
                 None => bag.items.push(("Content-Length".into(), len)),
             }
         }
-        (s.data.clone(), s.uninitialized, charset)
+        (s.data.clone(), s.uninitialized, s.copied, charset)
     })?;
     if uninit {
-        if !c.ret_used() {
-            return raise(
+        return match (copied, c.ret_used()) {
+            (false, true) => Ok(Value::Boolean(false)),
+            (_, false) => raise(
                 "Microsoft.Dynamics.Nav.Runtime.NavHttpContent variable not initialized.",
                 "NotInitialized",
-            );
-        }
-        return Ok(Value::Boolean(false));
+            ),
+            (true, true) => unsupported(
+                "HttpContent.ReadAs with its result used, on a copy of the content of a request that has none (not pinned)",
+            ),
+        };
     }
     // The body is read with the charset of the Content-Type header (lt-http-header-rules/P87ContentType.al:ReadAsIgnoresCharsetHeader,
     // whatever its name says: iso-8859-1 reads each byte as a character, utf-16 reads little-endian units, a lone last byte is U+FFFD;
@@ -1252,8 +1262,9 @@ fn read_as_stream(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Ou
         s.stream_taken = true;
         (out, s.uninitialized)
     })?;
+    // On the content of a request that has none, only ReadAs(Text) is pinned (see `read_as`). Probe wanted (docs/probes-needed.md).
     if uninit {
-        return Ok(Value::Boolean(false));
+        return unsupported("HttpContent.ReadAs(InStream) on the content of a request that has none (not pinned)");
     }
     crate::stream::set_stream(
         &a[0],
@@ -1801,6 +1812,7 @@ impl HttpContentState {
             uninitialized: self.uninitialized,
             stream_taken: self.stream_taken,
             written: self.written,
+            copied: true,
         }
     }
 

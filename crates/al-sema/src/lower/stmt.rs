@@ -23,6 +23,7 @@ impl Lowerer<'_> {
         };
         self.locals.clear();
         self.local_labels.clear();
+        self.local_textconsts.clear();
         self.tys.clear();
         self.tys_on = true;
         let mut locals = Vec::new();
@@ -72,6 +73,9 @@ impl Lowerer<'_> {
             for n in v.names() {
                 if let Some(l) = &label {
                     self.local_labels.insert(n.to_lowercase(), l.clone());
+                }
+                if is_textconst(v.type_ref().as_ref()) {
+                    self.local_textconsts.insert(n.to_lowercase());
                 }
                 if let Some(why) = refusal {
                     self.reasons.push(format!("`{n}`: {why}"));
@@ -560,6 +564,9 @@ impl Lowerer<'_> {
             ExitStmt => match kids.first() {
                 None => Ok(ir::Stmt::Exit(None)),
                 Some(e) => self.expr(e).and_then(|v| {
+                    if let Some(decl) = self.ret_decl.clone() {
+                        self.refuse_textconst_into_variant(&decl, e)?;
+                    }
                     // A DotNet result must fit the return type exactly (ADR-014). An interface
                     // result takes what an interface variable takes: a codeunit that implements
                     // it, an enum, or an interface it extends (codeunit/TestInterfaceRuntimeContracts.al:
@@ -961,6 +968,7 @@ impl Lowerer<'_> {
                 ));
             }
         }
+        self.refuse_textconst_into_variant(&target_ty, &kids[1])?;
         let value = match op_kind {
             _ if variant_into_text_field => value,
             Some(SyntaxKind::Assign) | None => self.convert_to(&target_ty, self.ty_ref(&kids[1]), value)?,

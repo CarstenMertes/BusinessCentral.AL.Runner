@@ -91,6 +91,7 @@ impl Lowerer<'_> {
                             out.push(ir::Arg::Value(value));
                             continue;
                         }
+                        self.refuse_textconst_into_variant(&p.ty, a)?;
                         out.push(ir::Arg::Value(self.convert_to(&p.ty, self.ty_ref(a), value)?));
                     }
                 }

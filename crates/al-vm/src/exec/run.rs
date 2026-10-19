@@ -806,6 +806,49 @@ impl Session {
     }
 
     #[inline(never)]
+    /// `Media.ImportStream` on a field of a record, from a stream on a Blob field of that same record. Two shapes are pinned:
+    /// - the Blob was written, then the row inserted and the Blob fetched with CalcFields: on BC 29 the field gets no value and no
+    ///   Tenant Media row is written (misc/lt-probes-needed-5/PnE06Media.al:66-84, ImportStream_ThreeArguments_ForComparison);
+    /// - the row was inserted, then the Blob written, the row modified and the Blob fetched: the import works on every major
+    ///   (streams/lt-stream-read-write-media/P102Media.al:24-41 with P102Fixtures.al:24-30, :57-73).
+    ///
+    /// Why BC drops the first import is not pinned, so a Blob whose content an Insert stored (`BlobBuf::inserted`) is refused.
+    /// Probe wanted (docs/probes-needed.md).
+    fn refuse_media_import_from_own_blob(
+        &mut self,
+        site: &BuiltinSite,
+        values: &[Value],
+        f: &mut Frame,
+    ) -> Result<(), Signal> {
+        let Some(ir::Arg::Ref(ir::Place::Field(rec, _))) = &site.receiver_arg else {
+            return Ok(());
+        };
+        let blob = match values.first() {
+            Some(Value::Library(_, h)) => match &*h.borrow() {
+                al_builtins::value::LibraryValue::InStream(s) => s.live_blob().cloned(),
+                _ => None,
+            },
+            _ => None,
+        };
+        let Some(blob) = blob else {
+            return Ok(());
+        };
+        if let Value::Record(r) = self.read(rec, f)? {
+            if blob.borrow().inserted
+                && r.borrow()
+                    .fields
+                    .iter()
+                    .any(|v| matches!(v, Value::Blob(b) if std::sync::Arc::ptr_eq(b, &blob)))
+            {
+                return Err(Signal::Unsupported(
+                    "Media.ImportStream from a stream on a Blob field of the same record (BC 29 imports nothing; why is not pinned)"
+                        .into(),
+                ));
+            }
+        }
+        Ok(())
+    }
+
     fn run_builtin(&mut self, site: &BuiltinSite, f: &mut Frame, nl: u16) -> Result<Value, Signal> {
         let recv = site.receiver.map(|r| take(f, r, nl));
         let mut values = if site.arg_regs.is_empty() {
@@ -835,6 +878,12 @@ impl Session {
         let Some(native) = site.native else {
             return Err(Signal::Unsupported(format!("builtin {}", site.id)));
         };
+        if matches!(
+            site.id,
+            al_builtins::builtin_id::ids::MEDIA_IMPORTSTREAM_1 | al_builtins::builtin_id::ids::MEDIA_IMPORTSTREAM_2
+        ) {
+            self.refuse_media_import_from_own_blob(site, &values, f)?;
+        }
         if site.id == al_builtins::builtin_id::ids::SYSTEM_CLEAR_1 {
             // `Clear` of a Variant empties it, whatever it holds (types/lt-variant/VaTIs*.al:Is_Empty_Variant `V := 5; Clear(V)`
             // has no type flag left); the native clears a value to the default of its own kind.

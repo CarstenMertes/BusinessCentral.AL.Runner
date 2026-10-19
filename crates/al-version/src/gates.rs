@@ -147,7 +147,8 @@ pub enum Gate {
     /// Not consumed yet; the test is refused by the runtime today.
     FileDownloadWithoutClientFrom28,
     /// Under `TestHttpRequestPolicy = BlockOutboundRequests` an `[HttpClientHandler]` answers the request from BC 29; before,
-    /// the request raises the unhandled-request error as if no handler were bound (al-language-onprem/session/PZHttpBlock.al:54-57).
+    /// the request raises the unhandled-request error as if no handler were bound, and the unused handler does not fail the test
+    /// (al-language-onprem/session/PZHttpBlock.al:43-58 passes on BC 27 and 28: oracle/27/junit-onprem.xml:430, oracle/28/junit-onprem.xml:445).
     HttpHandlerUnderBlockOutboundRequestsFrom29,
     /// `HttpHeaders.Add` with a name of blanks raises `InvalidHeader:Format` from BC 29 and `InvalidHeader:Argument` on BC 28
     /// (network/lt-http/HttpHeaders.al:304-308).

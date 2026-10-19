@@ -189,6 +189,8 @@ pub(crate) fn make_lowerer<'a>(sh: &'a Shared<'a>, tl: &'a Local<'a>, seq: &'a S
         locals: Default::default(),
         global_labels: HashMap::default(),
         local_labels: HashMap::default(),
+        global_textconsts: Default::default(),
+        local_textconsts: Default::default(),
         with_places: HashMap::default(),
         reasons: Vec::new(),
         calls: Vec::new(),
@@ -430,6 +432,9 @@ pub(crate) fn lower_object<'a>(
         for n in v.names() {
             if let Some(l) = &label {
                 lw.global_labels.insert(n.to_lowercase(), l.clone());
+            }
+            if is_textconst(v.type_ref().as_ref()) {
+                lw.global_textconsts.insert(n.to_lowercase());
             }
             if let Some(why) = refusal {
                 global_reasons.push(format!("global `{n}`: {why}"));
@@ -985,6 +990,11 @@ pub(crate) fn label_text(t: &ast::TypeRef) -> Option<String> {
         .collect();
     let pick = texts.iter().find(|(lang, _)| lang.text().eq_ignore_ascii_case("ENU"))?;
     Some(unquote(pick.1.text()))
+}
+
+/// Whether a declaration is of type `TextConst`.
+pub(crate) fn is_textconst(t: Option<&ast::TypeRef>) -> bool {
+    t.is_some_and(|t| t.type_name().eq_ignore_ascii_case("textconst"))
 }
 
 /// The lowering reason of a declaration that cannot be read: a `TextConst` with no `ENU` text. Which text such a

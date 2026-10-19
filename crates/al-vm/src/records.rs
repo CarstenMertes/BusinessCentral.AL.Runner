@@ -991,6 +991,16 @@ impl Session {
         self.auto_calculate(rec)
     }
 
+    /// Marks the Blobs that hold content, in the stored row and in the record, as stored by an `Insert` (`inserted`) or not (a `Modify`).
+    fn mark_blobs_inserted(rec: &Rec, stored: &[Value], inserted: bool) {
+        for v in stored.iter().chain(rec.borrow().fields.iter()) {
+            if let Value::Blob(b) = v {
+                let mut b = b.borrow_mut();
+                b.inserted = inserted && !b.bytes.is_empty();
+            }
+        }
+    }
+
     /// The row to hand to the store: a database table keeps its own copy of every Blob.
     fn to_store(rec: &Rec, mut row: Vec<Value>) -> Vec<Value> {
         if rec.borrow().temp_id.is_none() {
@@ -1035,14 +1045,15 @@ impl Session {
             // A row that is not stored (a copy of a record never inserted) leaves the Blob empty: the buffer
             // showed `*` after `Copy1 := Row`, and CalcFields reads nothing back
             // (types/ProbeTypeFormsAndFilters.al:FormatRecord_AssignmentCopiesBlobBytes, BC 27.5).
-            let (bytes, pending) = match stored.as_ref().map(|row| row[pos].clone()) {
+            let (bytes, pending, inserted) = match stored.as_ref().map(|row| row[pos].clone()) {
                 Some(Value::Blob(src)) => {
                     let src = src.borrow();
-                    (src.bytes.clone(), src.render_pending.clone())
+                    (src.bytes.clone(), src.render_pending.clone(), src.inserted)
                 }
-                _ => (Vec::new(), None),
+                _ => (Vec::new(), None, false),
             };
             let mut b = buf.borrow_mut();
+            b.inserted = inserted;
             b.bytes = bytes;
             b.written = false;
             b.fetched = true;
@@ -1401,6 +1412,7 @@ impl Session {
                     return self.fail_unique(&t, unique_key, &row);
                 }
                 let stored = Self::to_store(rec, self.stored_view(&t, &row));
+                Self::mark_blobs_inserted(rec, &stored, true);
                 match self
                     .store_for(rec)
                     .insert(&cx, &t, stored.clone())
@@ -1583,6 +1595,7 @@ impl Session {
                     return self.fail_unique(&t, unique_key, &row);
                 }
                 let stored = Self::to_store(rec, self.stored_view(&t, &row));
+                Self::mark_blobs_inserted(rec, &stored, false);
                 match self
                     .store_for(rec)
                     .modify(&cx, &t, stored.clone())

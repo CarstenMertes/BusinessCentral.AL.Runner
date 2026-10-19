@@ -184,6 +184,8 @@ pub(crate) fn make_lowerer<'a>(sh: &'a Shared<'a>, tl: &'a Local<'a>, seq: &'a S
         oi,
         file: sh.ws.objects[oi].file,
         globals: Default::default(),
+        request_page_globals: Default::default(),
+        in_request_page: false,
         locals: Default::default(),
         global_labels: HashMap::default(),
         local_labels: HashMap::default(),
@@ -438,6 +440,23 @@ pub(crate) fn lower_object<'a>(
             }
         }
     }
+    // The variables of the request page (`var` in a `requestpage` section) are slots of their own, seen by the
+    // triggers of that request page only (corpus report/lt-ab-request-page-triggers/ABRequestPageExt.al:63).
+    for v in obj.request_page_var_decls() {
+        let ty = v.type_ref().map(|t| Ty::from_type_ref(&t)).unwrap_or(Ty::Unknown);
+        for n in v.names() {
+            match lw.rt(&ty) {
+                Ok(rt) => {
+                    lw.request_page_globals.insert(n.to_lowercase(), globals.len());
+                    globals.push(ir::Slot {
+                        name: format!("requestpage.{n}"),
+                        ty: rt,
+                    });
+                }
+                Err(e) => global_reasons.push(format!("request page variable `{n}`: {e}")),
+            }
+        }
+    }
     let (mut rec_slot, mut xrec_slot) = (None, None);
     if let Some(t) = table_of[oi] {
         for (name, slot) in [("Rec", &mut rec_slot), ("xRec", &mut xrec_slot)] {
@@ -499,6 +518,11 @@ pub(crate) fn lower_object<'a>(
     let mut direct = Vec::new();
     for (ri, r) in tl.nodes.get(oi).iter().enumerate() {
         lw.routine_idx = ri;
+        lw.in_request_page = matches!(o.kind, ObjKind::Report | ObjKind::ReportExtension)
+            && r.syntax()
+                .ancestors()
+                .filter_map(ast::Section::cast)
+                .any(|s| s.name().eq_ignore_ascii_case("requestpage"));
         lw.reasons = global_reasons.clone();
         lw.calls.clear();
         // A trigger of a data item runs with the item's record as its `Rec`.

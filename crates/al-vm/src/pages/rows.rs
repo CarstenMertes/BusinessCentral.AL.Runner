@@ -267,6 +267,7 @@ impl Session {
         st.borrow_mut().window_from_start = false;
         st.borrow_mut().window_eof = false;
         st.borrow_mut().window_whole = false;
+        st.borrow_mut().open_read_to_end = false;
         let rec = self.page_rec(st);
         let start = self.row_key(&rec)?;
         let mut keys = Vec::new();
@@ -300,6 +301,7 @@ impl Session {
         // FindList_OnFindRecordAndOnNextRecord, `open` of a list of 3 rows: five reads). Only the
         // count is pinned, for a table of 3 rows.
         let find_page = self.declares(st, "onnextrecord") || self.declares(st, "onfindrecord");
+        let view_ended_at_open = end_reached && opening;
         // The same tail for a full window (misc/lt-probes-needed-6/PnF06FindListMoves.al:FindList_Ascending_25Rows
         // `...;R20;R1;N(-1);F(=);R1;C`), for an ascending view.
         let end_reached = (end_reached || (find_page && keys.len() == Self::WINDOW)) && opening;
@@ -314,7 +316,16 @@ impl Session {
             if let Some(first) = keys.first() {
                 rec.borrow_mut().fields = first.stored.clone();
             }
-            self.page_trigger(st, "onaftergetrecord", vec![])?;
+            // A view of one row is not read again before OnNextRecord(-1) (pages/lt-ai-list-order/AiListOrderTests.al:535
+            // Next_OneRow_Nav `F:=><=Yes;R:R1001;N:1=0;N:-1=0`, :565 Next_OneRow_NavCurr; pages/lt-an-testpage-640/
+            // AnTestPageTests.al:405 `F=><>A;RA;N1>0A;N-1>0A;`); two rows are (AiListOrderTests.al:600 Next_TwoRows_Nav).
+            if keys.len() > 1 {
+                self.page_trigger(st, "onaftergetrecord", vec![])?;
+            }
+            // After an open read that ran to the end of the view inside the window, Next on the last row asks the page
+            // nothing (AiListOrderTests.al:600, :630 Next_TwoRows_Nav/_NavCurr `next2_log` empty; :843
+            // OpenOnRow_SetPositionInOnOpenPage_LastRow).
+            st.borrow_mut().open_read_to_end = view_ended_at_open && keys.len() < Self::WINDOW;
             let stepped_back = self.declares(st, "onnextrecord") && self.nav_next(st, -1)?;
             // The closing OnFindRecord(`=`) and its read belong to the OnAfterGetCurrRecord that follows; a
             // list without that trigger ends after OnNextRecord(-1) when that answers 0 (pages/lt-f3-pages/F3ListTests.al:24
@@ -387,7 +398,17 @@ impl Session {
         // OpenView_OnlyRec30Rows_ReadsAtOpen `1-20,1`; with both triggers: `1-5,1,1` then the current-record read).
         let agcr = self.declares(st, "onaftergetcurrrecord");
         let single = !agcr && st.borrow().host.is_none() && end_reached;
-        if (walked > 0 || st.borrow().host.is_some()) && !single {
+        // A view of one row without OnAfterGetCurrRecord is read once, on a page and in a part (pages/lt-ai-list-order/
+        // AiListOrderTests.al:655 Next_OneRow_Plain `open` = `R:R1001`; pages/lt-part-subpageview-filter/PartViewFilter.al:317,
+        // :336 `open-ConstTen` = `AGR(H1/10)` once).
+        let one_row_read_once = walked == 0 && !agcr && end_reached;
+        if (walked > 0 || st.borrow().host.is_some()) && !single && !one_row_read_once {
+            self.page_trigger(st, "onaftergetrecord", vec![])?;
+        }
+        // A part with OnAfterGetCurrRecord whose view ends inside the window reads its first row twice more, as a list does
+        // (pages/lt-an-testpage-640/AnTestPageTests.al:168, :210 An02_Part_ConstLink_FiveRows, _FieldLink_FiveRows:
+        // `P.R10;...;P.R50;P.R10;P.R10;P.C10`); with one row once (:147, :189 `P.R10;P.R10;P.C10`).
+        if st.borrow().host.is_some() && agcr && end_reached && walked > 0 {
             self.page_trigger(st, "onaftergetrecord", vec![])?;
         }
         // A list that declares OnAfterGetCurrRecord reads its first row once more before that trigger, whatever its length, and so
@@ -395,7 +416,10 @@ impl Session {
         // OpenOrderOfHostAndPart: two rows read as 10000, 20000 and 10000; pages/W1Navigation.al:GoToKey_List_FiftyRows_RowsReadByAFarJump
         // `open`: rows 1 to 20, row 1, row 1). A list without the trigger reads 21 times: handlers/TestPageRuntimeContracts.al:
         // TestPage_List_OpenReads21Rows.
-        if (end_reached || (opening && self.declares(st, "onaftergetcurrrecord"))) && st.borrow().host.is_none() {
+        if (end_reached || (opening && self.declares(st, "onaftergetcurrrecord")))
+            && st.borrow().host.is_none()
+            && !one_row_read_once
+        {
             self.page_trigger(st, "onaftergetrecord", vec![])?;
         }
         Ok(())
@@ -695,12 +719,9 @@ impl Session {
         // After a refresh that read the view to its end, Next on the last row answers false without asking the page (pages/lt-f3-pages/
         // F3ListTests.al:72 Nav_ActionChangesViewThenUpdate `after_walk` is empty). Not pinned after an open, which stays a real
         // OnNextRecord call.
-        if how == PageMethod::Next
-            && at + 1 == window.len()
-            && st.borrow().window_eof
-            && window.len() < Self::WINDOW
-            && !self.declares(st, "onaftergetcurrrecord")
-        {
+        let read_to_end =
+            (st.borrow().window_eof && !self.declares(st, "onaftergetcurrrecord")) || st.borrow().open_read_to_end;
+        if how == PageMethod::Next && at + 1 == window.len() && read_to_end && window.len() < Self::WINDOW {
             return Ok(Some(false));
         }
         let target = match how {
@@ -779,6 +800,30 @@ impl Session {
         Ok(())
     }
 
+    /// A move onto a row the client holds reads that row from the table again, so a change made elsewhere since the window
+    /// was read shows (pages/W1Update.al:836-840 List_BufferLeftByOnAfterGetRecord_AfterTheStoredRowChanged `name_row2 =
+    /// changed`; misc/lt-probes-needed-7/PnGRefresh.al:268-269 BufferEditOfOnAfterGetRecordOnAList). Pinned for a page that
+    /// reads its rows from the table; a page with OnFindRecord or OnNextRecord keeps the row it holds (what the client asks
+    /// such a page for is not pinned). A held row the table no longer has is refused (not pinned).
+    pub(super) fn reread_held_row(&mut self, st: &St, target: usize) -> Result<(), Signal> {
+        if self.declares(st, "onfindrecord") || self.declares(st, "onnextrecord") {
+            return Ok(());
+        }
+        let rec = self.page_rec(st);
+        let mut key = st.borrow().window[target].key.clone();
+        self.ret_used = true;
+        if !matches!(self.record_op(RecordOp::Get, &rec, &mut key)?, Value::Boolean(true)) {
+            let stored = st.borrow().window[target].stored.clone();
+            rec.borrow_mut().fields = stored;
+            return unsupported("a move onto a row the client holds that the table no longer has (not pinned)");
+        }
+        let fresh = rec.borrow().fields.clone();
+        if let Some(w) = st.borrow_mut().window.get_mut(target) {
+            w.stored = fresh;
+        }
+        Ok(())
+    }
+
     /// The reads of a move onto row `target` of the rows the client holds (see `move_in_client_rows`).
     pub(super) fn read_client_row(&mut self, st: &St, target: usize) -> Result<(), Signal> {
         let before = self.xrec_before_move(st);
@@ -795,6 +840,7 @@ impl Session {
             self.set_xrec(st);
             return Ok(());
         }
+        self.reread_held_row(st, target)?;
         self.populate_current(st)?;
         if self.declares(st, "onfindrecord") {
             self.nav_find(st, "=")?;

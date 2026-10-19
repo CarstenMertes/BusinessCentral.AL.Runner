@@ -324,6 +324,9 @@ pub struct PageState {
     pub window_eof: bool,
     /// The window holds every row of the view, read by `Last` past a full window (see `last_past_the_window`).
     pub window_whole: bool,
+    /// The open read of a list that serves its rows from OnFindRecord and OnNextRecord ran to the end of the view inside the
+    /// window: Next on the last row then answers false without asking the page (see `move_in_client_rows`).
+    pub open_read_to_end: bool,
     /// The page is landing on its first row as it opens (the reads of a view that ends inside the window differ there).
     pub landing_first: bool,
     /// The page opened for edit over an empty view and ran its new-record triggers on a blank record; it shows no row and its
@@ -454,6 +457,7 @@ impl PageState {
             window_from_start: false,
             window_eof: false,
             window_whole: false,
+            open_read_to_end: false,
             landing_first: false,
             blank_on_open: false,
             read_backwards: false,

@@ -698,10 +698,25 @@ fn object_properties(ws: &Workspace, oi: usize, obj: &ast::Object, out: &mut Vec
     }
 }
 
-/// Triggers an object type does not have (corpus must-not-compile 0316 to 0321). A codeunit has OnRun only;
-/// for the other types the triggers of the other object types are listed.
+/// Triggers an object type does not have (corpus must-not-compile 0316 to 0321): the triggers of the other
+/// object types. A codeunit has more triggers than OnRun (install, upgrade and test runner codeunits, corpus
+/// install/TestInstallSeeder.al and events/lt-trigger-pins/PTestRunnerTriggers.al:107, :116), so only the
+/// triggers of tables, pages, reports and xmlports are judged there.
 fn foreign_triggers(kind: ObjKind) -> &'static [&'static str] {
     match kind {
+        ObjKind::Codeunit => &[
+            "OnInsert",
+            "OnModify",
+            "OnDelete",
+            "OnRename",
+            "OnOpenPage",
+            "OnClosePage",
+            "OnInitReport",
+            "OnPreReport",
+            "OnPostReport",
+            "OnPreXmlPort",
+            "OnPostXmlPort",
+        ],
         ObjKind::Page => &[
             "OnInsert",
             "OnModify",
@@ -740,22 +755,9 @@ fn foreign_triggers(kind: ObjKind) -> &'static [&'static str] {
 /// AL0162 for a trigger the object type does not have (corpus must-not-compile 0316 to 0321).
 fn object_triggers(ws: &Workspace, oi: usize, obj: &ast::Object, out: &mut Vec<Diagnostic>) {
     let kind = ws.objects[oi].kind;
-    // An install or upgrade codeunit has its own triggers (corpus install/TestInstallSeeder.al); they are not judged.
-    let install_or_upgrade = obj.properties().any(|p| {
-        p.name().eq_ignore_ascii_case("Subtype")
-            && matches!(
-                p.value_text().trim_matches('"').to_ascii_lowercase().as_str(),
-                "install" | "upgrade"
-            )
-    });
     for t in obj.triggers() {
         let name = t.name();
-        let bad = if kind == ObjKind::Codeunit {
-            !install_or_upgrade && !name.eq_ignore_ascii_case("OnRun")
-        } else {
-            foreign_triggers(kind).iter().any(|f| f.eq_ignore_ascii_case(&name))
-        };
-        if bad {
+        if foreign_triggers(kind).iter().any(|f| f.eq_ignore_ascii_case(&name)) {
             push(
                 out,
                 ws,
@@ -2134,6 +2136,9 @@ mod tests {
             "codeunit 50001 C { Subtype = Install; trigger OnInstallAppPerCompany() begin end; trigger OnInstallAppPerDatabase() begin end; }",
             "codeunit 50001 C { Subtype = \"Install\"; trigger OnInstallAppPerCompany() begin end; }",
             "codeunit 50001 C { Subtype = Upgrade; trigger OnUpgradePerCompany() begin end; trigger OnValidateUpgradePerDatabase() begin end; }",
+            // The triggers of a test runner codeunit (corpus events/lt-trigger-pins/PTestRunnerTriggers.al:107, :116).
+            "codeunit 50001 C { Subtype = TestRunner; trigger OnBeforeTestRun(CodeunitId: Integer; CodeunitName: Text; FunctionName: Text; FunctionTestPermissions: TestPermissions): Boolean begin exit(true); end;
+               trigger OnAfterTestRun(CodeunitId: Integer; CodeunitName: Text; FunctionName: Text; FunctionTestPermissions: TestPermissions; IsSuccess: Boolean) begin end; }",
             "table 50001 T { fields { field(1; Id; Integer) { } } trigger OnInsert() begin end; trigger OnModify() begin end; trigger OnDelete() begin end; trigger OnRename() begin end; }",
             "page 50001 P { PageType = Card; trigger OnOpenPage() begin end; trigger OnInit() begin end; trigger OnNewRecord(BelowxRec: Boolean) begin end; }",
             "report 50001 R { trigger OnPreReport() begin end; trigger OnPostReport() begin end; trigger OnInitReport() begin end; }",

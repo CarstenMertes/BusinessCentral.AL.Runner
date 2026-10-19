@@ -319,9 +319,12 @@ impl Workspace {
                 if lazy {
                     (scanned_file(src, symbols), Vec::new())
                 } else {
-                    match crate::pages::expand_ranges(src, symbols) {
-                        Some((text, added)) => (with_tree_cache(|cache| parse_file(&text, symbols, cache)), added),
-                        None => (with_tree_cache(|cache| parse_file(src, symbols, cache)), Vec::new()),
+                    match crate::pages::expand_or_parse(src, symbols) {
+                        crate::pages::Expansion::Expanded(text, added) => {
+                            (with_tree_cache(|cache| parse_file(&text, symbols, cache)), added)
+                        }
+                        // The parse that looked for expressions is the file's parse.
+                        crate::pages::Expansion::Unchanged(parse) => (parsed_file(parse), Vec::new()),
                     }
                 }
             })
@@ -701,17 +704,23 @@ impl Workspace {
     /// parse error if there is one. `fresh` starts from an empty token cache.
     fn parse_lazy(&self, fi: usize, f: &SourceFileData, fresh: bool) -> Attempt<(rowan::GreenNode, Vec<ByteRange>)> {
         let src = self.text(fi);
-        // Only a page can have properties to turn into routines; skip the extra parse otherwise.
-        let expanded = f
+        // Only a page can have properties to turn into routines; skip the extra parse otherwise. When there is nothing to
+        // add, the parse that looked is the file's parse; a `fresh` parse (the second one, of a file whose first parse had
+        // a problem) is made anew.
+        let (expanded, reused) = match f
             .has_page
-            .then(|| crate::pages::expand_ranges(src, &self.symbols[f.app]))
-            .flatten();
+            .then(|| crate::pages::expand_or_parse(src, &self.symbols[f.app]))
+        {
+            Some(crate::pages::Expansion::Expanded(text, added)) => (Some((text, added)), None),
+            Some(crate::pages::Expansion::Unchanged(parse)) if !fresh => (None, Some(parsed_file(parse))),
+            _ => (None, None),
+        };
         let text = expanded.as_ref().map(|(t, _)| t.as_str()).unwrap_or(src);
         let synthetic = expanded.as_ref().map(|(_, a)| a.clone()).unwrap_or_default();
-        let parsed = if fresh {
-            parse_file(text, &self.symbols[f.app], &mut al_syntax::TreeCache::default())
-        } else {
-            with_tree_cache(|cache| parse_file(text, &self.symbols[f.app], cache))
+        let parsed = match reused {
+            Some(parsed) => parsed,
+            None if fresh => parse_file(text, &self.symbols[f.app], &mut al_syntax::TreeCache::default()),
+            None => with_tree_cache(|cache| parse_file(text, &self.symbols[f.app], cache)),
         };
         let problem = parsed.errors.first().map(|e| {
             let line = text[..e.offset.min(text.len())].matches('\n').count() + 1;
@@ -895,6 +904,33 @@ impl Workspace {
     /// namespace nor `using` reference namespaced Base App tables and compile).
     pub fn resolve_ref(&self, file: usize, kind: ObjKind, parts: &[String]) -> Resolution {
         self.resolve_in_scope(file, kind, parts, false, true)
+    }
+
+    /// Whether any object of `kind` that `file` can see has the name (or id) `parts` says, whether or not
+    /// the compile includes it. `false` means the name is nowhere (AL0118).
+    ///
+    /// When an app the file can see declares a dependency that is not loaded (`--no-deps`, or a package
+    /// that was not found), the name may live there, so the answer is `true`: absence is only known when
+    /// every declared dependency is present. The platform app System is an implicit dependency of every
+    /// app (see `visible_from`), so the same holds while it is not loaded (corpus must-not-compile
+    /// 0740-subscribe-internal-event-get-role-center-banner.al:5 names its codeunit "System Action Triggers").
+    pub fn names_object(&self, file: usize, kind: ObjKind, parts: &[String]) -> bool {
+        self.has_unloaded_dependency(self.files[file].app)
+            || !self.apps.iter().any(|a| a.id.eq_ignore_ascii_case(PLATFORM_APP_ID))
+            || !matches!(
+                self.resolve_in_scope(file, kind, parts, false, false),
+                Resolution::Missing
+            )
+    }
+
+    /// Whether `app` or an app it sees declares a dependency that is not among the loaded apps.
+    pub fn has_unloaded_dependency(&self, app: usize) -> bool {
+        self.visible[app].iter().any(|&a| {
+            self.apps[a]
+                .dependencies
+                .iter()
+                .any(|d| !self.apps.iter().any(|x| x.id.eq_ignore_ascii_case(d)))
+        })
     }
 
     /// The id of the platform table `parts` names when nothing provides rows for it. The id is
@@ -1213,7 +1249,11 @@ fn settle<G>(first: Attempt<G>, again: impl FnOnce() -> Attempt<G>) -> (Attempt<
 }
 
 fn parse_file(src: &str, symbols: &BTreeSet<String>, cache: &mut al_syntax::TreeCache) -> ParsedFile {
-    let parse = al_syntax::parse_with_cache(src, symbols, cache);
+    parsed_file(al_syntax::parse_with_cache(src, symbols, cache))
+}
+
+/// The index entry of a parsed file.
+fn parsed_file(parse: al_syntax::Parse) -> ParsedFile {
     let root = ast::SourceFile::cast(parse.syntax()).expect("root is a SourceFile");
     ParsedFile {
         namespace: root.namespace(),

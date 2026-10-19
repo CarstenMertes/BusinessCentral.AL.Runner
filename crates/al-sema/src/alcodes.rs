@@ -25,25 +25,28 @@ use al_syntax::{SyntaxKind, SyntaxNode, ast};
 pub const IMPLEMENTED: &[(&str, &str)] = &[
     (
         "AL0118",
-        "a bare call of a name that is not a procedure or system function, in a codeunit",
+        "a bare call of a name that is not a procedure or system function, in a codeunit; an undeclared bare name in a codeunit, or assigned in a trigger of a table, page, report, query or xmlport; Codeunit::\"X\" or an event subscriber naming a codeunit nobody declares",
     ),
     (
         "AL0122",
-        "an enum assigned to an enum of another type whose target does not state AssignmentCompatibility = true; an Integer variable assigned to a Text; a text literal of two or more characters assigned to an Integer",
+        "an enum assigned to an enum of another type whose target does not state AssignmentCompatibility = true; an Integer variable assigned to a Text; a text literal of two or more characters assigned to an Integer; Decimal or Integer to Boolean, Date to Text, Boolean, Text or Decimal to Date, Variant or a one-character literal to an Enum, a Record to an Integer",
     ),
     (
         "AL0124",
-        "app.json key `assemblyProbingPaths` of a Cloud app at runtime 15.0, 16.0, 16.1, 17.0, 17.1 and 18.0; the property OrderBy on a query data item; the property AutoCalcField on an xmlport table element",
+        "app.json key `assemblyProbingPaths` of a Cloud app at runtime 15.0, 16.0, 16.1, 17.0, 17.1 and 18.0; the property OrderBy on a query data item; the property AutoCalcField on an xmlport table element; a property the object type does not have (any outside the 16 codeunit properties, SourceTable and others on a table, Editable on a report, TableNo on a page, ...); InitValue on a page field",
     ),
     (
         "AL0132",
-        "ExecutionMode::Install, Uninstall, Upgrade, Report, Profile; a field or method of a record that the table and the catalog lack; Length on a Text or Code",
+        "ExecutionMode::Install, Uninstall, Upgrade, Report, Profile; a field or method of a record that the table and the catalog lack; a method the catalog lacks on Text, Code, Boolean, List, Dictionary, JsonObject, JsonToken, HttpClient, RecordRef or TextBuilder; a value an enum of the workspace lacks; a page field Rec.X the source table lacks",
     ),
     (
         "AL0161",
         "a page extension names a non-protected variable or a local procedure of its base page, or a report extension does; a Cloud app names an internal agent table of the platform; a subscriber to the internal event GetRoleCenterBannerPartID of System Action Triggers; a page customization names a variable of its page in Editable of a modify",
     ),
-    ("AL0162", "OnInit, OnFindRecord and OnNextRecord in a page extension"),
+    (
+        "AL0162",
+        "OnInit, OnFindRecord and OnNextRecord in a page extension; a trigger the object type does not have (any but OnRun in a codeunit; page, table and report triggers of another object type)",
+    ),
     ("AL0197", "two objects of one type and name in one app"),
     (
         "AL0296",
@@ -373,6 +376,9 @@ pub fn check_workspace(ws: &Workspace) -> Vec<Diagnostic> {
         if obj.kind() == "pagecustomization" {
             page_customization_variables(ws, oi, &obj, &mut out);
         }
+        subscriber_publishers(ws, oi, &obj, &mut out);
+        object_properties(ws, oi, &obj, &mut out);
+        object_triggers(ws, oi, &obj, &mut out);
         match o.kind {
             ObjKind::XmlPort => xmlport_elements(ws, o.file, obj.sections(), &mut out),
             ObjKind::PageExtension => {
@@ -507,6 +513,73 @@ fn page_customization_variables(ws: &Workspace, oi: usize, obj: &ast::Object, ou
     walk(ws, ws.objects[oi].file, &page_ast, obj.sections(), false, out);
 }
 
+/// An object name as the compiler shows it in a message: quoted unless it is a plain identifier.
+pub(crate) fn quoted_if_needed(name: &str) -> String {
+    if !name.is_empty() && name.chars().all(|c| c.is_alphanumeric() || c == '_') {
+        name.to_string()
+    } else {
+        format!("\"{name}\"")
+    }
+}
+
+/// AL0118 (corpus must-not-compile 0222): `[EventSubscriber(ObjectType::Codeunit, Codeunit::"X", ...)]` names a
+/// codeunit that no app the file sees declares. Only a codeunit named by a plain name is judged.
+fn subscriber_publishers(ws: &Workspace, oi: usize, obj: &ast::Object, out: &mut Vec<Diagnostic>) {
+    let file = ws.objects[oi].file;
+    for r in ast::routines_in(obj.syntax()) {
+        for attr in r
+            .attributes()
+            .filter(|a| a.name().eq_ignore_ascii_case("EventSubscriber"))
+        {
+            let Some(args) = attr.args() else { continue };
+            let mut args = args.children();
+            let (Some(kind), Some(publisher)) = (args.next(), args.next()) else {
+                continue;
+            };
+            // `ObjectType::Codeunit, Codeunit::"Name"`: two scope expressions.
+            let scope = |n: &SyntaxNode| {
+                let mut k = n.children();
+                match (n.kind(), k.next(), k.next()) {
+                    (SyntaxKind::ScopeExpr, Some(l), Some(r)) if l.kind() == SyntaxKind::NameRef => Some((l, r)),
+                    _ => None,
+                }
+            };
+            let (Some((kl, kr)), Some((pl, pr))) = (scope(&kind), scope(&publisher)) else {
+                continue;
+            };
+            if !kl.text().to_string().eq_ignore_ascii_case("ObjectType")
+                || !kr.text().to_string().eq_ignore_ascii_case("Codeunit")
+                || !pl.text().to_string().eq_ignore_ascii_case("Codeunit")
+                || pr.kind() != SyntaxKind::NameRef
+            {
+                continue;
+            }
+            let name = pr
+                .children_with_tokens()
+                .filter_map(|e| e.into_token())
+                .find(|t| {
+                    matches!(
+                        t.kind(),
+                        SyntaxKind::Ident | SyntaxKind::QuotedIdent | SyntaxKind::Integer
+                    )
+                })
+                .map(|t| ast::ident_text(&t))
+                .unwrap_or_default();
+            if name.parse::<u32>().is_ok() || ws.names_object(file, ObjKind::Codeunit, &[name]) {
+                continue;
+            }
+            push(
+                out,
+                ws,
+                file,
+                offset_of(attr.syntax()),
+                "AL0118",
+                format!("The name '{}' does not exist in the current context.", pr.text()),
+            );
+        }
+    }
+}
+
 /// AL0197: one diagnostic for every declaration of a name that an app declares more than once for
 /// the same object type (corpus 0016: two codeunits, two diagnostics).
 fn duplicate_names(ws: &Workspace, out: &mut Vec<Diagnostic>) {
@@ -557,6 +630,149 @@ fn page_extension_triggers(ws: &Workspace, oi: usize, obj: &ast::Object, out: &m
                 t.keyword_offset().unwrap_or_else(|| offset_of(t.syntax())),
                 "AL0162",
                 format!("'{name}' is not a valid trigger"),
+            );
+        }
+    }
+}
+
+/// The properties of a codeunit (docs: Codeunit object properties). A name outside the list is AL0124
+/// (corpus must-not-compile 0305, 0310, 0312, over the 3,500 codeunit properties of the corpus: none else occurs).
+// behavior-coverage: validation-only begin
+const CODEUNIT_PROPERTIES: &[&str] = &[
+    "Access",
+    "Description",
+    "EventSubscriberInstance",
+    "InherentEntitlements",
+    "InherentPermissions",
+    "ObsoleteReason",
+    "ObsoleteState",
+    "ObsoleteTag",
+    "Permissions",
+    "RequiredTestIsolation",
+    "SingleInstance",
+    "Subtype",
+    "TableNo",
+    "TestHttpRequestPolicy",
+    "TestIsolation",
+    "TestPermissions",
+];
+// behavior-coverage: validation-only end
+
+/// Properties that belong to another object type, per object type (corpus 0306 to 0309). Only pinned
+/// pairs and their plain siblings are listed; other pairs are not judged.
+// behavior-coverage: validation-only begin
+fn foreign_properties(kind: ObjKind) -> &'static [&'static str] {
+    match kind {
+        ObjKind::Table => &["ApplicationArea", "PageType", "SourceTable", "TableNo", "Editable"],
+        ObjKind::Report => &["Editable", "PageType", "TableNo", "DataPerCompany"],
+        ObjKind::Page => &["TableNo", "DataPerCompany"],
+        _ => &[],
+    }
+}
+// behavior-coverage: validation-only end
+
+/// AL0124 for an object property the object type does not have (corpus must-not-compile 0305 to 0310,
+/// 0312) and for `InitValue` on a page field (0315, a property of table fields).
+fn object_properties(ws: &Workspace, oi: usize, obj: &ast::Object, out: &mut Vec<Diagnostic>) {
+    let kind = ws.objects[oi].kind;
+    let file = ws.objects[oi].file;
+    let message = |name: &str| {
+        format!(
+            "The property '{name}' cannot be used in this context. Verify the property is available for the current object type."
+        )
+    };
+    for p in obj.properties() {
+        let name = p.name();
+        let bad = match kind {
+            ObjKind::Codeunit => !CODEUNIT_PROPERTIES.iter().any(|c| c.eq_ignore_ascii_case(&name)),
+            k => foreign_properties(k).iter().any(|c| c.eq_ignore_ascii_case(&name)),
+        };
+        if bad {
+            push(out, ws, file, offset_of(p.syntax()), "AL0124", message(&name));
+        }
+    }
+    if matches!(kind, ObjKind::Page | ObjKind::PageExtension) {
+        for sec in ast::sections_in(obj.syntax()) {
+            if sec.name().eq_ignore_ascii_case("field") {
+                if let Some(p) = sec.properties().find(|p| p.name().eq_ignore_ascii_case("InitValue")) {
+                    push(out, ws, file, offset_of(p.syntax()), "AL0124", message(&p.name()));
+                }
+            }
+        }
+    }
+}
+
+/// Triggers an object type does not have (corpus must-not-compile 0316 to 0321): the triggers of the other
+/// object types. A codeunit has more triggers than OnRun (install, upgrade and test runner codeunits, corpus
+/// install/TestInstallSeeder.al and events/lt-trigger-pins/PTestRunnerTriggers.al:107, :116), so only the
+/// triggers of tables, pages, reports and xmlports are judged there.
+// behavior-coverage: validation-only begin
+fn foreign_triggers(kind: ObjKind) -> &'static [&'static str] {
+    match kind {
+        ObjKind::Codeunit => &[
+            "OnInsert",
+            "OnModify",
+            "OnDelete",
+            "OnRename",
+            "OnOpenPage",
+            "OnClosePage",
+            "OnInitReport",
+            "OnPreReport",
+            "OnPostReport",
+            "OnPreXmlPort",
+            "OnPostXmlPort",
+        ],
+        ObjKind::Page => &[
+            "OnInsert",
+            "OnModify",
+            "OnDelete",
+            "OnRename",
+            "OnRun",
+            "OnInitReport",
+            "OnPreReport",
+            "OnPostReport",
+            "OnPreXmlPort",
+            "OnPostXmlPort",
+        ],
+        ObjKind::Table => &[
+            "OnRun",
+            "OnOpenPage",
+            "OnClosePage",
+            "OnInitReport",
+            "OnPreReport",
+            "OnPostReport",
+            "OnPreXmlPort",
+            "OnPostXmlPort",
+        ],
+        ObjKind::Report => &[
+            "OnPreXmlPort",
+            "OnPostXmlPort",
+            "OnRun",
+            "OnInsert",
+            "OnModify",
+            "OnDelete",
+            "OnRename",
+        ],
+        _ => &[],
+    }
+}
+// behavior-coverage: validation-only end
+
+/// AL0162 for a trigger the object type does not have (corpus must-not-compile 0316 to 0321).
+fn object_triggers(ws: &Workspace, oi: usize, obj: &ast::Object, out: &mut Vec<Diagnostic>) {
+    let kind = ws.objects[oi].kind;
+    for t in obj.triggers() {
+        let name = t.name();
+        if foreign_triggers(kind).iter().any(|f| f.eq_ignore_ascii_case(&name)) {
+            push(
+                out,
+                ws,
+                ws.objects[oi].file,
+                t.keyword_offset().unwrap_or_else(|| offset_of(t.syntax())),
+                "AL0162",
+                format!(
+                    "'{name}' is not a valid trigger for this object type. Check the object documentation for supported triggers."
+                ),
             );
         }
     }
@@ -834,7 +1050,7 @@ pub fn check_context(ws: &Workspace, app: usize, ctx: &AppContext) -> Vec<Diagno
         }
     }
     // AL0296 (corpus 0110, 0112, 0113): a Cloud app calls a method that has scope OnPrem: GetLastErrorObject, the
-    // Unwrap of a SecretText, the Open of a File. Only these three shapes are pinned.
+    // Unwrap of a SecretText, the Open of a File, and the static File.Exists, Erase and Copy (0361 to 0363). Only these shapes are pinned.
     if ctx.target == AppTarget::Cloud {
         for (fi, f) in ws.files.iter().enumerate() {
             if f.app != app {
@@ -890,6 +1106,14 @@ fn onprem_method_calls(ws: &Workspace, file: usize, obj: &ast::Object, out: &mut
                         .map(|(_, t)| t.as_str());
                     match (ty, method.to_ascii_lowercase().as_str()) {
                         (Some("secrettext"), "unwrap") | (Some("file"), "open") => Some(method),
+                        // The static File methods (corpus must-not-compile 0361 to 0363): `File` names the type when no
+                        // variable, and no object of the workspace, is called File.
+                        (None, "exists" | "erase" | "copy")
+                            if recv_name == "file"
+                                && !ws.objects.iter().any(|o| o.name.eq_ignore_ascii_case("file")) =>
+                        {
+                            Some(method)
+                        }
                         _ => None,
                     }
                 }
@@ -1025,6 +1249,143 @@ mod tests {
             "var Hidden: Integer; trigger OnOpenPage() var V: Integer; begin Shown := 1; Hidden := 1; V := Bump(); end;",
         );
         assert!(codes(&[BASE, &ok]).is_empty());
+    }
+
+    /// The codes of `files` compiled as an app that declares the dependency `dep`; `loaded` is the source of
+    /// that dependency, or `None` when it is declared but not loaded (`--no-deps`).
+    fn codes_with_dependency(files: &[&str], loaded: Option<&str>) -> Vec<String> {
+        let mut apps = vec![AppSource {
+            id: "a".into(),
+            name: "a".into(),
+            dependencies: vec!["dep".into()],
+            files: files
+                .iter()
+                .enumerate()
+                .map(|(i, s)| (format!("f{i}.al"), s.to_string()))
+                .collect(),
+        }];
+        let mut kinds = vec![crate::workspace::AppKind::Workspace];
+        if let Some(src) = loaded {
+            apps.push(AppSource {
+                id: "dep".into(),
+                name: "dep".into(),
+                dependencies: vec![],
+                files: vec![("d.al".into(), src.to_string())],
+            });
+            kinds.push(crate::workspace::AppKind::Dependency);
+            // With every dependency loaded, the implicit one, the platform app, is loaded too.
+            apps.push(AppSource {
+                id: crate::workspace::PLATFORM_APP_ID.into(),
+                name: "System".into(),
+                dependencies: vec![],
+                files: vec![],
+            });
+            kinds.push(crate::workspace::AppKind::Dependency);
+        }
+        let ws = Workspace::load_apps(apps, kinds, &Default::default());
+        let m = crate::members::build(&ws);
+        let r = crate::check::check(&ws, &m, &Catalog::load());
+        let mut v: Vec<String> = r
+            .diagnostics
+            .iter()
+            .filter(|d| d.code.starts_with("AL"))
+            .map(|d| d.code.to_string())
+            .collect();
+        v.sort();
+        v
+    }
+
+    #[test]
+    fn al0118_codeunit_name_is_not_judged_when_a_dependency_is_not_loaded() {
+        // Microsoft's "Global Triggers" lives in Base Application. Without the dependency (`--no-deps`) the
+        // name may exist, so neither the expression nor the subscriber is refused.
+        let user = "codeunit 50000 C { procedure P(): Integer begin exit(Codeunit::\"Global Triggers\"); end; }";
+        let sub = "codeunit 50001 S { [EventSubscriber(ObjectType::Codeunit, Codeunit::\"Global Triggers\", 'OnX', '', false, false)] local procedure H() begin end; }";
+        assert!(codes_with_dependency(&[user, sub], None).is_empty());
+        // The dependency is loaded and has no such codeunit: the name does not exist.
+        let other = "codeunit 60000 Other { }";
+        assert_eq!(codes_with_dependency(&[user], Some(other)), vec!["AL0118"]);
+        assert_eq!(codes_with_dependency(&[sub], Some(other)), vec!["AL0118"]);
+        // And it resolves when the dependency has it.
+        let gt = "codeunit 60001 \"Global Triggers\" { }";
+        assert!(codes_with_dependency(&[user, sub], Some(gt)).is_empty());
+    }
+
+    /// The codes of `files` compiled as an app next to the platform app System (`PLATFORM_APP_ID`), whose
+    /// source is `platform`. Every app sees the platform app without declaring it.
+    fn codes_with_platform(files: &[&str], platform: &str) -> Vec<String> {
+        let mut v: Vec<String> = messages_with_platform(files, platform)
+            .into_iter()
+            .map(|m| m.split(' ').next().unwrap_or_default().to_string())
+            .collect();
+        v.sort();
+        v
+    }
+
+    /// The `code message` lines of `files` compiled next to the platform app (see `codes_with_platform`).
+    fn messages_with_platform(files: &[&str], platform: &str) -> Vec<String> {
+        let apps = vec![
+            AppSource {
+                id: "a".into(),
+                name: "a".into(),
+                dependencies: vec![],
+                files: files
+                    .iter()
+                    .enumerate()
+                    .map(|(i, s)| (format!("f{i}.al"), s.to_string()))
+                    .collect(),
+            },
+            AppSource {
+                id: crate::workspace::PLATFORM_APP_ID.into(),
+                name: "System".into(),
+                dependencies: vec![],
+                files: vec![("s.al".into(), platform.to_string())],
+            },
+        ];
+        let kinds = vec![
+            crate::workspace::AppKind::Workspace,
+            crate::workspace::AppKind::Dependency,
+        ];
+        let ws = Workspace::load_apps(apps, kinds, &Default::default());
+        let m = crate::members::build(&ws);
+        crate::check::check(&ws, &m, &Catalog::load())
+            .diagnostics
+            .iter()
+            .filter(|d| d.code.starts_with("AL"))
+            .map(|d| format!("{} {}", d.code, d.message))
+            .collect()
+    }
+
+    #[test]
+    fn al0118_codeunit_name_is_not_judged_when_the_platform_app_is_not_loaded() {
+        // must-not-compile 0740-subscribe-internal-event-get-role-center-banner.al:5 subscribes to
+        // Codeunit::"System Action Triggers", a codeunit of the platform app System. BC always provides that
+        // app, so without its source the name may exist and is not refused.
+        let user = "codeunit 50000 C { procedure P(): Integer begin exit(Codeunit::\"System Action Triggers\"); end; }";
+        let sub = "codeunit 50001 S { [EventSubscriber(ObjectType::Codeunit, Codeunit::\"System Action Triggers\", 'OnX', '', false, false)] local procedure H() begin end; }";
+        assert!(codes(&[user, sub]).is_empty());
+        // The platform app is loaded and has no such codeunit: the name does not exist.
+        let other = "codeunit 2000000001 Other { }";
+        assert_eq!(codes_with_platform(&[user], other), vec!["AL0118"]);
+        assert_eq!(codes_with_platform(&[sub], other), vec!["AL0118"]);
+        // And it resolves when the platform app has it.
+        let sat = "codeunit 2000000002 \"System Action Triggers\" { }";
+        assert!(codes_with_platform(&[user, sub], sat).is_empty());
+    }
+
+    #[test]
+    fn al0118_bare_names_are_not_judged_when_a_dependency_is_not_loaded() {
+        // A codeunit with `TableNo` of a table of the missing dependency has an implicit `Rec`; a page with a
+        // source table of it assigns the table's fields by their bare names.
+        let cu = "codeunit 50000 C { TableNo = \"Sales Header\"; trigger OnRun() begin Rec.Foo := 1; end; }";
+        let page = "page 50001 P { PageType = Card; SourceTable = \"Sales Header\"; trigger OnOpenPage() begin Foo := 1; Bar(); end; }";
+        assert!(codes_with_dependency(&[cu, page], None).is_empty());
+        // With the dependency loaded (a table that has no such field) the page's names are judged.
+        let t = "table 60000 \"Sales Header\" { fields { field(1; Id; Integer) { } } }";
+        assert!(codes_with_dependency(&[page], Some(t)).contains(&"AL0118".to_string()));
+        // A page extension of a base page of the missing dependency calls the base page's procedure.
+        let ext = "pageextension 50002 PE extends \"Customer Card\" { trigger OnOpenPage() begin BaseProc(); Rec.Foo := 1; end; }";
+        assert!(codes_with_dependency(&[ext], None).is_empty());
     }
 
     #[test]
@@ -1414,5 +1775,551 @@ mod tests {
         assert_eq!(codes(&[base, bad]), vec!["AL0161"]);
         let ok = "reportextension 50002 E extends R { trigger OnPreReport() begin Message(this.Shown); end; }";
         assert!(codes(&[base, ok]).is_empty());
+    }
+
+    // must-not-compile 0200 and 0205: an undeclared name in a codeunit (assigned, or passed as an argument).
+    // Declared variables, labels, procedures, system functions without parentheses and the implicit Rec of a
+    // codeunit with TableNo are names.
+    #[test]
+    fn al0118_undeclared_name_in_a_codeunit() {
+        let assign = "codeunit 50001 C { procedure Run1() begin Missing := 1; end; }";
+        assert_eq!(
+            messages(assign),
+            vec!["AL0118 The name 'Missing' does not exist in the current context."]
+        );
+        let arg = "codeunit 50001 C { procedure Run1() begin Error(MissingLbl); end; }";
+        assert_eq!(codes(&[arg]), vec!["AL0118"]);
+        let ok = "table 50000 T { fields { field(1; Id; Integer) { } } }
+            codeunit 50001 C { var G: Integer; Lbl: Label 'x';
+              procedure Run1(P: Integer): Integer var L: Integer; begin L := P + G; Error(Lbl); L := Today; exit(Helper()); end;
+              procedure Helper(): Integer begin exit(1); end; }
+            codeunit 50002 D { TableNo = T; trigger OnRun() begin Id := 1; end; }";
+        assert!(codes(&[ok]).is_empty(), "{:?}", messages(ok));
+    }
+
+    // must-not-compile 0206 to 0210: an undeclared name assigned in an object-level trigger of a table, page,
+    // report, query or xmlport. Fields, data items, columns and text elements of the object are names.
+    #[test]
+    fn al0118_undeclared_name_in_an_object_trigger() {
+        let t = "table 50000 T { fields { field(1; Id; Integer) { } } keys { key(PK; Id) { Clustered = true; } } }";
+        let bodies = [
+            "table 50009 T2 { fields { field(1; Id; Integer) { } } trigger OnInsert() begin Undeclared := 5; end; }",
+            "page 50010 P { PageType = Card; trigger OnOpenPage() begin Undeclared := 5; end; }",
+            "report 50011 R { trigger OnPreReport() begin Undeclared := 5; end; }",
+            "query 50013 Q { elements { dataitem(Row; T) { column(Id; Id) { } } } trigger OnBeforeOpen() begin Undeclared := 5; end; }",
+            "xmlport 50014 X { trigger OnPreXmlPort() begin Undeclared := 5; end; }",
+        ];
+        for b in bodies {
+            assert_eq!(codes(&[t, b]), vec!["AL0118"], "{b}");
+        }
+        let ok = [
+            "table 50009 T2 { fields { field(1; Id; Integer) { } } trigger OnInsert() begin Id := 5; Rec.Id := 1; xRec.Id := 2; end; }",
+            "page 50010 P { PageType = Card; SourceTable = T; trigger OnOpenPage() begin Id := 5; end; }",
+            "report 50011 R { dataset { dataitem(Row; T) { } } trigger OnPreReport() begin Row.Id := 5; end; }",
+            "query 50013 Q { elements { dataitem(Row; T) { column(Id; Id) { } } } trigger OnBeforeOpen() begin SetFilter(Id, '1'); end; }",
+            "xmlport 50014 X { schema { textelement(Root) { } } trigger OnPreXmlPort() begin Root := 'x'; end; }",
+        ];
+        for b in ok {
+            assert!(codes(&[t, b]).is_empty(), "{b}: {:?}", messages(b));
+        }
+    }
+
+    // must-not-compile 0223 and 0222: a codeunit named by an id-or-name that does not exist.
+    #[test]
+    fn al0118_codeunit_that_does_not_exist() {
+        // The name is judged only with the platform app loaded (see
+        // al0118_codeunit_name_is_not_judged_when_the_platform_app_is_not_loaded).
+        let platform = "codeunit 2000000001 \"Some Platform Codeunit\" { }";
+        let run = "codeunit 50001 C { procedure Run1() begin Codeunit.Run(Codeunit::\"MNC No Such Codeunit\"); end; }";
+        assert_eq!(
+            messages_with_platform(&[run], platform),
+            vec!["AL0118 The name '\"MNC No Such Codeunit\"' does not exist in the current context."]
+        );
+        let sub = "codeunit 50001 C { [EventSubscriber(ObjectType::Codeunit, Codeunit::\"MNC No Such Codeunit\", 'OnX', '', false, false)] local procedure Handle() begin end; }";
+        assert_eq!(codes_with_platform(&[sub], platform), vec!["AL0118"]);
+        let ok =
+            "codeunit 50002 Other { } codeunit 50001 C { procedure Run1() begin Codeunit.Run(Codeunit::Other); end; }";
+        assert!(codes_with_platform(&[ok], platform).is_empty());
+    }
+
+    // must-not-compile 0224 to 0226, 0228 to 0230, 0233 to 0236: a method the type does not have.
+    #[test]
+    fn al0132_method_that_a_library_type_does_not_have() {
+        let cases = [
+            (
+                "T: Text",
+                "T.Contain('x')",
+                "'Text' does not contain a definition for 'Contain'",
+            ),
+            ("T: Text", "T.Size()", "'Text' does not contain a definition for 'Size'"),
+            (
+                "L: List of [Text]",
+                "L.Length()",
+                "'List of [Text]' does not contain a definition for 'Length'",
+            ),
+            (
+                "D: Dictionary of [Text, Integer]",
+                "D.Size()",
+                "'Dictionary of [Text, Integer]' does not contain a definition for 'Size'",
+            ),
+            (
+                "J: JsonObject",
+                "J.Put('a', 1)",
+                "'JsonObject' does not contain a definition for 'Put'",
+            ),
+            (
+                "J: JsonToken",
+                "J.GetName()",
+                "'JsonToken' does not contain a definition for 'GetName'",
+            ),
+            (
+                "H: HttpClient; M: HttpRequestMessage; R: HttpResponseMessage",
+                "H.Send2(M, R)",
+                "'HttpClient' does not contain a definition for 'Send2'",
+            ),
+            (
+                "RR: RecordRef",
+                "RR.Fieldd(1)",
+                "'RecordRef' does not contain a definition for 'Fieldd'",
+            ),
+            (
+                "B: Boolean",
+                "B.Invert()",
+                "'Boolean' does not contain a definition for 'Invert'",
+            ),
+            (
+                "TB: TextBuilder",
+                "TB.Add('x')",
+                "'TextBuilder' does not contain a definition for 'Add'",
+            ),
+        ];
+        for (var, stmt, message) in cases {
+            let cu = format!("codeunit 50001 C {{ procedure Run1() var {var}; begin {stmt}; end; }}");
+            assert_eq!(messages(&cu), vec![format!("AL0132 {message}")], "{stmt}");
+        }
+        let ok = [
+            ("T: Text", "T.Contains('x')"),
+            ("L: List of [Text]", "L.Count()"),
+            ("D: Dictionary of [Text, Integer]", "D.ContainsKey('a')"),
+            ("J: JsonObject", "J.Add('a', 1)"),
+            ("J: JsonToken", "J.IsObject()"),
+            (
+                "H: HttpClient; M: HttpRequestMessage; R: HttpResponseMessage",
+                "H.Send(M, R)",
+            ),
+            ("RR: RecordRef", "RR.Field(1)"),
+            ("TB: TextBuilder", "TB.Append('x')"),
+        ];
+        for (var, stmt) in ok {
+            let cu = format!("codeunit 50001 C {{ procedure Run1() var {var}; begin {stmt}; end; }}");
+            assert!(codes(&[&cu]).is_empty(), "{stmt}: {:?}", messages(&cu));
+        }
+    }
+
+    // must-not-compile 0204: an enum value the enum does not have. A value an enum extension adds is one.
+    #[test]
+    fn al0132_enum_value_that_the_enum_does_not_have() {
+        let e = "enum 50006 \"MNC E204\" { Extensible = true; value(0; Red) { } value(1; Green) { } }";
+        let cu = |v: &str| {
+            format!(
+                "codeunit 50007 C {{ procedure Run1() var E: Enum \"MNC E204\"; begin E := \"MNC E204\"::{v}; end; }}"
+            )
+        };
+        let bad = cu("Purple");
+        assert_eq!(
+            messages(&format!("{e} {bad}")),
+            vec!["AL0132 '\"MNC E204\"' does not contain a definition for 'Purple'"]
+        );
+        assert!(codes(&[e, &cu("Green")]).is_empty());
+        let ext = "enumextension 50008 \"MNC E204 X\" extends \"MNC E204\" { value(50000; Purple) { } }";
+        assert!(codes(&[e, ext, &bad]).is_empty());
+    }
+
+    // must-not-compile 0212: a page field bound to a column the source table does not have.
+    #[test]
+    fn al0132_page_field_bound_to_a_column_the_table_does_not_have() {
+        let t = "table 50016 \"MNC T212\" { fields { field(1; Id; Integer) { } field(2; \"Long Name\"; Text[30]) { } }
+            procedure Calc(): Integer begin end; }";
+        let page = |src: &str| {
+            format!(
+                "page 50017 \"MNC P212\" {{ PageType = List; SourceTable = \"MNC T212\";
+                  layout {{ area(Content) {{ repeater(Rep) {{ field(X; {src}) {{ ApplicationArea = All; }} }} }} }} }}"
+            )
+        };
+        assert_eq!(
+            messages(&format!("{t} {}", page("Rec.NoSuchColumn"))),
+            vec!["AL0132 'Record \"MNC T212\"' does not contain a definition for 'NoSuchColumn'"]
+        );
+        for ok in [
+            "Rec.Id",
+            "Rec.\"Long Name\"",
+            "Rec.SystemId",
+            "Rec.Calc()",
+            "Id",
+            "Rec.Count",
+        ] {
+            assert!(codes(&[t, &page(ok)]).is_empty(), "{ok}");
+        }
+        let ext = "tableextension 50018 TE extends \"MNC T212\" { fields { field(50000; Extra; Integer) { } } }";
+        assert!(codes(&[t, ext, &page("Rec.Extra")]).is_empty());
+    }
+
+    // must-not-compile 0260 to 0268: a variable assigned to a variable of a type it does not convert to.
+    #[test]
+    fn al0122_variable_assigned_to_a_type_it_does_not_convert_to() {
+        let defs = "enum 50071 \"MNC E\" { value(0; A) { } }
+            table 50075 \"MNC T\" { fields { field(1; Id; Integer) { } } }";
+        let cases = [
+            ("B: Boolean; V: Decimal", "B := V", "Decimal", "Boolean"),
+            ("B: Boolean; V: Integer", "B := V", "Integer", "Boolean"),
+            ("B: Text; V: Date", "B := V", "Date", "Text"),
+            ("B: Date; V: Boolean", "B := V", "Boolean", "Date"),
+            ("B: Date; V: Text", "B := V", "Text", "Date"),
+            ("B: Date; V: Decimal", "B := V", "Decimal", "Date"),
+            ("B: Enum \"MNC E\"; V: Variant", "B := V", "Variant", "Enum \"MNC E\""),
+            (
+                "B: Integer; V: Record \"MNC T\"",
+                "B := V",
+                "Record \"MNC T\"",
+                "Integer",
+            ),
+            ("B: Enum \"MNC E\"", "B := 'A'", "Char", "Enum \"MNC E\""),
+        ];
+        for (vars, stmt, from, to) in cases {
+            let cu = format!("{defs} codeunit 50001 C {{ procedure Run1() var {vars}; begin {stmt}; end; }}");
+            assert_eq!(
+                messages(&cu),
+                vec![format!("AL0122 Cannot implicitly convert type '{from}' to '{to}'")],
+                "{vars}: {stmt}"
+            );
+        }
+        let ok = [
+            "B: Boolean; V: Boolean",
+            "B: Text; V: Text",
+            "B: Date; V: Date",
+            "B: Decimal; V: Integer",
+            "B: Variant; V: Date",
+        ];
+        for vars in ok {
+            let cu = format!("{defs} codeunit 50001 C {{ procedure Run1() var {vars}; begin B := V; end; }}");
+            assert!(codes(&[&cu]).is_empty(), "{vars}: {:?}", messages(&cu));
+        }
+        let text = format!("{defs} codeunit 50001 C {{ procedure Run1() var B: Text; begin B := 'A'; end; }}");
+        assert!(codes(&[&text]).is_empty());
+    }
+
+    // must-not-compile 0269 to 0273, 0285, 0286: the scalar pairs, a condition that is no Boolean.
+    #[test]
+    fn al0122_more_scalar_pairs_and_conditions() {
+        let cases = [
+            ("D: Date; M: DateTime", "D := M", "DateTime", "Date"),
+            ("B: Boolean", "B := 'true'", "Text", "Boolean"),
+            ("I: Integer; M: Time", "I := M", "Time", "Integer"),
+            ("J: JsonObject; K: JsonToken", "J := K", "JsonToken", "JsonObject"),
+            ("I: Integer", "if I then I := 0", "Integer", "Boolean"),
+            ("T: Text", "while T do T := ''", "Text", "Boolean"),
+        ];
+        for (vars, stmt, from, to) in cases {
+            let cu = format!("codeunit 50001 C {{ procedure Run1() var {vars}; begin {stmt}; end; }}");
+            assert_eq!(
+                messages(&cu),
+                vec![format!("AL0122 Cannot implicitly convert type '{from}' to '{to}'")],
+                "{vars}: {stmt}"
+            );
+        }
+        let ok = [
+            "B: Boolean; V: Boolean; if V then B := false",
+            "T: Text; V: Boolean; while V do T := ''",
+            "J: JsonToken; K: JsonObject; J := K",
+            "B: Boolean; V: Text; B := V = 'x'",
+            "B: Boolean; T: Text; B := T = ''",
+        ];
+        for stmt in ok {
+            let (vars, body) = stmt.rsplit_once("; ").unwrap();
+            let cu = format!("codeunit 50001 C {{ procedure Run1() var {vars}; begin {body}; end; }}");
+            assert!(codes(&[&cu]).is_empty(), "{stmt}: {:?}", messages(&cu));
+        }
+    }
+
+    // must-not-compile 0274 and 0275.
+    #[test]
+    fn al0122_exit_value_and_a_procedure_without_a_result() {
+        let exit = "codeunit 50001 C { procedure Run1(): Integer begin exit('abc'); end; }";
+        assert_eq!(
+            messages(exit),
+            vec!["AL0122 Cannot implicitly convert type 'Text' to 'Integer'"]
+        );
+        let none = "codeunit 50001 C { local procedure Nothing() begin end; procedure Run1() var I: Integer; begin I := Nothing(); end; }";
+        assert_eq!(
+            messages(none),
+            vec!["AL0122 Cannot implicitly convert type 'None' to 'Integer'"]
+        );
+        let ok = "codeunit 50001 C { local procedure One(): Integer begin exit(1); end; procedure Run1(): Text var I: Integer; begin I := One(); exit('a'); end; procedure Run2(): Integer begin exit(One()); end; }";
+        assert!(codes(&[ok]).is_empty(), "{:?}", messages(ok));
+        // A TryFunction returns a Boolean without declaring one (corpus errors/lt-error-handling/ErTTryBasics.al:81).
+        let try_fn = "codeunit 50001 C { [TryFunction] local procedure TryOk() begin end; procedure Run1() var Ok: Boolean; begin Ok := TryOk(); end; }";
+        assert!(codes(&[try_fn]).is_empty(), "{:?}", messages(try_fn));
+    }
+
+    // must-not-compile 0305 to 0310, 0312, 0315: a property the object type does not have.
+    #[test]
+    fn al0124_a_property_the_object_does_not_have() {
+        let table = "table 50120 T { fields { field(1; Id; Integer) { } } keys { key(PK; Id) { Clustered = true; } } }";
+        let cases = [
+            (
+                format!("{table} codeunit 50121 C {{ SourceTable = T; }}"),
+                "SourceTable",
+            ),
+            (
+                "table 50122 T { ApplicationArea = All; fields { field(1; Id; Integer) { } } }".to_string(),
+                "ApplicationArea",
+            ),
+            ("report 50123 R { Editable = false; }".to_string(), "Editable"),
+            (
+                "table 50124 T { PageType = List; fields { field(1; Id; Integer) { } } }".to_string(),
+                "PageType",
+            ),
+            ("page 50125 P { TableNo = 18; }".to_string(), "TableNo"),
+            (
+                "codeunit 50126 C { DataPerCompany = false; }".to_string(),
+                "DataPerCompany",
+            ),
+            (
+                "codeunit 50128 C { NoSuchProperty = true; }".to_string(),
+                "NoSuchProperty",
+            ),
+            (
+                format!(
+                    "{table} page 50132 P {{ PageType = List; SourceTable = T; layout {{ area(Content) {{ repeater(Rep) {{ field(Id; Rec.Id) {{ ApplicationArea = All; InitValue = 5; }} }} }} }} }}"
+                ),
+                "InitValue",
+            ),
+        ];
+        for (src, prop) in cases {
+            assert_eq!(
+                messages(&src),
+                vec![format!(
+                    "AL0124 The property '{prop}' cannot be used in this context. Verify the property is available for the current object type."
+                )],
+                "{src}"
+            );
+        }
+        let ok = [
+            "codeunit 50001 C { Subtype = Test; TestPermissions = Disabled; SingleInstance = true; TableNo = 18; Permissions = tabledata T = r; Access = Internal; Description = 'x'; EventSubscriberInstance = Manual; }",
+            "table 50001 T { DataPerCompany = false; Caption = 'x'; LookupPageId = 5; fields { field(1; Id; Integer) { InitValue = 5; } } }",
+            "page 50001 P { PageType = List; ApplicationArea = All; Editable = false; UsageCategory = Lists; SourceTable = T; }",
+            "report 50001 R { ApplicationArea = All; UsageCategory = Lists; ProcessingOnly = true; }",
+        ];
+        for src in ok {
+            let full = format!("table 50000 T {{ fields {{ field(1; Id; Integer) {{ }} }} }} {src}")
+                .replace("table 50001 T", "table 50002 T2");
+            assert!(codes(&[&full]).is_empty(), "{src}: {:?}", messages(&full));
+        }
+    }
+
+    // must-not-compile 0316 to 0321: a trigger the object type does not have.
+    #[test]
+    fn al0162_a_trigger_the_object_does_not_have() {
+        let cases = [
+            ("codeunit 50001 C", "OnOpenPage"),
+            ("page 50001 P { PageType = Card; }", "OnInsert"),
+            ("table 50001 T { fields { field(1; Id; Integer) { } } }", "OnRun"),
+            ("codeunit 50001 C", "OnPreReport"),
+            ("table 50001 T { fields { field(1; Id; Integer) { } } }", "OnOpenPage"),
+            ("report 50001 R", "OnPreXmlPort"),
+        ];
+        for (head, trg) in cases {
+            let head = head.strip_suffix('}').map_or(format!("{head} {{"), |h| format!("{h} "));
+            let src = format!("{head} trigger {trg}() begin end; }}");
+            assert_eq!(
+                messages(&src),
+                vec![format!(
+                    "AL0162 '{trg}' is not a valid trigger for this object type. Check the object documentation for supported triggers."
+                )],
+                "{src}"
+            );
+        }
+        let ok = [
+            "codeunit 50001 C { trigger OnRun() begin end; }",
+            // The install and upgrade triggers (corpus install/TestInstallSeeder.al).
+            "codeunit 50001 C { Subtype = Install; trigger OnInstallAppPerCompany() begin end; trigger OnInstallAppPerDatabase() begin end; }",
+            "codeunit 50001 C { Subtype = \"Install\"; trigger OnInstallAppPerCompany() begin end; }",
+            "codeunit 50001 C { Subtype = Upgrade; trigger OnUpgradePerCompany() begin end; trigger OnValidateUpgradePerDatabase() begin end; }",
+            // The triggers of a test runner codeunit (corpus events/lt-trigger-pins/PTestRunnerTriggers.al:107, :116).
+            "codeunit 50001 C { Subtype = TestRunner; trigger OnBeforeTestRun(CodeunitId: Integer; CodeunitName: Text; FunctionName: Text; FunctionTestPermissions: TestPermissions): Boolean begin exit(true); end;
+               trigger OnAfterTestRun(CodeunitId: Integer; CodeunitName: Text; FunctionName: Text; FunctionTestPermissions: TestPermissions; IsSuccess: Boolean) begin end; }",
+            "table 50001 T { fields { field(1; Id; Integer) { } } trigger OnInsert() begin end; trigger OnModify() begin end; trigger OnDelete() begin end; trigger OnRename() begin end; }",
+            "page 50001 P { PageType = Card; trigger OnOpenPage() begin end; trigger OnInit() begin end; trigger OnNewRecord(BelowxRec: Boolean) begin end; }",
+            "report 50001 R { trigger OnPreReport() begin end; trigger OnPostReport() begin end; trigger OnInitReport() begin end; }",
+        ];
+        for src in ok {
+            assert!(codes(&[src]).is_empty(), "{src}: {:?}", messages(src));
+        }
+    }
+
+    // must-not-compile 0324.
+    #[test]
+    fn al0122_a_codeunit_that_does_not_implement_the_interface() {
+        let head = "interface I { procedure Calc(A: Integer): Integer; } codeunit 50001 C { }";
+        let user = "codeunit 50002 D { procedure Run1() var I: Interface I; C: Codeunit C; begin I := C; end; }";
+        assert_eq!(
+            messages(&format!("{head} {user}")),
+            vec!["AL0122 Cannot implicitly convert type 'Codeunit \"C\"' to 'Interface \"I\"'"]
+        );
+        let ok = "interface I { procedure Calc(A: Integer): Integer; } interface J extends I { } \
+            codeunit 50001 C implements I { procedure Calc(A: Integer): Integer begin end; } \
+            codeunit 50003 C2 implements J { procedure Calc(A: Integer): Integer begin end; } \
+            codeunit 50002 D { procedure Run1() var I: Interface I; C: Codeunit C; C2: Codeunit C2; begin I := C; I := C2; end; }";
+        assert!(codes(&[ok]).is_empty(), "{:?}", messages(ok));
+    }
+
+    // must-not-compile 0351 to 0355: system variables an object type does not have.
+    #[test]
+    fn al0118_system_variables_the_object_does_not_have() {
+        let cases = [
+            (
+                "codeunit 50001 C { procedure Run1() begin CurrPage.Update(); end; }",
+                "CurrPage",
+            ),
+            (
+                "codeunit 50001 C { procedure Run1() begin CurrReport.Skip(); end; }",
+                "CurrReport",
+            ),
+            ("codeunit 50001 C { procedure Run1() begin xRec.Init(); end; }", "xRec"),
+            (
+                "table 50001 T { fields { field(1; Id; Integer) { } } trigger OnInsert() begin CurrPage.Update(); end; }",
+                "CurrPage",
+            ),
+            ("report 50001 R { trigger OnPreReport() begin Rec.Init(); end; }", "Rec"),
+        ];
+        for (src, name) in cases {
+            assert_eq!(
+                messages(src),
+                vec![format!(
+                    "AL0118 The name '{name}' does not exist in the current context."
+                )],
+                "{src}"
+            );
+        }
+        let ok = [
+            "table 50000 T { fields { field(1; Id; Integer) { } } } codeunit 50001 C { TableNo = T; procedure Run1() begin xRec.Init(); Rec.Init(); end; }",
+            "table 50001 T { fields { field(1; Id; Integer) { } } trigger OnInsert() begin Rec.Init(); xRec.Init(); end; }",
+            "report 50001 R { trigger OnPreReport() begin CurrReport.Skip(); end; }",
+            "page 50001 P { trigger OnOpenPage() begin CurrPage.Update(); end; }",
+        ];
+        for src in ok {
+            assert!(codes(&[src]).is_empty(), "{src}: {:?}", messages(src));
+        }
+    }
+
+    // must-not-compile 0356 and 0358: a local procedure and a global variable of another codeunit.
+    #[test]
+    fn al0161_a_local_procedure_or_a_variable_of_another_codeunit() {
+        let local = "codeunit 50001 C { local procedure Secret() begin end; } \
+            codeunit 50002 D { procedure Run1() var C: Codeunit C; begin C.Secret(); end; }";
+        assert_eq!(
+            messages(local),
+            vec!["AL0161 'Secret()' is inaccessible due to its protection level"]
+        );
+        let var = "codeunit 50001 C { var Shown: Integer; } \
+            codeunit 50002 D { procedure Run1() var C: Codeunit C; I: Integer; begin I := C.Shown; end; }";
+        assert_eq!(
+            messages(var),
+            vec!["AL0161 'Shown' is inaccessible due to its protection level"]
+        );
+        let ok = "codeunit 50001 C { var Shown: Integer; procedure Open() begin end; local procedure Secret() begin end; \
+            procedure Self() var Me: Codeunit C; begin Me.Secret(); end; } \
+            codeunit 50002 D { procedure Run1() var C: Codeunit C; begin C.Open(); C.Run(); end; }";
+        assert!(codes(&[ok]).is_empty(), "{:?}", messages(ok));
+    }
+
+    // must-not-compile 0401, 0403, 0405, 0407, 0412 to 0419, 0430 to 0438, 0445, 0448: more scalar, option and enum pairs.
+    #[test]
+    fn al0122_enum_option_and_boolean_pairs() {
+        let e = "enum 50010 E { Extensible = true; AssignmentCompatibility = true; value(0; None) { } value(1; One) { } } \
+            table 50011 T { fields { field(1; Id; Integer) { } field(2; Kind; Enum E) { } } } ";
+        let cases = [
+            ("C: Code[20]; T: Enum E", "C := T", "Enum \"E\"", "Code[20]"),
+            ("X: Text; T: Enum E", "X := T", "Enum \"E\"", "Text"),
+            ("X: Text; O: Option A,B,C", "O := X", "Text", "Option"),
+            ("D: Decimal; T: Enum E", "T := D", "Decimal", "Enum \"E\""),
+            ("C: Code[20]; T: Enum E", "T := C", "Code[20]", "Enum \"E\""),
+            ("X: Text; T: Enum E", "T := X", "Text", "Enum \"E\""),
+            ("D: Decimal; R: Record T", "R.Kind := D", "Decimal", "Enum \"E\""),
+            ("X: Text; R: Record T", "R.Kind := X", "Text", "Enum \"E\""),
+            ("B: Boolean; T: Enum E", "T := B", "Boolean", "Enum \"E\""),
+            ("D: Date; T: Enum E", "T := D", "Date", "Enum \"E\""),
+            ("C: Char; T: Enum E", "T := C", "Char", "Enum \"E\""),
+            ("B: Boolean; G: BigInteger", "B := G", "BigInteger", "Boolean"),
+            ("B: Boolean", "B := 1", "Integer", "Boolean"),
+            ("B: Boolean; I: Integer", "I := B", "Boolean", "Integer"),
+            ("B: Boolean; G: BigInteger", "G := B", "Boolean", "BigInteger"),
+            ("B: Boolean; O: Option A,B,C", "B := O", "Option", "Boolean"),
+            ("B: Boolean; O: Option A,B,C", "O := B", "Boolean", "Option"),
+            ("G: BigInteger", "if G then G := 0", "BigInteger", "Boolean"),
+            ("O: Option A,B,C", "if O then O := O", "Option", "Boolean"),
+            ("B: Boolean; T: Enum E", "B := T", "Enum \"E\"", "Boolean"),
+        ];
+        for (vars, stmt, from, to) in cases {
+            let cu = format!("{e} codeunit 50001 C {{ procedure Run1() var {vars}; begin {stmt}; end; }}");
+            assert_eq!(
+                messages(&cu),
+                vec![format!("AL0122 Cannot implicitly convert type '{from}' to '{to}'")],
+                "{vars}: {stmt}"
+            );
+        }
+        let ok = [
+            "B: Boolean; V: Boolean; B := V",
+            "I: Integer; O: Option A,B; I := O",
+            "O: Option A,B; I: Integer; O := I",
+            "T: Enum E; I: Integer; I := T.AsInteger()",
+            "T: Enum E; X: Text; X := Format(T)",
+            "T: Enum E; U: Enum E; T := U",
+            "B: Boolean; O: Option A,B; B := O = O::A",
+            "G: BigInteger; I: Integer; G := I",
+            "G: BigInteger; I: Integer; I := G",
+        ];
+        for stmt in ok {
+            let (vars, body) = stmt.rsplit_once("; ").unwrap();
+            let cu = format!("{e} codeunit 50001 C {{ procedure Run1() var {vars}; begin {body}; end; }}");
+            assert!(codes(&[&cu]).is_empty(), "{stmt}: {:?}", messages(&cu));
+        }
+        // exit(value) of an enum into a procedure whose enum does not state AssignmentCompatibility (0405).
+        let exit = "enum 50020 A { Extensible = true; value(0; None) { } } enum 50021 B { Extensible = true; value(0; None) { } } \
+            codeunit 50001 C { procedure Run1(): Enum B var S: Enum A; begin exit(S); end; }";
+        assert_eq!(
+            messages(exit),
+            vec!["AL0122 Cannot implicitly convert type 'Enum \"A\"' to 'Enum \"B\"'"]
+        );
+    }
+
+    // must-not-compile 0359: a local procedure of a table, called through a record.
+    #[test]
+    fn al0161_a_local_procedure_of_a_table_through_a_record() {
+        let t = "table 50000 T { fields { field(1; Id; Integer) { } } local procedure Secret() begin end; procedure Open() begin end; \
+            procedure Self() var R: Record T; begin R.Secret(); end; } ";
+        let bad = format!("{t} codeunit 50001 C {{ procedure Run1() var R: Record T; begin R.Secret(); end; }}");
+        assert_eq!(
+            messages(&bad),
+            vec!["AL0161 'Secret()' is inaccessible due to its protection level"]
+        );
+        let ok = format!("{t} codeunit 50001 C {{ procedure Run1() var R: Record T; begin R.Open(); end; }}");
+        assert!(codes(&[&ok]).is_empty(), "{:?}", messages(&ok));
+    }
+
+    // must-not-compile 0361 to 0363: File.Exists, File.Erase and File.Copy have scope OnPrem.
+    #[test]
+    fn al0296_static_file_methods_in_a_cloud_app() {
+        for call in ["B := File.Exists('x')", "File.Erase('x')", "File.Copy('a', 'b')"] {
+            let src = format!("codeunit 50000 C {{ procedure P() var B: Boolean; begin {call}; end; }}");
+            assert_eq!(ctx_codes(&src, &cloud()), vec!["AL0296"], "{call}");
+            let onprem = AppContext {
+                target: AppTarget::OnPrem,
+                ..cloud()
+            };
+            assert!(ctx_codes(&src, &onprem).is_empty(), "{call}");
+        }
+        let var = "codeunit 50000 C { procedure P() var File: Codeunit D; begin File.Exists('x'); end; } codeunit 50001 D { procedure Exists(S: Text) begin end; }";
+        assert!(ctx_codes(var, &cloud()).is_empty());
     }
 }

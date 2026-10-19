@@ -122,6 +122,8 @@ page_methods! {
     "TestRequestPage.OK#1" => TestPageOK,
     "TestRequestPage.Cancel#1" => TestPageCancel,
     "TestRequestPage.Caption#1" => TestPageCaption,
+    // report/lt-y-request-page/YRequestPageTests.al:124-161: New on a request page whose InsertAllowed is false.
+    "TestRequestPage.New#1" => TestPageNew,
     // handlers/PSRequestPageEditable.al: the page-level form answers as TestPage.Editable does.
     "TestRequestPage.Editable#1" => TestPageEditable,
     "TestRequestPage.ValidationErrorCount#1" => TestPageValidationErrorCount,

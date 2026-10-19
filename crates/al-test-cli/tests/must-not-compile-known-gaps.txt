@@ -121,3 +121,32 @@
 # runtime diagnostic (AR1005), not with the compiler's AL0132 that the case expects.
 27 0960-record-isdirty
 28 0960-record-isdirty
+# corpus bump 27: new cases the front end does not decide yet (Media/MediaSet file and HttpClient Windows
+# authentication members from a Cloud app, CurrPage.PromptMode = Lookup, a group without ApplicationArea).
+27 0643-media-exportfile-cloud
+27 0644-media-importfile-cloud
+27 0645-mediaset-exportfile-cloud
+27 0646-mediaset-importfile-cloud
+27 0651-httpclient-defaultnetworkwindowsauth-cloud
+27 0652-httpclient-windowsauth-text-cloud
+27 0653-httpclient-windowsauth-secrettext-cloud
+27 1090-currpage-promptmode-lookup
+27 1091-group-applicationarea
+28 0643-media-exportfile-cloud
+28 0644-media-importfile-cloud
+28 0645-mediaset-exportfile-cloud
+28 0646-mediaset-importfile-cloud
+28 0651-httpclient-defaultnetworkwindowsauth-cloud
+28 0652-httpclient-windowsauth-text-cloud
+28 0653-httpclient-windowsauth-secrettext-cloud
+28 1090-currpage-promptmode-lookup
+28 1091-group-applicationarea
+29 0643-media-exportfile-cloud
+29 0644-media-importfile-cloud
+29 0645-mediaset-exportfile-cloud
+29 0646-mediaset-importfile-cloud
+29 0651-httpclient-defaultnetworkwindowsauth-cloud
+29 0652-httpclient-windowsauth-text-cloud
+29 0653-httpclient-windowsauth-secrettext-cloud
+29 1090-currpage-promptmode-lookup
+29 1091-group-applicationarea

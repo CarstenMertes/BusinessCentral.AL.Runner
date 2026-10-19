@@ -82,6 +82,10 @@ fn every_corpus_table_field_has_a_known_type() {
 /// not a pass. A file with no gap left fails the test below, so the list only shrinks (ADR-007).
 const KNOWN_GAP_FILES: &[(&str, &str)] = &[
     (
+        "pages/lt-ap-testpage-642/ApTestPageTests.al",
+        "the checker takes a part control named `Page` (Host.PartF.\"Page\") for the page of the part (corpus bump 27)",
+    ),
+    (
         "misc/lt-inferred-behaviors/P69PartPageControl.al",
         "the checker does not resolve a member of a part page's control (corpus bump 11)",
     ),

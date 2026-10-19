@@ -66,7 +66,9 @@ impl Session {
         let policy = self.http_policy;
         let bound = self.has_http_handler();
         // Before BC 29 a bound handler does not answer under BlockOutboundRequests: the request raises as with no handler
-        // (al-language-onprem/session/PZHttpBlock.al:54-57).
+        // (al-language-onprem/session/PZHttpBlock.al:54-57). The bound handler counts as run: the test, with
+        // `[HandlerFunctions('Handler')]` and the error expected, passes on real BC 27 and 28 (oracle/27/junit-onprem.xml:430,
+        // oracle/28/junit-onprem.xml:445).
         let blocked_anyway =
             policy == Some("BlockOutboundRequests") && !self.has(al_version::Gate::HttpHandlerUnderBlockOutboundFrom29);
         if blocked_anyway && bound {

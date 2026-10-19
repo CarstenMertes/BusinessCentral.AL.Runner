@@ -49,6 +49,10 @@ pub struct BlobBuf {
     /// the name of the report. Any look at the buffer is refused (`observe`); a copy of the buffer carries the mark
     /// (`copy_blob`, a record assignment, `CalcFields`); creating the stream again clears it.
     pub render_pending: Option<std::sync::Arc<str>>,
+    /// The content is what an `Insert` stored, and no `Modify` or stream write came after. `Media.ImportStream` from a stream on
+    /// such a Blob of the same record is refused (misc/lt-probes-needed-5/PnE06Media.al:66-84 against streams/
+    /// lt-stream-read-write-media/P102Media.al:24-41, see `refuse_media_import_from_own_blob` in al-vm).
+    pub inserted: bool,
 }
 
 thread_local! {
@@ -59,8 +63,17 @@ thread_local! {
     static OBSERVED_ANY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
+/// The mark `Media.ExportStream` puts on a buffer before BC 29: BC re-encodes an imported PNG into bytes the corpus does not pin
+/// (types/W7Media.al:141-151), and other content is not probed on those majors.
+pub const MEDIA_REENCODED: &str = "Media.ExportStream";
+
 /// The refusal for a look at the output of a report that was run for its effects only (ADR-040).
 pub fn render_pending_error(report: &str) -> Signal {
+    if report == MEDIA_REENCODED {
+        return Signal::Unsupported(
+            "the bytes Media.ExportStream gives on a major that re-encodes an imported PNG (not pinned)".into(),
+        );
+    }
     // ADR-044 uses the same mark for the picture a `System.Drawing.Bitmap` was asked to save: the name is the .NET type.
     if report.starts_with("System.Drawing.") {
         return Signal::Unsupported(format!("picture drawn by {report} is not produced"));
@@ -139,6 +152,7 @@ pub fn new_blob() -> BlobRef {
         temp_row: false,
         written: false,
         render_pending: None,
+        inserted: false,
     }))
 }
 
@@ -162,6 +176,7 @@ pub fn copy_blob(b: &BlobRef, loaded: bool) -> BlobRef {
         temp_row: false,
         written: false,
         render_pending: b.render_pending.clone(),
+        inserted: b.inserted,
     }))
 }
 
@@ -178,6 +193,7 @@ pub fn write_bytes(b: &BlobRef, bytes: &[u8]) {
     buf.refetch = false;
     buf.persisted = false;
     buf.written = true;
+    buf.inserted = false;
 }
 
 /// How text becomes bytes in a stream. MSDos is code page 437 and the default (streams/TestStreamsRuntimeContracts.al:
@@ -390,6 +406,14 @@ impl InState {
         }
     }
 
+    /// The Blob buffer the stream reads, when it reads one.
+    pub fn live_blob(&self) -> Option<&BlobRef> {
+        match &self.source {
+            Source::Live(b) => Some(b),
+            Source::Snapshot(_) => None,
+        }
+    }
+
     /// The report whose unproduced output the stream looks at (ADR-040), if it does.
     pub fn render_pending(&self) -> Option<std::sync::Arc<str>> {
         match &self.source {
@@ -496,6 +520,7 @@ pub(crate) fn create_empty_in_stream(a: &mut [Value]) -> Result<(), Signal> {
         temp_row: false,
         written: false,
         render_pending: None,
+        inserted: false,
     });
     set_stream(
         &a[0],
@@ -511,19 +536,31 @@ fn blob_has_value(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> NR
     Ok(Value::Boolean(!buf.bytes.is_empty()))
 }
 
-fn blob_length(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> NResult {
+fn blob_length(c: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> NResult {
     let b = blob_of(r)?;
     let buf = b.borrow();
     buf.observe()?;
     if !buf.loaded {
-        // Before CalcFields the length is the stored size, which is 6 more than the content
-        // (:Blob_Length_WithoutCalcFields_ReportsTheStoredSize, one measurement: 5 bytes read as 11).
-        // Whether the 6 is constant is docs/probes-needed.md; an empty blob is 0 (streams/TestProbeStreamContracts.al:
-        // BlobLength_EmptyUnloaded).
-        if buf.bytes.is_empty() || buf.temp_row {
-            return Ok(Value::Integer(buf.bytes.len() as i32));
+        // Before CalcFields the length is the stored size. An empty blob is 0 (streams/TestProbeStreamContracts.al:
+        // BlobLength_EmptyUnloaded); a temporary row's is its content's (misc/lt-probes-needed-1/PnABlobLength.al:
+        // Length_InMemoryAndFindVariants). The stored size is the content plus 6 on every major for 4 bytes (streams/StTStreams.al:640,
+        // LengthNeedsCalcFields), 5 bytes (streams/TestStreamsRuntimeContracts.al:264, Blob_Length_WithoutCalcFields_ReportsTheStoredSize),
+        // 8 bytes (record/lt-blob-autocalc/BlobAutoCalc.al:144, Persistent_InsertedRecord_Blob) and 12 bytes (:276, :320;
+        // record/lt-temporary-blob/TemporaryBlobAutoCalc.al:144), and for 1 and 2 bytes from BC 29 (misc/lt-probes-needed-1/
+        // PnABlobLength.al:49-54, Length_ByStoredSize; the test is BC 29 only). 100 bytes and more are a compressed size (:55-60:
+        // 10, 31, 118 for 100, 10000, 100000 `x`). The other sizes are not pinned and are refused. Probe wanted (docs/probes-needed.md).
+        let n = buf.bytes.len();
+        if n == 0 || buf.temp_row {
+            return Ok(Value::Integer(n as i32));
         }
-        return Ok(Value::Integer(buf.bytes.len() as i32 + 6));
+        let pinned =
+            matches!(n, 4 | 5 | 8 | 12) || (matches!(n, 1 | 2) && c.gate(al_version::Gate::ProbedValuesDifferFrom29));
+        if !pinned {
+            return unsupported(format!(
+                "Blob.Length before CalcFields of a stored blob of {n} bytes (the stored size is not pinned)"
+            ));
+        }
+        return Ok(Value::Integer(n as i32 + 6));
     }
     Ok(Value::Integer(buf.bytes.len() as i32))
 }
@@ -825,13 +862,17 @@ fn in_read(c: &mut dyn Ctx, mut r: Option<&mut Value>, a: &mut [Value]) -> NResu
         let (taken, count) = with_in(r, |s| {
             let unit = s.enc.unit();
             let rest = s.rest();
-            // At the end of the stream the Text is emptied and the result is 0, no error
-            // (misc/lt-probes-needed-3/PnC20JsonStreams.al:312-318, `pastEnd`).
+            // At the end of the stream the Text is emptied, no error. The result is 0 on a stream of the default encoding
+            // (misc/lt-probes-needed-3/PnC20JsonStreams.al:312-318, `pastEnd`) and 1 on a UTF-8 one (misc/lt-probes-needed-5/
+            // PnE04Streams.al:89 and :113, `atEnd`).
             if rest.is_empty() {
-                return Ok((String::new(), 0));
+                return Ok((String::new(), usize::from(s.enc == Encoding::Utf8)));
             }
             let end = rest.chunks_exact(unit).position(|u| u.iter().all(|b| *b == 0));
-            if used && (end.is_none() || unit != 1) {
+            // On a UTF-8 stream a text with no zero byte after it counts one more than its bytes as well: `hello` is 6
+            // (PnE04Streams.al:111, ReadText_Utf8_NoTerminator).
+            let utf8_unterminated = end.is_none() && s.enc == Encoding::Utf8;
+            if used && ((end.is_none() && !utf8_unterminated) || unit != 1) {
                 return unsupported(
                     "the result of InStream.Read into a Text without a zero terminator or on a UTF-16 stream (not pinned)",
                 );
@@ -840,6 +881,7 @@ fn in_read(c: &mut dyn Ctx, mut r: Option<&mut Value>, a: &mut [Value]) -> NResu
                 Some(e) => (e * unit, (e + 1) * unit),
                 None => (rest.len(), rest.len()),
             };
+            let counted = consumed + usize::from(utf8_unterminated);
             let body = &rest[..body_len];
             if !s.enc.decode_pinned(body)
                 || (!s.enc.decode(body).is_ascii() && !matches!(s.enc, Encoding::Windows | Encoding::MsDos))
@@ -849,7 +891,7 @@ fn in_read(c: &mut dyn Ctx, mut r: Option<&mut Value>, a: &mut [Value]) -> NResu
                 );
             }
             s.pos += consumed;
-            Ok((s.enc.decode(body), consumed))
+            Ok((s.enc.decode(body), counted))
         })?;
         a[0] = match a[0] {
             Value::Code(_) => Value::Code(taken.into()),

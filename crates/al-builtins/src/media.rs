@@ -34,9 +34,12 @@ pub struct MediaObject {
     pub pending: Option<std::sync::Arc<str>>,
 }
 
+/// The eight bytes every PNG starts with.
+const PNG_SIGNATURE: [u8; 8] = [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
+
 /// The size a PNG header gives (`IHDR` at byte 16: width and height, big endian).
 fn png_size(b: &[u8]) -> Option<(i32, i32)> {
-    if b.len() < 24 || b[..8] != [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a] {
+    if b.len() < 24 || b[..8] != PNG_SIGNATURE {
         return None;
     }
     let w = u32::from_be_bytes(b[16..20].try_into().ok()?);
@@ -211,12 +214,24 @@ fn media_export(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out 
     };
     match &*h.borrow() {
         LibraryValue::OutStream(blob, _) => {
-            crate::stream::write_bytes(blob, &obj.bytes);
+            // Before BC 29 an imported PNG comes back re-encoded: 68 bytes export as 93 other bytes (types/W7Media.al:141-151,
+            // ExportStream_OfAnImportedPicture, `#else` branch). The export itself succeeds (streams/StTMedia.al:170 and :213,
+            // MediaExportStream and MediaExportAfterReload pass on BC 27 and 28). The re-encoded bytes are not pinned, and neither is
+            // what BC 27/28 export for content that is no PNG: the stream's buffer is marked like an unproduced report (ADR-040)
+            // and any look at it is refused. Probe wanted (docs/probes-needed.md).
+            if !c.gate(al_version::Gate::MediaExportKeepsTheImportedBytes) {
+                let mut buf = blob.borrow_mut();
+                buf.bytes.clear();
+                buf.loaded = true;
+                buf.written = true;
+                buf.render_pending = Some(crate::stream::MEDIA_REENCODED.into());
+            } else {
+                // From BC 29 the bytes are the ones imported (types/W7Media.al:134,146).
+                crate::stream::write_bytes(blob, &obj.bytes);
+            }
         }
         other => return unsupported(format!("an OutStream was expected, got {}", other.describe())),
     }
-    // The bytes are the ones imported. BC re-encodes an image, so the length differs from BC's;
-    // the corpus asserts only what any encoder preserves (media/TestMediaPngImport.al:99-168).
     Ok(Value::Boolean(true))
 }
 

@@ -690,6 +690,27 @@ const REGISTRY: &[(&str, NativeFn)] = &[
             std::rc::Rc::new(std::cell::RefCell::new(crate::value::LibraryValue::Text(text))),
         ))
     }),
+    // An interface assigned from another interface variable: one that holds no implementation raises
+    // (codeunit/lt-enums-interfaces/OjT71047.al:250-251, Uninitialized_AssignedFromUninitialized `af224`).
+    ("Interface.AssertAssigned#1", |_, _, a| match a.first() {
+        Some(Value::Null) | None => raise("Interface not initialized", "InvalidOperation"),
+        Some(v) => Ok(v.clone()),
+    }),
+    // A Variant assigned to an Integer: a BigInteger or a Duration beyond the Integer range raises TypeConversion:Overflow
+    // (types/lt-variant/VaTConvert.al:183-184; types/lt-filter-enum-relation-duration-guid/D_Duration.al:226). Everything
+    // else converts as any value does.
+    ("Variant.IntoInteger#1", |_, _, a| {
+        let v = a.first().cloned().unwrap_or(Value::Null);
+        if let Value::BigInteger(n) | Value::Duration(n) = v {
+            if i32::try_from(n).is_err() {
+                return raise(
+                    "The expression Variant cannot be type-converted to a Integer value.",
+                    "TypeConversion:Overflow",
+                );
+            }
+        }
+        crate::ops::convert(v, &crate::value::RtType::Integer)
+    }),
     ("Variant.IsDateFormula#1", |_, r, _| is(r, "DateFormula")),
     ("Variant.IsOption#1", |_, r, _| is(r, "Option")),
     ("Variant.IsList#1", |_, r, _| is(r, "List")),
@@ -793,6 +814,8 @@ pub const INVENTED_IDS: &[&str] = &[
     "Record.CurrFieldNo#1",
     "Media.ToVariant#1",
     "TextBuilder.AppendFieldValue#1",
+    "Interface.AssertAssigned#1",
+    "Variant.IntoInteger#1",
 ];
 
 /// Every name that gets a [`BuiltinId`]: the catalog's overloads of every version, the registered natives
@@ -2273,6 +2296,8 @@ pub(crate) mod tests {
             "Dialog.ErrorNotLiteral#1",
             "TextBuilder.AppendFieldValue#1",
             "Media.ToVariant#1",
+            "Interface.AssertAssigned#1",
+            "Variant.IntoInteger#1",
         ];
         for id in registered_ids().into_iter().filter(|id| !derived.contains(id)) {
             assert!(ids.iter().any(|i| i == id), "{id} is not a catalog overload id");

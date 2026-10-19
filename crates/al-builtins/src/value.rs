@@ -891,6 +891,9 @@ pub struct HttpContentState {
     pub stream_taken: bool,
     /// A `WriteFrom` has put a body here (a second one may add a Content-Length, see `write_body`).
     pub written: bool,
+    /// The value is a copy an assignment or a by-value parameter made (`deep_copy`), not the content a request handed out.
+    /// `ReadAs` on an uninitialized content runs only the shapes the corpus pins, and the two pins differ in this.
+    pub copied: bool,
 }
 
 impl Default for HttpContentState {
@@ -906,6 +909,7 @@ impl Default for HttpContentState {
             uninitialized: false,
             stream_taken: false,
             written: false,
+            copied: false,
         }
     }
 }

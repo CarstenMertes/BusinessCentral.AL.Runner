@@ -1380,13 +1380,21 @@ fn security_filtering_attr_member(v: &ast::VarDecl) -> Result<i32, String> {
         .ok_or_else(|| format!("the attribute SecurityFiltering({inner}) is not understood"))
 }
 
-/// Whether the routine body (lower case, without white space) clears or assigns the variable `name` as a whole:
-/// `Clear(name)`, `ClearAll` or `name :=`. A match inside a string or a comment only makes the check stricter.
+/// Whether the routine body (lower case, without white space) does something to the variable `name` whose effect on
+/// the declared SecurityFiltering value is not pinned: `Clear(name)`, `ClearAll`, `name :=`, passing it as an argument
+/// to any call (a callee may clear or assign it through a `var` parameter), or `Reset`, `Copy` or `TransferFields` on
+/// it. A match inside a string or a comment only makes the check stricter.
 fn cleared_or_assigned(body: &str, name: &str) -> bool {
     let n = name.to_lowercase();
     let quoted = format!("\"{n}\"");
     body.contains("clearall")
-        || [&n, &quoted]
-            .iter()
-            .any(|v| body.contains(&format!("clear({v})")) || body.contains(&format!("{v}:=")))
+        || [&n, &quoted].iter().any(|v| {
+            body.contains(&format!("{v}:="))
+                || body.contains(&format!("({v},"))
+                || body.contains(&format!("({v})"))
+                || body.contains(&format!(",{v}"))
+                || ["reset(", "copy(", "transferfields("]
+                    .iter()
+                    .any(|m| body.contains(&format!("{v}.{m}")))
+        })
 }

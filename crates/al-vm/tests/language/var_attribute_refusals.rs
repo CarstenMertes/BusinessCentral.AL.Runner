@@ -57,7 +57,14 @@ fn a_local_record_declared_with_security_filtering_starts_with_the_declared_valu
         procedure G(): Text var P: Record T; begin exit(Format(P.SecurityFiltering())); end; \
         procedure H(): Integer var [SecurityFiltering(SecurityFilter::Ignored)] R: Record T; begin exit(R.Count()); end; \
         procedure K(): Text var [SecurityFiltering(SecurityFilter::Filtered)] R: Record T; begin Clear(R); exit(Format(R.SecurityFiltering())); end; \
-        procedure L(): Text begin exit(Format(GR.SecurityFiltering())); end; }";
+        procedure L(): Text begin exit(Format(GR.SecurityFiltering())); end; \
+        procedure M1(): Text var [SecurityFiltering(SecurityFilter::Filtered)] R: Record T; begin Pass(R); exit(Format(R.SecurityFiltering())); end; \
+        procedure M2(): Text var [SecurityFiltering(SecurityFilter::Filtered)] R: Record T; begin Two(1, R); exit(Format(R.SecurityFiltering())); end; \
+        procedure M3(): Text var [SecurityFiltering(SecurityFilter::Filtered)] R: Record T; begin R.Reset(); exit(Format(R.SecurityFiltering())); end; \
+        procedure M4(): Text var [SecurityFiltering(SecurityFilter::Filtered)] R: Record T; P: Record T; begin R.Copy(P); exit(Format(R.SecurityFiltering())); end; \
+        procedure M5(): Text var [SecurityFiltering(SecurityFilter::Filtered)] R: Record T; begin R.TransferFields(R); exit(Format(R.SecurityFiltering())); end; \
+        procedure Pass(var X: Record T) begin end; \
+        procedure Two(N: Integer; var X: Record T) begin end; }";
     assert_eq!(
         al_testkit::text(al_testkit::run_in(src, "C", "F")),
         "FilteredIgnoredValidated"
@@ -67,4 +74,9 @@ fn a_local_record_declared_with_security_filtering_starts_with_the_declared_valu
     // Cleared: the read stays refused, as on main.
     refused(al_testkit::run_in(src, "C", "K"), "SecurityFiltering");
     refused(al_testkit::run_in(src, "C", "L"), "SecurityFiltering");
+    // Passed to a call, or the receiver or source of Reset, Copy or TransferFields: what the record keeps is not
+    // pinned, so the read stays refused.
+    for p in ["M1", "M2", "M3", "M4", "M5"] {
+        refused(al_testkit::run_in(src, "C", p), "SecurityFiltering");
+    }
 }

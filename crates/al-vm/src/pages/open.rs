@@ -627,7 +627,7 @@ impl Session {
         // ClientValidateField:NSValidateField. The trigger is not run again here: whether its other effects happen again at
         // Close is not pinned (docs/probes-needed.md). With two such refusals which error is left last is not pinned: the last
         // error then refuses to be read (pages/lt-f3-pages/F3ValidationAddinFilter.al:253 closes such a page and reads nothing).
-        // On a list the edits are kept (the earlier behavior; what BC does is not pinned).
+        // On a list the edits are kept (the earlier behavior; what BC does is not pinned: docs/probes-needed.md, Close after a refused entry).
         if !st.borrow().errors.is_empty() && !self.is_list(st) {
             let trigger_errors = st.borrow().trigger_errors.clone();
             match trigger_errors.as_slice() {

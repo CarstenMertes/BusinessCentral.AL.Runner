@@ -327,6 +327,13 @@ pub struct PageState {
     pub window_eof: bool,
     /// The window holds every row of the view, read by `Last` past a full window (see `last_past_the_window`).
     pub window_whole: bool,
+    /// A read of a list that serves its rows from OnFindRecord and OnNextRecord ran to the end of the view (an open whose view
+    /// ends inside the window, a GoToKey that read on to the end): Next on the last row then answers false without asking the
+    /// page (see `move_in_client_rows`).
+    pub view_read_to_end: bool,
+    /// The open read of a descending find list went up from the row it opened on, the last row of the view: the window holds
+    /// the rows above it in client order and the cursor stands on its last row (see `read_rows_up_from_the_last`).
+    pub window_read_up: bool,
     /// The page is landing on its first row as it opens (the reads of a view that ends inside the window differ there).
     pub landing_first: bool,
     /// The page opened for edit over an empty view and ran its new-record triggers on a blank record; it shows no row and its
@@ -458,6 +465,8 @@ impl PageState {
             window_from_start: false,
             window_eof: false,
             window_whole: false,
+            view_read_to_end: false,
+            window_read_up: false,
             landing_first: false,
             blank_on_open: false,
             read_backwards: false,

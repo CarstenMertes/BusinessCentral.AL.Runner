@@ -121,6 +121,10 @@ const PURE_SYSTEM: &[&str] = &[
     "WorkDate",
 ];
 
+/// The methods of `Database` that answer from the session, not from a row: `CompanyName` is the company the host gave
+/// the session when it started (al-vm sessionops.rs), whatever the install code wrote.
+const PURE_DATABASE: &[&str] = &["CompanyName"];
+
 /// Methods of `Guid` that only convert a value.
 const PURE_GUID: &[&str] = &["ToText"];
 
@@ -570,6 +574,7 @@ fn builtin(id: &str) -> Check {
     let ok = match receiver {
         "System" => PURE_SYSTEM.iter().any(|m| m.eq_ignore_ascii_case(name)),
         "Guid" => PURE_GUID.iter().any(|m| m.eq_ignore_ascii_case(name)),
+        "Database" => PURE_DATABASE.iter().any(|m| m.eq_ignore_ascii_case(name)),
         r => PURE_RECEIVERS.iter().any(|p| p.eq_ignore_ascii_case(r)),
     };
     if ok {
@@ -673,6 +678,18 @@ mod tests {
         };
         assert_eq!(verdict(&mock(""), &["T"]), None);
         assert!(verdict(&mock("H.AddEffectivePermissionSet('X');"), &["T"]).is_some_and(|w| w.contains(".NET")));
+    }
+
+    /// `CompanyName` answers the company the session works in, which the host gives it when it starts (al-vm
+    /// sessionops.rs `cx.company`), never a row the install code wrote. The corpus's Probe Observer scrubs it from
+    /// every observed value (_fixtures/ProbeObserver.Codeunit.al:81-83), so most of the corpus's tests call it.
+    #[test]
+    fn the_company_name_of_the_session_cannot_observe_the_baseline() {
+        let src = "codeunit 60001 Scrubber { procedure Scrub(V: Text): Text begin
+                if CompanyName() <> '' then V := V.Replace(CompanyName(), '<Company>'); exit(V); end; }
+            codeunit 60002 T { Subtype = Test; var S: Codeunit Scrubber;
+                [Test] procedure P() begin if S.Scrub('x') <> 'x' then Error('x'); end; }";
+        assert_eq!(verdict(src, &["T"]), None);
     }
 
     #[test]

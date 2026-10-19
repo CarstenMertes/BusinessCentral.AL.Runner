@@ -250,7 +250,12 @@ impl Lowerer<'_> {
                 Err(_) => return Err(bad()),
             },
             SyntaxKind::Decimal => ir::Const::Decimal(text.to_string()),
-            SyntaxKind::StringLit => ir::Const::Text(text[1..text.len() - 1].replace("''", "'")),
+            // `@'...'` is a multiline text literal: the text between the quotes, line ends of the source kept
+            // (PLiteralExpressions.al:152-173 LF, BuMultilineCrlf.al:23-38 CRLF).
+            SyntaxKind::StringLit => {
+                let t = text.strip_prefix('@').unwrap_or(text);
+                ir::Const::Text(t[1..t.len() - 1].replace("''", "'"))
+            }
             SyntaxKind::BigIntLit => ir::Const::BigInteger(text[..text.len() - 1].parse().map_err(|_| bad())?),
             SyntaxKind::Ident if text.eq_ignore_ascii_case("true") => ir::Const::Boolean(true),
             SyntaxKind::Ident if text.eq_ignore_ascii_case("false") => ir::Const::Boolean(false),

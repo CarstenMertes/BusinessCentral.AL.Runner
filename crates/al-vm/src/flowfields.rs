@@ -250,6 +250,29 @@ impl Session {
                 if !matches!(f.ty, RtType::Integer) {
                     return unsupported("count into a field that is not an Integer");
                 }
+                // Gate FlowFieldCountFilterBigIntegerFromIntegerFrom29: before BC 29 a filter that links a BigInteger
+                // source field to an Integer field (`Big = field(Id)`) is refused when calculated, source first
+                // (calcfields/lt-bm-flowfield-conversions/BmFlowFieldConversions.al:166-186). Only this pair and only
+                // a count are pinned.
+                if !self.has(al_version::Gate::FlowFieldCountFilterBigIntegerFromIntegerFrom29) {
+                    for c in &calc.conds {
+                        let ir::CalcValue::Field(h) = c.value else { continue };
+                        let (sf, hf) = (&src[c.field], &schema.fields[h]);
+                        if matches!((&sf.ty, &hf.ty), (RtType::BigInteger, RtType::Integer)) {
+                            let stcap = self.table_caption(calc.table);
+                            return error_code(
+                                format!(
+                                    "The following fields must have the same type:{BR}{BR}Field: {} <-- {}{BR}Table: {stcap} <-- {tcap}{BR}Type: {} <-- {}",
+                                    sf.name,
+                                    hf.name,
+                                    type_name(&sf.ty),
+                                    type_name(&hf.ty)
+                                ),
+                                "DB:TypeMisMatch",
+                            );
+                        }
+                    }
+                }
             }
             ir::CalcMethod::Exist => {
                 if !matches!(f.ty, RtType::Boolean) {

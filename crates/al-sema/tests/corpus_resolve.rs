@@ -121,6 +121,10 @@ const KNOWN_GAP_FILES: &[(&str, &str)] = &[
         "report/lt-report-this-passed-on/P141ThisReportExt.al",
         "the checker does not resolve `this` in a report extension (corpus bump 14)",
     ),
+    (
+        "record/lt-bm-builtin-name-procedures/BmBuiltinNameProcedures.al",
+        "a table procedure Insert() or Get() hides the built-in overloads with arguments (Insert(true), Get(2)) (corpus bump 28)",
+    ),
 ];
 
 /// Milestone 1: every name, member and call in every corpus body resolves,

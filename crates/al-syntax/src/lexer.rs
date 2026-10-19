@@ -155,7 +155,12 @@ impl Lexer<'_> {
                 self.eat_while(|b| b != b'\n' && b != b'\r');
                 self.push(Directive, start);
             }
-            b'\'' => self.string(start),
+            b'\'' => self.string(start, false),
+            // `@'...'`: a multiline text literal (BC 26 and later; see `multiline_text_literal_is_one_string_token`).
+            b'@' if self.peek(1) == b'\'' => {
+                self.pos += 1;
+                self.string(start, true);
+            }
             b'"' => {
                 self.pos += 1;
                 // A doubled quote inside the name is one escaped quote (see `ast::unquote_ident`).
@@ -193,11 +198,11 @@ impl Lexer<'_> {
         }
     }
 
-    fn string(&mut self, start: usize) {
+    fn string(&mut self, start: usize, multiline: bool) {
         let src = self.src;
         let mut i = self.pos + 1;
-        // Up to the closing quote; a doubled quote is one quote of the text; a line end or the end of the file makes
-        // an error token.
+        // Up to the closing quote; a doubled quote is one quote of the text; a line end (unless `multiline`) or the
+        // end of the file makes an error token.
         while i < src.len() {
             match src[i] {
                 b'\'' if src.get(i + 1) == Some(&b'\'') => i += 2,
@@ -206,7 +211,7 @@ impl Lexer<'_> {
                     self.push(SyntaxKind::StringLit, start);
                     return;
                 }
-                b'\n' | b'\r' => break,
+                b'\n' | b'\r' if !multiline => break,
                 _ => i += 1,
             }
         }
@@ -357,6 +362,19 @@ mod tests {
             significant("'it''s' ''"),
             vec![(StringLit, "'it''s'"), (StringLit, "''")]
         );
+    }
+
+    // A multiline text literal `@'...'` (BC 26 and later) is one string token that may span lines, with the
+    // line ends of the source kept (al-language/misc/lt-expressions-statements/PLiteralExpressions.al:152-158,
+    // al-language/text/lt-bu-multiline-crlf/BuMultilineCrlf.al:23-27).
+    #[test]
+    fn multiline_text_literal_is_one_string_token() {
+        assert_eq!(significant("@'a\nb' x"), vec![(StringLit, "@'a\nb'"), (Ident, "x")]);
+        assert_eq!(significant("@'a\r\nb'"), vec![(StringLit, "@'a\r\nb'")]);
+        assert_eq!(significant("@'it''s\nq'"), vec![(StringLit, "@'it''s\nq'")]);
+        assert_eq!(significant("@'single'"), vec![(StringLit, "@'single'")]);
+        // A plain literal still ends at the line end.
+        assert_eq!(significant("'a\nb'")[0].0, Error);
     }
 
     #[test]

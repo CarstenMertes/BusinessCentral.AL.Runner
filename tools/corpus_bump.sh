@@ -74,6 +74,15 @@ echo "run $run: green, commit $sha on $branch"
 
 # 2. The artifacts: per leg the larger is the oracle, the smaller the OnPrem file.
 arts="$("$gh" api "repos/$repo/actions/runs/$run/artifacts?per_page=100")"
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+# The XML file name an artifact holds (junit-al-language.xml, -onprem.xml, -onprem-dotnet.xml).
+xml_of() {
+  local d="$tmp/role-$1"
+  mkdir -p "$d"
+  "$gh" api "repos/$repo/actions/artifacts/$1/zip" > "$d/a.zip"
+  unzip -Z1 "$d/a.zip" | grep '\.xml$' | head -n 1
+}
 declare -A oracle_id onprem_id dotnet_id
 for leg in $legs; do
   # Two artifacts: the oracle (larger) and the OnPrem file. Three (since the OnPrem DotNet app runs in CI): the DotNet file is the smallest.
@@ -88,7 +97,25 @@ elif n == 3:
     print(n, a[2]["id"], a[1]["id"], a[0]["id"])
 else:
     print(n, 0, 0, 0)' "$arts" "$leg")
-  { [ "$n" = 2 ] || [ "$n" = 3 ]; } || die "run $run has $n artifact(s) named junit-test-results-$leg, expected 2 or 3 (the oracle, the OnPrem file, and the OnPrem DotNet file)"
+  if [ "$n" -gt 3 ]; then
+    # A job rerun (corpus run 39303760055, attempt 2) keeps the first attempt's artifact under the same name.
+    # The role is the XML file each artifact holds; per role the newest artifact is the rerun's.
+    big=0 mid=0 small=0
+    while read -r id; do
+      case "$(xml_of "$id")" in
+        junit-al-language.xml) [ "$big" != 0 ] || big=$id ;;
+        junit-al-language-onprem.xml) [ "$mid" != 0 ] || mid=$id ;;
+        junit-al-language-onprem-dotnet.xml) [ "$small" != 0 ] || small=$id ;;
+        *) die "artifact $id of junit-test-results-$leg holds no known JUnit file" ;;
+      esac
+    done < <(python3 -c '
+import json, sys
+a = [x for x in json.loads(sys.argv[1]).get("artifacts", []) if x.get("name") == "junit-test-results-" + sys.argv[2]]
+a.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+print("\n".join(str(x["id"]) for x in a))' "$arts" "$leg")
+    { [ "$big" != 0 ] && [ "$mid" != 0 ]; } || die "run $run: junit-test-results-$leg lacks the oracle or the OnPrem file"
+  fi
+  { [ "$n" -ge 2 ]; } || die "run $run has $n artifact(s) named junit-test-results-$leg, expected 2 or 3 (the oracle, the OnPrem file, and the OnPrem DotNet file)"
   oracle_id[$leg]=$big
   onprem_id[$leg]=$mid
   dotnet_id[$leg]=$small
@@ -119,6 +146,15 @@ n = sum(1 for c in ET.parse(sys.argv[1]).iter("testcase") if c.get("name") != "O
 print(n)
 PY
 }
+# The runtime's harness totals leave out the cases real BC skipped (BC 27 lists O_Database_CopyCompany as <skipped/>):
+# 14975 JUnit cases were 14974 runtime cases in bump 27. The oracle README keeps the JUnit count (cases()).
+run_cases() { python3 - "$1" <<'PY'
+import sys, xml.etree.ElementTree as ET
+n = sum(1 for c in ET.parse(sys.argv[1]).iter("testcase")
+        if c.get("name") != "OnRun" and c.find("skipped") is None)
+print(n)
+PY
+}
 declare -A before_cases before_onprem
 for leg in $legs; do
   major="${leg%%.*}"
@@ -130,8 +166,6 @@ done
 git -C "$corpus" checkout -q "$sha"
 
 # 4. The oracle files, copied unchanged.
-tmp="$(mktemp -d)"
-trap 'rm -rf "$tmp"' EXIT
 fetch_xml() { # artifact id, destination
   local id="$1" dest="$2" d="$tmp/$1"
   mkdir -p "$d"
@@ -179,7 +213,12 @@ done
 # 7. The harness counts: totals per major and the BC 29 area totals the harness asserts.
 dir="$(mktemp -d)"
 ./target/release/al-test-cli --root . --all-versions --no-deps --json "$dir/pass-rate.json" >/dev/null 2>&1 || true
-python3 - "$root" "$dir" "$old" "$sha" "${args[@]}" <<'PY'
+hargs=()
+for leg in $legs; do
+  major="${leg%%.*}"
+  hargs+=("$major" "${oracle_id[$leg]}" "${onprem_id[$leg]}" "$(run_cases "$root/oracle/$major/junit.xml")" "$(run_cases "$root/oracle/$major/junit-onprem.xml")")
+done
+python3 - "$root" "$dir" "$old" "$sha" "${hargs[@]}" <<'PY'
 import json, os, re, sys
 root, out, old, new, rest = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5:]
 legs = {rest[i]: rest[i + 3] for i in range(0, len(rest), 5)}

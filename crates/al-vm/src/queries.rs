@@ -148,7 +148,10 @@ impl Session {
                 // Opening an open query is not an error (query/TestQueryRuntimeContracts.al:
                 // Query_StateMisuse_DoesNotThrow); once rows were read what it does is not pinned.
                 if qs.borrow().run.as_ref().is_some_and(|r| r.started) {
-                    if !Self::query_read_to_the_end(&qs) {
+                    // After a filter changed it runs again with the new filters
+                    // (misc/lt-probes-needed-1/PnAQueryOpenRead.al:125-170, SetRangeAndOpenAfterRead: `next-entry` 4).
+                    let filters_changed = qs.borrow().run.as_ref().is_some_and(|r| r.filters_changed);
+                    if !filters_changed && !Self::query_read_to_the_end(&qs) {
                         return unsupported("Open on a query that is already open and was read from (not pinned)");
                     }
                     qs.borrow_mut().run = None;
@@ -184,11 +187,16 @@ impl Session {
             "SetRange" | "SetFilter" => {
                 let col = arg_col(args, 0)?;
                 // A filter set after Open and before the first Read is in force when the query runs.
-                if qs.borrow().run.as_ref().is_some_and(|r| r.started) {
-                    if !Self::query_read_to_the_end(&qs) {
-                        return unsupported(format!("{method} on a query that was read from (not pinned)"));
+                // After a Read that did not reach the end the filter is set, and the next Read raises until the query is
+                // opened again (query/lt-query-setrange-after-read/QuerySetRangeAfterRead.al:52-77, SetRange_AfterFirstRead;
+                // errors/lt-ms-refusals-131/P131QuerySetRangeAfterRead.al:118-145, SetFilter).
+                let mid_read = qs.borrow().run.as_ref().is_some_and(|r| r.started);
+                if mid_read {
+                    if Self::query_read_to_the_end(&qs) {
+                        qs.borrow_mut().run = None;
+                    } else {
+                        qs.borrow_mut().run.as_mut().expect("open").filters_changed = true;
                     }
-                    qs.borrow_mut().run = None;
                 }
                 let ty = def.columns[col].ty.clone();
                 let expr = if method == "SetRange" {
@@ -602,12 +610,7 @@ impl Session {
                 ..Default::default()
             })));
         }
-        if qs
-            .borrow()
-            .run
-            .as_ref()
-            .is_some_and(|r| !r.started && r.filters_changed)
-        {
+        if qs.borrow().run.as_ref().is_some_and(|r| r.filters_changed) {
             return Err(Signal::Error(Box::new(AlError {
                 message: "The READ function is called on a query after query metadata has been changed by one of the following: SETFILTER, SETRANGE, SECURITYFILTERING, or TOPNUMBEROFROWS. After metadata changes, you must reopen the query by calling the OPEN function before calling the READ function.".into(),
                 code: "Query".into(),

@@ -746,6 +746,136 @@ impl Session {
         Some((i, old))
     }
 
+    /// A BigInteger field with `SQLTimestamp = true` reads the row version: above 0 after the Insert, greater after a Modify,
+    /// the same without one, and an assignment to it is not stored (record/lt-x-table-props/XTablePropsTests.al:412-415).
+    /// `stored` is the row before a Modify: the field gets its value back first, so an assignment to it is no change.
+    /// A temporary record is not pinned and is refused.
+    fn sql_timestamp_before(&self, t: &TableDef, rec: &Rec, stored: Option<&[Value]>) -> Result<(), Signal> {
+        let fields = &self.engine.table_facts[t.object as usize].sql_timestamp;
+        if fields.is_empty() {
+            return Ok(());
+        }
+        if rec.borrow().temporary {
+            return unsupported(format!(
+                "a write to a temporary {} record, whose table has an SQLTimestamp field: its value is not pinned",
+                t.name
+            ));
+        }
+        if t.fields.iter().all(|f| f.id != 2_000_000_005) {
+            return unsupported(format!(
+                "an SQLTimestamp field of {}, a table without a row version",
+                t.name
+            ));
+        }
+        if let Some(old) = stored {
+            let mut r = rec.borrow_mut();
+            for &i in fields {
+                r.fields[i] = old[i].clone();
+            }
+        }
+        Ok(())
+    }
+
+    /// The SQLTimestamp fields take the row version the write gives the row (see `sql_timestamp_before`).
+    fn sql_timestamp_after(&self, t: &TableDef, rec: &Rec) {
+        let fields = &self.engine.table_facts[t.object as usize].sql_timestamp;
+        if fields.is_empty() {
+            return;
+        }
+        if let Some(v) = t.fields.iter().position(|f| f.id == 2_000_000_005) {
+            let mut r = rec.borrow_mut();
+            let version = r.fields[v].clone();
+            for &i in fields {
+                r.fields[i] = version.clone();
+            }
+        }
+    }
+
+    /// A Code field the database stores as a number (`SQLDataType = Integer`) takes the empty value and plain numbers. A
+    /// Modify of `0` or a number with a leading zero fails with error code 22928070, one of letters with 22928072
+    /// (record/lt-x-table-props/XTablePropsTests.al:352-353, :368-369, :384-385); the values '10' and '9' are taken
+    /// (:322-325). Any other value, any such value an Insert writes, and every value of a `BigInteger` one other than those
+    /// taken are not pinned: refused.
+    fn check_code_storage(&self, t: &TableDef, row: &[Value], modify: bool) -> Result<(), Signal> {
+        if !self.engine.table_facts[t.object as usize].code_sql_type {
+            return Ok(());
+        }
+        let schema = self.engine.program.objects[t.object as usize]
+            .table
+            .as_ref()
+            .expect("table");
+        for (i, f) in t.fields.iter().enumerate() {
+            if !matches!(f.ty, RtType::Code(_)) {
+                continue;
+            }
+            let declared = schema.fields[i]
+                .properties
+                .iter()
+                .find(|(k, _)| k.eq_ignore_ascii_case("SQLDataType"))
+                .map(|(_, v)| v.trim());
+            let Some(declared) = declared.filter(|v| !v.eq_ignore_ascii_case("Varchar")) else {
+                continue;
+            };
+            if f.code_storage == al_data::CodeStorage::Text {
+                return unsupported(format!("Code field {} with SQLDataType = {declared}", f.name));
+            }
+            if t.keys[0].contains(&i) {
+                return unsupported(format!(
+                    "Code field {} with SQLDataType = {declared} in the primary key: its order is not pinned",
+                    f.name
+                ));
+            }
+            let value = al_builtins::native::text_of(&row[i])
+                .map(|v| v.to_string())
+                .unwrap_or_default();
+            let digits = !value.is_empty() && value.bytes().all(|c| c.is_ascii_digit());
+            if value.is_empty() || (digits && !value.starts_with('0') && value.parse::<i32>().is_ok()) {
+                continue;
+            }
+            let number = if digits && value.starts_with('0') {
+                ("22928070", "NDBCS:BadCSideCodeData")
+            } else if value.bytes().all(|c| c.is_ascii_uppercase()) {
+                ("22928072", "NDBCS:BadSqlIntCodeData")
+            } else {
+                return unsupported(format!(
+                    "the value '{value}' in the Code field {}, which the database stores as a number: the outcome is not pinned",
+                    f.name
+                ));
+            };
+            if !modify || f.code_storage != al_data::CodeStorage::Integer {
+                return unsupported(format!(
+                    "{} of '{value}' into the Code field {} with SQLDataType = {declared}: the outcome is not pinned",
+                    if modify { "a Modify" } else { "an Insert" },
+                    f.name
+                ));
+            }
+            // Only a table named as its caption, with one Integer primary key field named as its caption, is pinned.
+            let pk = &t.keys[0];
+            if pk.len() != 1
+                || !matches!(t.fields[pk[0]].ty, RtType::Integer)
+                || self.caption(t) != t.name
+                || self.field_caption(t, pk[0]) != t.fields[pk[0]].name
+            {
+                return unsupported(format!(
+                    "the error of a value that is no integer in Code field {} of {}: the identification of this primary key is not pinned",
+                    f.name, t.name
+                ));
+            }
+            let key = match &row[pk[0]] {
+                Value::Integer(n) => n.to_string(),
+                _ => return unsupported("an Integer primary key field that holds no Integer"),
+            };
+            return Err(crate::transactions::al_error_code(
+                &format!(
+                    "The {} table contains a value that is not valid in an integer Code field:\\\\{}='{key}'\\Error code: {}",
+                    t.name, t.fields[pk[0]].name, number.0
+                ),
+                number.1,
+            ));
+        }
+        Ok(())
+    }
+
     fn restore_row_version(rec: &Rec, old: Option<(usize, Value)>) {
         if let Some((i, v)) = old {
             rec.borrow_mut().fields[i] = v;
@@ -1374,7 +1504,10 @@ impl Session {
                 if keep_id {
                     self.check_system_id_unique(rec, &t)?;
                 }
+                self.check_code_storage(&t, &rec.borrow().fields, false)?;
+                self.sql_timestamp_before(&t, rec, None)?;
                 let old_version = self.bump_row_version(&t, rec);
+                self.sql_timestamp_after(&t, rec);
                 let stamped = self.stamp_insert(&t, rec);
                 // The key is chosen below the trigger: OnInsert starts with it still 0 and a
                 // refused Insert never takes a value (corpus record/TestAutoIncrementExplicitKey.al:63,
@@ -1561,6 +1694,8 @@ impl Session {
                 // modified its row without a change (Create Prod. Order Lines.Copy) and pass, which a bumped version would make a
                 // stale write (record/lt-priority-assumptions/PriorityAssumptions.al:143-244, real BC 29: after a Modify that changes nothing and a Commit, the
                 // other variable's Modify of a changed field is accepted, while a Modify that changed a field makes it fail with DB:RecordChanged).
+                self.check_code_storage(&t, &rec.borrow().fields, true)?;
+                self.sql_timestamp_before(&t, rec, stored_row.as_deref())?;
                 let old_version = match stored_row.as_deref() {
                     Some(old) if !rec.borrow().temporary && Session::modify_changes_nothing(&t, old, rec) => {
                         if let Some(i) = t.fields.iter().position(|f| f.id == 2_000_000_005) {
@@ -1570,6 +1705,7 @@ impl Session {
                     }
                     _ => self.bump_row_version(&t, rec),
                 };
+                self.sql_timestamp_after(&t, rec);
                 let stamped = self.stamp_modify(&t, rec, stored_row.as_deref());
                 let mut row = rec.borrow().fields.clone();
                 for (i, v) in kept {
@@ -2281,12 +2417,28 @@ impl Session {
                 Ok(Value::Null)
             }
             RecordOp::SetCurrentKey => {
-                let wanted: Vec<usize> = (0..args.len()).map(|i| arg_pos(args, i)).collect::<Result<_, _>>()?;
+                let mut wanted: Vec<usize> = (0..args.len()).map(|i| arg_pos(args, i)).collect::<Result<_, _>>()?;
                 // Only the table's own keys: `t` may end with this record's earlier ad hoc key, and a
                 // prefix of it is a new ad hoc key, not that one.
                 let declared = self.engine.tables[t.object as usize]
                     .as_ref()
                     .map_or(t.keys.len(), |e| e.keys.len());
+                // Fields followed by the whole primary key sort as the key of those fields alone, when the table
+                // declares that key: the view and the SetAscending error name only them (record/lt-setascending-ties/
+                // SetAscendingTies.al:173-174, SetCurrentKey(Grp, Id) with primary key Id and a key on Grp).
+                {
+                    let pk = &t.keys[0];
+                    let n = wanted.len();
+                    if n > pk.len()
+                        && wanted[n - pk.len()..] == pk[..]
+                        && wanted[..n - pk.len()].iter().all(|p| !pk.contains(p))
+                    {
+                        let head = &wanted[..n - pk.len()];
+                        if t.keys[..declared].iter().any(|k| k[..] == *head) {
+                            wanted.truncate(n - pk.len());
+                        }
+                    }
+                }
                 match t.keys[..declared]
                     .iter()
                     .position(|k| k.len() >= wanted.len() && k[..wanted.len()] == wanted[..])

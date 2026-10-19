@@ -215,6 +215,7 @@ impl Engine {
                                 name: f.name.clone(),
                                 ty: f.ty.clone(),
                                 stored: f.stored,
+                                code_storage: code_storage(f),
                             })
                             .collect(),
                         keys: t.keys.clone(),
@@ -244,6 +245,26 @@ impl Engine {
                     .table
                     .as_ref()
                     .is_some_and(|t| t.fields.iter().any(|f| f.init_text.is_some() && f.init.is_none())),
+                sql_timestamp: o.table.as_ref().map_or_else(Vec::new, |t| {
+                    t.fields
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, f)| {
+                            f.properties.iter().any(|(k, v)| {
+                                k.eq_ignore_ascii_case("SQLTimestamp") && v.trim().eq_ignore_ascii_case("true")
+                            })
+                        })
+                        .map(|(i, _)| i)
+                        .collect()
+                }),
+                code_sql_type: o.table.as_ref().is_some_and(|t| {
+                    t.fields.iter().any(|f| {
+                        matches!(f.ty, RtType::Code(_))
+                            && f.properties.iter().any(|(k, v)| {
+                                k.eq_ignore_ascii_case("SQLDataType") && !v.trim().eq_ignore_ascii_case("Varchar")
+                            })
+                    })
+                }),
             })
             .collect();
         let object_facts: Vec<ir::ObjectFacts> = program.objects.iter().map(ir::ObjectFacts::of).collect();
@@ -1367,10 +1388,14 @@ impl Session {
 pub(crate) type AdhocTables = std::collections::HashMap<(u32, Vec<usize>), Arc<al_data::TableDef>>;
 
 /// Facts about a table object that never change during a run.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Default)]
 pub(crate) struct TableFacts {
     /// Some field has an `InitValue` text that did not evaluate at compile time.
     pub(crate) unresolved_init: bool,
+    /// The positions of the BigInteger fields with `SQLTimestamp = true`: they read the row version.
+    pub(crate) sql_timestamp: Vec<usize>,
+    /// Some Code field declares an `SQLDataType` other than `Varchar`: a write checks its value.
+    pub(crate) code_sql_type: bool,
 }
 
 /// The shared storage of an array value.
@@ -1441,5 +1466,23 @@ impl std::hash::Hasher for PtrHash {
     }
     fn write_usize(&mut self, n: usize) {
         self.0 = (n as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    }
+}
+
+/// How the database stores field `f`: a Code field's `SQLDataType` (record/lt-x-table-props/XTableObjects.al:127-129).
+/// `Varchar` and no property store it as text.
+fn code_storage(f: &al_ir::Field) -> al_data::CodeStorage {
+    if !matches!(f.ty, RtType::Code(_)) {
+        return al_data::CodeStorage::Text;
+    }
+    match f
+        .properties
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("SQLDataType"))
+        .map(|(_, v)| v.trim())
+    {
+        Some(v) if v.eq_ignore_ascii_case("Integer") => al_data::CodeStorage::Integer,
+        Some(v) if v.eq_ignore_ascii_case("BigInteger") => al_data::CodeStorage::BigInteger,
+        _ => al_data::CodeStorage::Text,
     }
 }

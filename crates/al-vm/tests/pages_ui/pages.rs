@@ -754,6 +754,31 @@ fn page_get_validation_error_without_an_index_is_the_first_error_or_empty() {
     assert_eq!(text(r), "[][guard refused]");
 }
 
+// A control's GetValidationError() without an index while the control has a validation error ends the session on real
+// BC with an uncatchable ArgumentOutOfRangeException (Windows check of the corpus, runs 39162782959 / 39162785239); the
+// runtime cannot raise such an error, so it refuses. Without an error it is not pinned by the corpus, and is refused too.
+#[test]
+fn control_get_validation_error_without_an_index_is_refused() {
+    for before in ["asserterror TP.Guard.SetValue('REFUSE');", ""] {
+        let r = run(
+            &format!(
+                "procedure F(): Text var R: Record \"PG Row\"; TP: TestPage \"PG Edit\"; begin
+                    {}
+                    TP.OpenEdit();
+                    {before}
+                    exit(TP.Guard.GetValidationError());
+                end;",
+                rows(&[("A", 1)])
+            ),
+            "F",
+        );
+        assert!(
+            matches!(&r, Err(Signal::Unsupported(m)) if m.contains("without an index")),
+            "{before}: {r:?}"
+        );
+    }
+}
+
 // handlers/TestPageBooleanSpelling_Tests.al: SetValue('False') is not an acceptable Boolean text.
 // (TextBool: a Text value written to an Integer control that cannot parse it.)
 #[test]

@@ -793,7 +793,8 @@ fn control_get_validation_error_without_an_index_is_refused() {
 }
 
 // handlers/TestPageBooleanSpelling_Tests.al: SetValue('False') is not an acceptable Boolean text.
-// (TextBool: a Text value written to an Integer control that cannot parse it.)
+// (TextBool: a Text value written to an Integer control that cannot parse it.) On a card the text says why
+// (pages/lt-ah-pages/AhPageTests.al:112, pages/lt-page-runtime/P82TestField.al:296).
 #[test]
 fn a_text_that_does_not_parse_is_refused_with_the_acceptable_value_message() {
     let r = run(
@@ -809,7 +810,7 @@ fn a_text_that_does_not_parse_is_refused_with_the_acceptable_value_message() {
     );
     assert_eq!(
         error_text(r),
-        "Validation error for Field: QtyCtl,  Message = 'Your entry of 'abc' is not an acceptable value for 'Qty'. (Select Refresh to discard errors)'"
+        "Validation error for Field: QtyCtl,  Message = 'Your entry of 'abc' is not an acceptable value for 'Qty'. The value \"abc\" can't be evaluated into type Integer. (Select Refresh to discard errors)'"
     );
 }
 

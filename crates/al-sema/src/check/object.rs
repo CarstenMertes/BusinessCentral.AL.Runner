@@ -148,6 +148,15 @@ impl<'a> Checker<'a> {
                 globals.insert(n.to_lowercase(), ty.clone());
             }
         }
+        // The variables of a report's `requestpage` section are the globals of its request page; only its triggers
+        // see them (corpus report/lt-ab-request-page-triggers/ABRequestPageExt.al:63, a request page extension that
+        // declares the same names as its base report). A report-level variable of the same name stays.
+        for v in obj.request_page_var_decls() {
+            let ty = v.type_ref().map(|t| Ty::from_type_ref(&t)).unwrap_or(Ty::Unknown);
+            for n in v.names() {
+                globals.entry(n.to_lowercase()).or_insert_with(|| ty.clone());
+            }
+        }
         // Report/query/xmlport data items are record variables in the object's scope.
         let sections = ast::sections_in(obj.syntax());
         for sec in &sections {

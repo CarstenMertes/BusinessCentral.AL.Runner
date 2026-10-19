@@ -34,3 +34,7 @@
 # `Opt.PreserveWhitespace(true)` (xml/XmlDocReadWrite.al:215-217 and :399-403, BC 29).
 + XmlWriteOptions.PreserveWhitespace inst () -> Boolean
 + XmlReadOptions.PreserveWhitespace inst () -> Boolean
+
+# Record.IsDirty() exists from BC 29 (runtime 18.0) but is not in the scrape. Corpus lt-ac/ACRecordIsDirty.al:30
+# `Format(Row.IsDirty())` compiles on BC 29.0 (guarded `#if BC29PLUS`; must-not-compile 0960 pins the BC 27 and 28 refusal).
++ Record.IsDirty inst () -> Boolean @18.0

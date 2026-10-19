@@ -623,13 +623,15 @@ impl Builder<'_> {
         // Other aggregates with a ColumnFilter on the optional side are not pinned.
         for c in &self.columns {
             let item = &self.items[c.item];
-            if item.left_outer && item.parent.is_some() && c.static_filter.is_some() {
-                if let Some(m) = c.method.filter(|m| *m != ir::QueryMethod::Count) {
-                    self.reasons.push(format!(
-                        "column {} has a ColumnFilter on a {m:?} aggregate of an outer-joined dataitem (not pinned)",
-                        c.name
-                    ));
-                }
+            if item.left_outer
+                && item.parent.is_some()
+                && c.static_filter.is_some()
+                && c.method.is_some_and(|m| m != ir::QueryMethod::Count)
+            {
+                self.reasons.push(format!(
+                    "column {} has a ColumnFilter on an aggregate other than Count of an outer-joined dataitem (not pinned)",
+                    c.name
+                ));
             }
         }
         let filtered: Vec<bool> = self
@@ -870,7 +872,9 @@ table 50001 "U" { fields { field(1; "No."; Code[20]) { } field(2; Amount; Decima
                 dataitem(B; U) { DataItemLink = \"No.\" = A.\"No.\"; column(S; Amount) { Method = Sum; ColumnFilter = S = const(0); } } } } }",
         );
         assert!(
-            l.reasons.iter().any(|r| r.contains("ColumnFilter on a Sum aggregate")),
+            l.reasons
+                .iter()
+                .any(|r| r.contains("ColumnFilter on an aggregate other than Count")),
             "{:?}",
             l.reasons
         );

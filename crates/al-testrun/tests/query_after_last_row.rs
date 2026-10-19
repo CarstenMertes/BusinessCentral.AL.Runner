@@ -1,6 +1,7 @@
-//! A query read to its last row can take new filters and be opened again (Base Application's Workflow Step Instance.
-//! SetTableRelationValues sets filters on its query, opens it and reads it to the end, once per table relation; assumption
-//! query-closed-after-last-row; 125 Tests-Workflow tests). A query that still has rows to read takes the filter and its next
+//! A query read to its last row takes a new filter, and its next Read raises until it is opened again
+//! (errors/lt-ms-refusals-131/P131QuerySetRangeAfterRead.al:154-170). Opened again it runs with the new filter (Base
+//! Application's Workflow Step Instance.SetTableRelationValues sets filters on its query, opens it and reads it to the end,
+//! once per table relation; assumption query-closed-after-last-row; Tests-Workflow). A query that still has rows to read takes the filter and its next
 //! Read raises until it is opened again (query/lt-query-setrange-after-read/QuerySetRangeAfterRead.al:52-77).
 
 use al_sema::workspace::AppSource;
@@ -37,6 +38,19 @@ codeunit 50470 "T"
         asserterror if Q.Read() then;
         if GetLastErrorCode() <> 'Query' then Error('code %1', GetLastErrorCode());
     end;
+    [Test]
+    procedure FilterAfterTheLastRowThenReadRaises()
+    var Row: Record "QLR Row"; Q: Query "QLR Query";
+    begin
+        // errors/lt-ms-refusals-131/P131QuerySetRangeAfterRead.al:154-170.
+        Row.Id := 5; Row.Insert(); Row.Id := 6; Row.Insert();
+        Q.Open();
+        while Q.Read() do;
+        if Q.Read() then Error('read after the end');
+        Q.SetRange(Id, 5);
+        asserterror if Q.Read() then;
+        if GetLastErrorCode() <> 'Query' then Error('code %1', GetLastErrorCode());
+    end;
 }
 "#;
 
@@ -65,6 +79,11 @@ fn a_query_read_to_the_end_takes_a_new_filter() {
     let o = rt.first_outcome(&CaseId {
         codeunit: 50470,
         name: "FilterWithRowsLeftThenReadRaises".into(),
+    });
+    assert_eq!(o, Outcome::Pass, "{o:?}");
+    let o = rt.first_outcome(&CaseId {
+        codeunit: 50470,
+        name: "FilterAfterTheLastRowThenReadRaises".into(),
     });
     assert_eq!(o, Outcome::Pass, "{o:?}");
 }

@@ -3851,6 +3851,7 @@
 67063 ModuleInfo_PackageId_ComparedToId
 67063 ModuleInfo_UnknownId_ResultDropped
 67064 GetResourceAsText_NameMatching
+67066 ClientType_CurrentAndDefault
 67066 ClientType_MemberList
 67066 Clock_ReadingsAgree
 67066 CreateGuid_FreshAndNotNull
@@ -4032,6 +4033,7 @@
 67325 ActiveSession_DatabaseName_EqualsSessionDatabaseName
 67325 ActiveSession_OwnRow_HostColumns
 67325 ColumnNames_Session_ActiveSession_TimeZone
+67325 Session_OwnRow_HostColumns
 67325 TimeZone_NumberingAndOrder
 67328 EffectivePermission_CodeunitIdAsTableData
 67328 PlatformOrder_IsSaaS_IsSandbox_And_TenantLicenseState
@@ -4047,6 +4049,7 @@
 67334 MethodA
 67334 MethodAA
 67334 MethodB
+67334 MethodId_TestsRunVersusTestLookup
 67334 MethodOther
 67338 Row_TableFieldValidate_ForComparison
 67343 AllProfile_Column13_DisablePersonalization_OfTheOwnProfile
@@ -9538,6 +9541,7 @@
 72210 Open_NumberNameCaptionByVariants
 72210 Open_TemporaryFlagIgnoresCompany
 72210 Open_TemporaryIsolatedFromReal
+72211 FieldExist_ByNumber
 72211 FieldExist_ClosedRecordRef
 72211 FieldRef_CopyRefersToSameField
 72211 Field_ByNumberNames
@@ -12392,6 +12396,8 @@
 75039 Query_EntityCaptions_ApiMetadataPerLanguage
 75039 Query_EntityCaptions_ApiMetadataPerLanguageDeu
 75039 Query_EntityCaptions_ApiMetadataPerLanguageFra
+75039 TestCodeunits_TestTypeAndRequiredTestIsolation_InMetadata
+75039 TestCodeunits_TestTypeAndRequiredTestIsolation_InMetadata2
 75039 TestCodeunits_TestTypeAndRequiredTestIsolation_InMetadata3
 75058 ObsoletePending_CardGroupGridFixedUserControl_StillWork
 75058 ObsoletePending_ListPageRepeaterAndActions_StillWork
@@ -12639,6 +12645,7 @@
 78862 Paging_Open_Nav
 79201 AtContainsFilterMatchesCaseInsensitively
 79201 ContainsFilterWithoutAt
+79201 FieldTableReportsOptimizeForTextSearch
 79201 PrefixAndSuffixFilters
 79201 TableWithOptimizedFieldInstallsAndStores
 79450 An01_DecimalBounds_MoreThanTwoDecimals

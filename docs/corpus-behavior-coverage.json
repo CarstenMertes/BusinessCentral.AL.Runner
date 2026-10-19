@@ -11389,6 +11389,15 @@
           "site": "pages/lt-report-page-properties/06-xmlport-linkforce.al:24"
         },
         {
+          "corpus_uses": 4,
+          "group": "codeunit",
+          "ms_uses": 0,
+          "name": "RequiredTestIsolation",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "codeunit/lt-x-object-props/XObjectProps.al:13"
+        },
+        {
           "corpus_uses": 2443,
           "group": "codeunit",
           "ms_uses": 0,
@@ -11396,6 +11405,15 @@
           "pinned": true,
           "runtime_reads": true,
           "site": "TestDotNetValueKindsContracts.al:64"
+        },
+        {
+          "corpus_uses": 4,
+          "group": "codeunit",
+          "ms_uses": 0,
+          "name": "TestType",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "codeunit/lt-x-object-props/XObjectProps.al:12"
         },
         {
           "corpus_uses": 1,
@@ -13117,15 +13135,6 @@
           "site": "xmlport/lt-y-xmlport-props/YXmlPortProps.al:368"
         },
         {
-          "corpus_uses": 4,
-          "group": "codeunit",
-          "ms_uses": 0,
-          "name": "RequiredTestIsolation",
-          "pinned": true,
-          "runtime_reads": false,
-          "site": "codeunit/lt-x-object-props/XObjectProps.al:13"
-        },
-        {
           "corpus_uses": 8,
           "group": "codeunit",
           "ms_uses": 0,
@@ -13133,15 +13142,6 @@
           "pinned": true,
           "runtime_reads": false,
           "site": "network/HttpClientAuthConfig.al:11"
-        },
-        {
-          "corpus_uses": 4,
-          "group": "codeunit",
-          "ms_uses": 0,
-          "name": "TestType",
-          "pinned": true,
-          "runtime_reads": false,
-          "site": "codeunit/lt-x-object-props/XObjectProps.al:12"
         },
         {
           "corpus_uses": 2,
@@ -16261,7 +16261,7 @@
         "code": "RenameArgument",
         "file": "crates/al-vm/src/records.rs",
         "generic": false,
-        "line": 2680,
+        "line": 2683,
         "pinned": true,
         "site": "recordref/lt-refs/RfTWrite.al:223",
         "template": "The number of field arguments does not match the primary key size."
@@ -16306,7 +16306,7 @@
         "code": "IndexOutOfBounds",
         "file": "crates/al-vm/src/refs.rs",
         "generic": false,
-        "line": 867,
+        "line": 877,
         "pinned": true,
         "site": "collections/lt-array-rows/ArrayRows.al:185",
         "template": "Index out of bounds."
@@ -16315,7 +16315,7 @@
         "code": "DB:KeyNotFound",
         "file": "crates/al-vm/src/refs.rs",
         "generic": false,
-        "line": 887,
+        "line": 897,
         "pinned": true,
         "site": "recordref/TestRecordRefKeyIndexSetRecFilterContracts.al:103",
         "template": "The % table does not have an active key at index %."
@@ -16324,7 +16324,7 @@
         "code": "KeyRef.{other}",
         "file": "crates/al-vm/src/refs.rs",
         "generic": false,
-        "line": 982,
+        "line": 992,
         "pinned": true,
         "site": "collections/lt-array-rows/ArrayRows.al:185",
         "template": "Index out of bounds"
@@ -16333,7 +16333,7 @@
         "code": "NotInitialized",
         "file": "crates/al-vm/src/refs.rs",
         "generic": false,
-        "line": 1002,
+        "line": 1012,
         "pinned": true,
         "site": "misc/lt-probes-needed-4/PnD05_UnassignedFieldRef.al:42",
         "template": "Microsoft.Dynamics.Nav.Runtime.NavFieldRef variable not initialized."
@@ -18542,7 +18542,7 @@
         "pinned": true,
         "scope": "",
         "site": "codeunit/lt-x-object-props/XObjectProps.al:13",
-        "state": "unknown"
+        "state": "implemented"
       },
       {
         "area": "properties",
@@ -18660,7 +18660,7 @@
         "pinned": true,
         "scope": "",
         "site": "codeunit/lt-x-object-props/XObjectProps.al:12",
-        "state": "unknown"
+        "state": "implemented"
       },
       {
         "area": "properties",

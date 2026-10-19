@@ -223,17 +223,21 @@ impl Session {
                 // Gate FlowFieldMinMaxOverRowVersionRefused (BC 29): the aggregate comes back from
                 // SQL as a timestamp and BC refuses it. lookup() still calculates. Corpus
                 // record/TestCalcFormulaSystemFieldsTests.Codeunit.al:298-318,353-361 pin the
-                // sentence and the Field, Type and SQL type fragments; the layout between them is
-                // assumed (docs/probes-needed.md).
+                // sentence and the Field, Type and SQL type fragments; the whole text, its backslash line
+                // breaks and the code are pinned by calcfields/W4CalcFields.al:134-135 and
+                // misc/lt-probes-needed-1/PnACalcFieldsBC29.al:225-243.
                 if calc.method != ir::CalcMethod::Lookup
                     && s.id == SYSTEM_ROW_VERSION
                     && self.has(al_version::Gate::FlowFieldMinMaxOverRowVersionRefused)
                 {
-                    return error(format!(
-                        "Table content in the {tcap} table on SQL Server contains a value that is not compatible with the corresponding data type.\n\nField: {}\nType: {}\nSQL type: timestamp",
-                        f.name,
-                        type_name(&f.ty)
-                    ));
+                    return error_code(
+                        format!(
+                            "Table content in the {tcap} table on SQL Server contains a value that is not compatible with the corresponding data type that is defined for the table.{BR}{BR}Field: {}{BR}Type: {}{BR}SQL type: timestamp{BR}{BR}The table design may have been changed outside Business Central.",
+                            f.name,
+                            type_name(&f.ty)
+                        ),
+                        "NDBCS:IncompatibleSqlType",
+                    );
                 }
                 // A lookup into an Enum field from the field of another enum is allowed (record/lt-flowfield-lookup-enum/
                 // FlowFieldLookupOtherEnum.al; Microsoft's VAT Return Period).
@@ -530,7 +534,8 @@ impl Session {
                             parts.push((c.field, FilterExpr::Range(None, Some(hi)), false));
                         }
                         // An open end, `<`, `>`, `<>` and several values are more than one range (UpperLimitSingleValue.al:
-                        // UpperLimit_OneValue `setfilter_lt_d`, UpperLimit_OpenAndEmpty). The error has no pinned code.
+                        // UpperLimit_OneValue `setfilter_lt_d`, UpperLimit_OpenAndEmpty). The code is DB:NotIntervalFilter
+                        // (calcfields/lt-upperlimit-error-code/UpperLimitErrorCode.al:107-111,131).
                         Some(
                             e @ (FilterExpr::Range(Some(_), None)
                             | FilterExpr::Lt(_)
@@ -546,7 +551,7 @@ impl Session {
                                     self.field_caption(&t, *q),
                                     self.caption(&t)
                                 ),
-                                "",
+                                "DB:NotIntervalFilter",
                             ));
                         }
                         Some(_) => return unsupported("upperlimit() of a filter that is not a range"),

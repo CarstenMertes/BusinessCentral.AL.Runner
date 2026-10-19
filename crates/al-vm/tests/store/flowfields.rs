@@ -1480,6 +1480,30 @@ fn upperlimit_of_a_flow_filter_with_one_value_is_that_value() {
     assert_eq!(text(r), "-10/30");
 }
 
+// calcfields/lt-upperlimit-error-code/UpperLimitErrorCode.al:107-111,131: upperlimit() of a filter that is more than one
+// range fails with the code DB:NotIntervalFilter.
+#[test]
+fn upperlimit_of_more_than_one_range_fails_with_not_interval_filter() {
+    let r = run_lines(
+        "procedure F(): Text
+        var H: Record \"FF Head\";
+        begin
+            SeedLines();
+            H.Get('D1');
+            H.SetFilter(\"Date Filter\", '%1|%2', 20240210D, 20240310D);
+            H.CalcFields(Balance);
+            exit('ran');
+        end;",
+    );
+    match r {
+        Err(Signal::Error(e)) => {
+            assert!(e.message.contains("results in more than one range."), "{}", e.message);
+            assert_eq!(e.code, "DB:NotIntervalFilter");
+        }
+        other => panic!("expected an AL error, got {other:?}"),
+    }
+}
+
 // Record.CalcSums of a Duration is not pinned (only FieldRef.CalcSum is, FieldRefCalcSumTypes; corpus issue 630 item 3): refused.
 #[test]
 fn record_calcsums_of_a_duration_field_is_refused_but_fieldref_calcsum_sums_it() {

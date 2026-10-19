@@ -119,6 +119,15 @@ n = sum(1 for c in ET.parse(sys.argv[1]).iter("testcase") if c.get("name") != "O
 print(n)
 PY
 }
+# The runtime's harness totals leave out the cases real BC skipped (BC 27 lists O_Database_CopyCompany as <skipped/>):
+# 14975 JUnit cases were 14974 runtime cases in bump 27. The oracle README keeps the JUnit count (cases()).
+run_cases() { python3 - "$1" <<'PY'
+import sys, xml.etree.ElementTree as ET
+n = sum(1 for c in ET.parse(sys.argv[1]).iter("testcase")
+        if c.get("name") != "OnRun" and c.find("skipped") is None)
+print(n)
+PY
+}
 declare -A before_cases before_onprem
 for leg in $legs; do
   major="${leg%%.*}"
@@ -179,7 +188,12 @@ done
 # 7. The harness counts: totals per major and the BC 29 area totals the harness asserts.
 dir="$(mktemp -d)"
 ./target/release/al-test-cli --root . --all-versions --no-deps --json "$dir/pass-rate.json" >/dev/null 2>&1 || true
-python3 - "$root" "$dir" "$old" "$sha" "${args[@]}" <<'PY'
+hargs=()
+for leg in $legs; do
+  major="${leg%%.*}"
+  hargs+=("$major" "${oracle_id[$leg]}" "${onprem_id[$leg]}" "$(run_cases "$root/oracle/$major/junit.xml")" "$(run_cases "$root/oracle/$major/junit-onprem.xml")")
+done
+python3 - "$root" "$dir" "$old" "$sha" "${hargs[@]}" <<'PY'
 import json, os, re, sys
 root, out, old, new, rest = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5:]
 legs = {rest[i]: rest[i + 3] for i in range(0, len(rest), 5)}

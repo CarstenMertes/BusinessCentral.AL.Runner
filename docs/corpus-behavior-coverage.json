@@ -15010,7 +15010,7 @@
         "code": "DateInvalid",
         "file": "crates/al-builtins/src/datefns.rs",
         "generic": false,
-        "line": 102,
+        "line": 107,
         "pinned": true,
         "site": "errors/lt-ms-refusals-131/P131EvalScalars.al:376",
         "template": "The date is not valid."
@@ -15019,7 +15019,7 @@
         "code": "DateInvalid",
         "file": "crates/al-builtins/src/datefns.rs",
         "generic": false,
-        "line": 114,
+        "line": 119,
         "pinned": true,
         "site": "errors/lt-ms-refusals-131/P131EvalScalars.al:376",
         "template": "The date is not valid."
@@ -15028,7 +15028,7 @@
         "code": "DateInvalid",
         "file": "crates/al-builtins/src/datefns.rs",
         "generic": false,
-        "line": 184,
+        "line": 189,
         "pinned": true,
         "site": "errors/lt-ms-refusals-131/P131EvalScalars.al:376",
         "template": "The date is not valid."
@@ -15037,7 +15037,7 @@
         "code": "DateInvalid",
         "file": "crates/al-builtins/src/datefns.rs",
         "generic": false,
-        "line": 267,
+        "line": 272,
         "pinned": true,
         "site": "errors/lt-ms-refusals-131/P131EvalScalars.al:376",
         "template": "The date is not valid."
@@ -15046,7 +15046,7 @@
         "code": "DateInvalid",
         "file": "crates/al-builtins/src/datefns.rs",
         "generic": false,
-        "line": 341,
+        "line": 346,
         "pinned": true,
         "site": "errors/lt-ms-refusals-131/P131EvalScalars.al:376",
         "template": "The date is not valid."
@@ -15055,7 +15055,16 @@
         "code": "DateInvalid",
         "file": "crates/al-builtins/src/datefns.rs",
         "generic": false,
-        "line": 360,
+        "line": 365,
+        "pinned": true,
+        "site": "errors/lt-ms-refusals-131/P131EvalScalars.al:376",
+        "template": "The date is not valid."
+      },
+      {
+        "code": "DateInvalid",
+        "file": "crates/al-builtins/src/datefns.rs",
+        "generic": false,
+        "line": 390,
         "pinned": true,
         "site": "errors/lt-ms-refusals-131/P131EvalScalars.al:376",
         "template": "The date is not valid."
@@ -15451,7 +15460,7 @@
         "code": "StackOverflow",
         "file": "crates/al-vm/src/lib.rs",
         "generic": false,
-        "line": 948,
+        "line": 1021,
         "pinned": true,
         "site": "record/TestCalcFieldsTruncateUniqueContracts.al:179",
         "template": "There is insufficient memory to execute this function. This can be caused by recursive function calls. Contact your system administrator."
@@ -15460,7 +15469,7 @@
         "code": "",
         "file": "crates/al-vm/src/queries.rs",
         "generic": false,
-        "line": 279,
+        "line": 280,
         "pinned": true,
         "site": "query/TestQueryTopProperty.al:179",
         "template": "Top number of rows cannot be negative"
@@ -15469,7 +15478,7 @@
         "code": "QueryNoDataSet",
         "file": "crates/al-vm/src/queries.rs",
         "generic": false,
-        "line": 607,
+        "line": 601,
         "pinned": true,
         "site": "xmlport/lt-xmlport-query-datatransfer/XpTQueryBasic.al:84",
         "template": "You have not yet retrieved a dataset for this query. The READ function can only be called after the dataset is retrieved with a call to the OPEN function."
@@ -15478,7 +15487,7 @@
         "code": "Query",
         "file": "crates/al-vm/src/queries.rs",
         "generic": false,
-        "line": 615,
+        "line": 609,
         "pinned": true,
         "site": "errors/lt-ms-refusals-131/P131QuerySetRangeAfterRead.al:111",
         "template": "The READ function is called on a query after query metadata has been changed by one of the following: SETFILTER, SETRANGE, SECURITYFILTERING, or TOPNUMBEROFROWS. After metadata changes, you must reopen the query by calling the OPEN function before calling the READ function."
@@ -15628,8 +15637,8 @@
         "template": "Invalid expression of type: table view.%%"
       }
     ],
-    "pinned": 69,
-    "sites": 69
+    "pinned": 70,
+    "sites": 70
   },
   "language": {
     "bc": "27-29",

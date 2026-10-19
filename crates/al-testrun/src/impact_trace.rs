@@ -301,8 +301,9 @@ pub fn impact_points(lowered: &al_sema::lower::Lowered, is_extension: impl Fn(us
             {
                 let mut writes = std::collections::BTreeSet::new();
                 let mut any = false;
+                let index = crate::runtime::written::ReachIndex::new(&registry, lowered);
                 for (ri, _) in o.routines.iter().enumerate().filter(|(_, r)| r.is_trigger) {
-                    let f = crate::runtime::reach_facts_in(&registry, lowered, oi, ri);
+                    let f = crate::runtime::written::reach_facts(&registry, lowered, &index, oi, ri);
                     writes.extend(f.writes);
                     any |= f.writes_any;
                 }

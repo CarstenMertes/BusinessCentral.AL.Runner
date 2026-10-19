@@ -1299,7 +1299,8 @@ Results (BC 29, Microsoft apps, `perf stat` instructions, load about 5):
 | selection | before | after |
 |---|---|---|
 | `--codeunit 74712` (pure) | 177.5 G, 10.2 s | 17.7 G, 1.3 s |
-| `--codeunit 60079` (names a helper that deletes rows) | about 10 s, two compiles | about 5.5 s, one compile |
+| `--codeunit 73032` (pure) | 177.3 G | 17.7 G |
+| `--codeunit 60079` (names a helper that deletes rows) | 177.4 G, 10.7 s, two compiles | 91.8 G, 5.6 s, one compile |
 | `--codeunit 60198` (records, needs the baseline) | 91.5 G | 91.6 G |
 | full run | 163.3 G | 163.3 G |
 

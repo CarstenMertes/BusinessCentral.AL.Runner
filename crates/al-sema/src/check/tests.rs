@@ -263,7 +263,10 @@ fn object_id_scope() {
 fn unresolved_name_member_and_call_are_diagnosed() {
     assert_eq!(
         diags(&[&cu("procedure P() begin Nope := 1; end;")]),
-        vec!["AR1000 unresolved name `Nope`"]
+        vec![
+            "AR1000 unresolved name `Nope`",
+            "AL0118 The name 'Nope' does not exist in the current context."
+        ]
     );
     assert_eq!(
         diags(&[
@@ -322,7 +325,9 @@ fn an_overload_from_a_newer_runtime_is_refused_when_it_fits_better() {
 fn an_unknown_builtin_member_says_it_is_not_in_the_catalog() {
     let src = cu("procedure P() var J: JsonObject; begin J.Nope(); end;");
     let d = diags_for("27", &[&src]);
-    assert_eq!(d.len(), 1, "{d:?}");
+    // The AL compiler's own code comes with it (alcodes: AL0132).
+    assert_eq!(d.len(), 2, "{d:?}");
+    assert_eq!(d[1], "AL0132 'JsonObject' does not contain a definition for 'Nope'");
     assert!(d[0].starts_with("AR1002 no member `Nope` on JsonObject"), "{d:?}");
     assert!(
         d[0].contains("not known to the catalog") && d[0].contains("up to 17.0"),
@@ -355,7 +360,13 @@ fn field_positions_do_not_capture_value_arguments() {
     // `Amount` here is the filter VALUE: it must resolve as a variable, so an
     // undeclared one is still an error.
     let src = cu("procedure P() var R: Record \"ALT Universal\"; begin R.SetRange(\"No.\", Nope); end;");
-    assert_eq!(diags(&[TABLE, &src]), vec!["AR1000 unresolved name `Nope`"]);
+    assert_eq!(
+        diags(&[TABLE, &src]),
+        vec![
+            "AR1000 unresolved name `Nope`",
+            "AL0118 The name 'Nope' does not exist in the current context."
+        ]
+    );
 }
 
 const PAGES: &str = "page 50900 \"ALT List\" { SourceTable = \"ALT Universal\"; layout { area(Content) { field(\"No.\"; Rec.\"No.\") { } part(Lines; \"ALT Sub\") { } } } actions { area(Processing) { action(Go) { } } } }\npage 50901 \"ALT Sub\" { SourceTable = \"ALT Universal\"; layout { area(Content) { field(Amt; Rec.Amount) { } } } }";
@@ -566,11 +577,14 @@ fn statements_are_walked() {
         diags(&[&cu(
             "procedure P() var i: Integer; begin if X then; for i := 1 to Y do; case Z of 1: ; end; repeat until W; end;"
         )]),
-        vec![
-            "AR1000 unresolved name `X`",
-            "AR1000 unresolved name `Y`",
-            "AR1000 unresolved name `Z`",
-            "AR1000 unresolved name `W`"
-        ]
+        ["X", "Y", "Z", "W"]
+            .iter()
+            .flat_map(|n| {
+                [
+                    format!("AR1000 unresolved name `{n}`"),
+                    format!("AL0118 The name '{n}' does not exist in the current context."),
+                ]
+            })
+            .collect::<Vec<_>>()
     );
 }

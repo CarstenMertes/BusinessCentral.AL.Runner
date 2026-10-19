@@ -194,6 +194,20 @@ const ABSENT_ENUM_MEMBERS: &[(&str, &[&str])] = &[(
     &["Install", "Uninstall", "Upgrade", "Report", "Profile"],
 )];
 
+/// Names the platform gives some objects as variables. A bare name like these is never judged unknown
+/// (not every object type models all of them).
+const SYSTEM_VARIABLES: &[&str] = &[
+    "this",
+    "rec",
+    "xrec",
+    "currfieldno",
+    "currpage",
+    "currreport",
+    "currxmlport",
+    "currquery",
+    "requestoptionspage",
+];
+
 pub fn check(ws: &Workspace, members: &MemberTable<'_>, catalog: &Catalog) -> CheckResult {
     check_with(ws, members, catalog, Roots::default())
 }
@@ -560,6 +574,8 @@ pub(crate) struct Checker<'a> {
     resolved: std::cell::RefCell<Resolved>,
     /// Checks that panicked (see [`CheckResult::panicked`]).
     panicked: HashMap<(usize, usize), String>,
+    /// The result type of the routine being checked (`None`: a trigger or a procedure without a result).
+    cur_ret: Option<Ty>,
 }
 
 /// Names resolved so far, by (file, kind) and then name; see [`Checker::resolved`].

@@ -286,15 +286,27 @@ impl Session {
                 rec.borrow_mut().fields = first.stored.clone();
             }
             self.page_trigger(st, "onaftergetrecord", vec![])?;
-            if self.declares(st, "onnextrecord") {
-                self.nav_next(st, -1)?;
-            }
+            let stepped_back = self.declares(st, "onnextrecord") && self.nav_next(st, -1)?;
             // The closing OnFindRecord(`=`) and its read belong to the OnAfterGetCurrRecord that follows; a
-            // list without that trigger ends after OnNextRecord(-1) (pages/lt-f3-pages/F3ListTests.al:24
+            // list without that trigger ends after OnNextRecord(-1) when that answers 0 (pages/lt-f3-pages/F3ListTests.al:24
             // Nav_TwelveRows_OpenLastPreviousFirstNext `open`, a list of 12 rows with OnFindRecord, OnNextRecord and
-            // OnAfterGetRecord).
+            // OnAfterGetRecord; pages/lt-ai-list-order/AiListOrderTests.al:909 Paging_Open_Nav, 25 rows: the same end after
+            // a full window; pages/lt-f3-pages/F3PartTests.al:23 FilterView_OneHost_OpenAndMoves, a part of 3 rows).
             let with_current = self.declares(st, "onaftergetcurrrecord");
-            if with_current && self.declares(st, "onfindrecord") {
+            let mut reread = with_current;
+            if !with_current && stepped_back {
+                if keys.len() < Self::WINDOW {
+                    return self.read_rows_before_the_first(st, keys);
+                }
+                // A full window and rows before its first one: not pinned. Base Application's "Base Calendar Entries
+                // Subform" (page 7604) keeps its position in a global that OnAfterGetRecord sets, and Microsoft's
+                // ERM Base Calendar BaseCalendarEntriesShowCorrespondingRecords (codeunit 134233) needs that position back
+                // on the first row once the page has opened: assumed to end as a list with OnAfterGetCurrRecord does
+                // (misc/lt-probes-needed-6/PnF06FindListMoves.al:FindList_Ascending_25Rows `R20;R1;N(-1);F(=);R1;C`).
+                al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::ListOpenFullWindowRowsBefore);
+                reread = true;
+            }
+            if reread && self.declares(st, "onfindrecord") {
                 self.nav_find(st, "=")?;
             }
             if let Some(row) = keys.first() {
@@ -302,7 +314,7 @@ impl Session {
                 self.set_xrec_fields(st, row.stored.clone());
             }
             st.borrow_mut().window = keys;
-            if with_current {
+            if reread {
                 self.page_trigger(st, "onaftergetrecord", vec![])?;
             }
             return Ok(());
@@ -357,6 +369,52 @@ impl Session {
         if (end_reached || (opening && self.declares(st, "onaftergetcurrrecord"))) && st.borrow().host.is_none() {
             self.page_trigger(st, "onaftergetrecord", vec![])?;
         }
+        Ok(())
+    }
+
+    /// The end of the open read of a list with OnFindRecord, OnNextRecord and OnAfterGetRecord (no OnAfterGetCurrRecord) whose
+    /// view ended inside the window and whose OnNextRecord(-1) from the first row read answered a step: the client reads each
+    /// row it steps back to and asks OnNextRecord(-1) again until it answers 0; the cursor stays on the row read first, and the
+    /// rows the client holds now start at the first row of the view (pages/lt-ai-list-order/AiListOrderTests.al:777
+    /// OpenOnRow_SetPositionInOnOpenPage `...;R:R1006;N:1=0;R:R1004;N:-1=-1;R:R1003;N:-1=-1;R:R1002;N:-1=-1;R:R1001;N:-1=0`,
+    /// `current` R1004, `first_log` empty). `forward` holds the rows read from the cursor on. Pinned for a page of its own with 6
+    /// rows; a part, and more rows than a window in all, are refused.
+    fn read_rows_before_the_first(
+        &mut self,
+        st: &St,
+        forward: Vec<al_builtins::value::WindowRow>,
+    ) -> Result<(), Signal> {
+        if st.borrow().host.is_some() {
+            return unsupported(
+                "the open read of a part with OnFindRecord and OnNextRecord that has rows before the first one read (not pinned)",
+            );
+        }
+        let rec = self.page_rec(st);
+        let mut before = Vec::new();
+        loop {
+            if before.len() + forward.len() >= Self::WINDOW {
+                return unsupported(
+                    "the open read of a list that steps back over more rows than a window holds (not pinned)",
+                );
+            }
+            let key = self.row_key(&rec)?;
+            let stored = rec.borrow().fields.clone();
+            self.populate_current(st)?;
+            before.push(al_builtins::value::WindowRow {
+                key,
+                stored,
+                shown: rec.borrow().fields.clone(),
+            });
+            if !self.nav_next(st, -1)? {
+                break;
+            }
+        }
+        before.reverse();
+        let first = forward[0].clone();
+        rec.borrow_mut().fields = first.shown;
+        self.set_xrec_fields(st, first.stored);
+        before.extend(forward);
+        st.borrow_mut().window = before;
         Ok(())
     }
 

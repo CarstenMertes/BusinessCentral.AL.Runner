@@ -292,9 +292,35 @@ const RUNTIME_CRATES: [&str; 6] = ["al-sema", "al-vm", "al-ir", "al-builtins", "
 /// The crates whose `raise` sites are runtime errors.
 const ERROR_CRATES: [&str; 4] = ["al-builtins", "al-vm", "al-data", "al-host"];
 
+/// The markers around a list the front end only checks names against (an AL0124 list of allowed
+/// properties, an AL0162 list of triggers): the names in it say nothing about what the runtime reads.
+const VALIDATION_ONLY_BEGIN: &str = "// behavior-coverage: validation-only begin";
+const VALIDATION_ONLY_END: &str = "// behavior-coverage: validation-only end";
+
+/// `text` with every validation-only region blanked (a region without an end runs to the end of the file).
+fn without_validation_only(text: &str) -> std::borrow::Cow<'_, str> {
+    if !text.contains(VALIDATION_ONLY_BEGIN) {
+        return std::borrow::Cow::Borrowed(text);
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(b) = rest.find(VALIDATION_ONLY_BEGIN) {
+        out.push_str(&rest[..b]);
+        let region = &rest[b..];
+        let e = region
+            .find(VALIDATION_ONLY_END)
+            .map_or(region.len(), |e| e + VALIDATION_ONLY_END.len());
+        out.extend(region[..e].chars().map(|c| if c == '\n' { '\n' } else { ' ' }));
+        rest = &region[e..];
+    }
+    out.push_str(rest);
+    std::borrow::Cow::Owned(out)
+}
+
 pub fn known_from_sources(sources: &[(String, String)]) -> Known {
     let mut k = Known::default();
     for (_, text) in sources {
+        let text = &*without_validation_only(text);
         for lit in rust_strings(text) {
             if looks_like_on_name(&lit.text) {
                 k.on_names.insert(lit.text.clone());
@@ -1822,6 +1848,25 @@ codeunit 50101 Tests
         assert!(k.knows(Dim::Syntax, "AssignStmt +="));
         assert!(!k.knows(Dim::Syntax, "AssignStmt -="));
         assert!(!k.knows(Dim::Syntax, "WhileStmt"));
+    }
+
+    #[test]
+    fn names_in_a_validation_only_list_are_not_read() {
+        // A list the front end only checks names against (AL0124 allowed properties) says nothing about
+        // what the runtime does with the property.
+        let k = known_from_sources(&[(
+            "alcodes.rs".into(),
+            "fn a() { x(\"Subtype\"); }\n\
+             // behavior-coverage: validation-only begin\n\
+             const ALLOWED: &[&str] = &[\"TestIsolation\", \"OnBeforeTestRun\"];\n\
+             // behavior-coverage: validation-only end\n\
+             fn b() { x(\"Permissions\"); }\n"
+                .into(),
+        )]);
+        assert!(k.knows(Dim::Property, "Subtype"));
+        assert!(k.knows(Dim::Property, "Permissions"));
+        assert!(!k.knows(Dim::Property, "TestIsolation"));
+        assert!(!k.on_names.contains("OnBeforeTestRun"));
     }
 
     #[test]

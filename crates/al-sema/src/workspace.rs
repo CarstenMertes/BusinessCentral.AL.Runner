@@ -906,6 +906,33 @@ impl Workspace {
         self.resolve_in_scope(file, kind, parts, false, true)
     }
 
+    /// Whether any object of `kind` that `file` can see has the name (or id) `parts` says, whether or not
+    /// the compile includes it. `false` means the name is nowhere (AL0118).
+    ///
+    /// When an app the file can see declares a dependency that is not loaded (`--no-deps`, or a package
+    /// that was not found), the name may live there, so the answer is `true`: absence is only known when
+    /// every declared dependency is present. The platform app System is an implicit dependency of every
+    /// app (see `visible_from`), so the same holds while it is not loaded (corpus must-not-compile
+    /// 0740-subscribe-internal-event-get-role-center-banner.al:5 names its codeunit "System Action Triggers").
+    pub fn names_object(&self, file: usize, kind: ObjKind, parts: &[String]) -> bool {
+        self.has_unloaded_dependency(self.files[file].app)
+            || !self.apps.iter().any(|a| a.id.eq_ignore_ascii_case(PLATFORM_APP_ID))
+            || !matches!(
+                self.resolve_in_scope(file, kind, parts, false, false),
+                Resolution::Missing
+            )
+    }
+
+    /// Whether `app` or an app it sees declares a dependency that is not among the loaded apps.
+    pub fn has_unloaded_dependency(&self, app: usize) -> bool {
+        self.visible[app].iter().any(|&a| {
+            self.apps[a]
+                .dependencies
+                .iter()
+                .any(|d| !self.apps.iter().any(|x| x.id.eq_ignore_ascii_case(d)))
+        })
+    }
+
     /// The id of the platform table `parts` names when nothing provides rows for it. The id is
     /// a constant of its declaration, so `Database::"X"` can name it.
     pub fn unprovided_platform_table_id(&self, file: usize, parts: &[String]) -> Option<i32> {

@@ -510,6 +510,15 @@ impl Session {
                 .iter()
                 .any(|(k, _)| k.eq_ignore_ascii_case(name))
         };
+        // A request page with a source table shows its caption alone on a stored row, whatever DataCaptionFields or
+        // DataCaptionExpression say (report/lt-y-request-page/YRequestPageTests.al:84, :157, :206, :241, :255, :365, :387). On a new
+        // row it is not pinned.
+        if self.is_request_page(st) {
+            if st.borrow().draft {
+                return unsupported("the caption of a request page on a new row (not pinned)");
+            }
+            return Ok(base);
+        }
         if has_prop("DataCaptionExpression") {
             return unsupported("the caption of a page with DataCaptionExpression (the expression is not evaluated)");
         }

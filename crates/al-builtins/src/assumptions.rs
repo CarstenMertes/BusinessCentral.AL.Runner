@@ -151,6 +151,18 @@ registry! {
         tests: "Tests-Marketing Marketing Matrix Management.TaskWithStatus* (Tasks.StatusFilter.SetValue(StatusFilter::\" \") resets the filter); 7 tests.",
         probe: "A page with an Option variable control without OptionCaption whose first member is \" \": TestPage SetValue(' ') after SetValue(A), then Value.",
     },
+    TestPageSetValueBlankEnumMember => {
+        id: "testpage-setvalue-blank-enum-member",
+        assumed: "TestPageField.SetValue of an Integer on a control bound to an Enum page variable selects the value of that ordinal when its caption is blank (all spaces, e.g. value(0; \" \") { Caption = ' '; }), although the caption text trims to '' and an empty text is refused (controls/W2ValueControls.al:Enum_VariableControl_OtherSpellings `empty`). Only that shape; a table-field control and a text argument are not covered.",
+        tests: "Tests-ERM ERM Budget (134922, 36 tests) and ERM Budget UI (134927, 11 tests): Initialize calls Budget.GLAccCategory.SetValue(0) on page 113 Budget, a control over GLAccCategoryFilter: Enum \"G/L Account Category\" (value 0 \" \", Caption ' ').",
+        probe: "A page with an Enum variable control and an Enum table-field control, value 0 with Caption = ' ': after SetValue(1), SetValue(0), SetValue(' '), SetValue('') and SetValue(Integer ordinal 1), each then Value() and the ordinal (errors with text and code). Also SetValue(Integer) on an Enum control without a blank caption (by ordinal or through the caption text?).",
+    },
+    PartFieldUnderTruePartExpression => {
+        id: "part-field-under-true-part-expression",
+        assumed: "TestField.Editable()/Enabled() of a field of a part whose part control has an Editable or Enabled expression that comes out true answer as without the property. An expression that comes out false is refused; a literal Editable = false is pinned (PnGPartRows.al:117).",
+        tests: "Tests-ERM sales and purchase document tests that read fields of a lines part behind `Editable = IsSalesLinesEditable; Enabled = IsSalesLinesEditable;` (and the purchase twins), about 170 passes in Tests-ERM.",
+        probe: "A host card with parts `Editable = Flag` and `Enabled = Flag`: with Flag false and true (set in OnOpenPage, then changed by an action), a part field's Editable() and Enabled(), and SetValue through the part.",
+    },
     EvaluateTimeDigitForms => {
         id: "evaluate-time-digit-forms",
         assumed: "Evaluate into a Time (format 0) reads six digits as hhmmss and one or two digits as an hour; an hour from 24, minutes or seconds from 60 are rejected.",

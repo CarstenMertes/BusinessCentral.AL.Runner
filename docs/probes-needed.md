@@ -837,3 +837,15 @@ FindSet and Count over the rows, run as usual. Writing the field replaces the un
 | Report Layout List (BC 29) | "Layout Subtype" (19), HeaderFooterPart (20) and ThemePart (21) of a layout that declares no `Subtype` (report/lt-y-report-props/YReportParts.al pins only layouts that declare one) | Read the three columns through a RecordRef for a layout with no Subtype, for a report with and without DefaultHeaderFooterPart | `platform/reports.rs` `layout_row` |
 | Field | "Type Name" (9) of a field that is not a Text field (record/PZFieldObsoleteRows.al:47 pins `Text30` only) | "Type Name" of an Integer, Code[20], Decimal, Option, Enum, Boolean, Date, Blob and Media field | `platform/fields.rs` `field_row` |
 | Feature Key | Description (3), "Learn More Link" (4) and "Description In English" (10) of every row | The three columns of two feature keys on 27.5, 28.5 and 29.0 | `platform/host_tables.rs` `feature_key_rows` |
+
+## Outside user reports (issues 252, 253, 254, 2026-10-19)
+
+An outside user reported these from real BC 29 (each repro passed there). The repros are evidence, not pins; the
+corpus writer on branch `al-runtime-rs-staging-bc` probes them. Until the corpus pins them they stay REFUSED.
+
+| Area | Refused until pinned | Probe wanted | Code |
+|---|---|---|---|
+| Pages | `addfirst`/`addlast(FactBoxes)` in a page extension when the base page declares no FactBoxes area (issue 252) | open a TestPage of a card whose extension adds a `systempart` and a `part` to FactBoxes when the base has only `area(Content)`; also `addlast`, and `area(FactBoxes)` added by the extension itself | `al-sema/src/pages.rs` (implicit areas) |
+| Reports | a dataset column that holds a Blob (also Media and MediaSet) in `Report.SaveAs` XML, Excel and the RDLC dataset (issue 253) | the text of a Blob column with and without `CalcFields`, empty and with bytes, in `SaveAs(..., ReportFormat::Xml, ...)` | `al-vm/src/reports.rs` (column text) |
+| Math | `Round` of a Duration (issue 254) | `Round(D)`, `Round(D, 1)`, `Round(D, 1000, '<' / '>' / '=')` for 0, 1, 1499, 1500 and negative durations; the result type (Decimal or Duration) | `al-builtins/src/mathfns.rs` |
+| Dates | `Date.Day/Month/Year()` of 0001-01-01: BC raises "The date is not valid." outside the TryFunction that takes the part (P93Date.al:59-60), so the place of the raise is not pinned | `D := 00010101D;` alone, passing `00010101D` as a Date argument, then `D.Year()` | `al-builtins/src/datefns.rs` (`date_part`) |

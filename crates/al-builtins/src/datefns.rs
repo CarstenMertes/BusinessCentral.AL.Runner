@@ -31,6 +31,11 @@ pub const REGISTRY: &[(&str, NativeFn)] = &[
     ("System.CalcDate#2", calcdate_text),
     ("Date.DayOfWeek#1", day_of_week),
     ("Date.WeekNo#1", week_no),
+    ("Date.Day#1", |_, r, _| date_part(r, "Date.Day", |(_, _, d)| d as i32)),
+    ("Date.Month#1", |_, r, _| {
+        date_part(r, "Date.Month", |(_, m, _)| m as i32)
+    }),
+    ("Date.Year#1", |_, r, _| date_part(r, "Date.Year", |(y, _, _)| y)),
     ("Time.Hour#1", |_, r, _| time_part(r, 3_600_000, 24)),
     ("Time.Minute#1", |_, r, _| time_part(r, 60_000, 60)),
     ("Time.Second#1", |_, r, _| time_part(r, 1000, 60)),
@@ -376,6 +381,19 @@ fn receiver_date(r: Option<&mut Value>, what: &str) -> Result<i32, Signal> {
 
 fn day_of_week(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Out {
     Ok(Value::Integer(weekday(receiver_date(r, "Date.DayOfWeek")?)))
+}
+
+/// `Date.Day/Month/Year()`: the parts of a normal or closing date (types/lt-totext-bigtext-codeunit-run/P93Date.al:51-78,
+/// :98-121); the undefined date raises "The date is not valid." (`DateInvalid`, P93Date.al:81-95).
+fn date_part(r: Option<&mut Value>, what: &str, pick: fn((i32, u32, u32)) -> i32) -> Out {
+    match r {
+        Some(Value::Date(0, _)) => raise("The date is not valid.", "DateInvalid"),
+        // 0001-01-01: BC raises "The date is not valid." before the part is taken (P93Date.al:59-60, also :169-172 for
+        // ToText), outside the TryFunction that takes it; where exactly is not pinned, so the part is refused.
+        Some(Value::Date(1, _)) => unsupported(format!("{what} of 0001-01-01")),
+        Some(Value::Date(n, _)) if *n > 1 => Ok(Value::Integer(pick(civil_from_day(*n)))),
+        other => unsupported(format!("{what} of {}", other.describe())),
+    }
 }
 
 /// The ISO 8601 week: the week that holds the year's first Thursday is week 1. The corpus pins
@@ -1178,6 +1196,34 @@ mod tests {
         assert_eq!(int(on("Date.DayOfWeek#1", date(2024, 1, 7))), 7);
         assert_eq!(int(on("Date.DayOfWeek#1", date(2024, 1, 3))), 3);
         refused(on("Date.DayOfWeek#1", Value::Date(0, false)));
+    }
+
+    #[test]
+    fn date_day_month_year_methods() {
+        // types/lt-totext-bigtext-codeunit-run/P93Date.al:51-78 (normal dates, 9999-12-31, 1753, leap days).
+        let parts = |v: Value| {
+            (
+                int(on("Date.Day#1", v.clone())),
+                int(on("Date.Month#1", v.clone())),
+                int(on("Date.Year#1", v)),
+            )
+        };
+        assert_eq!(parts(date(2024, 3, 15)), (15, 3, 2024));
+        assert_eq!(parts(date(2024, 2, 29)), (29, 2, 2024));
+        assert_eq!(parts(date(9999, 12, 31)), (31, 12, 9999));
+        assert_eq!(parts(date(1753, 1, 1)), (1, 1, 1753));
+        // P93Date.al:98-121: a closing date gives the parts of its day.
+        let closing = call("System.ClosingDate#1", vec![date(2023, 12, 31)]).unwrap();
+        assert_eq!(parts(closing), (31, 12, 2023));
+        // P93Date.al:59-60: 0001-01-01 raises outside the part; not pinned where, so refused.
+        refused(on("Date.Year#1", date(1, 1, 1)));
+        // P93Date.al:81-95: the undefined date raises.
+        for id in ["Date.Day#1", "Date.Month#1", "Date.Year#1"] {
+            assert!(matches!(
+                on(id, Value::Date(0, false)),
+                Err(Signal::Error(e)) if e.code == "DateInvalid" && e.message == "The date is not valid."
+            ));
+        }
     }
 
     #[test]

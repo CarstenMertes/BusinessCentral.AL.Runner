@@ -167,13 +167,10 @@ fn a_refusal_while_running_names_the_statement() {
 fn an_error_that_was_caught_does_not_stand_for_a_later_one() {
     let (_, rows) = run();
     let (_, outcome, d) = of(&rows, "AssertErrorIsCaught_ThenSecondErrorEscapes");
-    // ReadsTheUndefinedDate, which runs before it, was refused while it ran, so a failure of this codeunit is
-    // reported as not run (runtime.rs: the shared state is no longer BC's); the error is still the
-    // second one, and `--explain` still shows where it was raised.
-    assert!(
-        matches!(outcome, Outcome::NotRun(r) if r.contains("not trusted") && r.ends_with("second, escapes")),
-        "{outcome:?}"
-    );
+    // ReadsTheUndefinedDate, which runs before it, was refused while it ran, but its reach changes nothing this test
+    // reads (only locals), so the failure is trusted (runtime/written.rs); the error is the second one, and
+    // `--explain` shows where it was raised.
+    assert_eq!(outcome, &Outcome::Fail("second, escapes".into()), "{outcome:?}");
     assert_eq!(d.raised_in.len(), 1);
     assert_eq!(
         d.raised_in[0].at, "a: src/t.al:25:9",

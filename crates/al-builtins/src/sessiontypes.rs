@@ -247,13 +247,10 @@ fn n_scope(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
 /// Data is a text map: a second `SetData` of a name replaces its value
 /// (session/TestCalcDateNotificationContracts.al:142-180).
 fn n_set_data(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
-    // A Guid value is its text form (assumption guid-as-text-argument; Error Message Handler.ShowNotification
-    // `Notification.SetData('RegisterID', RegisterID)` with a Guid, 27 Tests-ERM tests).
+    // A Guid value is its text form: types/lt-guid-as-text-argument/GuidAsTextArgument.al:66
+    // Guid_AsTextArgument_NotificationData (SetData with a Guid, GetData reads `{XXXXXXXX-...}`).
     let v = match a.get(1) {
-        Some(Value::Guid(g)) => {
-            crate::assumptions::assume(crate::assumptions::Assumption::GuidAsTextArgument);
-            crate::format::format_guid(g)
-        }
+        Some(Value::Guid(g)) => crate::format::format_guid(g),
         _ => text(a, 1)?,
     };
     let k = text(a, 0)?;

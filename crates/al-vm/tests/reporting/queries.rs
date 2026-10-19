@@ -796,6 +796,40 @@ fn column_metadata() {
     assert_eq!(text(r), "EntryNo|Text Value|YesYes");
 }
 
+// ColumnNo is |FNV-1a 32 of the column name in UTF-16LE| read as a signed 32-bit number
+// (misc/lt-probes-needed-1/PnAQueryFiltersColumnNo.al:143-150, :168-175: twelve names checked).
+#[test]
+fn column_no_is_the_absolute_fnv1a_hash_of_the_column_name() {
+    let r = run(&with(
+        "",
+        "procedure F(): Text
+        var Q: Query \"ALT Universal Query\";
+        begin
+            exit(Format(Q.ColumnNo(EntryNo)) + '|' + Format(Q.ColumnNo(IntegerValue)) + '|' + Format(Q.ColumnNo(TextValue)));
+        end;",
+    ));
+    assert_eq!(
+        text(r),
+        format!("{}|{}|{}", fnv("EntryNo"), fnv("IntegerValue"), fnv("TextValue"))
+    );
+}
+
+fn fnv(name: &str) -> i32 {
+    let mut h: u32 = 0x811c_9dc5;
+    for b in name.encode_utf16().flat_map(u16::to_le_bytes) {
+        h = (h ^ u32::from(b)).wrapping_mul(0x0100_0193);
+    }
+    (h as i32).abs()
+}
+
+#[test]
+fn column_no_reference_hash_matches_the_corpus_values() {
+    // PnAQueryFiltersColumnNo.al:143-146.
+    assert_eq!(fnv("Entry"), 1327805081);
+    assert_eq!(fnv("Qty"), 352015135);
+    assert_eq!(fnv("Amt"), 84079987);
+}
+
 // query/TestQueryJoin.al:79-115 InnerJoin drops the unmatched parent.
 #[test]
 fn inner_join_pairs_parent_with_child_and_drops_the_unmatched_parent() {
@@ -1614,4 +1648,84 @@ fn grouped_rows_that_tie_on_the_order_by_come_in_grouping_column_order() {
             exit(Seen);
         end;");
     assert_eq!(text(r), "A:10:2;A:20:4;A:30:1;");
+}
+
+/// The objects of misc/lt-probes-needed-1/PnAQueryObjects.al:8-43.
+const PNA_PLAIN: &str = r#"
+table 70123 "PnA Src"
+{
+    fields
+    {
+        field(1; Entry; Integer) { }
+        field(2; Grp; Code[10]) { }
+        field(3; Name; Text[30]) { }
+        field(4; Qty; Integer) { }
+        field(5; Amt; Decimal) { }
+    }
+    keys { key(PK; Entry) { Clustered = true; } }
+}
+query 70124 "PnA Plain"
+{
+    QueryType = Normal;
+    OrderBy = ascending(Qty);
+    elements
+    {
+        dataitem(S; "PnA Src")
+        {
+            column(Entry; Entry) { }
+            column(Txt; Name) { }
+            column(Qty; Qty) { }
+            column(Amt; Amt) { }
+            filter(Grp; Grp) { }
+        }
+    }
+}
+"#;
+
+fn run_pna(body: &str) -> Result<Value, Signal> {
+    let src = format!("{PNA_PLAIN}\ncodeunit 50100 C {{ {body} }}");
+    al_testkit::run_in(&src, "C", "F")
+}
+
+// GetFilters with a filter element: misc/lt-probes-needed-1/PnAQueryFiltersColumnNo.al:59-118 (the
+// filter element lands by its field number among the filters set before it; a column lands by
+// column order among the columns only) and query/TestQueryRuntimeContracts.al:219-268.
+#[test]
+fn get_filters_with_a_filter_element_follows_the_order_of_setting() {
+    let r = run_pna(
+        "procedure F(): Text
+        var Q: Query \"PnA Plain\"; s: Text;
+        begin
+            Q.SetRange(Grp, 'G'); Q.SetRange(Entry, 1); Q.SetRange(Qty, 3);
+            s := Q.GetFilters() + ';';
+            Clear(Q);
+            Q.SetRange(Entry, 1); Q.SetRange(Qty, 3); Q.SetRange(Grp, 'G');
+            s += Q.GetFilters() + ';';
+            Clear(Q);
+            Q.SetRange(Txt, 'a'); Q.SetRange(Grp, 'G'); Q.SetRange(Qty, 3);
+            s += Q.GetFilters() + ';';
+            Clear(Q);
+            Q.SetRange(Qty, 3); Q.SetRange(Txt, 'a'); Q.SetRange(Grp, 'G');
+            s += Q.GetFilters();
+            exit(s);
+        end;",
+    );
+    assert_eq!(
+        text(r),
+        "Grp: G, Entry: 1, Qty: 3;Entry: 1, Grp: G, Qty: 3;Grp: G, Name: a, Qty: 3;Grp: G, Name: a, Qty: 3"
+    );
+}
+
+// Setting a filter again or removing one with a filter element present is not pinned.
+#[test]
+fn get_filters_with_a_filter_element_after_a_filter_was_set_again_is_refused() {
+    let r = run_pna(
+        "procedure F(): Text
+        var Q: Query \"PnA Plain\";
+        begin
+            Q.SetRange(Grp, 'G'); Q.SetRange(Entry, 1); Q.SetRange(Grp, 'H');
+            exit(Q.GetFilters());
+        end;",
+    );
+    assert!(unsupported(r).contains("GetFilters"));
 }

@@ -856,6 +856,19 @@ corpus writer on branch `al-runtime-rs-staging-bc` probes them. Until the corpus
 | Math | `Round` of a Duration (issue 254) | `Round(D)`, `Round(D, 1)`, `Round(D, 1000, '<' / '>' / '=')` for 0, 1, 1499, 1500 and negative durations; the result type (Decimal or Duration) | `al-builtins/src/mathfns.rs` |
 | Dates | `Date.Day/Month/Year()` of 0001-01-01: BC raises "The date is not valid." outside the TryFunction that takes the part (P93Date.al:59-60), so the place of the raise is not pinned | `D := 00010101D;` alone, passing `00010101D` as a Date argument, then `D.Year()` | `al-builtins/src/datefns.rs` (`date_part`) |
 
+## Outside user reports (issues 292 to 297, 2026-10-19)
+
+Same as above: the repros passed on real BC 29 and are evidence, not pins. Until the corpus pins them they stay REFUSED.
+Issues 292 and 297 are pinned by corpus tests that already existed and are implemented (see the code comments).
+
+| Area | Refused until pinned | Probe wanted | Code |
+|---|---|---|---|
+| Evaluate | `Evaluate` of a text with `;` into a Decimal (issue 294: `1;5;10`); other separators and symbols than letters, `%`, `_`, `-`, `.`, `,`, `+`, `$` | return value and the variable afterwards for `1;5;10`, `1;5`, `;`, `1:5`, `1/5`, `1 5` with format number 0 and 9 | `al-builtins/src/evaluate.rs` `decimal` |
+| Filters | `GetFilter` / `GetFilters` of a filter with `<>` before a wildcard (issue 295: `<>*` on a Code field), and which rows `<>*`, `<>A*` and `<>?` keep | `SetFilter(F, '<>*')`, `'<>A*'`, `'<>?'` on Code and Text fields: the GetFilter text and the rows found (blank, `A`, `AB`, `B`) | `al-vm/src/views.rs` `filter_value_with`, `al-builtins/src/filter.rs` |
+| Filters | `SetFilter` on a Decimal field with a text that is no number and not only letters (issue 296: `NOT-A-NUMBER`); only letters (`abc`) is pinned | the error text and code of `SetFilter(Amount, 'NOT-A-NUMBER')`, `'1-2'`, `'1,2,3'`, `'1;2'`, `'abc1'` on a Decimal field | `al-builtins/src/filter.rs` `Decimal` arm |
+| Session | `SessionInformation.SqlStatementsExecuted` and `SqlRowsRead` (issue 293): only "not negative" is pinned (session/TestMiscTypes.al:96-114), not the value, so both stay refused | the value on the first read of a test, two reads with nothing between, and the difference after `Get`, `FindSet`, `Insert`, `Modify` on one table (corpus #673 item 2) | `al-vm/src/sessionops.rs` |
+| Pages | `CurrPage.Update()`, `CurrPage.Update(true)` and `CurrPage.Close()` in a procedure of a Page variable that ran and closed after `Run` or `RunModal` (only the never-run case and `Update(false)` are implemented; ClosedPageVariableCurrPage*.al pins the modal close but the runtime does not yet record how a page ran) | `Update()`, `Update(true)` on a never-run page variable; all three after `Page.Run` closed | `al-vm/src/pages/pageops.rs` |
+
 ## Fields of a part behind an Editable or Enabled expression (page-part-editable, 2026-10-19)
 
 Refused until a probe pins them. The corpus pins TestPart.Editable()/Enabled() of the part itself (pages/lt-page-controls-aa/AaControls.al:AA_Controls_PartState) and Editable() No of a field behind a part control with the literal `Editable = false` (misc/lt-probes-needed-7/PnGPartRows.al:117).

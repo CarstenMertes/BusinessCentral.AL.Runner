@@ -12485,6 +12485,7 @@
 77532 AC_Attr_Procedures
 77532 AC_Attr_ReportHandler_RunReport
 77532 AC_Attr_RequiredPending
+77532 AC_Attr_SecurityFiltering_Variable
 77532 AC_Attr_TestPermissions_Disabled
 77532 AC_Attr_TestPermissions_NonRestrictive
 77532 AC_Attr_TestPermissions_Restrictive

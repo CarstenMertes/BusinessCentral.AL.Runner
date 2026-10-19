@@ -67,14 +67,41 @@ impl Lowerer<'_> {
             ret_local = Some(locals.len());
             add(self, n, t.clone(), &mut locals);
         }
+        let mut declared_security: Vec<(String, usize, Result<i32, String>)> = Vec::new();
+        let body_text: String = r
+            .body()
+            .map(|b| {
+                b.text()
+                    .to_string()
+                    .to_lowercase()
+                    .chars()
+                    .filter(|c| !c.is_whitespace())
+                    .collect()
+            })
+            .unwrap_or_default();
         for v in r.local_var_decls() {
             let ty = v.type_ref().map(|t| Ty::from_type_ref(&t)).unwrap_or(Ty::Unknown);
             let label = v.type_ref().as_ref().and_then(label_text);
             let refusal = v.type_ref().as_ref().and_then(textconst_refusal);
             let attrs = var_attribute_names(&v);
+            let security = attrs
+                .iter()
+                .any(|a| a == "securityfiltering")
+                .then(|| security_filtering_attr_member(&v));
             for n in v.names() {
+                if let Some(m) = &security {
+                    // Only a record keeps the declared value, and only one the routine does not clear or assign
+                    // (what those leave is not pinned): on anything else the read stays refused.
+                    if matches!(self.rt(&ty), Ok(RtType::Record(..))) && !cleared_or_assigned(&body_text, &n) {
+                        declared_security.push((n.clone(), locals.len(), m.clone()));
+                    }
+                }
                 if !attrs.is_empty() {
-                    self.local_var_attrs.insert(n.to_lowercase(), attrs.clone());
+                    let mut attrs = attrs.clone();
+                    if declared_security.last().is_some_and(|(d, ..)| *d == n) {
+                        attrs.retain(|a| a != "securityfiltering");
+                    }
+                    self.local_var_attrs.insert(n.to_lowercase(), attrs);
                 }
                 if let Some(l) = &label {
                     self.local_labels.insert(n.to_lowercase(), l.clone());
@@ -111,6 +138,10 @@ impl Lowerer<'_> {
             Some(b) => self.stmts_of(&b),
             None => Vec::new(),
         };
+        if !declared_security.is_empty() {
+            let prologue = self.declared_security_filtering(&declared_security, &locals);
+            body.splice(0..0, prologue);
+        }
         locals.append(&mut self.hidden_locals);
         if qcp {
             // A Boolean OnQueryClosePage that reaches its end without a value lets the page close
@@ -1128,6 +1159,51 @@ impl Lowerer<'_> {
         }
     }
 
+    /// A local record declared with `[SecurityFiltering(x)]` starts with x: `Rec.SecurityFiltering()` answers it
+    /// (al-language/lt-ac/ACAttributes.al:176-179, :187-190) and, with no security filter in force, it reads the same
+    /// rows (:184-186). The routine starts by setting it. What `Clear`, `ClearAll` or an assignment of the whole
+    /// variable leaves is not pinned: for a variable the routine names that way (`cleared_or_assigned`), and on anything
+    /// but a record, the read of the value stays refused (`security_filtering_read_refusal`).
+    fn declared_security_filtering(
+        &mut self,
+        declared: &[(String, usize, Result<i32, String>)],
+        locals: &[ir::Slot],
+    ) -> Vec<ir::Stmt> {
+        let mut out = Vec::new();
+        let id = match super::call::builtin_id("Record.SecurityFiltering#1") {
+            Ok(id) => id,
+            Err(e) => {
+                self.reasons.push(e);
+                return out;
+            }
+        };
+        let members: Vec<String> = al_builtins::sysenum::option_members("SecurityFilter")
+            .expect("known")
+            .iter()
+            .map(|m| m.to_string())
+            .collect();
+        for (name, slot, member) in declared {
+            let member = match member {
+                Ok(m) => *m,
+                Err(e) => {
+                    self.reasons.push(format!("`{name}`: {e}"));
+                    continue;
+                }
+            };
+            debug_assert!(matches!(locals[*slot].ty, RtType::Record(..)));
+            out.push(ir::Stmt::Expr(ir::Expr::Builtin {
+                id,
+                receiver: Some(Box::new(ir::Arg::Ref(ir::Place::Local(*slot)))),
+                args: vec![ir::Arg::Value(ir::Expr::Const(ir::Const::Option(
+                    member,
+                    members.clone(),
+                )))],
+                ret_used: false,
+            }));
+        }
+        out
+    }
+
     /// Why a use of the variable `name` is refused for an attribute of its declaration: `[RunOnClient]` (BC raises
     /// DotNetFromAlNotSupported, al-language-onprem-dotnet/lt-ac/AcDnAttributes.al:145-146) and `[WithEvents]` (the
     /// `trigger Variable::Event` handlers run when the object raises the event, AcDnAttributes.al:50, :86) are not
@@ -1284,4 +1360,33 @@ fn guard_exits(body: Vec<ir::Stmt>, guard: &[ir::Stmt]) -> Vec<ir::Stmt> {
         }
     }
     out
+}
+
+/// The member index of `SecurityFilter` named by `[SecurityFiltering(SecurityFilter::X)]`.
+fn security_filtering_attr_member(v: &ast::VarDecl) -> Result<i32, String> {
+    let attr = v
+        .attributes()
+        .into_iter()
+        .find(|a| a.name().eq_ignore_ascii_case("SecurityFiltering"))
+        .ok_or("no SecurityFiltering attribute")?;
+    let text = attr.args().map(|a| a.text().to_string()).unwrap_or_default();
+    let inner = text.trim().trim_start_matches('(').trim_end_matches(')').trim();
+    let member = inner.rsplit("::").next().unwrap_or("").trim().trim_matches('"');
+    let members = al_builtins::sysenum::option_members("SecurityFilter").expect("known");
+    members
+        .iter()
+        .position(|m| m.eq_ignore_ascii_case(member))
+        .map(|i| i as i32)
+        .ok_or_else(|| format!("the attribute SecurityFiltering({inner}) is not understood"))
+}
+
+/// Whether the routine body (lower case, without white space) clears or assigns the variable `name` as a whole:
+/// `Clear(name)`, `ClearAll` or `name :=`. A match inside a string or a comment only makes the check stricter.
+fn cleared_or_assigned(body: &str, name: &str) -> bool {
+    let n = name.to_lowercase();
+    let quoted = format!("\"{n}\"");
+    body.contains("clearall")
+        || [&n, &quoted]
+            .iter()
+            .any(|v| body.contains(&format!("clear({v})")) || body.contains(&format!("{v}:=")))
 }

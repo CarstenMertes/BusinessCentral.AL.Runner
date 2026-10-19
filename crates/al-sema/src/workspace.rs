@@ -319,9 +319,12 @@ impl Workspace {
                 if lazy {
                     (scanned_file(src, symbols), Vec::new())
                 } else {
-                    match crate::pages::expand_ranges(src, symbols) {
-                        Some((text, added)) => (with_tree_cache(|cache| parse_file(&text, symbols, cache)), added),
-                        None => (with_tree_cache(|cache| parse_file(src, symbols, cache)), Vec::new()),
+                    match crate::pages::expand_or_parse(src, symbols) {
+                        crate::pages::Expansion::Expanded(text, added) => {
+                            (with_tree_cache(|cache| parse_file(&text, symbols, cache)), added)
+                        }
+                        // The parse that looked for expressions is the file's parse.
+                        crate::pages::Expansion::Unchanged(parse) => (parsed_file(parse), Vec::new()),
                     }
                 }
             })
@@ -701,17 +704,23 @@ impl Workspace {
     /// parse error if there is one. `fresh` starts from an empty token cache.
     fn parse_lazy(&self, fi: usize, f: &SourceFileData, fresh: bool) -> Attempt<(rowan::GreenNode, Vec<ByteRange>)> {
         let src = self.text(fi);
-        // Only a page can have properties to turn into routines; skip the extra parse otherwise.
-        let expanded = f
+        // Only a page can have properties to turn into routines; skip the extra parse otherwise. When there is nothing to
+        // add, the parse that looked is the file's parse; a `fresh` parse (the second one, of a file whose first parse had
+        // a problem) is made anew.
+        let (expanded, reused) = match f
             .has_page
-            .then(|| crate::pages::expand_ranges(src, &self.symbols[f.app]))
-            .flatten();
+            .then(|| crate::pages::expand_or_parse(src, &self.symbols[f.app]))
+        {
+            Some(crate::pages::Expansion::Expanded(text, added)) => (Some((text, added)), None),
+            Some(crate::pages::Expansion::Unchanged(parse)) if !fresh => (None, Some(parsed_file(parse))),
+            _ => (None, None),
+        };
         let text = expanded.as_ref().map(|(t, _)| t.as_str()).unwrap_or(src);
         let synthetic = expanded.as_ref().map(|(_, a)| a.clone()).unwrap_or_default();
-        let parsed = if fresh {
-            parse_file(text, &self.symbols[f.app], &mut al_syntax::TreeCache::default())
-        } else {
-            with_tree_cache(|cache| parse_file(text, &self.symbols[f.app], cache))
+        let parsed = match reused {
+            Some(parsed) => parsed,
+            None if fresh => parse_file(text, &self.symbols[f.app], &mut al_syntax::TreeCache::default()),
+            None => with_tree_cache(|cache| parse_file(text, &self.symbols[f.app], cache)),
         };
         let problem = parsed.errors.first().map(|e| {
             let line = text[..e.offset.min(text.len())].matches('\n').count() + 1;
@@ -1240,7 +1249,11 @@ fn settle<G>(first: Attempt<G>, again: impl FnOnce() -> Attempt<G>) -> (Attempt<
 }
 
 fn parse_file(src: &str, symbols: &BTreeSet<String>, cache: &mut al_syntax::TreeCache) -> ParsedFile {
-    let parse = al_syntax::parse_with_cache(src, symbols, cache);
+    parsed_file(al_syntax::parse_with_cache(src, symbols, cache))
+}
+
+/// The index entry of a parsed file.
+fn parsed_file(parse: al_syntax::Parse) -> ParsedFile {
     let root = ast::SourceFile::cast(parse.syntax()).expect("root is a SourceFile");
     ParsedFile {
         namespace: root.namespace(),

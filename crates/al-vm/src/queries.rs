@@ -37,8 +37,22 @@ thread_local! {
     static COLLATION_FAILED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
-/// Where `ColumnNo` starts (not a position: query/TestQueryRuntimeContracts.al:Query_ColumnNo_IsNotAOneBasedPosition).
-const COLUMN_NO_BASE: i32 = 4001;
+/// `ColumnNo`: the FNV-1a 32 hash of the column's name in UTF-16LE, read as a signed 32-bit
+/// number, without its sign (misc/lt-probes-needed-1/PnAQueryFiltersColumnNo.al:143-150 for
+/// four columns and a filter element, :168-175 for seven aggregated columns). The one hash whose
+/// absolute value does not fit (`i32::MIN`) is not pinned and is refused.
+fn column_no(name: &str) -> Result<i32, Signal> {
+    let mut h: u32 = 0x811c_9dc5;
+    for b in name.encode_utf16().flat_map(u16::to_le_bytes) {
+        h = (h ^ u32::from(b)).wrapping_mul(0x0100_0193);
+    }
+    match (h as i32).checked_abs() {
+        Some(n) => Ok(n),
+        None => unsupported(format!(
+            "ColumnNo of column {name}: its hash is -2147483648 (not pinned)"
+        )),
+    }
+}
 
 fn arg_col(args: &[Value], i: usize) -> Result<usize, Signal> {
     match args.get(i) {
@@ -231,7 +245,11 @@ impl Session {
                 if let Some(run) = q.run.as_mut().filter(|r| !r.started) {
                     run.filters_changed = true;
                 }
+                let before = q.filters.len();
                 q.filters.retain(|(c, _)| *c != col);
+                if q.filters.len() != before {
+                    q.filter_replaced = true;
+                }
                 if let Some(e) = expr {
                     q.filters.push((col, e));
                 }
@@ -253,7 +271,7 @@ impl Session {
                 // (query/TestQueryRuntimeContracts.al:Query_GetFilters_TextForSingleAndCombinedFilters).
                 let q = qs.borrow();
                 let mut parts = Vec::new();
-                for (c, e) in self.filters_in_text_order(def, &q.filters)? {
+                for (c, e) in self.filters_in_text_order(def, &q.filters, q.filter_replaced)? {
                     let caption = self.column_caption(def, c)?;
                     parts.push(format!("{caption}: {}", self.filter_text(&e)?));
                 }
@@ -263,10 +281,8 @@ impl Session {
             "ColumnCaption" => self
                 .column_caption(def, arg_col(args, 0)?)
                 .map(|s| Value::Text(s.into())),
-            // The number is not the position: the first and second column are neither 1 nor 2 and
-            // the numbers differ (query/TestQueryRuntimeContracts.al:Query_ColumnNo_IsNotAOneBasedPosition,
-            // query/TestQueryObject.al:347-361). The real numbers are not pinned (docs/probes-needed.md).
-            "ColumnNo" => Ok(Value::Integer(COLUMN_NO_BASE + arg_col(args, 0)? as i32 * 97)),
+            // A hash of the column name, not its position (see `column_no`).
+            "ColumnNo" => column_no(&def.columns[arg_col(args, 0)?].name).map(Value::Integer),
             "TopNumberOfRows" => match args.first() {
                 None => Ok(Value::Integer(qs.borrow().top.unwrap_or(def.top))),
                 Some(n) => {
@@ -557,28 +573,76 @@ impl Session {
         self.field_caption_checked(&t, field)
     }
 
-    /// The filters in the order `GetFilters` prints them. The filters come in the order they were
-    /// set, except that the filter of a Text column comes last
-    /// (query/TestQueryRuntimeContracts.al:Query_GetFilters_ThreeFilters_OrderIsNotColumnOrder). That
-    /// probe has one Text column and it is also the OrderBy column, so it cannot tell "Text column"
-    /// from "OrderBy column" (docs/probes-needed.md asks for a probe); the Text reading is used.
+    /// The filters in the order `GetFilters` prints them.
+    ///
+    /// Filters on columns only come in column order, whatever the order they were set in
+    /// (query/W7QueryFilters.al: GetFilters_*, all 13 orders over seven columns, BC 27.5 and 29.0).
+    ///
+    /// With a filter element among them the order depends on the order of setting. Each filter is
+    /// placed when it is set: a column goes before the first column already filtered that comes
+    /// after it in column order (filter elements do not count), else last; the filter element goes
+    /// before the first filter already set whose field number is higher, else last. This rule
+    /// matches every case of misc/lt-probes-needed-1/PnAQueryFiltersColumnNo.al:59-118 (filter
+    /// element on field 2 between columns on fields 1 and 3) and
+    /// query/TestQueryRuntimeContracts.al:219-268 (same shape, other query). Outside that shape it
+    /// is not pinned and is refused: more than one filter element, filters on several dataitems or
+    /// on aggregated columns, columns whose column order differs from their field order, a field
+    /// filtered twice, or a filter set again or removed (`filter_replaced`).
     fn filters_in_text_order(
         &self,
         def: &ir::Query,
         filters: &[(usize, FilterExpr)],
+        filter_replaced: bool,
     ) -> Result<Vec<(usize, FilterExpr)>, Signal> {
-        // Filters on columns come in column order, whatever the order they were set in (query/W7QueryFilters.al:
-        // GetFilters_*, all 13 orders over seven columns, BC 27.5 and 29.0). With a filter element among them the
-        // order is the older probe's: set order, the Text column last.
         if !filters.iter().any(|(c, _)| def.columns[*c].filter_element) {
             let mut out = filters.to_vec();
             out.sort_by_key(|(c, _)| *c);
             return Ok(out);
         }
-        let is_text = |c: usize| matches!(def.columns[c].ty, RtType::Text(_) | RtType::Code(_));
-        let mut out: Vec<_> = filters.iter().filter(|(c, _)| !is_text(*c)).cloned().collect();
-        out.extend(filters.iter().filter(|(c, _)| is_text(*c)).cloned());
-        Ok(out)
+        let refuse = |why: &str| unsupported(format!("GetFilters with a filter element: {why} (not pinned)"));
+        if filter_replaced {
+            return refuse("a filter was set again or removed");
+        }
+        if filters.iter().filter(|(c, _)| def.columns[*c].filter_element).count() > 1 {
+            return refuse("more than one filter element");
+        }
+        let item = def.columns[filters[0].0].item;
+        let mut field_no = Vec::with_capacity(filters.len());
+        for (c, _) in filters {
+            let col = &def.columns[*c];
+            let Some(field) = col.field.filter(|_| col.item == item && col.method.is_none()) else {
+                return refuse("a filter on another dataitem or on an aggregated column");
+            };
+            let table = def.items[item].table;
+            let id = self.engine.program.objects[table].table.as_ref().expect("table").fields[field].id;
+            if field_no.contains(&id) {
+                return refuse("one field filtered twice");
+            }
+            field_no.push(id);
+        }
+        let mut columns: Vec<(usize, u32)> = filters
+            .iter()
+            .zip(&field_no)
+            .filter(|((c, _), _)| !def.columns[*c].filter_element)
+            .map(|((c, _), n)| (*c, *n))
+            .collect();
+        columns.sort_by_key(|(c, _)| *c);
+        if columns.windows(2).any(|w| w[0].1 > w[1].1) {
+            return refuse("columns whose column order differs from their field order");
+        }
+        // Positions in `filters` (set order), placed one by one.
+        let mut placed: Vec<usize> = Vec::with_capacity(filters.len());
+        for (i, (c, _)) in filters.iter().enumerate() {
+            let at = if def.columns[*c].filter_element {
+                placed.iter().position(|&j| field_no[j] > field_no[i])
+            } else {
+                placed
+                    .iter()
+                    .position(|&j| !def.columns[filters[j].0].filter_element && filters[j].0 > *c)
+            };
+            placed.insert(at.unwrap_or(placed.len()), i);
+        }
+        Ok(placed.into_iter().map(|i| filters[i].clone()).collect())
     }
 
     /// Whether the query was read to its last row (its last Read returned false).

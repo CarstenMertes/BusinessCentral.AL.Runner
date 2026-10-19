@@ -3,7 +3,8 @@ use super::*;
 
 impl Lowerer<'_> {
     /// `Rec.SecurityFiltering()` read on a variable declared with `[SecurityFiltering(...)]` answers the declared value on
-    /// BC (al-language/lt-ac/ACAttributes.al:176-191); the runtime does not keep the declared value, so the read is refused.
+    /// BC (al-language/lt-ac/ACAttributes.al:176-191); the runtime keeps it only for a local record
+    /// (`Lowerer::declared_security_filtering`), so the read is refused on anything else.
     fn security_filtering_read_refusal(&self, callee: &SyntaxNode, args: &[SyntaxNode]) -> L<()> {
         if !args.is_empty() || callee.kind() != SyntaxKind::MemberExpr {
             return Ok(());

@@ -68,7 +68,17 @@ impl Session {
         let inst = self.page_instance(st)?;
         if st.borrow().host.is_none() && !st.borrow().inited {
             st.borrow_mut().inited = true;
-            self.page_trigger(st, "oninit", vec![])?;
+            // OnInit reads the page's own Editable, not what the variable was set to before (handlers/PWPageVariableEditable.al:221-240;
+            // misc/lt-probes-needed-4/PnD13_PageEditableViewMode.al:197 ViewModePage_GivenEditableTrue `onInit = No` with SetRecord
+            // after the Editable call).
+            let preset = st.borrow_mut().editable_preset.take();
+            let r = self.page_trigger(st, "oninit", vec![]);
+            let mut s = st.borrow_mut();
+            if s.editable_preset.is_none() {
+                s.editable_preset = preset;
+            }
+            drop(s);
+            r?;
         }
         Ok(inst)
     }
@@ -225,6 +235,11 @@ impl Session {
             dst.filters = src.filters.clone();
             dst.key = src.key;
             dst.adhoc = src.adhoc.clone();
+            // The marks and MarkedOnly come along: the page shows the marked rows only, of a real and of a temporary record
+            // (misc/lt-protected-var-abs-query-views/P146ViewMarkedTemp.al:304 P146_PageRunModal_MarkedOnly_Real, :362
+            // P146_PageRunModal_Temporary). A page variable's SetRecord or SetTableView with marks is refused there (not pinned).
+            dst.marks = src.marks.clone();
+            dst.marked_only = src.marked_only;
             // A record that is no temporary one (a view only, see SetTableView) leaves a page whose source table is temporary on its own rows.
             if src.temporary || !dst.temporary {
                 dst.temporary = src.temporary;
@@ -448,6 +463,18 @@ impl Session {
                         return self.arrive(st);
                     }
                 }
+            }
+            // A record that names no row of the view (a blank one, a SetTableView, a row outside the view or not in the table)
+            // opens the page `=><` from the record's own values: the row itself, else the next one in the view's direction, else
+            // the one before. A descending view opened on a blank record lands on its last row (misc/W2PageProperties.al:234
+            // SetTableView_DescendingOrder `[A]`; pages/lt-page-sourceview-current-row/PageSourceViewCurrentRow.al:140
+            // P184_RunModal_NoRecord_DescendingView `1`, :192 P184_RunModal_RecordWithOwnFilterAndKey `1`), a record past the
+            // last row on the last row (platform/lt-xmlport-session-navapp-cookie/P94PageRun.al:88 Run_WithRecordNotInTable
+            // `id=3`, record/lt-loadfields-pagesource-validate/P81PageTempSource.al:358 PageVar_SetRecord_TempRecord `D2`).
+            // An action's RunPageView opens on the first row of its view instead (handlers/TestPageActionRunPageView.al:296
+            // RunPageView_OrderDescending_ReversesTheOpenedPage `cur=4`); `lenient_bind` marks that open (run_object_page).
+            if !self.declares(st, "onfindrecord") && !self.pages.lenient_bind {
+                return self.page_first_row_from(st, "=><", true);
             }
         }
         self.page_first_row(st)
@@ -862,6 +889,28 @@ impl Session {
         } else {
             "-"
         };
+        self.page_first_row_from(st, which, false)
+    }
+
+    /// `page_first_row`, finding the first row with `which`. With `handed` (a `=><` from a handed record) a row other than the
+    /// first of the view starts a window that does not begin at the view's start.
+    fn page_first_row_from(&mut self, st: &St, which: &str, handed: bool) -> Result<(), Signal> {
+        // The first row of the view, to tell whether a `=><` landed on it (a copy of the record, so the page's own is not moved).
+        let first_key = if handed && self.is_list(st) {
+            let rec = self.page_rec(st);
+            let probe = Rc::new(RefCell::new(rec.borrow().clone()));
+            self.ret_used = true;
+            if matches!(
+                self.record_op(RecordOp::FindFirst, &probe, &mut [])?,
+                Value::Boolean(true)
+            ) {
+                Some(self.row_key(&probe)?)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
         if self.nav_find(st, which)? {
             st.borrow_mut().cursor = Cursor::Row;
             st.borrow_mut().landing_first = true;
@@ -878,7 +927,10 @@ impl Session {
             };
             r?;
             // The window starts at the first row of the view.
-            let from_start = self.is_list(st);
+            let rec = self.page_rec(st);
+            let landed = self.row_key(&rec)?;
+            let from_start =
+                self.is_list(st) && (!handed || first_key.as_ref().is_some_and(|k| Self::same_key(k, &landed)));
             st.borrow_mut().window_from_start = from_start;
             Ok(())
         } else if st.borrow().new_line {

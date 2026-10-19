@@ -1480,6 +1480,31 @@ impl Session {
                 return self.field_argument_answer(field, answer);
             }
         }
+        // A second non-modal Run of a Page variable runs its OnInit again (pages/lt-page-variable-lifecycle/
+        // PageVariableLifecycle.al:131 PageVar_RunTwiceOnOneVariable `IOIO`); a second RunModal does not
+        // (controls/W2PageVariableInit.al:102-104 PageVariable_RunModalTwice). A run of the other kind than the one before, and a
+        // second non-modal run of a page with variables of its own (whether they keep their values is not pinned), are refused.
+        let last = st.borrow_mut().last_run_modal.replace(modal);
+        if let (false, Some(last)) = (trapped, last) {
+            if last != modal {
+                return unsupported(
+                    "a Page variable run modal after a non-modal run, or the other way round (whether OnInit runs again is not pinned)",
+                );
+            }
+            if !modal {
+                let own_globals = self.engine.program.objects[object as usize].globals.iter().any(|g| {
+                    !["Rec", "xRec", "CurrPage"]
+                        .iter()
+                        .any(|n| g.name.eq_ignore_ascii_case(n))
+                });
+                if own_globals {
+                    return unsupported(
+                        "a second non-modal Run of a Page variable whose page has variables of its own (whether they keep their values is not pinned)",
+                    );
+                }
+                st.borrow_mut().inited = false;
+            }
+        }
         let kind = if modal { UiKind::ModalPage } else { UiKind::Page };
         st.borrow_mut().modal = modal && !trapped;
         let handler = self.open_page(
@@ -1560,8 +1585,10 @@ impl Session {
             }
         }
         {
+            // The handler reads the lookup mode the run gave the page: Yes for the static Page.RunModal, which sets it, and the
+            // variable's own for a Page variable, No unless LookupMode(true) was called (errors/lt-ms-refusals-128/
+            // P128ModalOnInit.al:191 `lookup=Yes`, :210 P128_TypedModalHandler_PageWithOnInit_PageVariable `lookup=No`).
             let mut s = st.borrow_mut();
-            s.lookup = true;
             s.typed_handler = true;
             s.cursor = Cursor::Row;
         }

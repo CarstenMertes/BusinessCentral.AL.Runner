@@ -473,6 +473,18 @@ impl Session {
             // handlers/TestPageSetRecord.al).
             PageMethod::SetRecord => match args.first() {
                 Some(Value::Record(r)) => {
+                    // Whether the page variable takes the marks of the record is not pinned (only Page.RunModal(Id, Rec) is,
+                    // misc/lt-protected-var-abs-query-views/P146ViewMarkedTemp.al:304).
+                    if r.borrow().marked_only {
+                        return unsupported(
+                            "SetRecord on a Page variable with a record whose MarkedOnly is on (not pinned)",
+                        );
+                    }
+                    // A call on a Page variable that never ran constructs the page, and its OnInit runs then
+                    // (pages/lt-page-variable-lifecycle/PageVariableLifecycle.al:158 PageVar_MethodCallBeforeRun `afterSetRecord = I`).
+                    if !st.borrow().typed_handler && !st.borrow().open {
+                        self.construct_page(st)?;
+                    }
                     // Inside a Page-typed modal handler the page holds the record already
                     // (handlers/PSModalPageHandlerTyped.al: GetRecord answers the record SetRecord handed).
                     if st.borrow().typed_handler && self.has_source(st) {
@@ -726,6 +738,11 @@ impl Session {
             // ReEditable_LookupModeTrue_HasNoNewRowLine, Plain_LookupModeFalse_HasTheNewRowLine).
             PageMethod::SetTableView => match args.first() {
                 Some(Value::Record(r)) => {
+                    if r.borrow().marked_only {
+                        return unsupported(
+                            "SetTableView on a Page variable with a record whose MarkedOnly is on (not pinned)",
+                        );
+                    }
                     let copy = Rc::new(RefCell::new(r.borrow().clone()));
                     // The view is its filters and sorting only: the rows of a temporary record stay with it (Item Tracking Summary is handed
                     // `SetTableView(TempGlobalEntrySummary)` and then fills its own temporary Rec; the page must keep that Rec).

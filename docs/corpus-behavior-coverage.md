@@ -12,7 +12,7 @@ The catalog of each area is what the AL language server offers in probe files (`
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
 | attributes | 42 | 32 | 76.2% | 28 | 66.7% | 0 | 14 | 2 |
 | events | 23 | 16 | 69.6% | 22 | 95.7% | 0 | 1 | 0 |
-| properties | 720 | 662 | 91.9% | 551 | 76.5% | 18 | 151 | 4 |
+| properties | 720 | 662 | 91.9% | 555 | 77.1% | 18 | 147 | 4 |
 | syntax | 16 | 16 | 100.0% | 16 | 100.0% | 0 | 0 | 0 |
 | triggers | 128 | 128 | 100.0% | 116 | 90.6% | 3 | 9 | 0 |
 
@@ -49,9 +49,9 @@ Left out: 293 presentation-only properties (Caption, ToolTip, ApplicationArea, .
 | Entitlement | 5 | 5 | 100.0% | 2 | 40.0% | 0 | 3 | 0 |
 | EnumType | 9 | 9 | 100.0% | 8 | 88.9% | 0 | 1 | 0 |
 | EnumValue | 4 | 4 | 100.0% | 4 | 100.0% | 0 | 0 | 0 |
-| Field | 46 | 46 | 100.0% | 36 | 78.3% | 0 | 10 | 0 |
+| Field | 46 | 46 | 100.0% | 37 | 80.4% | 0 | 9 | 0 |
 | FieldGroup | 3 | 3 | 100.0% | 3 | 100.0% | 0 | 0 | 0 |
-| FieldModify | 8 | 7 | 87.5% | 6 | 75.0% | 0 | 2 | 0 |
+| FieldModify | 8 | 7 | 87.5% | 7 | 87.5% | 0 | 1 | 0 |
 | Interface | 5 | 5 | 100.0% | 5 | 100.0% | 0 | 0 | 0 |
 | Key | 11 | 11 | 100.0% | 8 | 72.7% | 0 | 3 | 0 |
 | Page | 46 | 44 | 95.7% | 39 | 84.8% | 0 | 7 | 2 |
@@ -62,12 +62,12 @@ Left out: 293 presentation-only properties (Caption, ToolTip, ApplicationArea, .
 | PageActionRef | 4 | 4 | 100.0% | 4 | 100.0% | 0 | 0 | 0 |
 | PageActionSeparator | 4 | 4 | 100.0% | 3 | 75.0% | 0 | 1 | 0 |
 | PageArea | 3 | 0 | 0.0% | 3 | 100.0% | 0 | 0 | 0 |
-| PageControlModify | 21 | 20 | 95.2% | 13 | 61.9% | 0 | 8 | 0 |
+| PageControlModify | 21 | 20 | 95.2% | 14 | 66.7% | 0 | 7 | 0 |
 | PageCueGroup | 16 | 10 | 62.5% | 9 | 56.2% | 0 | 7 | 0 |
 | PageCustomAction | 13 | 13 | 100.0% | 6 | 46.2% | 0 | 7 | 0 |
 | PageCustomizationObject | 10 | 10 | 100.0% | 6 | 60.0% | 0 | 4 | 0 |
 | PageExtension | 14 | 13 | 92.9% | 12 | 85.7% | 0 | 2 | 0 |
-| PageField | 46 | 45 | 97.8% | 33 | 71.7% | 0 | 13 | 0 |
+| PageField | 46 | 45 | 97.8% | 34 | 73.9% | 0 | 12 | 0 |
 | PageFileUploadAction | 10 | 10 | 100.0% | 6 | 60.0% | 0 | 4 | 0 |
 | PageFixed | 16 | 9 | 56.2% | 9 | 56.2% | 0 | 7 | 0 |
 | PageGrid | 16 | 10 | 62.5% | 9 | 56.2% | 0 | 7 | 0 |

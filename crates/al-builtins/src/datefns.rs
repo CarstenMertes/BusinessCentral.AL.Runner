@@ -31,6 +31,11 @@ pub const REGISTRY: &[(&str, NativeFn)] = &[
     ("System.CalcDate#2", calcdate_text),
     ("Date.DayOfWeek#1", day_of_week),
     ("Date.WeekNo#1", week_no),
+    ("Date.Day#1", |_, r, _| date_part(r, "Date.Day", |(_, _, d)| d as i32)),
+    ("Date.Month#1", |_, r, _| {
+        date_part(r, "Date.Month", |(_, m, _)| m as i32)
+    }),
+    ("Date.Year#1", |_, r, _| date_part(r, "Date.Year", |(y, _, _)| y)),
     ("Time.Hour#1", |_, r, _| time_part(r, 3_600_000, 24)),
     ("Time.Minute#1", |_, r, _| time_part(r, 60_000, 60)),
     ("Time.Second#1", |_, r, _| time_part(r, 1000, 60)),
@@ -378,6 +383,19 @@ fn day_of_week(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Out {
     Ok(Value::Integer(weekday(receiver_date(r, "Date.DayOfWeek")?)))
 }
 
+/// `Date.Day/Month/Year()`: the parts of a normal or closing date (types/lt-totext-bigtext-codeunit-run/P93Date.al:51-78,
+/// :98-121); the undefined date raises "The date is not valid." (`DateInvalid`, P93Date.al:81-95).
+fn date_part(r: Option<&mut Value>, what: &str, pick: fn((i32, u32, u32)) -> i32) -> Out {
+    match r {
+        Some(Value::Date(0, _)) => raise("The date is not valid.", "DateInvalid"),
+        // 0001-01-01: BC raises "The date is not valid." before the part is taken (P93Date.al:59-60, also :169-172 for
+        // ToText), outside the TryFunction that takes it; where exactly is not pinned, so the part is refused.
+        Some(Value::Date(1, _)) => unsupported(format!("{what} of 0001-01-01")),
+        Some(Value::Date(n, _)) if *n > 1 => Ok(Value::Integer(pick(civil_from_day(*n)))),
+        other => unsupported(format!("{what} of {}", other.describe())),
+    }
+}
+
 /// The ISO 8601 week: the week that holds the year's first Thursday is week 1. The corpus pins
 /// the range and the first week of a year (session/TestSystemExtended.al:285-300); the rule
 /// itself is the documented one (docs/probes-needed.md).
@@ -440,6 +458,12 @@ fn parse_formula(text: &str) -> Result<Vec<Term>, Signal> {
     // types/lt-date-formula-edges/DateFormulaEdges.al:ClosingBracket_MissingAfterPlus).
     if is_blank_formula(text) {
         return Ok(Vec::new());
+    }
+    if let Some(shown) = bracketed_steps_without_sign(text) {
+        return raise(
+            format!("The date formula '{shown}' must include plus (+) or minus (-)."),
+            "Evaluate",
+        );
     }
     let body = normalize_formula(text)?;
     if body.is_empty() {
@@ -510,6 +534,21 @@ fn parse_formula(text: &str) -> Result<Vec<Term>, Signal> {
         // A sign followed by a sign has no number (DateFormulaEdges.al:SignsAndDigits_ErrorTexts, `++1D`, `+-1D`).
         if plus && matches!(b.get(i), Some(b'+' | b'-')) {
             return err_number();
+        }
+        // A sign at the end of a formula opened with `<` has no number. The message shows the text between the brackets
+        // when it ends with `>`, else the whole text (errors/lt-ms-refusals-131/P131CalcDate.al:80-81 `<+` and `<->`,
+        // :116-117 `<1D>+` and `<1D+>`; errors/lt-ms-refusals-132/P132DateFormula.al:142 `<+>`). Without the opening bracket, or with lower case letters, it is not
+        // pinned.
+        if (plus || negative) && i == b.len() {
+            let compact: String = text.chars().filter(|c| !c.is_whitespace()).collect();
+            if !compact.starts_with('<') || compact.chars().any(|c| c.is_ascii_lowercase()) {
+                return refuse();
+            }
+            let shown = if compact.ends_with('>') { body } else { compact.as_str() };
+            return raise(
+                format!("The date formula '{shown}' should include a number."),
+                "Evaluate",
+            );
         }
         if b.get(i) == Some(&b'C') {
             let Some(unit) = unit_of(b.get(i + 1)) else {
@@ -610,6 +649,38 @@ pub fn is_blank_formula(text: &str) -> bool {
     matches!(text, "<>" | "<") || text.trim().is_empty()
 }
 
+/// `<A><B>`: two bracketed steps (`digits` and a unit) with no sign between them. The second step has no sign, so the
+/// formula raises the missing-sign error, with the text between the outer brackets
+/// (errors/lt-ms-refusals-131/P131CalcDate.al:111 `<1D><1D>` gives '1D><1D'). Only this shape is pinned; any other
+/// bracket inside a term stays refused (see [`normalize_formula`]).
+fn bracketed_steps_without_sign(text: &str) -> Option<&str> {
+    let body = text.strip_prefix('<')?.strip_suffix('>')?;
+    let (a, b) = body.split_once("><")?;
+    let step = |t: &str| {
+        let digits = t.len() - 1;
+        digits > 0
+            && t.as_bytes()[..digits].iter().all(u8::is_ascii_digit)
+            && matches!(t.as_bytes()[digits], b'D' | b'W' | b'M' | b'Q' | b'Y')
+    };
+    (step(a) && step(b)).then_some(body)
+}
+
+/// `<A>+` or `<A>-`: one bracketed step (`digits` and a unit) followed by a sign. `Evaluate` with its result used answers
+/// false (errors/lt-ms-refusals-131/P131CalcDate.al:152 `<1D>+`); the statement form and other trailing signs are not
+/// pinned for `Evaluate`.
+fn bracketed_step_then_sign(text: &str) -> bool {
+    let Some(rest) = text.strip_prefix('<') else {
+        return false;
+    };
+    let Some(step) = rest.strip_suffix(">+").or_else(|| rest.strip_suffix(">-")) else {
+        return false;
+    };
+    let digits = step.len().saturating_sub(1);
+    digits > 0
+        && step.as_bytes()[..digits].iter().all(u8::is_ascii_digit)
+        && matches!(step.as_bytes()[digits], b'D' | b'W' | b'M' | b'Q' | b'Y')
+}
+
 /// The formula in upper case without spaces, angle brackets and `%` placeholders. Brackets are read where the corpus
 /// pins them: any number of `<` at the start or right after a sign, and of `>` at the end or right before a sign
 /// (DateFormulaEdges.al:ClosingBracket_MissingAfterPlus `<1D>>`, `<<1D>`; TextsFromTheTestLibraries `8D+<1D>`,
@@ -686,6 +757,11 @@ pub enum Evaluated {
 /// Rejected: a letter no formula uses (`1X`, `LW`), a `D` alone, a number alone, a decimal point,
 /// and two parts without a sign (`1D1W`). Any other text stays refused (docs/probes-needed.md).
 pub fn evaluate_formula(text: &str) -> Result<Evaluated, Signal> {
+    // Evaluate with its result used answers false (errors/lt-ms-refusals-131/P131CalcDate.al:147, 152); the statement
+    // form is not pinned.
+    if bracketed_steps_without_sign(text).is_some() || bracketed_step_then_sign(text) {
+        return Ok(Evaluated::Rejected(None));
+    }
     let n = normalize_formula(text)?;
     if n.is_empty() {
         return Ok(Evaluated::Stored(String::new()));
@@ -1123,6 +1199,34 @@ mod tests {
     }
 
     #[test]
+    fn date_day_month_year_methods() {
+        // types/lt-totext-bigtext-codeunit-run/P93Date.al:51-78 (normal dates, 9999-12-31, 1753, leap days).
+        let parts = |v: Value| {
+            (
+                int(on("Date.Day#1", v.clone())),
+                int(on("Date.Month#1", v.clone())),
+                int(on("Date.Year#1", v)),
+            )
+        };
+        assert_eq!(parts(date(2024, 3, 15)), (15, 3, 2024));
+        assert_eq!(parts(date(2024, 2, 29)), (29, 2, 2024));
+        assert_eq!(parts(date(9999, 12, 31)), (31, 12, 9999));
+        assert_eq!(parts(date(1753, 1, 1)), (1, 1, 1753));
+        // P93Date.al:98-121: a closing date gives the parts of its day.
+        let closing = call("System.ClosingDate#1", vec![date(2023, 12, 31)]).unwrap();
+        assert_eq!(parts(closing), (31, 12, 2023));
+        // P93Date.al:59-60: 0001-01-01 raises outside the part; not pinned where, so refused.
+        refused(on("Date.Year#1", date(1, 1, 1)));
+        // P93Date.al:81-95: the undefined date raises.
+        for id in ["Date.Day#1", "Date.Month#1", "Date.Year#1"] {
+            assert!(matches!(
+                on(id, Value::Date(0, false)),
+                Err(Signal::Error(e)) if e.code == "DateInvalid" && e.message == "The date is not valid."
+            ));
+        }
+    }
+
+    #[test]
     fn week_no_is_the_iso_week() {
         // session/TestSystemExtended.al:285-300 pins the range 1..53 and the first week of a year.
         assert_eq!(int(on("Date.WeekNo#1", date(2024, 1, 1))), 1);
@@ -1179,7 +1283,7 @@ mod tests {
     fn calcdate_refuses_forms_the_corpus_does_not_pin() {
         let from = date(2024, 3, 15);
         for f in [
-            "<MON>", "<1W+MON>", "<2CM>", "<1X>", "<+>", "<WD0>", "<1D>M", "<-1WD>", "<+M>", "<1<D>",
+            "<MON>", "<1W+MON>", "<2CM>", "<1X>", "<WD0>", "<1D>M", "<-1WD>", "<+M>", "<1<D>",
         ] {
             refused(calc(f, from.clone()));
         }
@@ -1229,6 +1333,56 @@ mod tests {
                 other => panic!("{f}: {other:?}"),
             }
         }
+    }
+
+    #[test]
+    fn two_bracketed_terms_without_a_sign() {
+        // errors/lt-ms-refusals-131/P131CalcDate.al:111 (CalcDate) and :147 (Evaluate with its result used).
+        let Err(Signal::Error(e)) = calc("<1D><1D>", date(2024, 1, 15)) else {
+            panic!("`<1D><1D>` must raise");
+        };
+        assert_eq!(
+            (e.message.as_str(), e.code.as_str()),
+            (
+                "The date formula '1D><1D' must include plus (+) or minus (-).",
+                "Evaluate"
+            )
+        );
+        assert!(matches!(
+            super::evaluate_formula("<1D><1D>"),
+            Ok(super::Evaluated::Rejected(None))
+        ));
+        // A sign at the end (P131CalcDate.al:80-81, 116-117, 152; P132DateFormula.al:142 `<+>`).
+        for (f, shown) in [
+            ("<+", "<+"),
+            ("<->", "-"),
+            ("<+>", "+"),
+            ("<1D>+", "<1D>+"),
+            ("<1D+>", "1D+"),
+        ] {
+            let Err(Signal::Error(e)) = calc(f, date(2024, 1, 15)) else {
+                panic!("`{f}` must raise");
+            };
+            assert_eq!(
+                e.message,
+                format!("The date formula '{shown}' should include a number.")
+            );
+        }
+        assert!(matches!(
+            super::evaluate_formula("<1D>+"),
+            Ok(super::Evaluated::Rejected(None))
+        ));
+        assert!(matches!(calc("1D+", date(2024, 1, 15)), Err(Signal::Unsupported(_))));
+        // Other places of a bracket inside a term stay refused.
+        assert!(matches!(
+            calc("<1D><+1D>", date(2024, 1, 15)),
+            Err(Signal::Unsupported(_))
+        ));
+        assert!(matches!(
+            calc("<1D> <1D>", date(2024, 1, 15)),
+            Err(Signal::Unsupported(_))
+        ));
+        assert!(matches!(calc("1D<1D", date(2024, 1, 15)), Err(Signal::Unsupported(_))));
     }
 
     #[test]

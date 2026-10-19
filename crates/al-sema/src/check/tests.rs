@@ -271,7 +271,7 @@ fn unresolved_name_member_and_call_are_diagnosed() {
             &cu("procedure P() var R: Record \"ALT Universal\"; begin R.Nope := 1; end;")
         ]),
         vec![
-            "AR1002 no member `Nope` on Record \"ALT Universal\"; not known to the catalog (docs for runtime up to 17.0)",
+            "AR1002 no member `Nope` on Record \"ALT Universal\"; not known to the catalog (docs for runtime up to 18.0)",
             // And the compiler's own code for it (corpus must-not-compile 0060).
             "AL0132 'Record \"ALT Universal\"' does not contain a definition for 'Nope'"
         ]
@@ -325,7 +325,7 @@ fn an_unknown_builtin_member_says_it_is_not_in_the_catalog() {
     assert_eq!(d.len(), 1, "{d:?}");
     assert!(d[0].starts_with("AR1002 no member `Nope` on JsonObject"), "{d:?}");
     assert!(
-        d[0].contains("not known to the catalog") && d[0].contains("up to 17.0"),
+        d[0].contains("not known to the catalog") && d[0].contains("up to 18.0"),
         "{d:?}"
     );
 }

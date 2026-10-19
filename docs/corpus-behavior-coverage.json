@@ -5458,6 +5458,15 @@
           "site": "misc/lt-u-obsolete-pending/UObsoleteObjects.al:29"
         },
         {
+          "corpus_uses": 3,
+          "group": "page/cuegroup",
+          "ms_uses": 4,
+          "name": "CuegroupLayout",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "pages/lt-ab-group-properties/ABLayouts.al:21"
+        },
+        {
           "corpus_uses": 2,
           "group": "page/field",
           "ms_uses": 4,
@@ -5600,15 +5609,6 @@
           "pinned": true,
           "runtime_reads": false,
           "site": "pages/lt-report-page-properties/07-controladdin-images.al:10"
-        },
-        {
-          "corpus_uses": 3,
-          "group": "page/cuegroup",
-          "ms_uses": 4,
-          "name": "CuegroupLayout",
-          "pinned": true,
-          "runtime_reads": false,
-          "site": "pages/lt-ab-group-properties/ABLayouts.al:21"
         },
         {
           "corpus_uses": 0,
@@ -21885,7 +21885,7 @@
         "pinned": true,
         "scope": "",
         "site": "pages/lt-ab-group-properties/ABLayouts.al:21",
-        "state": "unknown"
+        "state": "implemented"
       },
       {
         "area": "properties",
@@ -23520,7 +23520,7 @@
         "pinned": false,
         "scope": "",
         "site": null,
-        "state": "unknown"
+        "state": "implemented"
       },
       {
         "area": "properties",
@@ -23760,7 +23760,7 @@
         "pinned": false,
         "scope": "",
         "site": null,
-        "state": "unknown"
+        "state": "implemented"
       },
       {
         "area": "properties",
@@ -24000,7 +24000,7 @@
         "pinned": false,
         "scope": "",
         "site": null,
-        "state": "unknown"
+        "state": "implemented"
       },
       {
         "area": "properties",
@@ -24705,7 +24705,7 @@
         "pinned": false,
         "scope": "",
         "site": null,
-        "state": "unknown"
+        "state": "implemented"
       },
       {
         "area": "properties",

@@ -351,6 +351,10 @@ pub struct PageState {
     pub focus_in_row: bool,
     /// Validation errors the client holds: (control index, stored text).
     pub errors: Vec<(usize, String)>,
+    /// The controls among `errors` whose refusal was an error of an AL trigger (the table's or the control's OnValidate),
+    /// not one of the client's own checks, with the trigger's message: Close validates those again
+    /// (pages/lt-ah-pages/AhPageTests.al:155-159).
+    pub trigger_errors: Vec<(usize, String)>,
     /// The started line's insert was refused and the client moved on without raising
     /// (corpus handlers/TestPageFailedInsert_Tests.al:1-30): `refused` keeps the line, `pending`
     /// is the line left behind by Previous()/First(), whose insert fails again at Close().
@@ -477,6 +481,7 @@ impl PageState {
             focus: None,
             focus_in_row: false,
             errors: Vec::new(),
+            trigger_errors: Vec::new(),
             refused: false,
             close_error: false,
             selection: None,

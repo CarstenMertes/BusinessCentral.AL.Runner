@@ -57,6 +57,7 @@ pub fn to_rust(cols: &BTreeMap<u32, BTreeSet<u32>>, corpus_commit: &str) -> Stri
     s.push_str(corpus_commit);
     s.push_str(").\n// Do not edit: UPDATE_GOLDEN=1 cargo test --release -p al-test-cli --test corpus_resolve_deps -- --ignored\n\n");
     s.push_str("/// The columns of a platform table that the corpus pins, by table id (`platform::PINNED_COLUMNS`).\n");
+    s.push_str("#[rustfmt::skip]\n");
     s.push_str("pub const GENERATED: &[(u32, &[u32])] = &[\n");
     for (t, c) in cols {
         let list = c.iter().map(u32::to_string).collect::<Vec<_>>().join(", ");

@@ -358,6 +358,53 @@ pub const PINNED_ELSEWHERE: &[(u32, &str, &str)] = &[
     ),
     (2_000_000_178, "6", "profile/TestAllProfileTable.al"),
     (2_000_000_139, "1", "handlers/TestReportMetadataColumns.al:49"),
+    // Read by field name through a RecordRef (FieldIndex loops in the helpers).
+    (2_000_000_041, "23", "record/PZFieldObsoleteRows.al:52"),
+    (
+        2_000_000_139,
+        "3",
+        "report/lt-reportext-layout-relations/ReportMetadataRelations.al:152, misc/lt-probes-needed-3/PnC21Metadata.al:269",
+    ),
+    (
+        2_000_000_139,
+        "8",
+        "report/lt-y-report-props/YHelper.al:226, YReportPropsTests.al:45",
+    ),
+    (
+        2_000_000_139,
+        "12",
+        "report/lt-y-report-props/YHelper.al:226, YReportPropsTests.al:45",
+    ),
+    (
+        2_000_000_139,
+        "13",
+        "report/lt-y-report-props/YHelper.al:226, YReportPropsTests.al:45",
+    ),
+    (
+        2_000_000_139,
+        "14",
+        "report/lt-y-report-props/YHelper.al:226, YReportPropsTests.al:45",
+    ),
+    (
+        2_000_000_139,
+        "24",
+        "report/lt-y-report-props/YHelper.al:226, YReportPropsTests.al:45",
+    ),
+    (
+        2_000_000_139,
+        "25",
+        "report/lt-y-report-props/YHelper.al:226, YReportPropsTests.al:45",
+    ),
+    (
+        2_000_000_280,
+        "InherentPermissions",
+        "xmlport/lt-y-xmlport-props/YXmlPortProps.al:731-740",
+    ),
+    (
+        2_000_000_280,
+        "InherentEntitlements",
+        "xmlport/lt-y-xmlport-props/YXmlPortProps.al:731-740",
+    ),
     (2_000_000_139, "30", "handlers/TestReportMetadataColumns.al"),
     (2_000_000_139, "31", "handlers/TestReportMetadataColumns.al"),
     (
@@ -390,11 +437,11 @@ pub const PINNED_ELSEWHERE: &[(u32, &str, &str)] = &[
         "SumIndexFields",
         "KeyTable_SumIndexFields_BaseApp, KeyTable_SumIndexFields_OwnTable (codeunit 71394)",
     ),
-    (
-        2_000_000_234,
-        "Layout Subtype",
-        "ReportParts_LayoutListRows (codeunit 75571), for a layout that declares a Subtype",
-    ),
+    // BC 29 only: "Layout Subtype" (19), HeaderFooterPart (20), ThemePart (21), read through a RecordRef by
+    // field name, for layouts that declare a Subtype. By id, because the symbols of older majors lack them.
+    (2_000_000_234, "19", "report/lt-y-report-props/YReportParts.al:75-80"),
+    (2_000_000_234, "20", "report/lt-y-report-props/YReportParts.al:75-80"),
+    (2_000_000_234, "21", "report/lt-y-report-props/YReportParts.al:75-80"),
     (2_000_000_280, "1", "xmlport/TestXmlPortMetadataVirtualTable.al:42"),
     (
         2_000_000_280,

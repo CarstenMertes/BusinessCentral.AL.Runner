@@ -208,6 +208,53 @@ codeunit 50953 "RTO Tests"
         exit(Result);
     end;
 
+    procedure StaticRunModalWithWindowOnNoPageReport()
+    begin
+        Report.RunModal(Report::"RTO NoPage", true);
+    end;
+
+    procedure StaticRunModalWithoutWindowGetter()
+    begin
+        Report.RunModal(Report::"RTO WithPage", false, false);
+    end;
+
+    procedure GetterAfterExecuteOfSetVariable(): Text
+    var Rpt: Report "RTO WithPage";
+    begin
+        Rpt.UseRequestPage(false);
+        Rpt.Execute('');
+        exit(Format(Rpt.UseRequestPage()));
+    end;
+
+    procedure SaveAsPreReportErrorLastError(): Text
+    var
+        R: Record "RTO Row";
+        Rpt: Report "RTO PreError";
+        OutS: OutStream;
+        Ok: Boolean;
+    begin
+        Seed();
+        R.Get(1);
+        R.Data.CreateOutStream(OutS);
+        Ok := Rpt.SaveAs('', ReportFormat::Xml, OutS);
+        exit(GetLastErrorText());
+    end;
+
+    procedure SecondSaveAsCode(): Text
+    var
+        R: Record "RTO Row";
+        Rpt: Report "RTO RpInit";
+        OutS: OutStream;
+        Ok: Boolean;
+    begin
+        Seed();
+        R.Get(1);
+        R.Data.CreateOutStream(OutS);
+        Ok := Rpt.SaveAs('', ReportFormat::Html, OutS);
+        Ok := Rpt.SaveAs('', ReportFormat::Pdf, OutS);
+        exit(GetLastErrorCode());
+    end;
+
     procedure RunTwice(): Text
     var
         L: Codeunit "RTO Log";
@@ -316,5 +363,59 @@ fn a_second_saveas_on_one_variable_answers_false_with_the_object_has_been_run() 
     assert_eq!(
         text(al_testkit::run_in(FIXTURE, "RTO Tests", "SecondSaveAs")),
         "No:Report 50956 does not have a valid layout. Valid layout types are: Word, RDLC, Excel, and Custom.|No:The object has been run. Use the function CLEAR(Report)."
+    );
+}
+
+fn assert_refused(r: Result<al_builtins::value::Value, al_builtins::native::Signal>, needle: &str) {
+    match r {
+        Err(al_builtins::native::Signal::Unsupported(m)) => assert!(m.contains(needle), "{m}"),
+        other => panic!("expected a refusal containing {needle:?}, got {other:?}"),
+    }
+}
+
+/// Only `Report.Run(id, true)` is pinned on a report declaring `UseRequestPage = false` (PnH2UseRp.al:347); the static
+/// RunModal form is refused.
+#[test]
+fn static_runmodal_with_requestwindow_true_on_a_report_that_declares_none_is_refused() {
+    assert_refused(
+        al_testkit::run_in(FIXTURE, "RTO Tests", "StaticRunModalWithWindowOnNoPageReport"),
+        "RunModal(id, true)",
+    );
+}
+
+/// What `CurrReport.UseRequestPage()` answers in a static `RunModal(id, false)` is not pinned (only Run is,
+/// P147UseRequestPagePreGet.al:79): the getter is refused.
+#[test]
+fn the_getter_in_a_static_runmodal_without_window_is_refused() {
+    assert_refused(
+        al_testkit::run_in(FIXTURE, "RTO Tests", "StaticRunModalWithoutWindowGetter"),
+        "UseRequestPage of report",
+    );
+}
+
+/// PnH2UseRp.al:389 pins the getter after an Execute only for a variable whose UseRequestPage was never set.
+#[test]
+fn the_getter_after_an_execute_of_a_set_variable_is_refused() {
+    assert_refused(
+        al_testkit::run_in(FIXTURE, "RTO Tests", "GetterAfterExecuteOfSetVariable"),
+        "UseRequestPage of report",
+    );
+}
+
+/// PnBReportSaveAs.al:412-413 pins only the answer of the SaveAs; what GetLastErrorText then holds is refused.
+#[test]
+fn the_last_error_after_a_failed_used_saveas_without_layout_is_refused() {
+    assert_refused(
+        al_testkit::run_in(FIXTURE, "RTO Tests", "SaveAsPreReportErrorLastError"),
+        "GetLastErrorText",
+    );
+}
+
+/// PnBReportSaveAs.al:387 pins the text of the second SaveAs's error, not its code.
+#[test]
+fn the_error_code_of_a_second_saveas_is_refused() {
+    assert_refused(
+        al_testkit::run_in(FIXTURE, "RTO Tests", "SecondSaveAsCode"),
+        "GetLastErrorCode",
     );
 }

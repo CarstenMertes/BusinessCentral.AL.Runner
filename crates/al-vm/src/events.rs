@@ -246,7 +246,9 @@ impl Registry {
                             }
                             if kind == ObjKind::Codeunit
                                 && target.eq_ignore_ascii_case("Reporting Triggers")
-                                && event == "customdocumentmergerex"
+                                && al_ir::RAISED_REPORTING_EVENTS
+                                    .iter()
+                                    .any(|e| e.eq_ignore_ascii_case(event.as_str()))
                             {
                                 reg.subscribers
                                     .entry((REPORTING_TRIGGERS, event.clone()))

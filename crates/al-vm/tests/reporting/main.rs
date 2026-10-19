@@ -10,6 +10,7 @@ mod report_no_output;
 mod report_obsolete_properties;
 mod report_properties;
 mod report_saveas;
+mod report_saveas_events;
 mod report_temp_globals;
 mod report_trigger_order;
 mod reportext_calls;

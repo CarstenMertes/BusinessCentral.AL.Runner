@@ -297,9 +297,9 @@ impl Session {
                 // The getter answers what the next Run does; the setter overrides the report's own
                 // property in both directions (handlers/TestReportRuntimeContracts.al:416-440).
                 let Some(Value::Boolean(b)) = args.first() else {
-                    return Ok(Value::Boolean(Self::report_shows_page(&inst, &schema)));
+                    return Ok(Value::Boolean(Self::report_shows_page(&inst, &schema)?));
                 };
-                inst.borrow_mut().globals[slot] = Value::Integer(if *b { 1 } else { 2 });
+                inst.borrow_mut().globals[slot] = Value::Integer(if *b { REQUEST_PAGE_ON } else { REQUEST_PAGE_OFF });
                 Ok(Value::Null)
             }
             ids::REPORT_RUN_1 | ids::REPORT_RUNMODAL_1 => {
@@ -320,7 +320,7 @@ impl Session {
                     ));
                 }
                 let schema = self.report_schema(&inst)?;
-                let window = Self::report_shows_page(&inst, &schema);
+                let window = Self::report_shows_page(&inst, &schema)?;
                 let result = if quit {
                     Ok(())
                 } else {
@@ -372,12 +372,33 @@ impl Session {
                         ));
                     }
                 }
+                // For the static RunModal only `true` on a report that shows its page, and `false` hiding the page, are
+                // pinned (handlers/TestReportRequestPageSaveValues.al:211, handlers/TestReportRunExecution.al:152). `true` on a
+                // report declaring `UseRequestPage = false` is refused, and what `CurrReport.UseRequestPage()` answers in a
+                // run of `RunModal(id, false)` is not pinned: the getter is refused there.
+                if id == ids::REPORT_RUNMODAL_3
+                    && explicit == Some(true)
+                    && schema.report().use_request_page == Some(false)
+                {
+                    return unsupported(format!(
+                        "Report.RunModal(id, true) of report \"{}\", which declares UseRequestPage = false (not pinned)",
+                        schema.name()
+                    ));
+                }
                 let quit = self.report_init(&inst)?;
                 if let Some(b) = explicit {
                     let slot = schema.report().request_flag_slot;
-                    inst.borrow_mut().globals[slot] = Value::Integer(if b { 1 } else { 2 });
+                    let flag = match (b, id == ids::REPORT_RUNMODAL_3) {
+                        (true, _) => REQUEST_PAGE_ON,
+                        (false, false) => REQUEST_PAGE_OFF,
+                        (false, true) => REQUEST_PAGE_OFF_UNPINNED_GETTER,
+                    };
+                    inst.borrow_mut().globals[slot] = Value::Integer(flag);
                 }
-                let window = Self::report_shows_page(&inst, &schema);
+                let window = match explicit {
+                    Some(b) => b,
+                    None => Self::report_shows_page(&inst, &schema)?,
+                };
                 if let Some(rec) = args.get(3) {
                     self.report_set_view(&inst, &schema, Some(rec))?;
                 }
@@ -411,10 +432,15 @@ impl Session {
                 // After an Execute the getter of a variable whose UseRequestPage was never set answers false
                 // (misc/lt-probes-needed-8/PnH2UseRp.al:389, WithRP_UseFalse_Run_RunModal_Execute `getter`). What the triggers
                 // read during the Execute, and the getter after an explicit UseRequestPage(true), are not pinned.
+                // After an explicit UseRequestPage the getter is refused.
                 let slot = schema.report().request_flag_slot;
-                if !matches!(inst.borrow().globals[slot], Value::Integer(1 | 2)) {
-                    inst.borrow_mut().globals[slot] = Value::Integer(2);
-                }
+                let after = match inst.borrow().globals[slot] {
+                    Value::Integer(REQUEST_PAGE_ON | REQUEST_PAGE_OFF | REQUEST_PAGE_OFF_UNPINNED_GETTER) => {
+                        REQUEST_PAGE_UNPINNED_GETTER
+                    }
+                    _ => REQUEST_PAGE_OFF,
+                };
+                inst.borrow_mut().globals[slot] = Value::Integer(after);
                 result.map(|()| Value::Null)
             }
             ids::REPORT_EXECUTE_3 => {
@@ -806,11 +832,16 @@ impl Session {
     /// Whether a `Run` of `inst` opens the request page: the variable's own `UseRequestPage(..)`
     /// first, else the report's property, which is true when it is not declared
     /// (handlers/TestReportRuntimeContracts.al:416-440).
-    fn report_shows_page(inst: &Inst, schema: &Schema) -> bool {
+    fn report_shows_page(inst: &Inst, schema: &Schema) -> Result<bool, Signal> {
         match inst.borrow().globals[schema.report().request_flag_slot] {
-            Value::Integer(1) => true,
-            Value::Integer(2) => false,
-            _ => schema.report().use_request_page != Some(false),
+            Value::Integer(REQUEST_PAGE_ON) => Ok(true),
+            Value::Integer(REQUEST_PAGE_OFF) => Ok(false),
+            Value::Integer(REQUEST_PAGE_OFF_UNPINNED_GETTER | REQUEST_PAGE_UNPINNED_GETTER) => unsupported(format!(
+                "UseRequestPage of report \"{}\" after a static RunModal(id, false) or after an Execute of a variable \
+                 whose UseRequestPage was set (not pinned)",
+                schema.name()
+            )),
+            _ => Ok(schema.report().use_request_page != Some(false)),
         }
     }
 
@@ -1852,6 +1883,8 @@ impl Session {
         let format = format.to_string();
         // ADR-040: a rendering save of a listed report runs it and writes nothing.
         let mut discard = false;
+        // The SaveAs raised SubstituteReport, so OnDocumentReady follows the dataset.
+        let mut document_ready = false;
         let (inst, schema, quit) = if at == 0 {
             let (inst, quit) = self.report_instance(receiver, true)?;
             let schema = self.report_schema(&inst)?;
@@ -1870,9 +1903,10 @@ impl Session {
                 if !result_used {
                     return unsupported("a second SaveAs on one report variable, with the answer dropped (not pinned)");
                 }
+                // The text is pinned (PnBReportSaveAs.al:387); the code is not, so GetLastErrorCode is refused.
                 self.last_error = al_builtins::native::AlError {
                     message: "The object has been run. Use the function CLEAR(Report).".into(),
-                    code: "Dialog".into(),
+                    code: al_builtins::native::UNPINNED_ERROR.into(),
                     call_stack: String::new(),
                     ..Default::default()
                 };
@@ -1885,7 +1919,21 @@ impl Session {
             self.report.report_save_tried.push(Rc::downgrade(&inst));
             (inst, schema, quit)
         } else {
-            let (inst, schema) = self.report_by_number(id, args.first())?;
+            let (mut inst, mut schema) = self.report_by_number(id, args.first())?;
+            if self.save_as_raises_events(&schema, &format, &parameters, record_ref, &target) {
+                if let Some(new_id) = self.raise_substitute_report(&schema)? {
+                    let (i, s) = self.report_by_number(id, Some(&Value::Integer(new_id)))?;
+                    if !self.save_as_raises_events(&s, &format, &parameters, record_ref, &target) {
+                        return unsupported(format!(
+                            "SubstituteReport set report {new_id} \"{}\" for an Xml SaveAs: only a report with an RDLC layout \
+                             is pinned",
+                            s.name()
+                        ));
+                    }
+                    (inst, schema) = (i, s);
+                }
+                document_ready = true;
+            }
             (inst, schema, false)
         };
         let custom = if format == "Xml" {
@@ -2052,6 +2100,15 @@ impl Session {
                     };
                     return self.render_custom_layout(&schema, &format, layout, bytes, &blob);
                 }
+                if document_ready {
+                    let SaveTarget::Stream(blob) = &target else {
+                        unreachable!("only a stream target raises the events")
+                    };
+                    if let Some(document) = self.raise_document_ready(&schema)? {
+                        al_builtins::stream::write_bytes(blob, &document);
+                        return Ok(Value::Boolean(true));
+                    }
+                }
                 match target {
                     SaveTarget::Stream(blob) if !discard => al_builtins::stream::write_bytes(&blob, &bytes),
                     SaveTarget::Stream(blob) => {
@@ -2079,9 +2136,10 @@ impl Session {
                 match (layout, extended) {
                     (ir::ReportLayout::None, _) if !result_used => Err(Signal::Error(e)),
                     // With the answer used, a report without a layout answers false and raises nothing
-                    // (misc/lt-probes-needed-2/PnBReportSaveAs.al:412-413, TriggerError_InPreReport).
+                    // (misc/lt-probes-needed-2/PnBReportSaveAs.al:412-413, TriggerError_InPreReport). What the last error
+                    // holds then is not pinned: GetLastErrorText and GetLastErrorCode are refused.
                     (ir::ReportLayout::None, false) => {
-                        self.last_error = *e;
+                        self.last_error = al_builtins::native::unpinned_error();
                         Ok(Value::Boolean(false))
                     }
                     // An error of a trigger reaches a SaveAs whose result is not used, also with a layout
@@ -2101,6 +2159,121 @@ impl Session {
                 }
             }
             Err(other) => Err(other),
+        }
+    }
+
+    /// Whether this `SaveAs` raises the platform's `SubstituteReport` before the run and `OnDocumentReady` after it. Pinned
+    /// for the static form, Xml, an empty parameters string, no record and a stream, of a report with an RDLC layout
+    /// (events/lt-platform-events-v/PeVTests.al:432, :483, :513, reports 69860 and 69861 of PeVFixtures.al). For any other
+    /// SaveAs whether the events are raised is not pinned, and they are not (docs/probes-needed.md).
+    fn save_as_raises_events(
+        &self,
+        schema: &Schema,
+        format: &str,
+        parameters: &str,
+        record_ref: Option<&Value>,
+        target: &SaveTarget,
+    ) -> bool {
+        let report = schema.report();
+        format == "Xml"
+            && parameters.is_empty()
+            && record_ref.is_none()
+            && matches!(target, SaveTarget::Stream(_))
+            && report.layout == ir::ReportLayout::Rdlc
+            && !report.processing_only
+            && (self
+                .engine
+                .events
+                .is_subscribed(crate::events::REPORTING_TRIGGERS, "substitutereport")
+                || self
+                    .engine
+                    .events
+                    .is_subscribed(crate::events::REPORTING_TRIGGERS, "ondocumentready"))
+    }
+
+    /// Raises `SubstituteReport(ReportId, RunMode, RequestPageXml, RecordRef, var NewReportId)` for an Xml SaveAs and
+    /// answers the report a subscriber put in its place. Pinned (PeVTests.al:432, :483): ReportId, RunMode `SaveAs`,
+    /// NewReportId -1 on entry, and a NewReportId a subscriber sets runs that report. Not pinned, and passed as BC most
+    /// likely does (docs/probes-needed.md): RequestPageXml empty and RecordRef unopened.
+    fn raise_substitute_report(&mut self, schema: &Schema) -> Result<Option<i32>, Signal> {
+        let report_id = self.object_id_of(schema.object as u32) as i32;
+        let members: std::sync::Arc<[String]> = ["Normal", "ParametersOnly", "Execute", "Print", "SaveAs", "RunModal"]
+            .iter()
+            .map(|m| m.to_string())
+            .collect();
+        let names: Vec<String> = ["ReportId", "RunMode", "RequestPageXml", "RecordRef", "NewReportId"]
+            .iter()
+            .map(|n| n.to_string())
+            .collect();
+        let mut args = vec![
+            Value::Integer(report_id),
+            Value::Option(4, members),
+            Value::Text(String::new().into()),
+            Value::Library(
+                "RecordRef".into(),
+                Rc::new(RefCell::new(al_builtins::value::LibraryValue::Empty)),
+            ),
+            Value::Integer(-1),
+        ];
+        let call = crate::dispatch::EventCall {
+            object: crate::events::REPORTING_TRIGGERS,
+            event: "substitutereport",
+            element: None,
+            isolated: false,
+            names: &names,
+            sender: None,
+        };
+        self.raise(&call, &mut args)?;
+        match args[4] {
+            Value::Integer(n) if n == -1 || n == report_id => Ok(None),
+            Value::Integer(n) => Ok(Some(n)),
+            ref other => unsupported(format!("SubstituteReport set NewReportId to {}", other.describe())),
+        }
+    }
+
+    /// Raises `OnDocumentReady(ObjectId, ObjectPayload, DocumentStream, var TargetStream, var Success)` once the Xml
+    /// dataset is made, and answers what a subscriber that set Success wrote to TargetStream: SaveAs saves that instead of
+    /// the dataset (PeVTests.al:513). ObjectId is the report that ran (PeVTests.al:483) and Success is false on entry
+    /// (:432). Not pinned, and refused: a use of ObjectPayload, a read of DocumentStream, and a TargetStream written
+    /// without Success.
+    fn raise_document_ready(&mut self, schema: &Schema) -> Result<Option<Vec<u8>>, Signal> {
+        use al_builtins::stream::{Encoding, InState};
+        use al_builtins::value::LibraryValue;
+        let stream = |name: &str, v: LibraryValue| Value::Library(name.into(), Rc::new(RefCell::new(v)));
+        let document = al_builtins::stream::new_blob();
+        document.borrow_mut().render_pending = Some(schema.name().into());
+        let output = al_builtins::stream::new_blob();
+        let names: Vec<String> = ["ObjectId", "ObjectPayload", "DocumentStream", "TargetStream", "Success"]
+            .iter()
+            .map(|n| n.to_string())
+            .collect();
+        let mut args = vec![
+            Value::Integer(self.object_id_of(schema.object as u32) as i32),
+            al_builtins::json::unpinned_object("the ObjectPayload of OnDocumentReady is not pinned"),
+            stream(
+                "InStream",
+                LibraryValue::InStream(InState::live(document, Encoding::Utf8)),
+            ),
+            stream("OutStream", LibraryValue::OutStream(output.clone(), Encoding::Utf8)),
+            Value::Boolean(false),
+        ];
+        let call = crate::dispatch::EventCall {
+            object: crate::events::REPORTING_TRIGGERS,
+            event: "ondocumentready",
+            element: None,
+            isolated: false,
+            names: &names,
+            sender: None,
+        };
+        self.raise(&call, &mut args)?;
+        let written = output.borrow().written;
+        match args[4] {
+            Value::Boolean(true) => Ok(Some(output.borrow().bytes.clone())),
+            Value::Boolean(false) if !written => Ok(None),
+            _ => unsupported(format!(
+                "OnDocumentReady of report \"{}\": a subscriber wrote TargetStream without setting Success (not pinned)",
+                schema.name()
+            )),
         }
     }
 
@@ -2664,6 +2837,7 @@ impl Session {
         // the table has no row (report/W3ReportDataset.al:174 Header_CompanyInformation_NameAndAddress). The other lines are not
         // pinned and stay empty (docs/probes-needed.md).
         let mut company_line1 = String::new();
+        let mut company_line2 = String::new();
         if self.has(al_version::Gate::ReportSaveAsXmlHeaderHasCompanyBlock) {
             if let Some(obj) = self.compiled_table(79) {
                 let t = self.engine.tables[obj].clone().expect("a compiled table has a schema");
@@ -2675,6 +2849,29 @@ impl Session {
                             if let Some(n) = al_builtins::native::text_of(&rec.borrow().fields[p]) {
                                 company_line1 = n.to_string();
                             }
+                            // The address fields fill the next lines in an order that depends on the country
+                            // (report/lt-ah-dataset-header/AhDatasetHeader.al:98-151); that is not built yet. Address is line 2
+                            // whenever it is set (AhDatasetHeader.al:120-124), so Address alone is written there
+                            // (report/W3ReportDataset.al:204 sets only Address); with any other field set it is refused.
+                            const OTHER: [&str; 5] =
+                                ["Address 2", "City", "Post Code", "County", "Country/Region Code"];
+                            let value = |i: usize| al_builtins::native::text_of(&rec.borrow().fields[i]);
+                            if let Some(i) = t.fields.iter().position(|f| f.name.eq_ignore_ascii_case("Address")) {
+                                if let Some(v) = value(i) {
+                                    company_line2 = v.to_string();
+                                }
+                            }
+                            let set = t.fields.iter().enumerate().find(|(i, f)| {
+                                OTHER.iter().any(|a| a.eq_ignore_ascii_case(&f.name))
+                                    && value(*i).is_some_and(|v| !v.is_empty())
+                            });
+                            if let Some((_, f)) = set {
+                                return unsupported(format!(
+                                    "the company address lines of the dataset header (Company Information has \"{}\" set; \
+                                     the address format of AhDatasetHeader.al is not built)",
+                                    f.name
+                                ));
+                            }
                         }
                     }
                 }
@@ -2682,6 +2879,7 @@ impl Session {
         }
         Ok(dataset::Header {
             company_line1,
+            company_line2,
             extension_id: app.map(|a| a.id.clone()).unwrap_or_default(),
             extension_name: app
                 .map(|a| header_extension_name(&a.name, &a.publisher))
@@ -2740,6 +2938,16 @@ mod ignored_output_tests {
         }
     }
 }
+
+/// Values of a report's request-page flag slot (`UseRequestPage`); any other value means "never set": the report's own
+/// property decides.
+const REQUEST_PAGE_ON: i32 = 1;
+const REQUEST_PAGE_OFF: i32 = 2;
+/// The page is hidden, but what the getter answers is not pinned (a static `RunModal(id, false)`): the getter is refused.
+const REQUEST_PAGE_OFF_UNPINNED_GETTER: i32 = 3;
+/// After an `Execute` of a variable whose `UseRequestPage` was set: what the getter answers is not pinned
+/// (misc/lt-probes-needed-8/PnH2UseRp.al:389 pins only the variable never set), so it is refused.
+const REQUEST_PAGE_UNPINNED_GETTER: i32 = 4;
 
 /// The ExtensionName of the dataset header: the app's name, " by " and its publisher (report/lt-report-dataset-header/
 /// ReportDatasetHeaderRaw.al:174, misc/lt-probes-needed-2/PnBReportSaveAs.al:162). An app without a publisher (only the

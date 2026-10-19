@@ -334,6 +334,75 @@ fn reach_only_compiles_the_procedures_the_selected_tests_name() {
     );
 }
 
+/// With `Roots::lean` (and `reach_only`) a workspace object that no selected test names, directly or through the objects
+/// it names (by name, or by id in an integer literal), is left out of the compile: its routines refuse with
+/// `check::LEFT_OUT`. A table with its triggers, the page on it, a subscriber and an install codeunit beside a pure test
+/// are not compiled with it; what the test names is.
+#[test]
+fn lean_leaves_out_the_workspace_objects_no_selected_test_names() {
+    const SRC: &str = "table 50110 \"Row\" { fields { field(1; \"No.\"; Integer) { } }
+            trigger OnInsert() begin Message('i'); end; }
+        page 50111 \"Rows\" { SourceTable = \"Row\"; trigger OnOpenPage() begin Message('o'); end; }
+        codeunit 50112 \"Listener\" {
+            [EventSubscriber(ObjectType::Table, Database::\"Row\", 'OnAfterInsertEvent', '', false, false)]
+            local procedure L(var Rec: Record \"Row\") begin Message('l'); end; }
+        codeunit 50113 \"Seed\" { Subtype = Install; trigger OnInstallAppPerCompany() begin Message('n'); end; }
+        codeunit 50100 \"Helper\" { var Lib: Codeunit \"Lib\"; procedure Used(): Integer begin exit(Lib.Two() - 1); end; }
+        codeunit 50101 \"Lib\" { procedure Two(): Integer begin exit(2); end; }
+        codeunit 50104 \"By Id\" { procedure Three(): Integer begin exit(3); end; }
+        codeunit 50102 \"T\" { Subtype = Test; var H: Codeunit \"Helper\";
+            [Test] procedure P() var n: Integer; begin n := 50104; if H.Used() <> 1 then Error('x'); end; }
+        codeunit 50103 \"Other Test\" { Subtype = Test; [Test] procedure Q() var r: Record \"Row\"; begin r.Insert(); end; }";
+    let compile = |lean: bool| {
+        let (ws, l) = compile_apps_with(
+            vec![AppSource {
+                id: "a".into(),
+                name: "a".into(),
+                dependencies: vec![],
+                files: vec![("f.al".to_string(), SRC.to_string())],
+            }],
+            vec![crate::workspace::AppKind::Workspace],
+            &Default::default(),
+            None,
+            crate::check::Roots {
+                baseline: false,
+                only_tests: Some(vec![(0, 50102)]),
+                reach_only: true,
+                lean,
+                ..Default::default()
+            },
+        );
+        let ids = |pick: &dyn Fn(usize) -> bool| -> Vec<u32> {
+            let mut v: Vec<u32> = (0..ws.objects.len())
+                .filter(|&oi| pick(oi))
+                .filter_map(|oi| ws.objects[oi].id)
+                .collect();
+            v.sort_unstable();
+            v
+        };
+        let by_reason = ids(&|oi| {
+            let refusals: Vec<&String> = l.unsupported[oi].iter().flatten().collect();
+            !refusals.is_empty() && refusals.iter().all(|why| why.as_str() == crate::check::LEFT_OUT)
+        });
+        assert_eq!(
+            by_reason,
+            ids(&|oi| l.left_out[oi]),
+            "Lowered::left_out names the same objects"
+        );
+        by_reason
+    };
+    assert_eq!(
+        compile(false),
+        Vec::<u32>::new(),
+        "without lean every object beside the tests compiles"
+    );
+    assert_eq!(
+        compile(true),
+        vec![50110, 50111, 50112, 50113],
+        "the table, its page, the subscriber and the installer are named by no selected test"
+    );
+}
+
 /// (line, column) of the position a `Stmt::Pos` marker names.
 fn at(l: &Lowered, s: &ir::Stmt) -> (u32, u32) {
     let ir::Stmt::Pos(id) = s else {

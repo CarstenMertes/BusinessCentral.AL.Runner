@@ -847,6 +847,7 @@ pub(crate) fn lower_core(
         pos_ranges: Vec::new(),
         checker_diags: checked.from_checker.clone(),
         skipped: checked.skipped.clone(),
+        left_out: (0..ws.objects.len()).map(|oi| checked.is_left_out(oi)).collect(),
     };
     if positions {
         program.sources = ws

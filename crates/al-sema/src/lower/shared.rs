@@ -570,6 +570,8 @@ pub(crate) fn lower_object<'a>(
                     )
                 }
             }
+        } else if checked.is_left_out(oi) {
+            lw.refused(r, crate::check::LEFT_OUT.into())
         } else {
             lw.stub(r)
         };

@@ -836,7 +836,19 @@ impl Session {
             PageMethod::GetValidationError => {
                 let i = match args.first() {
                     Some(Value::Integer(i)) => *i,
-                    None => 1,
+                    // Without an index while the control has a validation error, real BC ends the session with an
+                    // uncatchable ArgumentOutOfRangeException (Windows check of the corpus, runs 39162782959 and
+                    // 39162785239); the runtime has no such error to raise. Without an error the answer is not pinned.
+                    None if st.borrow().errors.iter().any(|(c, _)| *c == idx) => {
+                        return unsupported(
+                            "TestField.GetValidationError() without an index while the control has a validation error (real BC crashes with an uncatchable ArgumentOutOfRangeException)",
+                        );
+                    }
+                    None => {
+                        return unsupported(
+                            "TestField.GetValidationError() without an index on a control with no validation error (not pinned)",
+                        );
+                    }
                     _ => return unsupported("GetValidationError with a non-integer index"),
                 };
                 let s = st.borrow();

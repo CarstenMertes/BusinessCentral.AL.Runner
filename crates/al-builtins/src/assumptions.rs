@@ -105,9 +105,9 @@ registry! {
     },
     QueryClosedAfterLastRow => {
         id: "query-closed-after-last-row",
-        assumed: "A query whose Read has returned false after its last row is closed: SetRange and SetFilter take a new filter and Open runs it again.",
-        tests: "Workflow Step Instance.SetTableRelationValues (one query variable, filtered and opened once per table relation); 125 Tests-Workflow tests.",
-        probe: "Open a query, Read to false, SetRange on a column, Open and Read again; the same without the SetRange; Open twice after the last row.",
+        assumed: "Open on a query whose Read has returned false after its last row runs the query again, with the filters set since then (a SetRange or SetFilter there is pinned: it takes the filter and a Read before the next Open raises, errors/lt-ms-refusals-131/P131QuerySetRangeAfterRead.al:154-170).",
+        tests: "Workflow Step Instance.SetTableRelationValues (one query variable, filtered and opened once per table relation); Tests-Workflow.",
+        probe: "Open a query, Read to false, SetRange on a column, Open and Read again (no asserterror in between, it rolls back the rows); the same without the SetRange.",
     },
     XmlportExportsFlowfieldCalculated => {
         id: "xmlport-exports-flowfield-calculated",

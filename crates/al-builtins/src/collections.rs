@@ -31,14 +31,14 @@ pub const REGISTRY: &[(&str, NativeFn)] = &[
         })
     }),
     ("List.Contains#1", |_, r, a| {
-        read_list(r, |l| Ok(Value::Boolean(position_checked(l, &a[0])?.is_some())))
+        read_list_unpinned(r, |l| Ok(Value::Boolean(position_checked(l, &a[0])?.is_some())))
     }),
     ("List.Count#1", |_, r, _| {
-        read_list(r, |l| Ok(Value::Integer(l.len() as i32)))
+        read_list_unpinned(r, |l| Ok(Value::Integer(l.len() as i32)))
     }),
     ("List.Get#1", |_, r, a| {
         let i = index(&a[0])?;
-        read_list(r, |l| l.get(i).cloned().map_or_else(list_get_error, Ok))
+        read_list_unpinned(r, |l| l.get(i).cloned().map_or_else(list_get_error, Ok))
     }),
     ("List.Get#2", |c, r, a| {
         // An index below 1 answers false like one past the end (collections/ListInt.al:Int_AddCountGet `get 0 ret`).
@@ -46,7 +46,7 @@ pub const REGISTRY: &[(&str, NativeFn)] = &[
             Value::Integer(n) if *n < 1 && c.ret_used() => None,
             other => {
                 let i = index(other)?;
-                read_list(r, |l| Ok(l.get(i).cloned()))?
+                read_list_unpinned(r, |l| Ok(l.get(i).cloned()))?
             }
         };
         match got {
@@ -64,7 +64,7 @@ pub const REGISTRY: &[(&str, NativeFn)] = &[
         })
     }),
     ("List.LastIndexOf#1", |_, r, a| {
-        read_list(r, |l| {
+        read_list_unpinned(r, |l| {
             Ok(Value::Integer(
                 l.iter().rposition(|x| eq(x, &a[0])).map_or(0, |p| p as i32 + 1),
             ))
@@ -139,7 +139,7 @@ pub const REGISTRY: &[(&str, NativeFn)] = &[
     ("List.GetRange#1", |_, r, a| {
         let i = index(&a[0])?;
         let n = count(&a[1])?;
-        read_list(r, |l| {
+        read_list_unpinned(r, |l| {
             if i + n > l.len() {
                 return range_past_end();
             }
@@ -354,12 +354,25 @@ fn list_items(v: &Value) -> Result<Vec<Value>, Signal> {
     }
 }
 
-/// A method that only reads the list: it does not count as a change, so it may run inside a `foreach` over the same
-/// list (misc/lt-u-obsolete-pending/UObsoletePending.al:35-36 calls `IndexOf` there; the changing methods raise
-/// "Collection was modified", collections/RefSemantics.al:343-408).
+/// `IndexOf` only reads the list: it does not count as a change, so it may run inside a `foreach` over the same list
+/// (misc/lt-u-obsolete-pending/UObsoletePending.al:35-36; the changing methods raise "Collection was modified",
+/// collections/RefSemantics.al:343-408).
 fn read_list<T>(r: Option<&mut Value>, f: impl FnOnce(&[Value]) -> Result<T, Signal>) -> Result<T, Signal> {
     match r {
         Some(Value::List(l)) => f(&l.borrow()),
+        other => Err(Signal::Unsupported(format!("list method on {}", other.describe()))),
+    }
+}
+
+/// A read whose effect inside a `foreach` over the same list is not pinned (Count, Get, Contains, LastIndexOf, GetRange):
+/// it does not change the list, and it marks the read, so a foreach over the list that sees it refuses instead of
+/// guessing (`exec/run.rs`, op_foreach_next).
+fn read_list_unpinned<T>(r: Option<&mut Value>, f: impl FnOnce(&[Value]) -> Result<T, Signal>) -> Result<T, Signal> {
+    match r {
+        Some(Value::List(l)) => {
+            l.borrow_mut().unpinned_reads += 1;
+            f(&l.borrow())
+        }
         other => Err(Signal::Unsupported(format!("list method on {}", other.describe()))),
     }
 }

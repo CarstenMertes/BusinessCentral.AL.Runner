@@ -72,11 +72,18 @@ pub enum RtType {
 pub struct ListVec {
     items: Vec<Value>,
     pub version: u64,
+    /// Reads by List methods whose effect on a `foreach` over the list is not pinned (`collections.rs`, `read_list_unpinned`):
+    /// a foreach that sees this change refuses (`exec/run.rs`).
+    pub unpinned_reads: u64,
 }
 
 impl From<Vec<Value>> for ListVec {
     fn from(items: Vec<Value>) -> Self {
-        ListVec { items, version: 0 }
+        ListVec {
+            items,
+            version: 0,
+            unpinned_reads: 0,
+        }
     }
 }
 

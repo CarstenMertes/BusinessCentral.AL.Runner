@@ -182,3 +182,58 @@ codeunit 69968 C
 "#;
     refused(al_testkit::run_in(src, "C", "F"), "CaptionClassTranslate");
 }
+
+const FIND_LIST: &str = r#"
+table 69950 "FL Row" { fields { field(1; Id; Integer) { } } keys { key(PK; Id) { } } }
+page 69951 "FL List"
+{
+    PageType = List; SourceTable = "FL Row"; ApplicationArea = All; UsageCategory = None; Editable = false;
+    layout { area(Content) { repeater(R) { field(Id; Rec.Id) { } } } }
+    trigger OnOpenPage() begin end;
+    trigger OnFindRecord(Which: Text): Boolean begin exit(Rec.Find(Which)); end;
+    trigger OnNextRecord(Steps: Integer): Integer begin exit(Rec.Next(Steps)); end;
+    trigger OnAfterGetRecord() begin end;
+    trigger OnAfterGetCurrRecord() begin end;
+}
+codeunit 69952 C
+{
+    local procedure Seed(N: Integer)
+    var R: Record "FL Row"; i: Integer;
+    begin
+        for i := 1 to N do begin R.Id := i; R.Insert(); end;
+    end;
+    procedure Descending(): Text
+    var P: TestPage "FL List";
+    begin
+        Seed(3);
+        P.OpenView();
+        exit(P.Id.Value());
+    end;
+    procedure GoToKeyFar(): Text
+    var P: TestPage "FL List";
+    begin
+        Seed(25);
+        P.OpenView();
+        P.GoToKey(22);
+        exit(P.Id.Value());
+    end;
+}
+"#;
+
+/// misc/lt-probes-needed-6/PnF06FindListMoves.al:304, :318: a descending OnFindRecord list with OnAfterGetCurrRecord steps
+/// back over every row it served when it opens. That walk is not implemented, so the open is refused.
+#[test]
+fn opening_a_descending_find_list_with_on_after_get_curr_record_is_refused() {
+    let src = FIND_LIST.replace(
+        "trigger OnOpenPage() begin end;",
+        "trigger OnOpenPage() begin Rec.Ascending(false); end;",
+    );
+    refused(al_testkit::run_in(&src, "C", "Descending"), "descending");
+}
+
+/// pages/lt-ai-list-order/AiListOrderTests.al:999, :1020: GoToKey on an OnFindRecord list with a full window of 20 rows makes
+/// the client ask the page for the rows around the key. That is not implemented, so it is refused.
+#[test]
+fn go_to_key_on_a_find_list_with_a_full_window_is_refused() {
+    refused(al_testkit::run_in(FIND_LIST, "C", "GoToKeyFar"), "full window");
+}

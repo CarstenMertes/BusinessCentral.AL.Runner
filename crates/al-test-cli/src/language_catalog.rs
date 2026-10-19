@@ -135,7 +135,7 @@ pub fn runtime_receiver(owner: &str) -> &str {
 /// The shape of one parameter, for matching.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Shape {
-    /// Lower case, normalized (`joker` is `any`, `array[] of x` is `array of [x]`, `string` is `text`).
+    /// Lower case, normalized (`joker` is `any`, `array[] of x` is `array of [x]`, `string` is `text`, `table` is `record`).
     pub ty: String,
     pub by_var: bool,
     pub optional: bool,
@@ -151,6 +151,8 @@ fn norm_type(t: &str) -> String {
     };
     match t.as_str() {
         "string" => "text".into(),
+        // The compiler names a record parameter `Table`, the runtime catalog `Record`.
+        "table" => "record".into(),
         _ => t,
     }
 }
@@ -614,5 +616,19 @@ mod tests {
                 .unwrap()
                 .contains("\"description\"")
         );
+    }
+
+    /// The compiler spells a record parameter `Table`, the runtime catalog `Record`: the two are one
+    /// type, so `Page.Run(Integer, [Table], [Joker])` matches its runtime overload exactly and not by
+    /// arity to the `FullyQualifiedName: Text` one.
+    #[test]
+    fn a_table_parameter_matches_a_record_parameter() {
+        let catalog = al_builtins::catalog::Catalog::load();
+        let run = catalog
+            .overloads("Page", "Run")
+            .into_iter()
+            .find(|s| s.to_line() == "Page.Run static (Number: Integer, ?Record: Record, ?Field: Any)")
+            .unwrap();
+        assert_eq!(compiler_shapes("(Integer, [Table], [Joker])"), runtime_shapes(run));
     }
 }

@@ -224,13 +224,22 @@ impl Session {
                 unsupported("CurrReport.FormatRegion in a report whose FormatRegion property is set (not pinned)")
             }
             // `en-US`, the session's own region, reads back empty and leaves Format as it was while the report keeps the
-            // session's language (misc/lt-probes-needed-8/PnH4CurrReport.al:244 `region=[]`); after `CurrReport.Language :=` another
-            // language it is kept as text, as before (not pinned, docs/probes-needed.md).
+            // session's language (misc/lt-probes-needed-8/PnH4CurrReport.al:244 `region=[]`). After `CurrReport.Language :=` only
+            // `de-DE` after 1031 is pinned (PnC06ReportLanguage.al:58-65); any other region there is refused (docs/probes-needed.md).
             ids::REPORT_FORMATREGION_1 => match args.first() {
                 Some(Value::Text(t) | Value::Code(t)) if self.report.report_preview_pinned.last() == Some(&true) => {
                     let t = t.to_string();
-                    let own_language = matches!(self.report.curr_report_language, None | Some(1033));
-                    self.report.format_region = (t != "en-US" || !own_language).then_some(t);
+                    match self.report.curr_report_language {
+                        None if t == "en-US" => self.report.format_region = None,
+                        None => self.report.format_region = Some(t),
+                        // `de-DE` after `CurrReport.Language := 1031` (PnC06ReportLanguage.al:58-65 `region1:de-DE`).
+                        Some(1031) if t == "de-DE" => self.report.format_region = Some(t),
+                        Some(l) => {
+                            return unsupported(format!(
+                                "CurrReport.FormatRegion := '{t}' after CurrReport.Language := {l} (only 'de-DE' after 1031 is pinned)"
+                            ));
+                        }
+                    }
                     Ok(Value::Null)
                 }
                 Some(Value::Text(_) | Value::Code(_)) => Ok(Value::Null),
@@ -696,7 +705,10 @@ impl Session {
         // (handlers/TestReportOnInitReportTiming.al:88-98, QuitInOnInitReport_StopsPreReportAndBody).
         let saved = self.report.report_init_depth.replace(self.depth + 1);
         self.report.report_quit = false;
+        let region = o.report.as_ref().and_then(|r| r.format_region.clone());
+        let outer_region = std::mem::replace(&mut self.report.region_in_init, region);
         let r = self.call(object, on_init, inst.clone(), Vec::new());
+        self.report.region_in_init = outer_region;
         self.report.report_init_depth = saved;
         let quit = std::mem::take(&mut self.report.report_quit);
         r?;
@@ -2506,6 +2518,15 @@ impl Session {
         let engine = &schema.engine;
         let object = &engine.program.objects[schema.object];
         let report = schema.report();
+        // A report with the FormatRegion property: report/lt-y-report-props/YReportPropsTests.al:34-148 pins its DataItems block
+        // only (the helper cuts the text at `<DataItems>`). Whether the header (`ReportDataSet formatRegion=` and the
+        // `FormatRegion` element) names the report's region or the session's is not pinned (docs/probes-needed.md).
+        if let Some(r) = &report.format_region {
+            return unsupported(format!(
+                "the header of the SaveAs Xml dataset of report \"{}\" with FormatRegion = '{r}' (only its DataItems block is pinned)",
+                schema.name()
+            ));
+        }
         let app = engine.program.apps.get(object.app as usize);
         let ms = self.now_millis();
         let day = ms.div_euclid(86_400_000) + i64::from(al_builtins::format::day_from_civil(1970, 1, 1));
@@ -2562,10 +2583,6 @@ impl Session {
             user_name: self.host.identity.user_id(),
             now: (y, mo, d, (in_day / 3_600_000) as u32, (in_day / 60_000 % 60) as u32),
             company_block: self.has(al_version::Gate::ReportSaveAsXmlHeaderHasCompanyBlock),
-            format_region: report
-                .format_region
-                .clone()
-                .unwrap_or_else(|| dataset::LANGUAGE.to_string()),
         })
     }
 }

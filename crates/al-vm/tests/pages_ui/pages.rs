@@ -202,6 +202,19 @@ page 50011 "PG Kind Page"
     var Kind: Enum "PG Kind";
 }
 
+enum 50090 "PG Blank Kind"
+{
+    value(0; " ") { Caption = ' '; }
+    value(1; Assets) { Caption = 'Assets'; }
+}
+
+page 50091 "PG Blank Kind Page"
+{
+    PageType = Card;
+    layout { area(Content) { field(KindCtl; Kind) { Caption = 'Kind Filter'; } } }
+    var Kind: Enum "PG Blank Kind";
+}
+
 page 50012 "PG Hidden Get"
 {
     PageType = List;
@@ -1150,4 +1163,26 @@ fn a_list_plus_page_over_an_empty_view_runs_new_record_and_get_curr_record() {
         "F",
     );
     assert_eq!(text(r), "open;new;agcr;");
+}
+
+// Assumption testpage-setvalue-blank-enum-member (Tests-ERM ERM Budget 134922 and ERM Budget UI 134927, `Initialize`:
+// `Budget.GLAccCategory.SetValue(0)` on a page-variable control of Enum "G/L Account Category", whose value 0 has
+// Caption = ' '): an Integer handed to an Enum variable control selects the value whose caption is blank.
+#[test]
+fn set_value_of_an_integer_selects_the_blank_captioned_enum_value() {
+    al_builtins::assumptions::clear_hits();
+    let r = run(
+        "procedure F(): Text var TP: TestPage \"PG Blank Kind Page\"; begin
+            TP.OpenEdit();
+            TP.KindCtl.SetValue('Assets');
+            TP.KindCtl.SetValue(0);
+            exit('[' + TP.KindCtl.Value() + ']');
+        end;",
+        "F",
+    );
+    assert_eq!(text(r), "[ ]");
+    assert!(
+        al_builtins::assumptions::take_hits()
+            .contains(&al_builtins::assumptions::Assumption::TestPageSetValueBlankEnumMember)
+    );
 }

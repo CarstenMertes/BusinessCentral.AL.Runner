@@ -9,6 +9,7 @@ mod call_stack;
 mod clear_all_temp_rows;
 mod clear_enum;
 mod code_compare;
+mod codeunit_index;
 mod continue_stmt;
 mod corpus_failures_1;
 mod dataformats;

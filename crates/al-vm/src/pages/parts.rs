@@ -127,6 +127,60 @@ impl Session {
         )
     }
 
+    /// What the part controls that show `st` (its host's, and theirs up the chain) say about `Editable()` (`editable`
+    /// true) or `Enabled()` of a field of `st`. `Some(false)`: the answer is No. `None`: the part controls say nothing, the
+    /// field answers by itself. Pinned only for a field read through a part whose control says the literal `Editable =
+    /// false`: Editable() No (misc/lt-probes-needed-7/PnGPartRows.al:117 ReadOnlyPartSetValue `ro-descr-editable`; a part a page
+    /// extension adds, pageext/lt-u-page-props/UPageProps.al:239-240 PageExt_PartStates `ext_part_row_*_editable`).
+    /// An Editable or Enabled expression that comes out true counts as no property (assumption
+    /// part-field-under-true-part-expression). Everything else a part control's Editable or Enabled can do to its fields
+    /// is refused (hard rule 4): an expression that comes out false (Tests-ERM ERM Sales Quotes BlankSalesQuoteLinesUneditable
+    /// reads a field behind `Editable = IsSalesLinesEditable` with the flag false), `Enabled = false`, Enabled() behind
+    /// `Editable = false`, and `Editable = false` on a part control further up the chain.
+    pub(super) fn part_field_gate(&mut self, st: &St, editable: bool) -> Result<Option<bool>, Signal> {
+        let what = if editable { "Editable()" } else { "Enabled()" };
+        let engine = self.engine();
+        let mut answer = None;
+        let mut at = st.borrow().host.clone();
+        let mut direct = true;
+        while let Some((host, idx)) = at {
+            let Some(host) = host.upgrade() else { break };
+            for name in ["enabled", "editable"] {
+                let shown = if name == "enabled" { "Enabled" } else { "Editable" };
+                match page_of(&engine, &host).controls[idx].prop(name) {
+                    None => {}
+                    Some(ir::PropVal::Lit(v)) => {
+                        let v = is_true(v);
+                        if !v && name == "editable" && editable && direct {
+                            answer = Some(false);
+                            continue;
+                        }
+                        if !v {
+                            return unsupported(format!(
+                                "{what} of a field on a part whose control says {shown} = false (not pinned)"
+                            ));
+                        }
+                    }
+                    // An expression that comes out true is taken as no property (assumption
+                    // part-field-under-true-part-expression); one that comes out false is not pinned.
+                    Some(_) => {
+                        if !self.prop_bool_now(&host, idx, name, true)? {
+                            return unsupported(format!(
+                                "{what} of a field on a part whose control has an {shown} expression that is false (not pinned)"
+                            ));
+                        }
+                        al_builtins::assumptions::assume(
+                            al_builtins::assumptions::Assumption::PartFieldUnderTruePartExpression,
+                        );
+                    }
+                }
+            }
+            direct = false;
+            at = host.borrow().host.clone();
+        }
+        Ok(answer)
+    }
+
     pub(super) fn refuse_read_only_part(&self, st: &St, what: &str) -> Result<(), Signal> {
         if self.part_control_read_only(st) {
             return unsupported(format!(

@@ -1050,7 +1050,10 @@ fn the_run_clock_starts_at_the_same_time_of_day_in_every_run() {
     let first = time();
     std::thread::sleep(std::time::Duration::from_millis(5));
     let second = time();
-    assert_eq!(first, second, "the time of day a test reads depends on when its run began");
+    assert_eq!(
+        first, second,
+        "the time of day a test reads depends on when its run began"
+    );
     // The first read of a session is the run clock's start: noon (12 h after midnight, in ms).
     assert_eq!(first.replace(',', ""), "43200000");
 }

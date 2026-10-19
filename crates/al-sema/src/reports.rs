@@ -416,6 +416,23 @@ const INERT_REQUEST_PAGE_PROPERTIES: &[&str] = &[
     "contextsensitivehelppage",
 ];
 
+/// Request page properties of a page with a source table that the runtime handles (report/lt-y-request-page/YRequestPageTests.al:
+/// 72-390; the parts the corpus does not pin are refused at run time, see `al-vm/src/pages/request.rs`). AutoSplitKey and
+/// MultipleNewLines stay refused: the keys and rows they give are not settled by the corpus.
+const SOURCE_TABLE_REQUEST_PAGE_PROPERTIES: &[&str] = &[
+    "sourcetableview",
+    "sourcetabletemporary",
+    "deleteallowed",
+    "modifyallowed",
+    "insertallowed",
+    "datacaptionfields",
+    "datacaptionexpression",
+    "cardpageid",
+    "linksallowed",
+    "populateallfields",
+    "helplink",
+];
+
 /// Request page triggers the test client runs: it opens the page (`OnInit`, `OnOpenPage`) and
 /// closes it (`OnQueryClosePage`, `OnClosePage`).
 const REQUEST_PAGE_TRIGGERS: &[&str] = &[
@@ -506,6 +523,7 @@ pub fn request_layout(
             // `Editable = false` makes the page and its fields read Editable No (handlers/PSRequestPageEditable.al).
             let editable = name == "editable" && bool_prop(&p.value_text()).is_some();
             if !["caption", "savevalues", "sourcetable"].contains(&name.as_str())
+                && !SOURCE_TABLE_REQUEST_PAGE_PROPERTIES.contains(&name.as_str())
                 && !INERT_REQUEST_PAGE_PROPERTIES.contains(&name.as_str())
                 && !show_filter
                 && !editable

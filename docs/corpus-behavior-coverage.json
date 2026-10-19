@@ -5026,6 +5026,15 @@
           "site": "pages/lt-report-page-properties/06-xmlport-maxocc.al:23"
         },
         {
+          "corpus_uses": 0,
+          "group": "page",
+          "ms_uses": 7,
+          "name": "HelpLink",
+          "pinned": false,
+          "runtime_reads": true,
+          "site": null
+        },
+        {
           "corpus_uses": 1,
           "group": "page/actionref",
           "ms_uses": 7,
@@ -5105,15 +5114,6 @@
           "pinned": true,
           "runtime_reads": false,
           "site": "pages/lt-report-page-properties/07-controladdin-size.al:16"
-        },
-        {
-          "corpus_uses": 0,
-          "group": "page",
-          "ms_uses": 7,
-          "name": "HelpLink",
-          "pinned": false,
-          "runtime_reads": false,
-          "site": null
         },
         {
           "corpus_uses": 2,
@@ -12073,6 +12073,15 @@
           "site": "handlers/PSRequestPageEditable.al:120"
         },
         {
+          "corpus_uses": 1,
+          "group": "report/requestpage",
+          "ms_uses": 0,
+          "name": "HelpLink",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "report/lt-y-request-page/YRequestPage.al:296"
+        },
+        {
           "corpus_uses": 2,
           "group": "report/requestpage",
           "ms_uses": 0,
@@ -12953,15 +12962,6 @@
           "pinned": true,
           "runtime_reads": false,
           "site": "report/PZReportLabels.al:33"
-        },
-        {
-          "corpus_uses": 1,
-          "group": "report/requestpage",
-          "ms_uses": 0,
-          "name": "HelpLink",
-          "pinned": true,
-          "runtime_reads": false,
-          "site": "report/lt-y-request-page/YRequestPage.al:296"
         },
         {
           "corpus_uses": 1,
@@ -19899,7 +19899,7 @@
         "pinned": false,
         "scope": "",
         "site": null,
-        "state": "unknown"
+        "state": "implemented"
       },
       {
         "area": "properties",
@@ -25014,7 +25014,7 @@
         "pinned": false,
         "scope": "",
         "site": null,
-        "state": "refused"
+        "state": "implemented"
       },
       {
         "area": "properties",
@@ -26639,7 +26639,7 @@
         "pinned": true,
         "scope": "",
         "site": "report/lt-y-request-page/YRequestPage.al:296",
-        "state": "refused"
+        "state": "implemented"
       },
       {
         "area": "properties",

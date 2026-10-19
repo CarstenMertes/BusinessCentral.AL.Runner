@@ -36,6 +36,23 @@ impl Session {
         self.engine.field_facts[table as usize][pos].class == ir::FieldClass::FlowFilter
     }
 
+    /// The FlowFields of `t` that a condition of field `pos`'s relation names.
+    fn flow_field_conditions(&self, t: &TableDef, pos: usize) -> Vec<usize> {
+        let Some(schema) = self.engine.program.objects[t.object as usize].table.as_ref() else {
+            return Vec::new();
+        };
+        let field = &schema.fields[pos];
+        let mut out: Vec<usize> = Vec::new();
+        for arm in field.relation_arms.iter().chain(field.relation_runtime.iter()) {
+            for c in &arm.conditions {
+                if self.is_flow_field(t.object, c.field) && !out.contains(&c.field) {
+                    out.push(c.field);
+                }
+            }
+        }
+        out
+    }
+
     /// The arm of field `pos`'s relation that applies to the buffer, if any.
     fn relation_arm(&self, rec: &Rec, t: &TableDef, pos: usize) -> Result<Option<ir::RelationArm>, Signal> {
         let schema = self.engine.program.objects[t.object as usize]
@@ -157,6 +174,13 @@ impl Session {
         // Typed field facts, worked out once (a scan of the field's properties on each Validate showed in the Tests-ERM profile).
         if !self.engine.field_facts[t.object as usize][pos].validate_relation {
             return Ok(());
+        }
+        // The check calculates a FlowField that an if condition of the relation names, without a CalcFields first
+        // (misc/lt-probes-needed-6/PnF29RelationByFlowField.al:242-260, FlowRelation_Condition_NoCalcFields). Like the
+        // where() case below, whether the calculated value stays on the record is not observed.
+        let flow_conds = self.flow_field_conditions(t, pos);
+        if !flow_conds.is_empty() {
+            self.calc_fields(rec, &flow_conds)?;
         }
         let Some(arm) = self.relation_arm(rec, t, pos)? else {
             return Ok(());

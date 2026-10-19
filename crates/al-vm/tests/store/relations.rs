@@ -44,6 +44,7 @@ table 50956 "Rel Flow Child" {
         field(2; ParentId; Integer) { }
         field(3; FlowGrp; Code[20]) { FieldClass = FlowField; CalcFormula = lookup("Rel Flow Parent".Grp where(Id = field(ParentId))); }
         field(4; ByFlow; Code[20]) { TableRelation = "Rel Parent".Code where(Grp = field(FlowGrp)); }
+        field(5; CondByFlow; Code[20]) { TableRelation = if (FlowGrp = const('G1')) "Rel Parent".Code else "Rel Parent B".Code; }
     }
     keys { key(PK; Id) { } }
 }
@@ -270,4 +271,27 @@ fn a_relation_filtered_by_a_flowfield_of_the_record_calculates_it() {
         t.starts_with("X|") && t.contains("cannot be found in the related table"),
         "{t}"
     );
+}
+
+// misc/lt-probes-needed-6/PnF29RelationByFlowField.al:242-260 (FlowRelation_Condition_NoCalcFields): Validate calculates a
+// FlowField that an if condition of the relation names; no CalcFields is needed first.
+#[test]
+fn validate_calculates_a_flowfield_named_by_an_arm_condition() {
+    let r = run(
+        "procedure F(): Text var C: Record \"Rel Flow Child\"; FP: Record \"Rel Flow Parent\"; PA: Record \"Rel Parent\"; PB: Record \"Rel Parent B\"; s: Text; begin
+            FP.Id := 1; FP.Grp := 'G1'; FP.Insert();
+            FP.Id := 2; FP.Grp := 'G2'; FP.Insert();
+            PA.Code := 'ONLYA'; PA.Insert();
+            PB.Code := 'ONLYB'; PB.Insert();
+            C.Id := 1; C.ParentId := 1; C.Insert();
+            C.Id := 2; C.ParentId := 2; C.Insert();
+            Commit();
+            C.Get(1);
+            C.Validate(CondByFlow, 'ONLYA'); s := C.CondByFlow;
+            C.Get(2);
+            C.Validate(CondByFlow, 'ONLYB'); s += '|' + C.CondByFlow;
+            exit(s);
+        end;",
+    );
+    assert_eq!(text(r), "ONLYA|ONLYB");
 }

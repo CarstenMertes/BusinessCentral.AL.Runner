@@ -4692,6 +4692,7 @@
 68039 DeleteAllTrue_WithDatabaseDeleteEnabled
 68039 SetupSubscriberWritesTheAskedTable
 68042 IntegerSource_IntoBigIntegerFlowField
+68042 SystemRowVersion_MinMax
 68045 Ascending_WholeKey_Ties
 68045 SetAscending_SingleFieldKey
 68045 SetAscending_TwoFieldKey_OneFieldAtATime
@@ -6816,6 +6817,7 @@
 70106 Modify_RunTrigger_AndXRec
 70106 Rename_AlwaysRunsTriggers
 70106 TwoExtensions_SameTrigger
+70109 SystemRowVersion_Aggregates_FullText
 70109 TypeMismatch_BigIntegerAndInteger
 70115 Modify_StampsOnlyWhenStoredFieldDiffers
 70115 RenameOfAnotherTable_ReStampsPropagatedRows
@@ -11296,6 +11298,7 @@
 73932 FlowRelation_Code_AfterCalcFields
 73932 FlowRelation_Code_NoCalcFields
 73932 FlowRelation_Condition_AfterCalcFields
+73932 FlowRelation_Condition_NoCalcFields
 73932 FlowRelation_Integer_AfterCalcFields
 73932 FlowRelation_Integer_NoCalcFields
 73934 LoadFields_AfterGet_Assigned
@@ -12483,6 +12486,8 @@
 77532 AC_Attr_TestPermissions_Disabled
 77532 AC_Attr_TestPermissions_NonRestrictive
 77532 AC_Attr_TestPermissions_Restrictive
+78006 UpperLimit_ErrorCode_ThenClear
+78006 UpperLimit_MoreThanOneRange_ErrorCode
 78008 Ties_AscendingFalseThenSetAscending
 78008 Ties_Basic
 78008 Ties_ExplicitPrimaryKeyInKey

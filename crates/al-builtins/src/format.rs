@@ -17,6 +17,11 @@ pub trait FormatCtx {
     fn region(&self) -> Option<String> {
         None
     }
+    /// Why the culture of `Format` is not known here (a report trigger whose region is not pinned), else None. A value whose text
+    /// would depend on the culture is then refused.
+    fn region_unpinned(&self) -> Option<String> {
+        None
+    }
 }
 
 /// A context without the format region, for the plain en-US text a region then rewrites.
@@ -253,6 +258,18 @@ pub fn try_format(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) ->
 pub fn format_value(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) -> Result<String, FormatFail> {
     if let Value::Unknown(why) = v {
         return Err(FormatFail::Unsupported(why.to_string()));
+    }
+    if let Some(why) = ctx.region_unpinned() {
+        // A text, and an Integer in the standard format, read the same in every region the corpus measured
+        // (report/lt-y-report-props/YReportPropsTests.al:34-148 `1234567`); any other value is refused.
+        let same_everywhere = match v {
+            Value::Null | Value::Text(_) | Value::Code(_) => true,
+            Value::Integer(_) | Value::BigInteger(_) => standard == 0,
+            _ => false,
+        };
+        if !same_everywhere {
+            return Err(FormatFail::Unsupported(format!("Format of {} {why}", type_phrase(v))));
+        }
     }
     if let Some(region) = ctx.region().filter(|r| !r.is_empty()) {
         return format_in_region(v, length, standard, &region, ctx);

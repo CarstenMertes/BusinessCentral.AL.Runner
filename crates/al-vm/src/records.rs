@@ -2145,6 +2145,13 @@ impl Session {
                                 {
                                     parsed = parse(&fixed);
                                 }
+                            } else {
+                                // Another session language or placeholders: whether BC raises the event is not pinned.
+                                return unsupported(format!(
+                                    "SetFilter of `{}` with {event} subscribers in session language {} or with placeholders (not pinned)",
+                                    text.trim(),
+                                    self.global_language
+                                ));
                             }
                         }
                     }

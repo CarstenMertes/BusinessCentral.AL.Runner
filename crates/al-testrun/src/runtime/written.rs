@@ -179,7 +179,7 @@ impl ReachFacts {
 
 /// What the reach walk looks up by object: the extensions of a table, page or report, objects by kind and id, the
 /// subscribers to the events of each object, and the subscribers of the `Global Triggers` database events. Built once
-/// per codeunit run.
+/// per engine (`Engine::derived`): it depends on the program only.
 pub(crate) struct ReachIndex {
     by_id: HashMap<(ObjKind, u32), usize>,
     extensions: HashMap<(ObjKind, u32), Vec<usize>>,

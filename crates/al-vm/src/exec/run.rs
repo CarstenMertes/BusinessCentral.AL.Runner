@@ -841,7 +841,7 @@ impl Session {
                     .any(|v| matches!(v, Value::Blob(b) if std::sync::Arc::ptr_eq(b, &blob)))
             {
                 return Err(Signal::Unsupported(
-                    "Media.ImportStream from a stream on a Blob field of the same record (BC 29 imports nothing; why is not pinned)"
+                    "Media.ImportStream from a stream on a Blob field of the same record that an Insert stored (BC imports nothing there; why is not pinned)"
                         .into(),
                 ));
             }

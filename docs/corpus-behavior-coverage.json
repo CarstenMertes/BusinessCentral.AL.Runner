@@ -15865,7 +15865,7 @@
         "code": "InvalidPath",
         "file": "crates/al-builtins/src/media.rs",
         "generic": false,
-        "line": 269,
+        "line": 284,
         "pinned": true,
         "site": "media/MediaFiles.al:203",
         "template": "The specified path is invalid."
@@ -15874,7 +15874,7 @@
         "code": "InvalidPath",
         "file": "crates/al-builtins/src/media.rs",
         "generic": false,
-        "line": 272,
+        "line": 287,
         "pinned": true,
         "site": "media/MediaFiles.al:205",
         "template": "Could not find a part of the path '%'."
@@ -16018,7 +16018,7 @@
         "code": "InvalidStreamData",
         "file": "crates/al-builtins/src/stream.rs",
         "generic": false,
-        "line": 586,
+        "line": 623,
         "pinned": true,
         "site": "lt-file-type/FileReadSeek.al:114",
         "template": "Invalid data encountered in stream, unable to read text."
@@ -16027,7 +16027,7 @@
         "code": "InvalidStreamData",
         "file": "crates/al-builtins/src/stream.rs",
         "generic": false,
-        "line": 748,
+        "line": 785,
         "pinned": true,
         "site": "lt-file-type/FileReadSeek.al:114",
         "template": "Invalid data encountered in stream, unable to read text."
@@ -16036,7 +16036,7 @@
         "code": "InvalidStreamData",
         "file": "crates/al-builtins/src/stream.rs",
         "generic": false,
-        "line": 913,
+        "line": 950,
         "pinned": true,
         "site": "lt-file-type/FileReadSeek.al:114",
         "template": "Invalid data encountered in stream, unable to read text."
@@ -16045,7 +16045,7 @@
         "code": "DateInvalid",
         "file": "crates/al-builtins/src/stream.rs",
         "generic": false,
-        "line": 945,
+        "line": 982,
         "pinned": true,
         "site": "errors/lt-ms-refusals-131/P131EvalScalars.al:376",
         "template": "The date is not valid."
@@ -16180,7 +16180,7 @@
         "code": "IndexOutOfBounds",
         "file": "crates/al-vm/src/interp.rs",
         "generic": false,
-        "line": 1053,
+        "line": 1054,
         "pinned": true,
         "site": "collections/lt-array-rows/ArrayRows.al:185",
         "template": "Index out of bounds."
@@ -16189,7 +16189,7 @@
         "code": "IndexOutOfBounds",
         "file": "crates/al-vm/src/interp.rs",
         "generic": false,
-        "line": 1130,
+        "line": 1131,
         "pinned": true,
         "site": "collections/lt-array-rows/ArrayRows.al:185",
         "template": "Index out of bounds."
@@ -16198,7 +16198,7 @@
         "code": "IndexOutOfBounds",
         "file": "crates/al-vm/src/interp.rs",
         "generic": false,
-        "line": 1140,
+        "line": 1141,
         "pinned": true,
         "site": "collections/lt-array-rows/ArrayRows.al:185",
         "template": "Index out of bounds."
@@ -16261,7 +16261,7 @@
         "code": "RenameArgument",
         "file": "crates/al-vm/src/records.rs",
         "generic": false,
-        "line": 2438,
+        "line": 2451,
         "pinned": true,
         "site": "recordref/lt-refs/RfTWrite.al:223",
         "template": "The number of field arguments does not match the primary key size."

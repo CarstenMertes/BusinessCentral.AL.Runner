@@ -71,7 +71,7 @@ pub const MEDIA_REENCODED: &str = "Media.ExportStream";
 pub fn render_pending_error(report: &str) -> Signal {
     if report == MEDIA_REENCODED {
         return Signal::Unsupported(
-            "the bytes Media.ExportStream gives before BC 29 (BC re-encodes an imported PNG; not pinned)".into(),
+            "the bytes Media.ExportStream gives on a major that re-encodes an imported PNG (not pinned)".into(),
         );
     }
     // ADR-044 uses the same mark for the picture a `System.Drawing.Bitmap` was asked to save: the name is the .NET type.

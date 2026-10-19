@@ -439,8 +439,16 @@ impl Providers {
         Ok(m)
     }
 
-    /// The rows of the table of `kind`, worked out from the program and the host.
+    /// The rows of the table of `kind`, worked out from the program and the host, with the
+    /// columns nothing pins left unknown ([`mark_unpinned`]).
     fn list_rows(&self, t: &TableDef, kind: Virtual) -> Vec<mat::Entry> {
+        let mut rows = self.provided_rows(t, kind);
+        mark_unpinned(t, &mut rows);
+        rows
+    }
+
+    /// The rows a provider fills for the table of `kind`.
+    fn provided_rows(&self, t: &TableDef, kind: Virtual) -> Vec<mat::Entry> {
         match kind {
             Virtual::ApiWebhookEntity | Virtual::TenantMedia | Virtual::Unprovided => {
                 unreachable!("refused or listed before")
@@ -478,6 +486,39 @@ impl Providers {
             Virtual::Key => fields::key_rows(self, t),
             Virtual::Integer | Virtual::Date | Virtual::WindowsLanguage | Virtual::LicensePermission => {
                 unreachable!("generated, never listed")
+            }
+        }
+    }
+}
+
+/// Leaves every column of a table of `PINNED_COLUMNS` that the list does not name, outside the
+/// primary key, the FlowFields and the system fields, `Value::Unknown` in every row: a read of it is refused
+/// (ADR-013 decision 7; hard rule 3), a copy keeps the marker. There are no exceptions: a
+/// column a corpus test reads but does not assert is not pinned either.
+pub(crate) fn mark_unpinned(t: &TableDef, rows: &mut [mat::Entry]) {
+    let Some(id) = al_builtins::platform::REGISTRY
+        .iter()
+        .chain(al_builtins::platform::LATER_MAJORS)
+        .find(|(_, n, _)| n.eq_ignore_ascii_case(&t.name))
+        .map(|(i, _, _)| *i)
+    else {
+        return;
+    };
+    let Some((_, pinned)) = al_builtins::platform::PINNED_COLUMNS.iter().find(|(i, _)| *i == id) else {
+        return;
+    };
+    for (pos, f) in t.fields.iter().enumerate() {
+        if f.id >= al_builtins::platform::SYSTEM_OBJECT_BASE
+            || !f.stored
+            || pinned.contains(&f.id)
+            || t.keys[0].contains(&pos)
+        {
+            continue;
+        }
+        let why = Value::Unknown(unknown_why(t, f.id, "any row"));
+        for e in rows.iter_mut() {
+            if !matches!(e.row[pos], Value::Unknown(_)) {
+                e.row[pos] = why.clone();
             }
         }
     }

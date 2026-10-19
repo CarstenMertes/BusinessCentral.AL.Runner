@@ -9,7 +9,8 @@
 //! IsNoSession", TestActiveSessionTable.al "GetOnASessionIdThatIsNoSession").
 //!
 //! Columns no test reads keep the type default, as AL Runner does ("Server Instance Name",
-//! "Client Computer Name", "Login Type", "Database Name").
+//! "Login Type", "Database Name"). "Client Computer Name" is not in `PINNED_COLUMNS`: the row holds it
+//! unknown, so a read is refused (it is the test runner's, TestActiveSessionHostColumnsContracts.al:9).
 
 use super::{Ident, blank, option, pos};
 use al_builtins::value::Value;
@@ -64,7 +65,7 @@ pub(super) fn active_session_row(t: &TableDef, i: &Ident) -> Row {
     r[pos(t, 2)] = Value::Integer(i.instance_id);
     r[pos(t, 3)] = Value::Integer(i.session_id);
     // "Server Instance Name" and "Server Computer Name" are not blank; only their shape is pinned (session/
-    // TestActiveSessionHostColumnsContracts.al), "Client Computer Name" is blank on the test runner.
+    // TestActiveSessionHostColumnsContracts.al).
     r[pos(t, 4)] = Value::Text("BC".into());
     r[pos(t, 5)] = Value::Text(i.host_name.clone().into());
     r[pos(t, 6)] = Value::Text(i.user_id.clone().into());

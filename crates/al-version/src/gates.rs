@@ -305,7 +305,7 @@ impl Gate {
             Gate::ReportPartNamePropertiesFrom29 => &[
                 Evidence {
                     file: "report/lt-y-report-props/YReportPropsTests.al",
-                    lines: "44,63,82,101,120,139,154,170,188,206,256",
+                    lines: "45,60,75,90,105,120,135,151,169,187,237",
                 },
                 Evidence {
                     file: "report/lt-y-request-page/YRequestPageTests.al",

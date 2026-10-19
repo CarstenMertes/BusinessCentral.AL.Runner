@@ -270,8 +270,7 @@ impl Session {
             }
             // A page that is not a tree has nothing to expand (docs only; the corpus calls them,
             // TestPageAdvanced.al:104, :283, asserting nothing about the answer).
-            // On a tree (a repeater with ShowAsTree) Expand shows the rows below the current one
-            // (pages/lt-ah-pages/AhPageTests.al:986-989, :1066-1068); the client keeps the rows collapsed, so it refuses.
+            // On a tree (a repeater with ShowAsTree) Expand shows or hides the rows below the current one (`tree_expand`).
             PageMethod::Expand => {
                 self.require_open(st)?;
                 let engine = self.engine();
@@ -280,14 +279,23 @@ impl Session {
                         && matches!(c.prop("showastree"), Some(ir::PropVal::Lit(v)) if unquote(v).eq_ignore_ascii_case("true"))
                 });
                 if tree {
-                    return unsupported(
-                        "Expand on a page whose repeater has ShowAsTree: the test client does not expand rows",
-                    );
+                    let on = match args.first() {
+                        Some(v) => ops::truthy(v)?,
+                        None => return unsupported("Expand without an argument on a tree page (not pinned)"),
+                    };
+                    self.tree_expand(st, on)?;
                 }
                 Ok(Value::Null)
             }
             PageMethod::IsExpanded => {
                 self.require_open(st)?;
+                // On a tree, whether the row was expanded with Expand(true) (pages/lt-ah-pages/AhPageTests.al:953-961).
+                if self.has_source(st) && self.tree_indentation(st).is_some() && st.borrow().cursor == Cursor::Row {
+                    let key = self.row_key(&self.page_rec(st))?;
+                    return Ok(Value::Boolean(
+                        st.borrow().expanded.iter().any(|k| Self::same_key(k, &key)),
+                    ));
+                }
                 Ok(Value::Boolean(false))
             }
             PageMethod::SaveAsXml => self.request_save_as_xml(st, args),
@@ -473,6 +481,18 @@ impl Session {
             // handlers/TestPageSetRecord.al).
             PageMethod::SetRecord => match args.first() {
                 Some(Value::Record(r)) => {
+                    // Whether the page variable takes the marks of the record is not pinned (only Page.RunModal(Id, Rec) is,
+                    // misc/lt-protected-var-abs-query-views/P146ViewMarkedTemp.al:304).
+                    if r.borrow().marked_only {
+                        return unsupported(
+                            "SetRecord on a Page variable with a record whose MarkedOnly is on (not pinned)",
+                        );
+                    }
+                    // A call on a Page variable that never ran constructs the page, and its OnInit runs then
+                    // (pages/lt-page-variable-lifecycle/PageVariableLifecycle.al:158 PageVar_MethodCallBeforeRun `afterSetRecord = I`).
+                    if !st.borrow().typed_handler && !st.borrow().open {
+                        self.construct_page(st)?;
+                    }
                     // Inside a Page-typed modal handler the page holds the record already
                     // (handlers/PSModalPageHandlerTyped.al: GetRecord answers the record SetRecord handed).
                     if st.borrow().typed_handler && self.has_source(st) {
@@ -726,6 +746,11 @@ impl Session {
             // ReEditable_LookupModeTrue_HasNoNewRowLine, Plain_LookupModeFalse_HasTheNewRowLine).
             PageMethod::SetTableView => match args.first() {
                 Some(Value::Record(r)) => {
+                    if r.borrow().marked_only {
+                        return unsupported(
+                            "SetTableView on a Page variable with a record whose MarkedOnly is on (not pinned)",
+                        );
+                    }
                     let copy = Rc::new(RefCell::new(r.borrow().clone()));
                     // The view is its filters and sorting only: the rows of a temporary record stay with it (Item Tracking Summary is handed
                     // `SetTableView(TempGlobalEntrySummary)` and then fills its own temporary Rec; the page must keep that Rec).

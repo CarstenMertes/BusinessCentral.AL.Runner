@@ -135,6 +135,17 @@ impl Session {
                 }
             }
         }
+        // ClosingDates on the control (pages/lt-page-presentation-properties/P119ReportFields.al:174,
+        // pageext/lt-z-modify-controls/ZModifyControls.al:290) or on the source field (record/lt-x-table-props/
+        // XTablePropsTests.al:523-524). A control that turns it off over a field that turns it on is not pinned.
+        let closing_ctl = lit("closingdates").map(|v| is_true(&v));
+        let closing_field = from_field("closingdates").is_some_and(|v| is_true(&v));
+        if closing_ctl == Some(false) && closing_field {
+            if let Value::Date(_, true) = self.control_value(st, idx)? {
+                return unsupported("ClosingDates = false on a control whose field sets ClosingDates (not pinned)");
+            }
+        }
+        f.closing_dates = closing_ctl.unwrap_or(closing_field);
         f.blank_zero = lit("blankzero")
             .or_else(|| from_field("blankzero"))
             .is_some_and(|v| is_true(&v));
@@ -420,6 +431,14 @@ impl Session {
                 self.control_text(st, idx, &converted)?.into()
             }
         };
+        // A text on a Code control is compared in upper case: 'abc' against 'ABC' passes
+        // (pages/lt-testpage-assertequals-option/TestPageAssertEqualsOption.al:167, :179). The error shows the expected
+        // text as written ('Wrong' against an empty Code control, handlers/TestRequestPageControlErrorName.al:281, :397).
+        let on_code = matches!(&expected, Value::Text(_) | Value::Code(_))
+            && matches!(self.control_type(st, idx, &actual), Some(RtType::Code(_)));
+        if on_code && expected_text.to_uppercase() == actual_text {
+            return Ok(Value::Null);
+        }
         if expected_text != actual_text {
             let engine = self.engine();
             let name = page_of(&engine, st).controls[idx].name.clone();
@@ -433,7 +452,8 @@ impl Session {
         Ok(Value::Null)
     }
 
-    /// The control's caption: its own `Caption`, else the source field's, else its name.
+    /// The control's caption: its own `CaptionClass` or `Caption`, else the source field's `CaptionClass` or `Caption`,
+    /// else its name.
     pub(super) fn control_caption(&mut self, st: &St, idx: usize) -> Result<String, Signal> {
         let engine = self.engine();
         let ctl = &page_of(&engine, st).controls[idx];
@@ -448,18 +468,93 @@ impl Session {
             None => None,
         };
         if let Some(c) = class {
+            // The page resolved it when it filled; a read takes that caption and raises no event
+            // (misc/W2CaptionClass.al:113-116 claimed, :133-136 unclaimed, :170-178 an expression).
+            let cached = st
+                .borrow()
+                .control_captions
+                .iter()
+                .find(|(i, t, _)| *i == idx && *t == c)
+                .map(|(_, _, caption)| caption.clone());
+            if let Some(caption) = cached {
+                return Ok(caption);
+            }
             return self.caption_class_text(st, &c);
         }
-        if let Some(ir::PropVal::Lit(c)) = ctl.prop("caption") {
-            return Ok(unquote(c));
-        }
-        if let Some(f) = self.control_field(st, idx) {
-            if let Some((_, c)) = f.properties.iter().find(|(k, _)| k.eq_ignore_ascii_case("caption")) {
-                return Ok(unquote(c));
+        let own_caption = match ctl.prop("caption") {
+            Some(ir::PropVal::Lit(c)) => Some(unquote(c)),
+            _ => None,
+        };
+        let field = self.control_field(st, idx);
+        let field_prop = |n: &str| {
+            field.as_ref().and_then(|f| {
+                f.properties
+                    .iter()
+                    .find(|(k, _)| k.eq_ignore_ascii_case(n))
+                    .map(|(_, v)| unquote(v))
+            })
+        };
+        // The source field's CaptionClass beats its Caption (pageext/lt-page-ext-properties/TableExtCaptionClass.al:69) and is
+        // resolved when the caption is read, not when the page opens (record/lt-x-table-props/XTablePropsTests.al:483-487).
+        // Whether a Caption on the control beats it is not pinned.
+        if let Some(c) = field_prop("captionclass") {
+            if own_caption.is_some() {
+                return unsupported(
+                    "a control Caption over its source field's CaptionClass (which one BC shows is not pinned)",
+                );
             }
+            return self.caption_class_text(st, &c);
+        }
+        if let Some(c) = own_caption {
+            return Ok(c);
+        }
+        if let Some(c) = field_prop("caption") {
+            return Ok(c);
+        }
+        if let Some(f) = field {
             return Ok(f.name);
         }
         Ok(ctl.name.clone())
+    }
+
+    /// Resolve a control's CaptionClass as the page fills and keep the caption for `Caption()`. A class text the control
+    /// already resolved raises no event again: after a SetValue only the expression whose text changed is resolved
+    /// (misc/W2CaptionClass.al:92 at open, :174-178 after SetValue).
+    pub(super) fn fill_caption_class(&mut self, st: &St, idx: usize, text: &str) -> Result<(), Signal> {
+        if st
+            .borrow()
+            .control_captions
+            .iter()
+            .any(|(i, t, _)| *i == idx && t == text)
+        {
+            return Ok(());
+        }
+        let caption = self.caption_class_text(st, text)?;
+        let mut s = st.borrow_mut();
+        s.control_captions.retain(|(i, _, _)| *i != idx);
+        s.control_captions.push((idx, text.to_string(), caption));
+        Ok(())
+    }
+
+    /// After a SetValue the client evaluates the CaptionClass expressions again and resolves the ones whose text changed
+    /// (misc/W2CaptionClass.al:ExpressionFromPageVariable_FollowsTheVariable, `set_events`).
+    pub(super) fn refresh_caption_classes(&mut self, st: &St) -> Result<(), Signal> {
+        if !st.borrow().open {
+            return Ok(());
+        }
+        let engine = self.engine();
+        let page = page_of(&engine, st);
+        for (idx, c) in page.controls.iter().enumerate() {
+            let Some(routine @ (ir::PropVal::Routine(_) | ir::PropVal::Ext(..))) = c.prop("captionclass") else {
+                continue;
+            };
+            if let Some(Value::Text(t) | Value::Code(t)) = self.prop_routine_value(st, idx, routine)? {
+                if !t.starts_with("3,") {
+                    self.fill_caption_class(st, idx, &t)?;
+                }
+            }
+        }
+        Ok(())
     }
 
     /// A boolean control property, evaluated now: a literal, a routine, or `default`.

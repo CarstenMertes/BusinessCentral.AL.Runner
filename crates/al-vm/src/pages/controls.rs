@@ -517,6 +517,7 @@ impl Session {
                 // GetValidationError_ErrorThenCorrected, line 272: the page answers an empty text afterwards).
                 st.borrow_mut().errors.retain(|(i, _)| *i != idx);
                 self.run_refresh(st)?;
+                self.refresh_caption_classes(st)?;
                 Ok(Value::Null)
             }
             Err(Signal::Error(e)) => {

@@ -126,7 +126,7 @@ impl Session {
                             // costs the open nothing; only reading that caption is refused.
                             if let Value::Text(t) | Value::Code(t) = &v {
                                 if !t.starts_with("3,") {
-                                    self.caption_class_text(st, t)?;
+                                    self.fill_caption_class(st, idx, t)?;
                                 }
                             }
                         }
@@ -137,7 +137,7 @@ impl Session {
                         self.refuse_caption_class_translate()?;
                         let c = unquote(l);
                         if !c.starts_with("3,") {
-                            self.caption_class_text(st, &c)?;
+                            self.fill_caption_class(st, idx, &c)?;
                         }
                     }
                     _ => {}

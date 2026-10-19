@@ -158,6 +158,7 @@ impl Session {
             s.never_stored = false;
             s.dirty = false;
             s.frozen_visible = Vec::new();
+            s.control_captions = Vec::new();
             s.window = Vec::new();
             s.window_from_start = false;
             s.window_eof = false;

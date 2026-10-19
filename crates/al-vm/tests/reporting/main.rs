@@ -11,6 +11,7 @@ mod report_obsolete_properties;
 mod report_properties;
 mod report_saveas;
 mod report_temp_globals;
+mod report_trigger_order;
 mod reportext_calls;
 mod reportext_currreport;
 mod reportext_this;

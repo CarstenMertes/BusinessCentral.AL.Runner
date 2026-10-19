@@ -74,6 +74,15 @@ echo "run $run: green, commit $sha on $branch"
 
 # 2. The artifacts: per leg the larger is the oracle, the smaller the OnPrem file.
 arts="$("$gh" api "repos/$repo/actions/runs/$run/artifacts?per_page=100")"
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+# The XML file name an artifact holds (junit-al-language.xml, -onprem.xml, -onprem-dotnet.xml).
+xml_of() {
+  local d="$tmp/role-$1"
+  mkdir -p "$d"
+  "$gh" api "repos/$repo/actions/artifacts/$1/zip" > "$d/a.zip"
+  unzip -Z1 "$d/a.zip" | grep '\.xml$' | head -n 1
+}
 declare -A oracle_id onprem_id dotnet_id
 for leg in $legs; do
   # Two artifacts: the oracle (larger) and the OnPrem file. Three (since the OnPrem DotNet app runs in CI): the DotNet file is the smallest.
@@ -88,7 +97,25 @@ elif n == 3:
     print(n, a[2]["id"], a[1]["id"], a[0]["id"])
 else:
     print(n, 0, 0, 0)' "$arts" "$leg")
-  { [ "$n" = 2 ] || [ "$n" = 3 ]; } || die "run $run has $n artifact(s) named junit-test-results-$leg, expected 2 or 3 (the oracle, the OnPrem file, and the OnPrem DotNet file)"
+  if [ "$n" -gt 3 ]; then
+    # A job rerun (corpus run 39303760055, attempt 2) keeps the first attempt's artifact under the same name.
+    # The role is the XML file each artifact holds; per role the newest artifact is the rerun's.
+    big=0 mid=0 small=0
+    while read -r id; do
+      case "$(xml_of "$id")" in
+        junit-al-language.xml) [ "$big" != 0 ] || big=$id ;;
+        junit-al-language-onprem.xml) [ "$mid" != 0 ] || mid=$id ;;
+        junit-al-language-onprem-dotnet.xml) [ "$small" != 0 ] || small=$id ;;
+        *) die "artifact $id of junit-test-results-$leg holds no known JUnit file" ;;
+      esac
+    done < <(python3 -c '
+import json, sys
+a = [x for x in json.loads(sys.argv[1]).get("artifacts", []) if x.get("name") == "junit-test-results-" + sys.argv[2]]
+a.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+print("\n".join(str(x["id"]) for x in a))' "$arts" "$leg")
+    { [ "$big" != 0 ] && [ "$mid" != 0 ]; } || die "run $run: junit-test-results-$leg lacks the oracle or the OnPrem file"
+  fi
+  { [ "$n" -ge 2 ]; } || die "run $run has $n artifact(s) named junit-test-results-$leg, expected 2 or 3 (the oracle, the OnPrem file, and the OnPrem DotNet file)"
   oracle_id[$leg]=$big
   onprem_id[$leg]=$mid
   dotnet_id[$leg]=$small
@@ -139,8 +166,6 @@ done
 git -C "$corpus" checkout -q "$sha"
 
 # 4. The oracle files, copied unchanged.
-tmp="$(mktemp -d)"
-trap 'rm -rf "$tmp"' EXIT
 fetch_xml() { # artifact id, destination
   local id="$1" dest="$2" d="$tmp/$1"
   mkdir -p "$d"

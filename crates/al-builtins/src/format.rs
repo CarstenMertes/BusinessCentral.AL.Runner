@@ -256,6 +256,9 @@ pub fn try_format(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) ->
 
 /// `Format(Value, Length, Standard)` with BC's own errors kept apart from refusals.
 pub fn format_value(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) -> Result<String, FormatFail> {
+    if let Value::Unknown(why) = v {
+        return Err(FormatFail::Unsupported(why.to_string()));
+    }
     if let Some(why) = ctx.region_unpinned() {
         // A text, and an Integer in the standard format, read the same in every region the corpus measured
         // (report/lt-y-report-props/YReportPropsTests.al:34-148 `1234567`); any other value is refused.

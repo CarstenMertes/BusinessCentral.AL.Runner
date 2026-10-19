@@ -458,6 +458,13 @@ impl<'a> Compiler<'a> {
                 }
                 let receiver_reg = if receiver.is_some() { Some(regs.remove(0)) } else { None };
                 let receiver_arg = if receiver.is_some() { Some(kept.remove(0)) } else { None };
+                let by_ref = |a: &ir::Arg| matches!(a, ir::Arg::Ref(_));
+                let plain = !vm
+                    && native.is_some()
+                    && *id != al_builtins::builtin_id::ids::SYSTEM_CLEAR_1
+                    && *id != al_builtins::builtin_id::ids::SYSTEM_COPYARRAY_1
+                    && !receiver_arg.as_ref().is_some_and(by_ref)
+                    && !kept.iter().any(by_ref);
                 self.chunk.builtins.push(BuiltinSite {
                     id: *id,
                     vm_class: vm,
@@ -468,6 +475,7 @@ impl<'a> Compiler<'a> {
                     arg_regs: regs,
                     args: kept,
                     ret_used: *ret_used,
+                    plain,
                 });
                 let s = (self.chunk.builtins.len() - 1) as u32;
                 self.emit(Op::Builtin { s, d });

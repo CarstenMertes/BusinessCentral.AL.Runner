@@ -339,6 +339,11 @@ impl Engine {
     }
 }
 
+/// How many emptied vectors a session keeps for the next calls, and the largest capacity it keeps (`Session::spare_vec`):
+/// as many as calls are nested in a deep stack of ordinary code, none of the large ones.
+const SPARE_VECS: usize = 64;
+const SPARE_CAPACITY: usize = 256;
+
 /// The reason `Signal::Unsupported` carries when the runner stopped the test (`Session::stop_flag`).
 pub const STOPPED: &str = "the runner stopped the test";
 
@@ -380,6 +385,9 @@ pub struct Session {
     pub engine: Arc<Engine>,
     pub last_error: AlError,
     depth: usize,
+    /// Emptied vectors of call values (arguments, a frame's slots, a builtin's operands), taken again by the next call
+    /// (`spare_vec`, `return_vec`): a call of a procedure or a builtin allocates nothing once there are some.
+    spare_vecs: Vec<Vec<Value>>,
     /// The objects of the routines on the call stack, innermost last (builtins scoped to an app,
     /// `NavApp.GetCallerModuleInfo`).
     pub(crate) frames: Vec<usize>,
@@ -604,6 +612,7 @@ impl Session {
             engine,
             last_error: AlError::default(),
             depth: 0,
+            spare_vecs: Vec::new(),
             singletons: Default::default(),
             store,
             temps: Default::default(),
@@ -884,6 +893,23 @@ impl Session {
     }
 
     /// The identity of a new private table for a temporary record.
+    /// An empty vector with room for `n` values of a call, from the spares when there is one.
+    #[inline]
+    pub(crate) fn spare_vec(&mut self, n: usize) -> Vec<Value> {
+        let mut v = self.spare_vecs.pop().unwrap_or_default();
+        v.reserve(n);
+        v
+    }
+
+    /// Gives `v` back to the spares, emptied (its values are dropped in order, as a drop of the vector does).
+    #[inline]
+    pub(crate) fn return_vec(&mut self, mut v: Vec<Value>) {
+        v.clear();
+        if v.capacity() != 0 && self.spare_vecs.len() < SPARE_VECS && v.capacity() <= SPARE_CAPACITY {
+            self.spare_vecs.push(v);
+        }
+    }
+
     pub(crate) fn new_temp_id(&mut self) -> al_builtins::value::TempId {
         self.next_temp += 1;
         al_builtins::value::TempId::new(self.next_temp, self.temp_release.clone())
@@ -1061,16 +1087,19 @@ impl Session {
         // The bytecode, if the mode asks for it. Whether a capture watches the routine is only known once its frame is
         // entered (`cap_enter_frame`); a capture watches the captured form of the bytecode.
         let chunk = engine.exec.chunk(&engine.program, object, routine);
-        let mut locals: Vec<Value> = Vec::with_capacity(r.locals.len() + chunk.map_or(0, |c| usize::from(c.temps)));
+        let mut locals = self.spare_vec(r.locals.len() + chunk.map_or(0, |c| usize::from(c.temps)));
+        let passed = args.len().min(r.params);
         for (i, s) in r.locals.iter().enumerate() {
-            // The default of an array parameter that is passed in is never seen: the argument replaces it.
-            if i < r.params && i < args.len() && matches!(&s.ty, RtType::Array(_, el) if plain_default(el)) {
+            // The default of a parameter that is passed in is never seen: the argument replaces it. One with state of
+            // its own (a record takes the number of a temporary table) is still made, as the values are made in order.
+            if i < passed && (plain_default(&s.ty) || matches!(&s.ty, RtType::Array(_, el) if plain_default(el))) {
                 locals.push(Value::Null);
             } else {
                 locals.push(self.default_value(&s.ty));
             }
         }
-        for (i, a) in args.into_iter().enumerate().take(r.params) {
+        let mut args = args;
+        for (i, a) in args.drain(..).enumerate().take(r.params) {
             locals[i] = match (a, r.by_var.get(i).copied().unwrap_or(false)) {
                 // A temporary record handed to a Variant parameter keeps its table: the callee counts the
                 // caller's rows through the Variant, though a by-value copy is an empty buffer
@@ -1139,9 +1168,10 @@ impl Session {
                 ) if matches!(r.locals[i].ty, RtType::Text(_) | RtType::Code(_)) => {
                     return Err(self.variant_to_text_error(matches!(r.locals[i].ty, RtType::Code(_))));
                 }
-                (a, _) => ops::convert(a, &r.locals[i].ty)?,
+                (a, _) => ops::convert_plain(a, &r.locals[i].ty)?,
             };
         }
+        self.return_vec(args);
         let mut frame = Frame {
             object,
             routine,
@@ -1214,7 +1244,7 @@ impl Session {
             }
             frame
                 .locals
-                .resize(r.locals.len() + usize::from(chunk.temps), Value::Null);
+                .resize_with(r.locals.len() + usize::from(chunk.temps), || Value::Null);
             self.run_chunk(chunk, &mut frame)
         } else {
             // The bytecode names a register with 16 bits; a routine that needs more is refused, never run in part.
@@ -1263,7 +1293,7 @@ impl Session {
             }
         };
         let value = match (&r.ret, ret, r.ret_local) {
-            (Some(t), Some(v), _) => ops::convert(v, t)?,
+            (Some(t), Some(v), _) => ops::convert_plain(v, t)?,
             (Some(_), None, Some(l)) => frame.locals[l].clone(),
             (Some(t), None, None) => Value::default_for(t),
             (None, _, _) => Value::Null,

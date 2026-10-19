@@ -16,6 +16,19 @@ pub struct FieldDef {
     pub ty: RtType,
     /// FlowFields and FlowFilters are not stored.
     pub stored: bool,
+    /// How the database stores a Code field (its `SQLDataType`); `Text` for every other field.
+    pub code_storage: CodeStorage,
+}
+
+/// The column type of a Code field (`SQLDataType`). An `Integer` one sorts by number: the empty value first, then 9
+/// before 10 (corpus record/lt-x-table-props/XTablePropsTests.al:322-325). The order of a `BigInteger` one is not
+/// pinned: a read that sorts by it is refused, as is a filter on either other than one value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CodeStorage {
+    #[default]
+    Text,
+    Integer,
+    BigInteger,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -31,6 +44,19 @@ pub struct TableDef {
 }
 
 impl TableDef {
+    /// The key order of two values of field `i`.
+    #[inline]
+    pub fn cmp_key_field(&self, i: usize, a: &Value, b: &Value) -> std::cmp::Ordering {
+        if let (Value::Code(x), Value::Code(y)) = (a, b)
+            && self.fields[i].code_storage == CodeStorage::Integer
+        {
+            // The values are written as plain numbers (the VM refuses any other), so length then text is the number order.
+            let (x, y) = (x.as_str(), y.as_str());
+            return x.len().cmp(&y.len()).then_with(|| x.cmp(y));
+        }
+        al_builtins::ops::compare_key_value(a, b).unwrap_or(std::cmp::Ordering::Equal)
+    }
+
     pub fn primary_key(&self, row: &[Value]) -> Vec<Value> {
         self.keys[0].iter().map(|&i| row[i].clone()).collect()
     }

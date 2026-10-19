@@ -810,6 +810,7 @@ mod tests {
                     name: format!("F{i}"),
                     ty: ty.clone(),
                     stored: true,
+                    code_storage: Default::default(),
                 })
                 .collect(),
             keys: vec![keys],

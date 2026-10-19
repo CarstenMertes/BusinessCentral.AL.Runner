@@ -1709,3 +1709,53 @@ fn with_a_make_int_filter_subscriber_another_bad_text_is_refused() {
         other => panic!("{other:?}"),
     }
 }
+
+// events/W4GlobalTriggers.al:327, :341: a DeleteAll asks for the setup before it looks for rows, so a row the setup
+// subscriber inserts is deleted with the database event.
+#[test]
+fn deleteall_asks_the_setup_before_it_counts_the_rows() {
+    let src = r#"
+table 50321 Own
+{
+    fields { field(1; Id; Integer) { } }
+    keys { key(PK; Id) { } }
+}
+codeunit 50322 Log
+{
+    SingleInstance = true;
+    var Text: Text; Busy: Boolean;
+    procedure Add(What: Text) begin Text += What + ';'; end;
+    procedure Take(): Text var R: Text; begin R := Text; Text := ''; exit(R); end;
+    procedure IsBusy(): Boolean begin exit(Busy); end;
+    procedure SetBusy(B: Boolean) begin Busy := B; end;
+}
+codeunit 50323 GT
+{
+    [EventSubscriber(ObjectType::Codeunit, Codeunit::"Global Triggers", 'GetDatabaseTableTriggerSetup', '', false, false)]
+    local procedure Setup(TableId: Integer; var OnDatabaseInsert: Boolean; var OnDatabaseModify: Boolean; var OnDatabaseDelete: Boolean; var OnDatabaseRename: Boolean)
+    var L: Codeunit Log; R: Record Own;
+    begin
+        if TableId <> Database::Own then exit;
+        L.Add('Setup');
+        if not L.IsBusy() then begin
+            L.SetBusy(true);
+            R.Id := 99;
+            R.Insert(true);
+            L.SetBusy(false);
+        end;
+        OnDatabaseDelete := true;
+    end;
+    [EventSubscriber(ObjectType::Codeunit, Codeunit::"Global Triggers", 'OnDatabaseDelete', '', false, false)]
+    local procedure DD(RecRef: RecordRef)
+    var L: Codeunit Log;
+    begin
+        if RecRef.Number = Database::Own then L.Add('dD(' + Format(RecRef.Field(1).Value) + ')');
+    end;
+}
+codeunit 50324 C
+{
+    procedure F(): Text var R: Record Own; L: Codeunit Log; begin R.DeleteAll(); exit(L.Take() + Format(R.Count())); end;
+}
+"#;
+    assert_eq!(text(run(src, "F")), "Setup;dD(99);0");
+}

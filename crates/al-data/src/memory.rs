@@ -202,7 +202,7 @@ fn key_fields_differ(t: &TableDef, old: &[Value], new: &[Value]) -> bool {
 /// `key_cmp(position(t, key, row), other)` without building the position.
 fn cmp_row_to_position(t: &TableDef, key: usize, row: &[Value], other: &[Value]) -> Ordering {
     for (&i, x) in t.keys[key].iter().chain(&t.keys[0]).zip(other) {
-        match al_builtins::ops::compare_key_value(&row[i], x).unwrap_or(Ordering::Equal) {
+        match t.cmp_key_field(i, &row[i], x) {
             Ordering::Equal => continue,
             o => return o,
         }
@@ -213,7 +213,7 @@ fn cmp_row_to_position(t: &TableDef, key: usize, row: &[Value], other: &[Value])
 /// `key_cmp(position(t, key, a), position(t, key, b))` without building the positions.
 fn cmp_rows(t: &TableDef, key: usize, a: &[Value], b: &[Value]) -> Ordering {
     for &i in t.keys[key].iter().chain(&t.keys[0]) {
-        match al_builtins::ops::compare_key_value(&a[i], &b[i]).unwrap_or(Ordering::Equal) {
+        match t.cmp_key_field(i, &a[i], &b[i]) {
             Ordering::Equal => continue,
             o => return o,
         }
@@ -268,6 +268,10 @@ impl Seek {
         let mut seek = Seek::default();
         let (mut lo_open, mut hi_open) = (false, false);
         for &fld in &fields {
+            // A Code field stored as a number sorts in another order than its filters compare: no bound from it on.
+            if t.fields[fld].code_storage != CodeStorage::Text {
+                break;
+            }
             // The first usable lower and upper value of the filters on this field (all of them apply at once).
             let (mut lo, mut hi): (Option<&Value>, Option<&Value>) = (None, None);
             for f in filters.iter().filter(|f| f.field == fld && f.group != OR_GROUP) {
@@ -418,6 +422,33 @@ impl MemStore {
             if let Some(why) = cols.iter().find_map(|&c| row.get(c).and_then(Value::unknown)) {
                 return Err(StoreError::Refused(why.to_string()));
             }
+        }
+        Ok(())
+    }
+
+    /// A read that filters a Code field stored as a number by anything but one value, or sorts by a Code field stored as a
+    /// BigInteger, is refused: neither is pinned (see [`CodeStorage`]).
+    fn code_storage_read(t: &TableDef, filters: &[FieldFilter], order: &[usize]) -> Result<(), StoreError> {
+        use al_builtins::filter::FilterExpr as E;
+        let stored_as = |i: usize| t.fields.get(i).map_or(CodeStorage::Text, |f| f.code_storage);
+        if let Some(f) = filters.iter().find(|f| {
+            stored_as(f.field) != CodeStorage::Text
+                && !match &f.expr {
+                    E::Eq(_) | E::Ne(_) | E::RangeSame(_) => true,
+                    E::Range(Some(a), Some(b)) => al_builtins::ops::compare(a, b).ok() == Some(Ordering::Equal),
+                    _ => false,
+                }
+        }) {
+            return Err(StoreError::Refused(format!(
+                "a filter other than one value on the Code field {}, which the database stores as a number (SQLDataType): its order is not pinned",
+                t.fields[f.field].name
+            )));
+        }
+        if let Some(&i) = order.iter().find(|&&i| stored_as(i) == CodeStorage::BigInteger) {
+            return Err(StoreError::Refused(format!(
+                "sorting by the Code field {}, which the database stores as a BigInteger (SQLDataType): its order is not pinned",
+                t.fields[i].name
+            )));
         }
         Ok(())
     }
@@ -784,7 +815,7 @@ impl MemStore {
         // How a row stands to the position `a`.
         let cmp_after = |r: &[Value], a: &[Value]| -> Ordering {
             for (&i, x) in fields.iter().zip(a) {
-                match al_builtins::ops::compare_key_value(&r[i], x).unwrap_or(Ordering::Equal) {
+                match t.cmp_key_field(i, &r[i], x) {
                     Ordering::Equal => continue,
                     o => return o,
                 }
@@ -1047,6 +1078,7 @@ impl Store for MemStore {
             return v.next(self, cx, t, scan);
         }
         self.unknown_read(cx, t, scan.filters, t.keys.get(scan.key).map_or(&[], |k| k.as_slice()))?;
+        Self::code_storage_read(t, scan.filters, t.keys.get(scan.key).map_or(&[], |k| k.as_slice()))?;
         let Some(table) = self.table(cx, t) else {
             return Ok(None);
         };
@@ -1170,6 +1202,7 @@ impl Store for MemStore {
             return v.count(self, cx, t, f);
         }
         self.unknown_read(cx, t, f, &[])?;
+        Self::code_storage_read(t, f, &[])?;
         Ok(self
             .table(cx, t)
             .map_or(0, |m| pk_band(&m, t, f).filter(|(_, r)| passes(r, f)).count()))
@@ -1180,6 +1213,7 @@ impl Store for MemStore {
             return Err(self.read_only(t, "DeleteAll"));
         }
         self.unknown_read(cx, t, f, &[])?;
+        Self::code_storage_read(t, f, &[])?;
         let doomed: Vec<Key> = self
             .table(cx, t)
             .map(|table| {
@@ -1242,6 +1276,7 @@ mod tests {
             name: name.into(),
             ty,
             stored: true,
+            code_storage: Default::default(),
         };
         TableDef {
             object: 9,
@@ -1597,6 +1632,7 @@ mod tests {
                 name: "K".into(),
                 ty: al_builtins::value::RtType::Integer,
                 stored: true,
+                code_storage: Default::default(),
             }],
             keys: vec![vec![0]],
             per_company: true,
@@ -1639,6 +1675,7 @@ mod tests {
                 name: "K".into(),
                 ty: al_builtins::value::RtType::Integer,
                 stored: true,
+                code_storage: Default::default(),
             }],
             keys: vec![vec![0]],
             per_company: true,
@@ -1668,6 +1705,7 @@ mod tests {
                 name: "K".into(),
                 ty: al_builtins::value::RtType::Integer,
                 stored: true,
+                code_storage: Default::default(),
             }],
             keys: vec![vec![0]],
             per_company: true,
@@ -2020,6 +2058,7 @@ mod virtual_tests {
                 name: "K".into(),
                 ty: RtType::Integer,
                 stored: true,
+                code_storage: Default::default(),
             }],
             keys: vec![vec![0]],
             per_company: false,

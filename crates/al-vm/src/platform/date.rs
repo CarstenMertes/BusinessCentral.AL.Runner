@@ -332,6 +332,7 @@ mod tests {
             name: format!("F{id}"),
             ty,
             stored: true,
+            code_storage: Default::default(),
         };
         TableDef {
             object: 0,

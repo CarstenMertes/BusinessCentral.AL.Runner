@@ -12,7 +12,7 @@ The catalog of each area is what the AL language server offers in probe files (`
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
 | attributes | 42 | 32 | 76.2% | 26 | 61.9% | 0 | 16 | 2 |
 | events | 23 | 16 | 69.6% | 22 | 95.7% | 0 | 1 | 0 |
-| properties | 720 | 662 | 91.9% | 548 | 76.1% | 18 | 154 | 4 |
+| properties | 720 | 662 | 91.9% | 549 | 76.2% | 18 | 153 | 4 |
 | syntax | 16 | 16 | 100.0% | 16 | 100.0% | 0 | 0 | 0 |
 | triggers | 128 | 128 | 100.0% | 116 | 90.6% | 3 | 9 | 0 |
 
@@ -49,7 +49,7 @@ Left out: 293 presentation-only properties (Caption, ToolTip, ApplicationArea, .
 | Entitlement | 5 | 5 | 100.0% | 2 | 40.0% | 0 | 3 | 0 |
 | EnumType | 9 | 9 | 100.0% | 8 | 88.9% | 0 | 1 | 0 |
 | EnumValue | 4 | 4 | 100.0% | 4 | 100.0% | 0 | 0 | 0 |
-| Field | 46 | 46 | 100.0% | 34 | 73.9% | 0 | 12 | 0 |
+| Field | 46 | 46 | 100.0% | 35 | 76.1% | 0 | 11 | 0 |
 | FieldGroup | 3 | 3 | 100.0% | 3 | 100.0% | 0 | 0 | 0 |
 | FieldModify | 8 | 7 | 87.5% | 6 | 75.0% | 0 | 2 | 0 |
 | Interface | 5 | 5 | 100.0% | 5 | 100.0% | 0 | 0 | 0 |

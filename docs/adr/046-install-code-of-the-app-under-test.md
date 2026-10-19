@@ -1,10 +1,10 @@
 # ADR-046: The install code of the app under test runs in the install baseline; several companies only as an opt-in
 
-- Status: Accepted; amendment 1 Proposed
+- Status: Accepted; amendment 1 Accepted (owner, 2026-10-19)
 - Date: 2026-10-19 (accepted by the owner, 2026-10-19, with the `--companies` flag); amendment 1 2026-10-19
 - Amends: ADR-013 decision 5 (items 1 and 2) and its section "Install baseline and Global Triggers as built"
-- Amendment 1 (Proposed, section "Amendment 1" below) replaces the object-order rule of decision 3 and decision 8 with
-  what the corpus probes P1 and P3 to P8 pinned. Where the two disagree, amendment 1 wins once it is accepted.
+- Amendment 1 (Accepted by the owner 2026-10-19, section "Amendment 1" below) replaces the object-order rule of decision 3 and decision 8 with
+  what the corpus probes P1 and P3 to P8 pinned. Where the two disagree, amendment 1 wins.
 
 ## Context
 
@@ -302,7 +302,18 @@ items 1 to 3 ask related questions for install codeunits.
   a corpus probe: read it from BCApps' AL-Go setup or a run on a Windows container. Until then the recipe lanes run in
   the default mode.
 
-## Amendment 1 (Proposed, 2026-10-19): what the probes pinned
+## Amendment 1 (Accepted, 2026-10-19): what the probes pinned
+
+Owner decisions, 2026-10-19:
+
+1. Amendment 1 is accepted.
+2. Company Triggers in the install session (A4 item 4): raise `OnCompanyOpen` and `OnCompanyOpenCompleted` to the
+   subscribers of EVERY installed app now. This is a flagged assumption (CLAUDE.md rule 3), registered in the runtime
+   assumption registry when built, id `install_company_triggers_all_apps`. Probe Q3 confirms it later; if Q3
+   disagrees, Q3 wins and the code changes.
+3. Dependency apps (Microsoft's apps) get the same rule as the app under test (A2): the order is unknown, so a test
+   that can observe it is refused, whatever this costs. Step A still reports the count of affected routine pairs and
+   Microsoft tests.
 
 Corpus writer BF answered P1 and P3 to P8 (corpus issue 661). The tests pass on real BC 27.5, 28.5 and 29.0, 7 of 7
 per leg (corpus branch `al-runtime-rs-staging-bf` at `3a91496`, CI runs 39227416374, 39227450187, 39227481098). The
@@ -443,9 +454,9 @@ Probe" and "ALT Quoted Install Probe" write nothing. Item d also refuses `Instal
 once it lands, although that test only compares per-company rows with the per-database row, an order that is pinned
 (fact 5). This is accepted: the runtime cannot tell which rows a test compares. That case is not in the baseline.
 
-**Not decided:** dependency apps (Microsoft's apps) have the same question. Step A counts the pairs of install routines
-of one dependency app that a to c would flag, and the Microsoft tests a refusal would stop, and reports both numbers to
-the owner. Until the owner decides, dependency apps run as today.
+**Decided (owner, 2026-10-19):** dependency apps (Microsoft's apps) get the same refusals a to d, whatever they cost.
+Step A still counts the pairs of install routines of one dependency app that a to c flag, and the Microsoft tests the
+refusal stops, and reports both numbers.
 
 When probe Q1 pins a rule, a later amendment replaces the refusals a to d with that order.
 
@@ -472,16 +483,11 @@ This replaces decision 8.
 4. **Company Triggers in the install session.** The install session raises `OnCompanyOpen` and then
    `OnCompanyOpenCompleted` in each company, before that company's install routines, and not in the per-database part
    (fact 9). Pinned only for subscribers of the app being installed. Whether a dependency app's subscribers run there
-   is probe Q3. **Not decided**, for the owner:
-   - Raise the two events to every subscriber of every installed app. This is how BC handles other events, but not
-     pinned for this case. Microsoft's apps have such subscribers, so the baseline would run more Microsoft code.
-   - Until Q3 lands: do not raise them in the install session. The tables that a Company Triggers subscriber of an
-     app under test writes join `Engine::unseeded`. An install routine that reads the state of a SingleInstance
-     codeunit such a subscriber writes has its tables join `Engine::unseeded` too (in the corpus: "LT BF Install
-     Log"). This is the existing rule for a root that cannot run (decision 6).
-
-   Step A measures how many dependency-app subscribers exist to the two events and which tables they write, so the
-   owner can choose.
+   is probe Q3. **Decided (owner, 2026-10-19):** raise the two events to every subscriber of every installed app,
+   Microsoft's apps included, as a flagged assumption with id `install_company_triggers_all_apps` in the runtime
+   assumption registry. A test whose baseline passes through it is reported as a flagged pass. When probe Q3 lands,
+   it wins; the code changes if it disagrees. Step A still reports how many dependency-app subscribers to the two
+   events exist and which tables they write.
 5. **Company Triggers in the test session** (fact 10) stay a separate additive change. It is no longer waiting on a
    probe. Not pinned: whether they are raised once per test session or once per test codeunit (the corpus runs the
    tests of one codeunit in one session).
@@ -512,7 +518,7 @@ so a probe app would not install (`BfTests:24-25`). It stays refused (`Signal::U
 ### A7. Build order and expected outcomes
 
 - **Step A** no longer waits for a probe (P4, P6 and P7 are answered), only for the submodule and oracle bump. It
-  adds A2 (refusals a to d), A4 items 1 to 3, the A4 item 4 choice once the owner makes it, and A5.
+  adds A2 (refusals a to d), A4 items 1 to 3, A4 item 4 (all apps' subscribers, flagged assumption `install_company_triggers_all_apps`), and A5.
 - **Step B** no longer waits for a probe (P1 and P8 are answered), only for the bump. It adds A6.
 - Expected outcomes of `BfTests`:
 

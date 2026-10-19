@@ -600,6 +600,9 @@ pub struct RecordState {
     /// (recordref/lt-recordref-fieldref-members/RecordRefIsDirtyEdges.al:IsDirty_TwoRefs_OtherModifies). `None` when the
     /// buffer came from elsewhere (GetTable, Init).
     pub dirty_base: Option<Vec<Value>>,
+    /// The row this variable's last Modify wrote. A later Modify of the unchanged buffer, after a rollback undid that write,
+    /// writes nothing (record/lt-record-conversion-assumptions/StaleBuffer.al:76-86).
+    pub last_modify: Option<Vec<Value>>,
     /// The table's and its extensions' global variables of this record variable (ADR-021).
     pub globals: TableGlobals,
 }

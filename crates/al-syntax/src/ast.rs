@@ -405,6 +405,13 @@ impl Object {
             .filter_map(VarSection::cast)
             .flat_map(|s| s.decls().collect::<Vec<_>>())
     }
+    /// The variables a report or report extension declares in a `var` section of its `requestpage`: the globals of the
+    /// request page, which only the triggers of that request page see.
+    pub fn request_page_var_decls(&self) -> impl Iterator<Item = VarDecl> {
+        self.sections()
+            .filter(|s| s.name().eq_ignore_ascii_case("requestpage"))
+            .flat_map(|s| s.var_decls().collect::<Vec<_>>())
+    }
     /// The variables of the `protected var` sections: the ones a page or report extension may name.
     pub fn protected_var_decls(&self) -> impl Iterator<Item = VarDecl> {
         self.members()
@@ -556,6 +563,12 @@ impl Section {
     }
     pub fn triggers(&self) -> impl Iterator<Item = Routine> {
         self.members().filter_map(Routine::cast)
+    }
+    /// The variables of the `var` sections inside this section (the `var` of a `requestpage`).
+    pub fn var_decls(&self) -> impl Iterator<Item = VarDecl> {
+        self.members()
+            .filter_map(VarSection::cast)
+            .flat_map(|s| s.decls().collect::<Vec<_>>())
     }
 }
 

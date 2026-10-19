@@ -66,6 +66,34 @@ pub enum Gate {
     /// The report metadata properties `DefaultHeaderFooterPartName` and `DefaultThemePartName` exist from BC 29 (runtime 18.0,
     /// empty by default); before they are absent (report/lt-y-report-props/YReportPropsTests.al, corpus bump 25). Not consumed yet.
     ReportPartNamePropertiesFrom29,
+    /// A request page extension also runs `OnAfterGetCurrRecord` when a report request page opens, from BC 28 (pages/lt-ab-tests/ABTests.al, corpus bump 26). Not consumed yet.
+    RequestPageExtensionRecordTriggerOrderFrom28,
+    /// `FieldRef.Value` set from an Option text that is not a value: the Evaluate error from BC 28, `The type NavOption is unknown.` before (record/lt-u-table-field-props/UTableCdsOrdinals.al, corpus bump 26). Not consumed yet.
+    OptionFieldRefSetEvaluateErrorFrom28,
+    /// `AL:MetadataNotFound` for an unknown report id names the calling test codeunit from BC 28, and `Test Runner - Mgt.` before (report/lt-t-validate-layout/TValidateLayout.al, corpus bump 26). Not consumed yet.
+    MetadataNotFoundNamesTheCallerFrom28,
+    /// The fully qualified name overloads of Report.Run, Page.Run and RecordRef.Open exist from BC 28 (runtime 17.0); the test file is compiled from BC 28 on (report/lt-t-fqn-run/LtTFqnRun.al, corpus bump 26). Not consumed yet.
+    FullyQualifiedNameRunAndOpenFrom28,
+    /// Setting a field whose control add-in was not created raises `NSValidationFailed:DotNetControlAddInNotCreated` from BC 28 (lt-ac/ACControlAddIn.al, corpus bump 26). Not consumed yet.
+    ControlAddInNotInstantiatedErrorFrom28,
+    /// The system table Windows Language has 212 rows from BC 29 (208 before) (platform/lt-ag-contoso/AgWindowsLanguage.al, corpus bump 26). Not consumed yet.
+    WindowsLanguageRowsFrom29,
+    /// The platform table Language Selection has the row ff-NG and other rows from BC 29 (platform/lt-platform-rows-fresh/PlatformRowsLanguageSelection.al, corpus bump 26). Not consumed yet.
+    LanguageSelectionRowsFrom29,
+    /// The report dataset header has the CompanyAddressLine1..8 elements from BC 29 (report/lt-ah-dataset-header/AhDatasetHeader.al, corpus bump 26). Not consumed yet.
+    DatasetHeaderCompanyAddressLinesFrom29,
+    /// `Report.SaveAs` of a report with inherent permissions is refused with `DB:ClientReadDenied` from BC 29 (report/lt-u-report-props/UPropertyTests.al, corpus bump 26). Not consumed yet.
+    ReportSaveAsInherentPermissionsFrom29,
+    /// Attributes on procedures and variables including the Obsolete state RequiredPending exist from BC 29 (lt-ac/ACAttributes.al, corpus bump 26). Not consumed yet.
+    ObsoleteRequiredPendingAttributeFrom29,
+    /// ModuleInfo.ContextSensitiveHelpUrl, EULA, Help, PrivacyStatement and the NavApp resource overloads with an AppId exist from BC 29 (lt-ac/ACBc29ModuleNavApp.al, corpus bump 26). Not consumed yet.
+    ModuleInfoAndNavAppResourceMethodsFrom29,
+    /// DataSourceContext and TestHandlerContext exist from BC 29 (lt-ac/ACContexts.al, corpus bump 26). Not consumed yet.
+    DataSourceAndTestHandlerContextFrom29,
+    /// The IsolatedStorage.Get overloads with an IsolationLevel exist from BC 29 (lt-ac/ACIsolatedStorageIsolation.al, corpus bump 26). Not consumed yet.
+    IsolatedStorageIsolationLevelOverloadsFrom29,
+    /// `Record.IsDirty()` exists from BC 29 (lt-ac/ACRecordIsDirty.al, corpus bump 26). Not consumed yet.
+    RecordIsDirtyFrom29,
     /// `Get` with a Text argument for an Integer key: the Evaluate error `The value "..." can't be evaluated into type Integer.`
     /// (code `Evaluate:Format`) from BC 28; before, `The type NavInteger is unknown.` (record/lt-get-text-argument/GetWithTextArgument.al,
     /// corpus bump 22). Not consumed yet.
@@ -133,6 +161,20 @@ impl Gate {
         Gate::ReportXmlDecimalFormatterFrom28,
         Gate::ReportPartNamePropertiesFrom29,
         Gate::GetTextArgumentEvaluateErrorFrom28,
+        Gate::RequestPageExtensionRecordTriggerOrderFrom28,
+        Gate::OptionFieldRefSetEvaluateErrorFrom28,
+        Gate::MetadataNotFoundNamesTheCallerFrom28,
+        Gate::FullyQualifiedNameRunAndOpenFrom28,
+        Gate::ControlAddInNotInstantiatedErrorFrom28,
+        Gate::WindowsLanguageRowsFrom29,
+        Gate::LanguageSelectionRowsFrom29,
+        Gate::DatasetHeaderCompanyAddressLinesFrom29,
+        Gate::ReportSaveAsInherentPermissionsFrom29,
+        Gate::ObsoleteRequiredPendingAttributeFrom29,
+        Gate::ModuleInfoAndNavAppResourceMethodsFrom29,
+        Gate::DataSourceAndTestHandlerContextFrom29,
+        Gate::IsolatedStorageIsolationLevelOverloadsFrom29,
+        Gate::RecordIsDirtyFrom29,
         Gate::BigIntegerToEnumVariableFrom29,
         Gate::FromBase64InvalidTextRaises,
         Gate::MediaExportKeepsTheImportedBytes,
@@ -163,7 +205,16 @@ impl Gate {
             | Gate::MediaExportKeepsTheImportedBytes
             | Gate::PlatformMetadataColumnsFrom29
             | Gate::InterfaceListCodeunitFrom29
-            | Gate::ProbedValuesDifferFrom29 => 29,
+            | Gate::ProbedValuesDifferFrom29
+            | Gate::WindowsLanguageRowsFrom29
+            | Gate::LanguageSelectionRowsFrom29
+            | Gate::DatasetHeaderCompanyAddressLinesFrom29
+            | Gate::ReportSaveAsInherentPermissionsFrom29
+            | Gate::ObsoleteRequiredPendingAttributeFrom29
+            | Gate::ModuleInfoAndNavAppResourceMethodsFrom29
+            | Gate::DataSourceAndTestHandlerContextFrom29
+            | Gate::IsolatedStorageIsolationLevelOverloadsFrom29
+            | Gate::RecordIsDirtyFrom29 => 29,
             Gate::ReportSaveAsDataItemIdentity
             | Gate::FeatureKeyListChangedFrom28
             | Gate::FromBase64InvalidTextRaises
@@ -176,7 +227,12 @@ impl Gate {
             | Gate::GetTextArgumentEvaluateErrorFrom28
             | Gate::RecordRefIsDirtyFrom28
             | Gate::ReportXmlDecimalFormatterFrom28
-            | Gate::PartLineBeforeHostKeyFrom28 => 28,
+            | Gate::PartLineBeforeHostKeyFrom28
+            | Gate::RequestPageExtensionRecordTriggerOrderFrom28
+            | Gate::OptionFieldRefSetEvaluateErrorFrom28
+            | Gate::MetadataNotFoundNamesTheCallerFrom28
+            | Gate::FullyQualifiedNameRunAndOpenFrom28
+            | Gate::ControlAddInNotInstantiatedErrorFrom28 => 28,
         }
     }
 
@@ -267,6 +323,62 @@ impl Gate {
                     lines: "11",
                 },
             ],
+            Gate::RequestPageExtensionRecordTriggerOrderFrom28 => &[Evidence {
+                file: "pages/lt-ab-tests/ABTests.al",
+                lines: "1236",
+            }],
+            Gate::OptionFieldRefSetEvaluateErrorFrom28 => &[Evidence {
+                file: "record/lt-u-table-field-props/UTableCdsOrdinals.al",
+                lines: "170,175",
+            }],
+            Gate::MetadataNotFoundNamesTheCallerFrom28 => &[Evidence {
+                file: "report/lt-t-validate-layout/TValidateLayout.al",
+                lines: "144,150",
+            }],
+            Gate::FullyQualifiedNameRunAndOpenFrom28 => &[Evidence {
+                file: "report/lt-t-fqn-run/LtTFqnRun.al",
+                lines: "7",
+            }],
+            Gate::ControlAddInNotInstantiatedErrorFrom28 => &[Evidence {
+                file: "lt-ac/ACControlAddIn.al",
+                lines: "99",
+            }],
+            Gate::WindowsLanguageRowsFrom29 => &[Evidence {
+                file: "platform/lt-ag-contoso/AgWindowsLanguage.al",
+                lines: "58",
+            }],
+            Gate::LanguageSelectionRowsFrom29 => &[Evidence {
+                file: "platform/lt-platform-rows-fresh/PlatformRowsLanguageSelection.al",
+                lines: "238,377,401,489,581",
+            }],
+            Gate::DatasetHeaderCompanyAddressLinesFrom29 => &[Evidence {
+                file: "report/lt-ah-dataset-header/AhDatasetHeader.al",
+                lines: "9",
+            }],
+            Gate::ReportSaveAsInherentPermissionsFrom29 => &[Evidence {
+                file: "report/lt-u-report-props/UPropertyTests.al",
+                lines: "185,190,195",
+            }],
+            Gate::ObsoleteRequiredPendingAttributeFrom29 => &[Evidence {
+                file: "lt-ac/ACAttributes.al",
+                lines: "146",
+            }],
+            Gate::ModuleInfoAndNavAppResourceMethodsFrom29 => &[Evidence {
+                file: "lt-ac/ACBc29ModuleNavApp.al",
+                lines: "7",
+            }],
+            Gate::DataSourceAndTestHandlerContextFrom29 => &[Evidence {
+                file: "lt-ac/ACContexts.al",
+                lines: "10",
+            }],
+            Gate::IsolatedStorageIsolationLevelOverloadsFrom29 => &[Evidence {
+                file: "lt-ac/ACIsolatedStorageIsolation.al",
+                lines: "7",
+            }],
+            Gate::RecordIsDirtyFrom29 => &[Evidence {
+                file: "lt-ac/ACRecordIsDirty.al",
+                lines: "7",
+            }],
             Gate::PartLineBeforeHostKeyFrom28 => &[Evidence {
                 file: "pages/lt-part-line-before-host-key/PartLineBeforeHostKey.al",
                 lines: "322",

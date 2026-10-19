@@ -157,6 +157,10 @@ pub(crate) struct Lowerer<'a> {
     oi: usize,
     file: usize,
     globals: HashMap<String, usize>,
+    /// The globals of the request page of a report, by lowercase name; a trigger of the request page (`in_request_page`)
+    /// finds them before the report's own variables.
+    request_page_globals: HashMap<String, usize>,
+    in_request_page: bool,
     locals: HashMap<String, usize>,
     /// Declared text of Label variables, by lowercase name; reads lower to that constant.
     global_labels: HashMap<String, String>,

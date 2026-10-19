@@ -825,8 +825,10 @@ fn in_read(c: &mut dyn Ctx, mut r: Option<&mut Value>, a: &mut [Value]) -> NResu
         let (taken, count) = with_in(r, |s| {
             let unit = s.enc.unit();
             let rest = s.rest();
+            // At the end of the stream the Text is emptied and the result is 0, no error
+            // (misc/lt-probes-needed-3/PnC20JsonStreams.al:312-318, `pastEnd`).
             if rest.is_empty() {
-                return unsupported("InStream.Read into a Text at the end of the stream (not pinned)");
+                return Ok((String::new(), 0));
             }
             let end = rest.chunks_exact(unit).position(|u| u.iter().all(|b| *b == 0));
             if used && (end.is_none() || unit != 1) {

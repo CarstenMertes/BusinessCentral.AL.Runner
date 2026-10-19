@@ -15,6 +15,7 @@ impl Session {
     /// open, and a subscriber that claims nothing changes nothing). The language handed to the
     /// event is the session language (types/PSCaptionClass.al).
     pub(super) fn caption_class_text(&mut self, st: &St, text: &str) -> Result<String, Signal> {
+        self.refuse_caption_class_translate()?;
         if let Some(rest) = text.strip_prefix("3,") {
             if rest.is_empty() {
                 // P84Captions.al Page_NoSubscriber c06: a control whose CaptionClass is '3,' reads the caption of another
@@ -43,6 +44,7 @@ impl Session {
     /// session language, and comes back unchanged when no subscriber resolves it (corpus types/PSCaptionClass.al:5-8,
     /// CaptionClassTranslate_Expressions).
     pub(crate) fn caption_class_translate(&mut self, text: &str) -> Result<String, Signal> {
+        self.refuse_caption_class_translate()?;
         let Some((area, expr)) = text.split_once(',') else {
             return Ok(text.to_string());
         };
@@ -50,6 +52,24 @@ impl Session {
             return Ok(expr.to_string());
         }
         self.raise_resolve_caption_class(area, expr, text)
+    }
+
+    /// Every caption class the client translates raises `CaptionClassTranslate` of the platform codeunit `UI Helper Triggers`,
+    /// area 3 included (events/lt-global-triggers-statements/P114GlobalTriggerEvents.al:301, :304, :323-327). The runtime does
+    /// not raise it, so a translation while a subscriber listens is refused.
+    pub(crate) fn refuse_caption_class_translate(&self) -> Result<(), Signal> {
+        let test = self.test_object.and_then(|t| self.engine.program.objects.get(t));
+        match self.engine.events.unraised_subscriber(
+            "ui helper triggers",
+            Some("captionclasstranslate"),
+            test,
+            self.test_object,
+        ) {
+            Some((_, sub)) => unsupported(format!(
+                "a caption class is translated while {sub} subscribes to CaptionClassTranslate of UI Helper Triggers, which the runtime does not raise"
+            )),
+            None => Ok(()),
+        }
     }
 
     pub(super) fn raise_resolve_caption_class(&mut self, area: &str, expr: &str, text: &str) -> Result<String, Signal> {
@@ -101,6 +121,7 @@ impl Session {
                             .prop_routine_value(st, idx, routine)?
                             .expect("a routine-valued property");
                         if name == "captionclass" {
+                            self.refuse_caption_class_translate()?;
                             // Area 3 raises no event, so '3,' with nothing after it (a matrix column whose caption nobody set)
                             // costs the open nothing; only reading that caption is refused.
                             if let Value::Text(t) | Value::Code(t) = &v {
@@ -113,6 +134,7 @@ impl Session {
                     // An area no built-in resolver claims goes to the Caption Class codeunit's
                     // OnResolveCaptionClass event (corpus autoformat/TestCaptionClassResolverFailure.al:1-12).
                     Some(ir::PropVal::Lit(l)) if name == "captionclass" => {
+                        self.refuse_caption_class_translate()?;
                         let c = unquote(l);
                         if !c.starts_with("3,") {
                             self.caption_class_text(st, &c)?;
@@ -282,6 +304,13 @@ impl Session {
         // `...;R20;R1;N(-1);F(=);R1;C`), for an ascending view.
         let end_reached = (end_reached || (find_page && keys.len() == Self::WINDOW)) && opening;
         if end_reached && find_page && self.declares(st, "onaftergetrecord") {
+            // A descending view steps back over every row it served before OnAfterGetCurrRecord (misc/lt-probes-needed-6/
+            // PnF06FindListMoves.al:304, :318: `R1;N(1);N(-1);R2;N(-1);R3;...;F(=);R1;C`); the walk below is the ascending one.
+            if !rec.borrow().ascending && self.declares(st, "onaftergetcurrrecord") {
+                return unsupported(
+                    "a list that serves a descending view from OnFindRecord and OnNextRecord, with OnAfterGetCurrRecord, opening (the step back is not implemented)",
+                );
+            }
             if let Some(first) = keys.first() {
                 rec.borrow_mut().fields = first.stored.clone();
             }
@@ -1155,6 +1184,13 @@ impl Session {
             if let Some(at) = held {
                 self.read_client_row(st, at)?;
                 return Ok(Value::Boolean(true));
+            }
+            // With a full window of rows the client asks the page for the rows around the key (pages/lt-ai-list-order/
+            // AiListOrderTests.al:999, :1020, Paging_GoToKey_Nav and Paging_GoToKeyThenWalk_Nav); the scan below is not that.
+            if st.borrow().window.len() >= Self::WINDOW {
+                return unsupported(
+                    "GoToKey on a list that serves its rows from OnFindRecord, with a full window of rows (the rows the client asks for are not implemented)",
+                );
             }
         }
         let before_fields = rec.borrow().fields.clone();

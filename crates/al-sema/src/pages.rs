@@ -45,7 +45,8 @@ const CONTROL_SECTIONS: &[&str] = &[
 /// The type a property evaluates to, when it is one the client evaluates.
 pub fn dynamic_type(prop: &str) -> Option<PropType> {
     match prop.to_ascii_lowercase().as_str() {
-        "visible" | "editable" | "enabled" => Some(PropType::Boolean),
+        // HideValue may name a variable (pages/lt-page-presentation-properties/P119LabelHideValue.al:74).
+        "visible" | "editable" | "enabled" | "hidevalue" => Some(PropType::Boolean),
         "autoformatexpression" | "captionclass" => Some(PropType::Text),
         _ => None,
     }

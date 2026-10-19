@@ -411,7 +411,7 @@ registry! {
     },
     HttpHandlerEveryVersion => {
         id: "http-handler-every-version",
-        assumed: "An [HttpClientHandler] answers HttpClient calls on every BC major and environment. (The probe PZHttpHandler.al measured it on the newest major; on the two older ones a request was not given to the handler, and NP Retail notes that handlers intercept only on an on-prem tier. ADR-027 owner decision 1: handler-served on all.) The response a handler leaves keeps 200 OK for what it does not set, a handler that answers false or nothing intercepts, a call answers true whatever the status, and a handler that answers true is treated as a failed send (http-true-is-unresolvable).",
+        assumed: "An [HttpClientHandler] answers HttpClient calls on every BC major and environment, except under TestHttpRequestPolicy = BlockOutboundRequests on the majors before the gate HttpHandlerUnderBlockOutboundFrom29, where the request raises the unhandled-request error (pinned by al-language-onprem/session/PZHttpBlock.al:54-57; not assumed under that policy). (The probe PZHttpHandler.al measured it on the newest major; on the two older ones a request was not given to the handler, and NP Retail notes that handlers intercept only on an on-prem tier. ADR-027 owner decision 1: handler-served on all.) The response a handler leaves keeps 200 OK for what it does not set, a handler that answers false or nothing intercepts, a call answers true whatever the status, and a handler that answers true is treated as a failed send (http-true-is-unresolvable).",
         tests: "NP Retail tests with [HttpClientHandler] mocks (Entria, Adyen, EFT, Azure Key Vault, Ticket Module): about 2,000 tests; 319 in the Microsoft buckets (CrossIntercompany Connector.Send).",
         probe: "PZHttpHandler.al on the two older majors as an on-prem service tier; a handler that sets only the status 404 (reason phrase?); a handler error. Asked in corpus #650.",
     },
@@ -474,12 +474,6 @@ registry! {
         assumed: "Page.Run with a record on a page whose SourceTableView names an ORDER(ascending|descending): the page runs in the view's direction, as the view alone does. (P145PageRunView.al pins the view's SORTING and the record's direction when the view names none.)",
         tests: "Pages with SourceTableView = sorting(...) order(descending), such as Item Ledger Entries, opened with a record: SCM Item Journal and SCM Warehouse tests; about 11 Tests-SCM tests.",
         probe: "Page.Run(Page, Rec) with Rec ascending and the page's view order(descending), and the reverse: the first row the page shows. Asked in corpus #641.",
-    },
-    ListGoneOnlyRowWithoutUpdate => {
-        id: "list-gone-only-row-without-update",
-        assumed: "A list whose only row an action deleted, when the action did not call CurrPage.Update, shows its blank line and raises OnAfterGetCurrRecord three times, as it does after an action that called CurrPage.Update (pageupdate/TestPageUpdateGoneRow.al pins that case).",
-        tests: "Planning worksheet and requisition tests whose action deletes the only line (SCM Plan-Req. Wksht CalcPlan... from a blanket order): about 11 Tests-SCM tests.",
-        probe: "The Gone List fixture of TestPageUpdateGoneRow.al with an action that deletes the only row and does not call CurrPage.Update: the trace of OnAfterGetCurrRecord calls. Asked in corpus #641.",
     },
     ReportRenderDiscarded => {
         id: "report-render-discarded",

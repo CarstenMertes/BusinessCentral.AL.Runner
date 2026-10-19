@@ -1,6 +1,6 @@
-//! A list whose only row an action deleted. After an action that calls CurrPage.Update the list shows its blank line and
-//! raises OnAfterGetCurrRecord three times (corpus pageupdate/TestPageUpdateGoneRow.al:List_DeletedByAction_OnlyRow_ShowsNoStoredRow).
-//! Without the call the same is assumed (list-gone-only-row-without-update); the corpus does not pin the count there.
+//! A list whose only row an action deleted, with or without CurrPage.Update. Opened for editing it shows its blank line:
+//! OnNewRecord and OnAfterGetCurrRecord three times (corpus pageupdate/TestPageUpdateGoneRow.al:List_DeletedByAction_OnlyRow_ShowsNoStoredRow,
+//! misc/lt-probes-needed-7/PnGRefresh.al:120, :142). Opened for viewing it raises nothing (pages/W1Update.al:534, :556).
 
 use al_testkit::text;
 
@@ -19,6 +19,7 @@ page 69982 "GR List"
     layout { area(Content) { repeater(R) { field(Code; Rec.Code) { } } } }
     actions { area(Processing) { action(Gone) { ApplicationArea = All; trigger OnAction() begin Rec.Delete(); end; } } }
     trigger OnAfterGetCurrRecord() var L: Codeunit "GR Log"; begin L.Bump(); end;
+    trigger OnNewRecord(BelowxRec: Boolean) var L: Codeunit "GR Log"; begin L.Bump(); end;
 }
 codeunit 69983 C
 {
@@ -33,10 +34,27 @@ codeunit 69983 C
         P.Close();
         exit(Format(Before));
     end;
+    procedure V(): Text
+    var R: Record "GR Row"; P: TestPage "GR List"; L: Codeunit "GR Log"; Before: Integer;
+    begin
+        R.Code := 'A'; R.Insert();
+        P.OpenView();
+        L.Take();
+        P.Gone.Invoke();
+        Before := L.Take();
+        P.Close();
+        exit(Format(Before));
+    end;
 }
 "#;
 
 #[test]
 fn a_list_whose_only_row_an_action_deleted_shows_the_blank_line() {
-    assert_eq!(text(al_testkit::run_in(SRC, "C", "F")), "3");
+    // Three times OnNewRecord and OnAfterGetCurrRecord.
+    assert_eq!(text(al_testkit::run_in(SRC, "C", "F")), "6");
+}
+
+#[test]
+fn a_view_list_whose_only_row_an_action_deleted_raises_nothing() {
+    assert_eq!(text(al_testkit::run_in(SRC, "C", "V")), "0");
 }

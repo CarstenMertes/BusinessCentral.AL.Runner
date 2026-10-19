@@ -220,15 +220,15 @@ codeunit 69952 C
 }
 "#;
 
-/// misc/lt-probes-needed-6/PnF06FindListMoves.al:304, :318: a descending OnFindRecord list with OnAfterGetCurrRecord steps
-/// back over every row it served when it opens. That walk is not implemented, so the open is refused.
+/// misc/lt-probes-needed-6/PnF06FindListMoves.al:304, :318: a descending OnFindRecord list with OnAfterGetCurrRecord opens on
+/// the last row of its view (the row Find('=><') finds) and steps back over the rows above it (the reads: pages_ui/row_window.rs).
 #[test]
-fn opening_a_descending_find_list_with_on_after_get_curr_record_is_refused() {
+fn opening_a_descending_find_list_with_on_after_get_curr_record_stands_on_the_last_row() {
     let src = FIND_LIST.replace(
         "trigger OnOpenPage() begin end;",
         "trigger OnOpenPage() begin Rec.Ascending(false); end;",
     );
-    refused(al_testkit::run_in(&src, "C", "Descending"), "descending");
+    assert_eq!(al_testkit::text(al_testkit::run_in(&src, "C", "Descending")), "1");
 }
 
 /// pages/lt-ai-list-order/AiListOrderTests.al:999, :1020: GoToKey on an OnFindRecord list with a full window of 20 rows makes

@@ -222,3 +222,205 @@ codeunit 69914 C
         "R10;R10;C10|R10;R20;R30;R40;R50;R10;R10;C10"
     );
 }
+
+/// pages/lt-ai-list-order/AiListOrderTests.al:769 (GoToRecord_BeforeAnyNavigation_NavCurr): on a find list with
+/// OnAfterGetCurrRecord that holds its whole view, GoToRecord from the first row steps through the rows one move at a time.
+/// Without OnAfterGetCurrRecord nothing is read (:739 GoToRecord_BeforeAnyNavigation_Nav).
+#[test]
+fn go_to_record_on_a_find_list_with_the_current_record_trigger_steps_row_by_row() {
+    let go = |page: &str| {
+        let src = lists(&format!(
+            r#"
+codeunit 69909 C
+{{
+    procedure F(): Text
+    var P: TestPage "{page}"; Log: Codeunit "RW Log Mgt"; S: Codeunit Seed; Row: Record "RW Row"; R: Text;
+    begin
+        S.Rows(6);
+        P.OpenView();
+        Log.Take();
+        Row.Get(4);
+        R := Format(P.GoToRecord(Row)) + ':' + Log.Take() + '|' + P.Id.Value();
+        R += '|' + Format(P.Next()) + ':' + Log.Take();
+        exit(R);
+    end;
+}}
+"#
+        ));
+        al_testkit::text(al_testkit::run_in(&src, "C", "F"))
+    };
+    assert_eq!(
+        go("RW NavCurr"),
+        "Yes:R:2;F:==Yes;R:2;C:2;R:3;F:==Yes;R:3;C:3;R:4;F:==Yes;R:4;C:4|4|Yes:R:5;F:==Yes;R:5;C:5"
+    );
+    assert_eq!(go("RW Nav"), "Yes:|4|Yes:");
+}
+
+/// pages/lt-page-report-events/P84ListTemp.al:387-401 (TestPage_Real_OpenNew) and pages/lt-opennew-findrecord/
+/// OpenNewFindRecord.al:210-231 (List_OpenNew_TableWithRows): on a list opened with OpenNew over a table with rows, First and
+/// Next answer No, run no trigger, and the cursor stays on the new row.
+#[test]
+fn moves_on_a_list_opened_with_open_new_answer_no() {
+    let src = lists(
+        r#"
+codeunit 69909 C
+{
+    procedure F(): Text
+    var P: TestPage "RW Plain"; Log: Codeunit "RW Log Mgt"; S: Codeunit Seed; R: Text;
+    begin
+        S.Rows(3);
+        P.OpenNew();
+        Log.Take();
+        R := Format(P.First()) + ':' + Log.Take() + ':' + P.Id.Value();
+        R += '|' + Format(P.Next()) + ':' + Log.Take() + ':' + P.Id.Value();
+        exit(R);
+    end;
+    procedure G(): Text
+    var P: TestPage "RW Plain"; S: Codeunit Seed;
+    begin
+        S.Rows(3);
+        P.OpenNew();
+        exit(Format(P.Last()));
+    end;
+}
+"#,
+    );
+    assert_eq!(al_testkit::text(al_testkit::run_in(&src, "C", "F")), "No::0|No::0");
+    match al_testkit::run_in(&src, "C", "G") {
+        Err(al_builtins::native::Signal::Unsupported(why)) => assert!(why.contains("OpenNew"), "{why}"),
+        other => panic!("expected a refusal, got {other:?}"),
+    }
+}
+
+/// record/lt-loadfields-pagesource-validate/P81PageTempSource.al:238-242 (RunModal_TempRecord_NewRow): a row saved by New()
+/// below T1 with key N1 stays below T1 in the client's order (`page_row1 = T1`, `page_row2 = N1`). The client keeps key order,
+/// so a move other than Next after such a save is refused; a key that follows its anchor in key order is not.
+#[test]
+fn a_move_after_a_new_row_saved_out_of_key_order_is_refused() {
+    let src = with_log(
+        r#"
+table 69915 "RW Code Row" { fields { field(1; "Code"; Code[10]) { } field(2; Name; Text[30]) { } } keys { key(PK; "Code") { } } }
+page 69916 "RW Code List"
+{
+    PageType = List; SourceTable = "RW Code Row"; ApplicationArea = All; UsageCategory = None;
+    layout { area(Content) { repeater(Rows) { field("Code"; Rec."Code") { } field(Name; Rec.Name) { } } } }
+}
+codeunit 69909 C
+{
+    local procedure Seed()
+    var R: Record "RW Code Row";
+    begin
+        R."Code" := 'T1'; R.Insert(); R."Code" := 'T2'; R.Insert(); R."Code" := 'T3'; R.Insert();
+    end;
+    procedure F(): Text
+    var P: TestPage "RW Code List";
+    begin
+        Seed();
+        P.OpenEdit();
+        P.First();
+        P.New();
+        P."Code".SetValue('N1');
+        P.First();
+        exit(P."Code".Value());
+    end;
+    procedure G(): Text
+    var P: TestPage "RW Code List";
+    begin
+        Seed();
+        P.OpenEdit();
+        P.First();
+        P.New();
+        P."Code".SetValue('T15');
+        P.First();
+        exit(P."Code".Value());
+    end;
+}
+"#,
+    );
+    match al_testkit::run_in(&src, "C", "F") {
+        Err(al_builtins::native::Signal::Unsupported(why)) => assert!(why.contains("key order"), "{why}"),
+        other => panic!("expected a refusal, got {other:?}"),
+    }
+    assert_eq!(al_testkit::text(al_testkit::run_in(&src, "C", "G")), "T1");
+}
+
+/// misc/lt-probes-needed-6/PnF06FindListMoves.al:299-325 (FindList_Descending_3Rows, _25Rows): a find list with
+/// OnAfterGetCurrRecord over a descending view opens on its last row; the client reads up from there, at most a window of rows,
+/// and moves inside the rows it holds. First past them reads the rest of the view upwards.
+#[test]
+fn a_descending_find_list_with_the_current_record_trigger_reads_up_from_its_last_row() {
+    let moves = |rows: i32| {
+        let src = with_log(&format!(
+            r#"
+page 69917 "RW Desc"
+{{
+    PageType = List; SourceTable = "RW Row"; ApplicationArea = All; UsageCategory = None;
+    layout {{ area(Content) {{ repeater(Rows) {{ field(Id; Rec.Id) {{ }} }} }} }}
+    var Log: Codeunit "RW Log Mgt";
+    trigger OnOpenPage() begin Rec.Ascending(false); end;
+    trigger OnFindRecord(Which: Text): Boolean begin Log.Add('F(' + Which + ')'); exit(Rec.Find(Which)); end;
+    trigger OnNextRecord(Steps: Integer): Integer begin Log.Add('N(' + Format(Steps) + ')'); exit(Rec.Next(Steps)); end;
+    trigger OnAfterGetRecord() begin Log.Add('R' + Format(Rec.Id)); end;
+    trigger OnAfterGetCurrRecord() begin Log.Add('C'); end;
+}}
+codeunit 69909 C
+{{
+    procedure F(): Text
+    var P: TestPage "RW Desc"; Log: Codeunit "RW Log Mgt"; Row: Record "RW Row"; i: Integer; R: Text;
+    begin
+        for i := 1 to {rows} do begin Row.Init(); Row.Id := i; Row.Insert(); end;
+        Log.Take();
+        P.OpenView();
+        R := Log.Take();
+        P.Next(); R += '|' + Log.Take();
+        P.Last(); R += '|' + Log.Take();
+        P.Previous(); R += '|' + Log.Take();
+        P.First(); R += '|' + Log.Take() + '|' + P.Id.Value();
+        exit(R);
+    end;
+}}
+"#
+        ));
+        al_testkit::text(al_testkit::run_in(&src, "C", "F"))
+    };
+    assert_eq!(
+        moves(3),
+        "F(=><);R1;N(1);N(-1);R2;N(-1);R3;N(-1);R1;F(=);R1;C|||R2;F(=);R2;C|R3;F(=);R3;C|3"
+    );
+    let up: String = (2..=20).map(|i| format!("R{i};N(-1);")).collect();
+    let rest: String = (22..=25).map(|i| format!("N(-1);R{i};")).collect();
+    assert_eq!(
+        moves(25),
+        format!("F(=><);R1;N(1);N(-1);{up}R21;R1;F(=);R1;C|||R2;F(=);R2;C|R21;{rest}N(-1);F(=);R25;C|25")
+    );
+}
+
+/// pages/lt-ai-list-order/AiListOrderTests.al:999, :1020 (Paging_GoToKey_Nav, Paging_GoToKeyThenWalk_Nav): GoToKey past a full
+/// window on a find list without OnAfterGetCurrRecord reads the last two rows held again, then the rest of the view with
+/// OnNextRecord; the walk to the end afterwards asks nothing.
+#[test]
+fn go_to_key_past_a_full_window_of_a_find_list_reads_on_to_the_end() {
+    let src = lists(
+        r#"
+codeunit 69909 C
+{
+    procedure F(): Text
+    var P: TestPage "RW Nav"; Log: Codeunit "RW Log Mgt"; S: Codeunit Seed; R: Text;
+    begin
+        S.Rows(25);
+        P.OpenView();
+        Log.Take();
+        R := Format(P.GoToKey(21)) + ':' + Log.Take() + '|' + P.Id.Value();
+        while P.Next() do
+            R += '|' + P.Id.Value() + ':' + Log.Take();
+        exit(R + '|' + Log.Take() + '|' + P.Id.Value());
+    end;
+}
+"#,
+    );
+    let on: String = (21..=24).map(|i| format!("R:{i};N:1=1;")).collect();
+    assert_eq!(
+        al_testkit::text(al_testkit::run_in(&src, "C", "F")),
+        format!("Yes:R:19;R:20;N:1=1;{on}R:25;N:1=0|21|22:|23:|24:|25:||25")
+    );
+}

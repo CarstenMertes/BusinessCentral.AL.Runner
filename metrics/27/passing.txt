@@ -11263,6 +11263,7 @@
 73932 FlowRelation_Code_AfterCalcFields
 73932 FlowRelation_Code_NoCalcFields
 73932 FlowRelation_Condition_AfterCalcFields
+73932 FlowRelation_Condition_NoCalcFields
 73932 FlowRelation_Integer_AfterCalcFields
 73932 FlowRelation_Integer_NoCalcFields
 73934 LoadFields_AfterGet_Assigned
@@ -12445,6 +12446,8 @@
 77532 AC_Attr_TestPermissions_Disabled
 77532 AC_Attr_TestPermissions_NonRestrictive
 77532 AC_Attr_TestPermissions_Restrictive
+78006 UpperLimit_ErrorCode_ThenClear
+78006 UpperLimit_MoreThanOneRange_ErrorCode
 78008 Ties_AscendingFalseThenSetAscending
 78008 Ties_Basic
 78008 Ties_ExplicitPrimaryKeyInKey

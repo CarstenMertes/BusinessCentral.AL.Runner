@@ -159,10 +159,15 @@ pub enum Gate {
     /// A `case` over a Time with a `0T:` label runs from BC 29; on BC 28.5 the server's generated C# for the codeunit does not compile
     /// (types/TestCaseContracts.al:391-416, corpus bump 28). Not consumed yet.
     CaseTimeZeroLabelFrom29,
+    /// A count FlowField whose filter links a BigInteger source field to an Integer field (`Big = field(Id)`) counts from BC 29;
+    /// before, CalcFields raises `The following fields must have the same type` (`DB:TypeMisMatch`)
+    /// (calcfields/lt-bm-flowfield-conversions/BmFlowFieldConversions.al:166-186, corpus bump 28).
+    FlowFieldCountFilterBigIntegerFromIntegerFrom29,
 }
 
 impl Gate {
     pub const ALL: &'static [Gate] = &[
+        Gate::FlowFieldCountFilterBigIntegerFromIntegerFrom29,
         Gate::CaseTimeZeroLabelFrom29,
         Gate::DataTransferAddDestinationFilterFrom28,
         Gate::FlowFieldSumIntegerIntoBigInteger,
@@ -239,6 +244,7 @@ impl Gate {
             | Gate::RecordIsDirtyFrom29
             | Gate::HttpHandlerUnderBlockOutboundFrom29
             | Gate::CaseTimeZeroLabelFrom29
+            | Gate::FlowFieldCountFilterBigIntegerFromIntegerFrom29
             | Gate::HttpBlankHeaderNameIsFormatFrom29 => 29,
             Gate::ReportSaveAsDataItemIdentity
             | Gate::FeatureKeyListChangedFrom28
@@ -266,6 +272,10 @@ impl Gate {
     /// The corpus guards that pin both sides.
     pub fn evidence(self) -> &'static [Evidence] {
         match self {
+            Gate::FlowFieldCountFilterBigIntegerFromIntegerFrom29 => &[Evidence {
+                file: "calcfields/lt-bm-flowfield-conversions/BmFlowFieldConversions.al",
+                lines: "38,95,127,147,155,176,181",
+            }],
             Gate::CaseTimeZeroLabelFrom29 => &[Evidence {
                 file: "types/TestCaseContracts.al",
                 lines: "391,399,416",
@@ -605,10 +615,6 @@ impl Gate {
                 },
             ],
             Gate::ProbedValuesDifferFrom29 => &[
-                Evidence {
-                    file: "calcfields/lt-bm-flowfield-conversions/BmFlowFieldConversions.al",
-                    lines: "38,95,127,147,155,176,181",
-                },
                 Evidence {
                     file: "types/lt-bu-property-conversions/BuPropertyConversions.al",
                     lines: "25,83",

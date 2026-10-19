@@ -617,12 +617,31 @@ impl Builder<'_> {
         // whose joined row is missing or fails the filter is gone, so the join is an inner join in effect
         // (corpus query/lt-outer-joins/P71JoinStatic.al: Join_Left_StaticActive gives 2 of 3 items,
         // Join_Left_StaticZoneBlank gives none; P71FilterCombined.al for a run time filter on top).
+        // A ColumnFilter on a Count column is a filter on the groups (HAVING), not on the joined rows: the join
+        // stays outer and `const(0)` keeps the parents without children
+        // (errors/lt-ms-refusals-133/P133QueryOuterFilters.al:321-323, :361-362, default join and LeftOuterJoin).
+        // Other aggregates with a ColumnFilter on the optional side are not pinned.
+        for c in &self.columns {
+            let item = &self.items[c.item];
+            if item.left_outer && item.parent.is_some() && c.static_filter.is_some() {
+                if let Some(m) = c.method.filter(|m| *m != ir::QueryMethod::Count) {
+                    self.reasons.push(format!(
+                        "column {} has a ColumnFilter on a {m:?} aggregate of an outer-joined dataitem (not pinned)",
+                        c.name
+                    ));
+                }
+            }
+        }
         let filtered: Vec<bool> = self
             .items
             .iter()
             .enumerate()
             .map(|(i, item)| {
-                !item.table_filter.is_empty() || self.columns.iter().any(|c| c.item == i && c.static_filter.is_some())
+                !item.table_filter.is_empty()
+                    || self
+                        .columns
+                        .iter()
+                        .any(|c| c.item == i && c.static_filter.is_some() && c.method.is_none())
             })
             .collect();
         for (item, filtered) in self.items.iter_mut().zip(filtered) {
@@ -833,6 +852,27 @@ table 50001 "U" { fields { field(1; "No."; Code[20]) { } field(2; Amount; Decima
         has(
             "query 50100 Q { elements { dataitem(A; Nowhere) { column(No; \"No.\") { } } } }",
             "outside the workspace",
+        );
+    }
+
+    /// A ColumnFilter on a Count column of the optional side keeps the join outer
+    /// (errors/lt-ms-refusals-133/P133QueryOuterFilters.al:321-323); on another aggregate it is not pinned.
+    #[test]
+    fn a_count_column_filter_keeps_the_join_outer_and_other_aggregates_are_refused() {
+        let l = layout_of(
+            "query 50100 Q { elements { dataitem(A; T) { column(No; \"No.\") { }
+                dataitem(B; U) { DataItemLink = \"No.\" = A.\"No.\"; column(N) { Method = Count; ColumnFilter = N = const(0); } } } } }",
+        );
+        assert_eq!(l.reasons, Vec::<String>::new());
+        assert!(l.query.items[1].left_outer);
+        let l = layout_of(
+            "query 50100 Q { elements { dataitem(A; T) { column(No; \"No.\") { }
+                dataitem(B; U) { DataItemLink = \"No.\" = A.\"No.\"; column(S; Amount) { Method = Sum; ColumnFilter = S = const(0); } } } } }",
+        );
+        assert!(
+            l.reasons.iter().any(|r| r.contains("ColumnFilter on a Sum aggregate")),
+            "{:?}",
+            l.reasons
         );
     }
 

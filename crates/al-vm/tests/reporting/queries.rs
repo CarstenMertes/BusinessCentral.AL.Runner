@@ -1729,3 +1729,167 @@ fn get_filters_with_a_filter_element_after_a_filter_was_set_again_is_refused() {
     );
     assert!(unsupported(r).contains("GetFilters"));
 }
+
+/// The objects of errors/lt-ms-refusals-133/P133QueryOuterFilters.al:8-122.
+const P133: &str = r#"
+table 74054 "P133 Parent"
+{
+    DataClassification = CustomerContent;
+
+    fields
+    {
+        field(1; DocNo; Code[20]) { }
+        field(2; PostDate; Date) { }
+        field(3; Amount; Decimal) { }
+        field(4; Debit; Decimal) { }
+    }
+
+    keys
+    {
+        key(PK; DocNo, PostDate) { Clustered = true; }
+    }
+}
+
+table 74055 "P133 Child"
+{
+    DataClassification = CustomerContent;
+
+    fields
+    {
+        field(1; EntryNo; Integer) { }
+        field(2; DocNo; Code[20]) { }
+        field(3; PostDate; Date) { }
+        field(4; Kind; Integer) { }
+    }
+
+    keys
+    {
+        key(PK; EntryNo) { Clustered = true; }
+    }
+}
+
+query 74056 "P133 Q CountZero Default"
+{
+    QueryType = Normal;
+    OrderBy = ascending(DocNo);
+
+    elements
+    {
+        dataitem(Parent; "P133 Parent")
+        {
+            column(DocNo; DocNo) { }
+            column(PostDate; PostDate) { }
+            column(SumAmount; Amount) { Method = Sum; }
+            column(SumDebit; Debit) { Method = Sum; }
+            column(NoOfParents) { Method = Count; }
+            dataitem(Child; "P133 Child")
+            {
+                DataItemLink = DocNo = Parent.DocNo, PostDate = Parent.PostDate;
+                column(NoOfChildren)
+                {
+                    ColumnFilter = NoOfChildren = const(0);
+                    Method = Count;
+                }
+            }
+        }
+    }
+}
+
+query 74057 "P133 Q CountZero Left"
+{
+    QueryType = Normal;
+    OrderBy = ascending(DocNo);
+
+    elements
+    {
+        dataitem(Parent; "P133 Parent")
+        {
+            column(DocNo; DocNo) { }
+            column(PostDate; PostDate) { }
+            column(SumAmount; Amount) { Method = Sum; }
+            column(NoOfParents) { Method = Count; }
+            dataitem(Child; "P133 Child")
+            {
+                DataItemLink = DocNo = Parent.DocNo, PostDate = Parent.PostDate;
+                SqlJoinType = LeftOuterJoin;
+                column(NoOfChildren)
+                {
+                    ColumnFilter = NoOfChildren = const(0);
+                    Method = Count;
+                }
+            }
+        }
+    }
+}
+
+query 74058 "P133 Q CountPositive Left"
+{
+    QueryType = Normal;
+    OrderBy = ascending(DocNo);
+
+    elements
+    {
+        dataitem(Parent; "P133 Parent")
+        {
+            column(DocNo; DocNo) { }
+            column(PostDate; PostDate) { }
+            column(NoOfParents) { Method = Count; }
+            dataitem(Child; "P133 Child")
+            {
+                DataItemLink = DocNo = Parent.DocNo, PostDate = Parent.PostDate;
+                SqlJoinType = LeftOuterJoin;
+                column(NoOfChildren)
+                {
+                    ColumnFilter = NoOfChildren = filter(> 0);
+                    Method = Count;
+                }
+            }
+        }
+    }
+}
+"#;
+
+fn run_p133(body: &str) -> Result<Value, Signal> {
+    let src = format!("{P133}\ncodeunit 50100 C {{ {body} }}");
+    al_testkit::run_in(&src, "C", "F")
+}
+
+const P133_SEED: &str = "
+    procedure P(DocNo: Code[20]; Amount: Decimal)
+    var R: Record \"P133 Parent\";
+    begin
+        R.DocNo := DocNo; R.PostDate := DMY2Date(1, 1, 2024); R.Amount := Amount; R.Debit := Amount / 10; R.Insert();
+    end;
+    procedure K(EntryNo: Integer; DocNo: Code[20]; Day: Integer)
+    var R: Record \"P133 Child\";
+    begin
+        R.EntryNo := EntryNo; R.DocNo := DocNo; R.PostDate := DMY2Date(Day, 1, 2024); R.Kind := 1; R.Insert();
+    end;
+    procedure Seed()
+    begin
+        P('D1', 10); P('D2', 20); P('D3', 30); P('D4', 40);
+        K(1, 'D1', 1); K(2, 'D1', 1); K(3, 'D2', 1); K(4, 'D4', 2);
+    end;
+";
+
+// A Count column on the outer-joined child with ColumnFilter = const(0) keeps the parents that have
+// no child, with the default join type and with LeftOuterJoin spelled out
+// (errors/lt-ms-refusals-133/P133QueryOuterFilters.al:321-323, :361-362).
+#[test]
+fn count_zero_column_filter_on_the_outer_child_keeps_the_parents_without_children() {
+    let r = run_p133(&format!(
+        "{P133_SEED}
+        procedure F(): Text
+        var D: Query \"P133 Q CountZero Default\"; L: Query \"P133 Q CountZero Left\"; s: Text;
+        begin
+            Seed();
+            D.Open();
+            while D.Read() do s += D.DocNo + ':' + Format(D.NoOfParents) + ',' + Format(D.NoOfChildren) + ',' + Format(D.SumAmount) + ' ';
+            s += '|';
+            L.Open();
+            while L.Read() do s += L.DocNo + ':' + Format(L.NoOfParents) + ',' + Format(L.NoOfChildren) + ',' + Format(L.SumAmount) + ' ';
+            exit(s);
+        end;"
+    ));
+    assert_eq!(text(r), "D3:1,0,30 D4:1,0,40 |D3:1,0,30 D4:1,0,40 ");
+}

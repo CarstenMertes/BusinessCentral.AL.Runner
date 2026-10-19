@@ -637,6 +637,7 @@ fn page_extension_triggers(ws: &Workspace, oi: usize, obj: &ast::Object, out: &m
 
 /// The properties of a codeunit (docs: Codeunit object properties). A name outside the list is AL0124
 /// (corpus must-not-compile 0305, 0310, 0312, over the 3,500 codeunit properties of the corpus: none else occurs).
+// behavior-coverage: validation-only begin
 const CODEUNIT_PROPERTIES: &[&str] = &[
     "Access",
     "Description",
@@ -655,9 +656,11 @@ const CODEUNIT_PROPERTIES: &[&str] = &[
     "TestIsolation",
     "TestPermissions",
 ];
+// behavior-coverage: validation-only end
 
 /// Properties that belong to another object type, per object type (corpus 0306 to 0309). Only pinned
 /// pairs and their plain siblings are listed; other pairs are not judged.
+// behavior-coverage: validation-only begin
 fn foreign_properties(kind: ObjKind) -> &'static [&'static str] {
     match kind {
         ObjKind::Table => &["ApplicationArea", "PageType", "SourceTable", "TableNo", "Editable"],
@@ -666,6 +669,7 @@ fn foreign_properties(kind: ObjKind) -> &'static [&'static str] {
         _ => &[],
     }
 }
+// behavior-coverage: validation-only end
 
 /// AL0124 for an object property the object type does not have (corpus must-not-compile 0305 to 0310,
 /// 0312) and for `InitValue` on a page field (0315, a property of table fields).
@@ -702,6 +706,7 @@ fn object_properties(ws: &Workspace, oi: usize, obj: &ast::Object, out: &mut Vec
 /// object types. A codeunit has more triggers than OnRun (install, upgrade and test runner codeunits, corpus
 /// install/TestInstallSeeder.al and events/lt-trigger-pins/PTestRunnerTriggers.al:107, :116), so only the
 /// triggers of tables, pages, reports and xmlports are judged there.
+// behavior-coverage: validation-only begin
 fn foreign_triggers(kind: ObjKind) -> &'static [&'static str] {
     match kind {
         ObjKind::Codeunit => &[
@@ -751,6 +756,7 @@ fn foreign_triggers(kind: ObjKind) -> &'static [&'static str] {
         _ => &[],
     }
 }
+// behavior-coverage: validation-only end
 
 /// AL0162 for a trigger the object type does not have (corpus must-not-compile 0316 to 0321).
 fn object_triggers(ws: &Workspace, oi: usize, obj: &ast::Object, out: &mut Vec<Diagnostic>) {

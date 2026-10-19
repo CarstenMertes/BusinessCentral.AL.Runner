@@ -6205,15 +6205,6 @@
           "site": null
         },
         {
-          "corpus_uses": 2,
-          "group": "codeunit",
-          "ms_uses": 2,
-          "name": "TestIsolation",
-          "pinned": true,
-          "runtime_reads": true,
-          "site": "codeunit/lt-u-test-isolation/UTestIsolation.al:91"
-        },
-        {
           "corpus_uses": 1,
           "group": "controladdin",
           "ms_uses": 2,
@@ -6437,6 +6428,15 @@
           "pinned": true,
           "runtime_reads": true,
           "site": "pages/lt-report-page-properties/06-xmlport-tablesep.al:12"
+        },
+        {
+          "corpus_uses": 2,
+          "group": "codeunit",
+          "ms_uses": 2,
+          "name": "TestIsolation",
+          "pinned": true,
+          "runtime_reads": false,
+          "site": "codeunit/lt-u-test-isolation/UTestIsolation.al:91"
         },
         {
           "corpus_uses": 1,
@@ -11389,15 +11389,6 @@
           "site": "pages/lt-report-page-properties/06-xmlport-linkforce.al:24"
         },
         {
-          "corpus_uses": 6,
-          "group": "codeunit",
-          "ms_uses": 0,
-          "name": "TestHttpRequestPolicy",
-          "pinned": true,
-          "runtime_reads": true,
-          "site": "network/TestHttpClientBlockNoHandler.al:26"
-        },
-        {
           "corpus_uses": 2424,
           "group": "codeunit",
           "ms_uses": 0,
@@ -12521,6 +12512,15 @@
           "pinned": true,
           "runtime_reads": true,
           "site": "xmlport/lt-y-xmlport-props/YXmlPortProps.al:368"
+        },
+        {
+          "corpus_uses": 6,
+          "group": "codeunit",
+          "ms_uses": 0,
+          "name": "TestHttpRequestPolicy",
+          "pinned": true,
+          "runtime_reads": false,
+          "site": "network/TestHttpClientBlockNoHandler.al:26"
         },
         {
           "corpus_uses": 1,
@@ -17786,7 +17786,7 @@
         "pinned": false,
         "scope": "",
         "site": null,
-        "state": "implemented"
+        "state": "unknown"
       },
       {
         "area": "properties",
@@ -17859,7 +17859,7 @@
         "pinned": true,
         "scope": "",
         "site": "network/TestHttpClientBlockNoHandler.al:26",
-        "state": "implemented"
+        "state": "unknown"
       },
       {
         "area": "properties",
@@ -17874,7 +17874,7 @@
         "pinned": true,
         "scope": "",
         "site": "codeunit/lt-u-test-isolation/UTestIsolation.al:91",
-        "state": "implemented"
+        "state": "unknown"
       },
       {
         "area": "properties",

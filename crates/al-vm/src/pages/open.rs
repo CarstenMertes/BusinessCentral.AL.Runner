@@ -193,6 +193,16 @@ impl Session {
             .iter()
             .find(|(k, _)| k.eq_ignore_ascii_case("SourceTableView"))
             .map(|(_, v)| crate::views::property_view(v.trim()));
+        // A request page's SourceTableView leaves its `Rec` without the view's filter: OnOpenPage reads `VERSION(1)
+        // SORTING(DocNo,LineNo)`, no filters and every row (report/lt-y-request-page/YRequestPageTests.al:72-87, a view that sorts by
+        // the primary key and filters with a CONST). Another sorting or another kind of filter is not pinned.
+        let source_view = match source_view {
+            Some(view) if self.is_request_page(st) && has_source => {
+                self.request_source_view_pinned(st, &view)?;
+                None
+            }
+            other => other,
+        };
         // The part control's SubPageView comes first: its filters land in the link group, its
         // sorting and order set the key and direction. The part page's own SourceTableView then
         // sets only the halves it names (corpus handlers/TestPartOwnSortVsSubPageView.al:1-45).
@@ -553,6 +563,30 @@ impl Session {
         self.require_open(st)?;
         let mapped = self.close_action(st, action);
         let action = mapped.as_str();
+        // Cancel on a request page whose ModifyAllowed is false drops a changed row: no error, the stored row unchanged
+        // (report/lt-y-request-page/YRequestPageTests.al:130-162, `modify = ok changed` then `rows` as seeded). With ModifyAllowed
+        // true, or at OK, what happens to a changed row of a request page is not pinned.
+        if self.is_request_page(st) && self.has_source(st) {
+            let changed = {
+                let s = st.borrow();
+                s.dirty && s.cursor == Cursor::Row
+            };
+            if changed {
+                let rec = self.page_rec(st);
+                let differs = !Self::same_values(&rec.borrow().fields, &self.page_xrec_fields(st));
+                let object = st.borrow().object as usize;
+                if differs
+                    && (action != "Cancel"
+                        || st.borrow().draft
+                        || !flag_denied(&self.engine(), object, "ModifyAllowed")?)
+                {
+                    return unsupported(format!(
+                        "{action} on a request page with a changed row (only Cancel with ModifyAllowed = false is pinned)"
+                    ));
+                }
+                st.borrow_mut().dirty = false;
+            }
+        }
         if st.borrow().refused {
             // The refused line was reported when it was left; closing drops it.
             let mut s = st.borrow_mut();

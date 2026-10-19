@@ -7,6 +7,16 @@ impl al_builtins::format::FormatCtx for Session {
     fn region(&self) -> Option<String> {
         self.report.format_region.clone()
     }
+    /// `OnInitReport` of a report with the `FormatRegion` property: the corpus reports format their values only in
+    /// `OnAfterGetRecord` (report/lt-y-report-props/YReports.al:32-48), so whether `Format` there already follows the
+    /// region is not pinned (docs/probes-needed.md).
+    fn region_unpinned(&self) -> Option<String> {
+        self.report.region_in_init.as_ref().map(|r| {
+            format!(
+                "in OnInitReport of a report with FormatRegion = '{r}' (whether it follows the region is not pinned)"
+            )
+        })
+    }
     /// The caption a value declares, else its name (types/TestEnumCaption.al).
     fn enum_name(&self, id: u32, value: i32) -> String {
         self.note_enum(id);

@@ -143,8 +143,9 @@ impl Session {
 
     /// `MakeIntFilter` and `MakeTimeFilter`: a filter text of one word of letters (`abc`) that does not read is asked about as
     /// `MakeDateFilter` asks about a piece: once (m1), again with a changed text that does not read (m2), and the text a
-    /// subscriber repairs is parsed instead (m3) (events/lt-platform-triggers/PtObserve.al:Bad_Int, Bad_Time). Another text does
-    /// not raise the event, as `MakeDateFilter` does not for a shape it does not pin (docs/probes-needed.md).
+    /// subscriber repairs is parsed instead (m3) (events/lt-platform-triggers/PtObserve.al:Bad_Int, Bad_Time). Whether BC raises
+    /// the event for another text that does not evaluate (`1..x`, `1.5`, `*`) is not pinned: with a subscriber present it is
+    /// refused rather than answered with the evaluate error (docs/probes-needed.md).
     pub(crate) fn repair_word_filter_text(
         &mut self,
         event: &'static str,
@@ -154,8 +155,20 @@ impl Session {
     ) -> Result<Option<String>, Signal> {
         let t = text.trim();
         if !al_builtins::filter::letters_only(t) {
-            return Ok(None);
+            return Err(Signal::Unsupported(format!(
+                "SetFilter of `{t}`, which does not evaluate, with {} subscribers (whether BC raises the event for it is not pinned)",
+                event_name(event)
+            )));
         }
         self.repair_piece(event, param, t, reads)
+    }
+}
+
+/// The event's name as AL code spells it.
+fn event_name(event: &str) -> &'static str {
+    match event {
+        "makeintfilter" => "MakeIntFilter",
+        "maketimefilter" => "MakeTimeFilter",
+        _ => "Filter Helper Triggers",
     }
 }

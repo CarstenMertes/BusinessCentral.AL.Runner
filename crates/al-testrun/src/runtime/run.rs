@@ -238,6 +238,7 @@ pub(crate) fn run_codeunit_core(
         }
     };
     session.in_test_codeunit = true;
+    session.test_object = Some(object);
     // What BC's AL test runner does around each test method (runner_reset.rs). A scratch run has no runner.
     let runner = if execute {
         runner_reset::RunnerReset::default()

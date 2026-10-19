@@ -270,8 +270,20 @@ impl Session {
             }
             // A page that is not a tree has nothing to expand (docs only; the corpus calls them,
             // TestPageAdvanced.al:104, :283, asserting nothing about the answer).
+            // On a tree (a repeater with ShowAsTree) Expand shows the rows below the current one
+            // (pages/lt-ah-pages/AhPageTests.al:986-989, :1066-1068); the client keeps the rows collapsed, so it refuses.
             PageMethod::Expand => {
                 self.require_open(st)?;
+                let engine = self.engine();
+                let tree = page_of(&engine, st).controls.iter().any(|c| {
+                    c.kind == ir::ControlKind::Repeater
+                        && matches!(c.prop("showastree"), Some(ir::PropVal::Lit(v)) if unquote(v).eq_ignore_ascii_case("true"))
+                });
+                if tree {
+                    return unsupported(
+                        "Expand on a page whose repeater has ShowAsTree: the test client does not expand rows",
+                    );
+                }
                 Ok(Value::Null)
             }
             PageMethod::IsExpanded => {

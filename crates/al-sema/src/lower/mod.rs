@@ -167,6 +167,12 @@ pub(crate) struct Lowerer<'a> {
     /// Declared text of Label variables, by lowercase name; reads lower to that constant.
     global_labels: HashMap<String, String>,
     local_labels: HashMap<String, String>,
+    /// Attributes of variables the lowering reads (`shared::var_attribute_names`), by lowercase name.
+    global_var_attrs: HashMap<String, Vec<String>>,
+    local_var_attrs: HashMap<String, Vec<String>>,
+    /// The reasons `place` gave for a variable whose attribute is not supported: a statement that fails with one of them
+    /// refuses when it runs (`stmt_plain`) instead of refusing its routine.
+    run_refusals: std::collections::HashSet<String>,
     /// The record of each `with` statement being lowered, by the start offset of the statement.
     with_places: HashMap<usize, ir::Place>,
     reasons: Vec<String>,

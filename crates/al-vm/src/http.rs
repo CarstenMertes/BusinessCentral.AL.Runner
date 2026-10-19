@@ -65,7 +65,14 @@ impl Session {
     pub(crate) fn http_send_impl(&mut self, request: HttpOutgoing) -> Result<TestHttpResponseState, Signal> {
         let policy = self.http_policy;
         let bound = self.has_http_handler();
-        if !bound {
+        // Before BC 29 a bound handler does not answer under BlockOutboundRequests: the request raises as with no handler
+        // (al-language-onprem/session/PZHttpBlock.al:54-57).
+        let blocked_anyway =
+            policy == Some("BlockOutboundRequests") && !self.has(al_version::Gate::HttpHandlerUnderBlockOutboundFrom29);
+        if blocked_anyway && bound {
+            self.http_handlers_count_as_run();
+        }
+        if !bound || blocked_anyway {
             return match policy {
                 Some(p @ ("BlockOutboundRequests" | "AllowOutboundFromHandler")) => raise(
                     format!(
@@ -86,7 +93,10 @@ impl Session {
         if request.joined_with_base {
             assume(Assumption::HttpRelativeRequestPath);
         }
-        assume(Assumption::HttpHandlerEveryVersion);
+        // Under BlockOutboundRequests the BC 29 answer is pinned (PZHttpBlock.al:54-55); elsewhere it is assumed.
+        if policy != Some("BlockOutboundRequests") {
+            assume(Assumption::HttpHandlerEveryVersion);
+        }
         let (path, params) = split_url(&request.url);
         let query = Value::Dictionary(Rc::new(RefCell::new(
             params

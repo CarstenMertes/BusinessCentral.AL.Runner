@@ -146,6 +146,9 @@ pub enum Gate {
     /// compiles on 28 and later and has no BC 27 counterpart (al-language-onprem/lt-file-type/FileQProbes.al:92, corpus bump 24).
     /// Not consumed yet; the test is refused by the runtime today.
     FileDownloadWithoutClientFrom28,
+    /// Under `TestHttpRequestPolicy = BlockOutboundRequests` an [HttpClientHandler] answers the request from BC 29; before, the
+    /// request raises the unhandled-request error although a handler is bound (al-language-onprem/session/PZHttpBlock.al:54-57).
+    HttpHandlerUnderBlockOutboundFrom29,
 }
 
 impl Gate {
@@ -192,6 +195,7 @@ impl Gate {
         Gate::Base64TextIsWindows1252From28,
         Gate::TestFieldTypedValueTexts,
         Gate::FileDownloadWithoutClientFrom28,
+        Gate::HttpHandlerUnderBlockOutboundFrom29,
     ];
 
     /// The first BC major with the new behaviour.
@@ -219,7 +223,8 @@ impl Gate {
             | Gate::ModuleInfoAndNavAppResourceMethodsFrom29
             | Gate::DataSourceAndTestHandlerContextFrom29
             | Gate::IsolatedStorageIsolationLevelOverloadsFrom29
-            | Gate::RecordIsDirtyFrom29 => 29,
+            | Gate::RecordIsDirtyFrom29
+            | Gate::HttpHandlerUnderBlockOutboundFrom29 => 29,
             Gate::ReportSaveAsDataItemIdentity
             | Gate::FeatureKeyListChangedFrom28
             | Gate::FromBase64InvalidTextRaises
@@ -572,6 +577,10 @@ impl Gate {
                     lines: "486,532,538,544",
                 },
             ],
+            Gate::HttpHandlerUnderBlockOutboundFrom29 => &[Evidence {
+                file: "../al-language-onprem/session/PZHttpBlock.al",
+                lines: "54-57",
+            }],
             Gate::FileDownloadWithoutClientFrom28 => &[Evidence {
                 file: "../al-language-onprem/lt-file-type/FileQProbes.al",
                 lines: "92",

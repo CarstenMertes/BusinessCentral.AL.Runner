@@ -503,6 +503,14 @@ pub(crate) const KEEP_FILLED: &[(u32, u32, &str)] = &[
         10,
         "events/lt-event-subscription-trigger-rows/EventSubscriptionTriggerRows.al:163",
     ),
+    // Report Metadata TransactionType: `HasColumn` formats the value only to compare it with 'nofield'
+    // (report/lt-reportext-layout-relations/ReportMetadataRelations.al:43-46, :147;
+    // ReportMeta_TwoLayouts_RowAndColumnsPresent in codeunit 71698).
+    (
+        2_000_000_139,
+        11,
+        "report/lt-reportext-layout-relations/ReportMetadataRelations.al:147",
+    ),
 ];
 
 /// Leaves every column of a table of `PINNED_COLUMNS` that the list does not name, outside the

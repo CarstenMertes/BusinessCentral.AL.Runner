@@ -227,10 +227,12 @@ fn a_column_nothing_pins_is_refused_where_code_reads_it() {
     let o = outcomes(
         r#"codeunit 50000 "T" { Subtype = Test;
   [Test] procedure ReadsAPinnedColumn() var F: Record Field; begin F.SetRange(TableNo, 50000); if F.IsEmpty() then; end;
-  [Test] procedure ReadsAnUnpinnedColumn() var F: Record Field; L: Text; begin L := F.ExternalName; end; }"#,
+  [Test] procedure ReadsAnUnpinnedColumn() var R: Record "Report Metadata"; L: Integer; begin L := R.MaxRows; end; }"#,
     );
+    // The corpus pins every Field column up to 28 (record/PZFieldObsoleteRows.al:39-58); Report Metadata
+    // MaxRows (19) is read by no corpus test.
     let why = not_run(&o, "ReadsAnUnpinnedColumn");
-    assert!(why.contains("column 10 of platform table 'Field'"), "{why}");
+    assert!(why.contains("column 19 of platform table 'Report Metadata'"), "{why}");
     assert!(
         !matches!(o.iter().find(|(n, _)| n == "ReadsAPinnedColumn").map(|(_, o)| o), Some(Outcome::NotRun(w)) if w.contains("column")),
         "{o:?}"

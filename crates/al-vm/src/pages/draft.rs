@@ -10,11 +10,26 @@ impl Session {
         let engine = self.engine();
         let object = st.borrow().object as usize;
         let insert_denied = flag_denied(&engine, object, "InsertAllowed")?;
+        // A request page is pinned only where InsertAllowed is false: the error names the report and `Id = 0`
+        // (report/lt-y-request-page/YRequestPageTests.al:161). Which row a new line gets and whether the request page writes the
+        // row it leaves are not pinned (the AutoSplitKey cases of the same file go by rules the corpus does not settle).
+        if self.is_request_page(st) && !insert_denied {
+            let changed = {
+                let s = st.borrow();
+                s.dirty && !s.draft && s.cursor == Cursor::Row
+            };
+            return unsupported(if changed {
+                "New() on a request page after a changed row (whether the request page writes the row it leaves is not pinned)"
+            } else {
+                "New() on a request page that allows inserts (the new line is not pinned)"
+            });
+        }
         if insert_denied {
             // The text names the page and its id, the code is DB:ClientInsertDenied (corpus
             // pageext/lt-z-page-ext-props/ZPageExtProps.al:ZInsertAllowed_1, _4).
             let o = &engine.program.objects[object];
-            let Some(id) = o.id else {
+            let id = if self.is_request_page(st) { Some(0) } else { o.id };
+            let Some(id) = id else {
                 return unsupported("New() on a page without an id denied by InsertAllowed (the text is not pinned)");
             };
             return Err(error_code(

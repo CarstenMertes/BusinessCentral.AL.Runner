@@ -1,5 +1,5 @@
 {
-  "corpus_commit": "db082fc475847efdfa0a7d4cd10acc832a05555a",
+  "corpus_commit": "0f48ad6685ef280a2668b12bcaaf994ee280ae63",
   "language": {
     "bc": "27-29",
     "implemented": 1498,
@@ -4791,10 +4791,10 @@
         "id": "HttpClient.UseDefaultNetworkWindowsAuthentication#1",
         "ms_uses": 0,
         "name": "UseDefaultNetworkWindowsAuthentication",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
         "sig": "()",
-        "site": null,
+        "site": "must-not-compile/cases/0651-httpclient-defaultnetworkwindowsauth-cloud.al:12",
         "state": "refused",
         "type": "HttpClient"
       },
@@ -4823,10 +4823,10 @@
         "id": "HttpClient.UseServerCertificateValidation#1",
         "ms_uses": 0,
         "name": "UseServerCertificateValidation",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
         "sig": "(Boolean)",
-        "site": null,
+        "site": "network/lt-httpclient-server-certificate/HttpClientServerCertificateValidation.al:21",
         "state": "refused",
         "type": "HttpClient"
       },
@@ -4839,10 +4839,10 @@
         "id": "HttpClient.UseWindowsAuthentication#1",
         "ms_uses": 0,
         "name": "UseWindowsAuthentication",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
         "sig": "(SecretText, SecretText, [SecretText])",
-        "site": null,
+        "site": "must-not-compile/cases/0653-httpclient-windowsauth-secrettext-cloud.al:12",
         "state": "refused",
         "type": "HttpClient"
       },
@@ -4855,10 +4855,10 @@
         "id": "HttpClient.UseWindowsAuthentication#2",
         "ms_uses": 0,
         "name": "UseWindowsAuthentication",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
         "sig": "(Text, Text, [Text])",
-        "site": null,
+        "site": "must-not-compile/cases/0652-httpclient-windowsauth-text-cloud.al:12",
         "state": "refused",
         "type": "HttpClient"
       },
@@ -8477,10 +8477,10 @@
         "id": "JsonObject.WriteWithSecretsTo#2",
         "ms_uses": 0,
         "name": "WriteWithSecretsTo",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
         "sig": "(Dictionary of [Text, SecretText], var SecretText)",
-        "site": null,
+        "site": "json/lt-json-select-secrets/WriteWithSecrets.al:107",
         "state": "refused",
         "type": "JsonObject"
       },
@@ -8493,10 +8493,10 @@
         "id": "JsonObject.WriteWithSecretsTo#1",
         "ms_uses": 0,
         "name": "WriteWithSecretsTo",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
         "sig": "(Text, SecretText, var SecretText)",
-        "site": null,
+        "site": "json/lt-json-select-secrets/WriteWithSecrets.al:40",
         "state": "refused",
         "type": "JsonObject"
       },
@@ -10316,10 +10316,10 @@
         "id": "Media.ExportFile#1",
         "ms_uses": 8,
         "name": "ExportFile",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
         "sig": "(Text)",
-        "site": null,
+        "site": "media/MediaFiles.al:67",
         "state": "refused",
         "type": "Media"
       },
@@ -10367,7 +10367,7 @@
         "pinned": true,
         "scope": "",
         "sig": "()",
-        "site": "media/TestMediaPngImport.al:79",
+        "site": "media/MediaFiles.al:107",
         "state": "implemented",
         "type": "Media"
       },
@@ -10383,7 +10383,7 @@
         "pinned": true,
         "scope": "",
         "sig": "(Text, Text, [Text])",
-        "site": "session/PZMediaImportFile.al:31",
+        "site": "media/MediaFiles.al:79",
         "state": "implemented",
         "type": "Media"
       },
@@ -10396,10 +10396,10 @@
         "id": "Media.ImportStream#2",
         "ms_uses": 1,
         "name": "ImportStream",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
         "sig": "(InStream, Text, Text, Text)",
-        "site": null,
+        "site": "must-not-compile/cases/0642-media-importstream-filename-all-majors.al:16",
         "state": "implemented",
         "type": "Media"
       },
@@ -10447,7 +10447,7 @@
         "pinned": true,
         "scope": "",
         "sig": "()",
-        "site": "media/TestMediaSetPersistence.al:69",
+        "site": "media/MediaFiles.al:232",
         "state": "implemented",
         "type": "MediaSet"
       },
@@ -10460,10 +10460,10 @@
         "id": "MediaSet.ExportFile#1",
         "ms_uses": 2,
         "name": "ExportFile",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
         "sig": "(Text)",
-        "site": null,
+        "site": "media/MediaFiles.al:73",
         "state": "refused",
         "type": "MediaSet"
       },
@@ -10495,7 +10495,7 @@
         "pinned": true,
         "scope": "",
         "sig": "(Text, Text, [Text])",
-        "site": "session/PZMediaImportFile.al:37",
+        "site": "media/MediaFiles.al:229",
         "state": "implemented",
         "type": "MediaSet"
       },
@@ -12280,7 +12280,7 @@
         "pinned": true,
         "scope": "",
         "sig": "()",
-        "site": "error-handling/TestAssertErrorRollbackNestedTransaction.al:44",
+        "site": "codeunit/lt-x-object-props/XObjectProps.al:480",
         "state": "implemented",
         "type": "Query"
       },
@@ -12376,7 +12376,7 @@
         "pinned": true,
         "scope": "",
         "sig": "()",
-        "site": "error-handling/TestAssertErrorRollbackNestedTransaction.al:42",
+        "site": "codeunit/lt-x-object-props/XObjectProps.al:477",
         "state": "implemented",
         "type": "Query"
       },
@@ -12392,7 +12392,7 @@
         "pinned": true,
         "scope": "",
         "sig": "()",
-        "site": "error-handling/TestAssertErrorRollbackNestedTransaction.al:43",
+        "site": "codeunit/lt-x-object-props/XObjectProps.al:478",
         "state": "implemented",
         "type": "Query"
       },
@@ -12421,10 +12421,10 @@
         "id": "Query.SaveAsCsv#3",
         "ms_uses": 0,
         "name": "SaveAsCsv",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
         "sig": "(Integer, Text, [Integer], [Text])",
-        "site": null,
+        "site": "query/QuerySaveAsFile.al:139",
         "state": "refused",
         "type": "Query"
       },
@@ -12453,10 +12453,10 @@
         "id": "Query.SaveAsCsv#1",
         "ms_uses": 0,
         "name": "SaveAsCsv",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
         "sig": "(Text, [Integer], [Text])",
-        "site": null,
+        "site": "query/QuerySaveAsFile.al:84",
         "state": "refused",
         "type": "Query"
       },
@@ -12517,10 +12517,10 @@
         "id": "Query.SaveAsXml#3",
         "ms_uses": 0,
         "name": "SaveAsXml",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
         "sig": "(Integer, Text)",
-        "site": null,
+        "site": "query/QuerySaveAsFile.al:167",
         "state": "refused",
         "type": "Query"
       },
@@ -12549,10 +12549,10 @@
         "id": "Query.SaveAsXml#1",
         "ms_uses": 0,
         "name": "SaveAsXml",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
         "sig": "(Text)",
-        "site": null,
+        "site": "query/QuerySaveAsFile.al:165",
         "state": "refused",
         "type": "Query"
       },
@@ -16928,7 +16928,7 @@
         "pinned": true,
         "scope": "",
         "sig": "()",
-        "site": "lt-o-system-onprem/OBlobAndSession.al:171",
+        "site": "json/lt-json-select-secrets/WriteWithSecrets.al:26",
         "state": "implemented",
         "type": "SecretText"
       },
@@ -18368,7 +18368,7 @@
         "pinned": true,
         "scope": "",
         "sig": "([Integer])",
-        "site": "events/lt-global-triggers-statements/P114GlobalTriggerEvents.al:117",
+        "site": "codeunit/lt-x-object-props/XObjectProps.al:373",
         "state": "implemented",
         "type": "System"
       },
@@ -18640,7 +18640,7 @@
         "pinned": true,
         "scope": "",
         "sig": "(Integer)",
-        "site": "misc/lt-probes-needed-1/PnASystemFields.al:127",
+        "site": "lt-al-dotnet/AlTimerTriggers.al:140",
         "state": "implemented",
         "type": "System"
       },
@@ -18944,7 +18944,7 @@
         "pinned": true,
         "scope": "",
         "sig": "()",
-        "site": "pages/lt-page-runtime/P82TestField.al:55",
+        "site": "pages/lt-an-testpage-640/AnTestPageTests.al:228",
         "state": "implemented",
         "type": "TestField"
       },
@@ -27946,7 +27946,7 @@
       }
     ],
     "overloads": 1750,
-    "pinned": 1688,
+    "pinned": 1701,
     "refused": 224,
     "runtime_only": [
       "ErrorInfo.Create#3",
@@ -27983,7 +27983,7 @@
     "unknown": 28
   },
   "overloads": 1732,
-  "pinned": 1674,
+  "pinned": 1687,
   "types": [
     {
       "methods": [
@@ -29939,9 +29939,9 @@
         },
         {
           "id": "HttpClient.UseDefaultNetworkWindowsAuthentication#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "HttpClient.UseDefaultNetworkWindowsAuthentication inst () -> Boolean?",
-          "site": null
+          "site": "must-not-compile/cases/0651-httpclient-defaultnetworkwindowsauth-cloud.al:12"
         },
         {
           "id": "HttpClient.UseResponseCookies#1",
@@ -29951,25 +29951,25 @@
         },
         {
           "id": "HttpClient.UseServerCertificateValidation#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "HttpClient.UseServerCertificateValidation inst (UseServerCertificateValidation: Boolean) -> Boolean?",
-          "site": null
+          "site": "network/lt-httpclient-server-certificate/HttpClientServerCertificateValidation.al:21"
         },
         {
           "id": "HttpClient.UseWindowsAuthentication#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "HttpClient.UseWindowsAuthentication inst (UserName: SecretText, Password: SecretText, ?Domain: SecretText) -> Boolean?",
-          "site": null
+          "site": "must-not-compile/cases/0653-httpclient-windowsauth-secrettext-cloud.al:12"
         },
         {
           "id": "HttpClient.UseWindowsAuthentication#2",
-          "pinned": false,
+          "pinned": true,
           "signature": "HttpClient.UseWindowsAuthentication inst (UserName: Text, Password: Text, ?Domain: Text) -> Boolean?",
-          "site": null
+          "site": "must-not-compile/cases/0652-httpclient-windowsauth-text-cloud.al:12"
         }
       ],
       "overloads": 18,
-      "pinned": 14,
+      "pinned": 18,
       "type": "HttpClient"
     },
     {
@@ -31370,19 +31370,19 @@
         },
         {
           "id": "JsonObject.WriteWithSecretsTo#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "JsonObject.WriteWithSecretsTo inst (Path: Text, Secret: SecretText, var Result: SecretText) -> Boolean?",
-          "site": null
+          "site": "json/lt-json-select-secrets/WriteWithSecrets.al:40"
         },
         {
           "id": "JsonObject.WriteWithSecretsTo#2",
-          "pinned": false,
+          "pinned": true,
           "signature": "JsonObject.WriteWithSecretsTo inst (Secrets: Dictionary of [Text, SecretText], var Result: SecretText) -> Boolean?",
-          "site": null
+          "site": "json/lt-json-select-secrets/WriteWithSecrets.al:107"
         }
       ],
       "overloads": 66,
-      "pinned": 63,
+      "pinned": 65,
       "type": "JsonObject"
     },
     {
@@ -31982,9 +31982,9 @@
       "methods": [
         {
           "id": "Media.ExportFile#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Media.ExportFile inst (Filename: Text) -> Boolean?",
-          "site": null
+          "site": "media/MediaFiles.al:67"
         },
         {
           "id": "Media.ExportStream#1",
@@ -32002,13 +32002,13 @@
           "id": "Media.HasValue#1",
           "pinned": true,
           "signature": "Media.HasValue inst () -> Boolean",
-          "site": "media/TestMediaPngImport.al:79"
+          "site": "media/MediaFiles.al:107"
         },
         {
           "id": "Media.ImportFile#1",
           "pinned": true,
           "signature": "Media.ImportFile inst (Filename: Text, Description: Text, ?MimeType: Text) -> Guid?",
-          "site": "session/PZMediaImportFile.al:31"
+          "site": "media/MediaFiles.al:79"
         },
         {
           "id": "Media.ImportStream#1",
@@ -32018,9 +32018,9 @@
         },
         {
           "id": "Media.ImportStream#2",
-          "pinned": false,
+          "pinned": true,
           "signature": "Media.ImportStream inst (Stream: InStream, Description: Text, MimeType: Text, FileName: Text) -> Guid?",
-          "site": null
+          "site": "must-not-compile/cases/0642-media-importstream-filename-all-majors.al:16"
         },
         {
           "id": "Media.MediaId#1",
@@ -32030,7 +32030,7 @@
         }
       ],
       "overloads": 8,
-      "pinned": 6,
+      "pinned": 8,
       "type": "Media"
     },
     {
@@ -32039,13 +32039,13 @@
           "id": "MediaSet.Count#1",
           "pinned": true,
           "signature": "MediaSet.Count inst () -> Integer",
-          "site": "media/TestMediaSetPersistence.al:69"
+          "site": "media/MediaFiles.al:232"
         },
         {
           "id": "MediaSet.ExportFile#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "MediaSet.ExportFile inst (FilenamePrefix: Text) -> Integer?",
-          "site": null
+          "site": "media/MediaFiles.al:73"
         },
         {
           "id": "MediaSet.FindOrphans#1",
@@ -32057,7 +32057,7 @@
           "id": "MediaSet.ImportFile#1",
           "pinned": true,
           "signature": "MediaSet.ImportFile inst (Filename: Text, Description: Text, ?MimeType: Text) -> Guid?",
-          "site": "session/PZMediaImportFile.al:37"
+          "site": "media/MediaFiles.al:229"
         },
         {
           "id": "MediaSet.ImportStream#1",
@@ -32091,7 +32091,7 @@
         }
       ],
       "overloads": 9,
-      "pinned": 8,
+      "pinned": 9,
       "type": "MediaSet"
     },
     {
@@ -32756,7 +32756,7 @@
           "id": "Query.Close#1",
           "pinned": true,
           "signature": "Query.Close inst ()",
-          "site": "error-handling/TestAssertErrorRollbackNestedTransaction.al:44"
+          "site": "codeunit/lt-x-object-props/XObjectProps.al:480"
         },
         {
           "id": "Query.ColumnCaption#1",
@@ -32792,19 +32792,19 @@
           "id": "Query.Open#1",
           "pinned": true,
           "signature": "Query.Open inst () -> Boolean?",
-          "site": "error-handling/TestAssertErrorRollbackNestedTransaction.al:42"
+          "site": "codeunit/lt-x-object-props/XObjectProps.al:477"
         },
         {
           "id": "Query.Read#1",
           "pinned": true,
           "signature": "Query.Read inst () -> Boolean?",
-          "site": "error-handling/TestAssertErrorRollbackNestedTransaction.al:43"
+          "site": "codeunit/lt-x-object-props/XObjectProps.al:478"
         },
         {
           "id": "Query.SaveAsCsv#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Query.SaveAsCsv inst (FileName: Text, ?Format: Integer, ?FormatArgument: Text) -> Boolean?",
-          "site": null
+          "site": "query/QuerySaveAsFile.al:84"
         },
         {
           "id": "Query.SaveAsCsv#2",
@@ -32814,9 +32814,9 @@
         },
         {
           "id": "Query.SaveAsCsv#3",
-          "pinned": false,
+          "pinned": true,
           "signature": "Query.SaveAsCsv static (Number: Integer, FileName: Text, ?Format: Integer, ?FormatArgument: Text) -> Boolean?",
-          "site": null
+          "site": "query/QuerySaveAsFile.al:139"
         },
         {
           "id": "Query.SaveAsCsv#4",
@@ -32838,9 +32838,9 @@
         },
         {
           "id": "Query.SaveAsXml#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Query.SaveAsXml inst (FileName: Text) -> Boolean?",
-          "site": null
+          "site": "query/QuerySaveAsFile.al:165"
         },
         {
           "id": "Query.SaveAsXml#2",
@@ -32850,9 +32850,9 @@
         },
         {
           "id": "Query.SaveAsXml#3",
-          "pinned": false,
+          "pinned": true,
           "signature": "Query.SaveAsXml static (Number: Integer, FileName: Text) -> Boolean?",
-          "site": null
+          "site": "query/QuerySaveAsFile.al:167"
         },
         {
           "id": "Query.SaveAsXml#4",
@@ -32886,7 +32886,7 @@
         }
       ],
       "overloads": 22,
-      "pinned": 18,
+      "pinned": 22,
       "type": "Query"
     },
     {
@@ -34550,7 +34550,7 @@
           "id": "SecretText.Unwrap#1",
           "pinned": true,
           "signature": "SecretText.Unwrap inst () -> Text",
-          "site": "lt-o-system-onprem/OBlobAndSession.al:171"
+          "site": "json/lt-json-select-secrets/WriteWithSecrets.al:26"
         }
       ],
       "overloads": 3,
@@ -35118,7 +35118,7 @@
           "id": "System.GlobalLanguage#1",
           "pinned": true,
           "signature": "System.GlobalLanguage static (?NewLanguageID: Integer) -> Integer?",
-          "site": "events/lt-global-triggers-statements/P114GlobalTriggerEvents.al:117"
+          "site": "codeunit/lt-x-object-props/XObjectProps.al:373"
         },
         {
           "id": "System.GuiAllowed#1",
@@ -35220,7 +35220,7 @@
           "id": "System.Sleep#1",
           "pinned": true,
           "signature": "System.Sleep static (Duration: Integer)",
-          "site": "misc/lt-probes-needed-1/PnASystemFields.al:127"
+          "site": "lt-al-dotnet/AlTimerTriggers.al:140"
         },
         {
           "id": "System.TemporaryPath#1",
@@ -35355,7 +35355,7 @@
           "id": "TestField.AsDate#1",
           "pinned": true,
           "signature": "TestField.AsDate inst () -> Date",
-          "site": "pages/lt-page-runtime/P82TestField.al:55"
+          "site": "pages/lt-an-testpage-640/AnTestPageTests.al:228"
         },
         {
           "id": "TestField.AsDateTime#1",

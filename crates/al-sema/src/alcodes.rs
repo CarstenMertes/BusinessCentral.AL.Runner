@@ -637,6 +637,8 @@ fn page_extension_triggers(ws: &Workspace, oi: usize, obj: &ast::Object, out: &m
 
 /// The properties of a codeunit (docs: Codeunit object properties). A name outside the list is AL0124
 /// (corpus must-not-compile 0305, 0310, 0312, over the 3,500 codeunit properties of the corpus: none else occurs).
+/// `TestType` compiles on a Test codeunit (corpus al-language/codeunit/lt-x-object-props/XObjectProps.al:11); on a
+/// codeunit without Subtype = Test and with an invalid value it does not (must-not-compile 0781, 0782), which this list does not judge.
 // behavior-coverage: validation-only begin
 const CODEUNIT_PROPERTIES: &[&str] = &[
     "Access",
@@ -655,6 +657,7 @@ const CODEUNIT_PROPERTIES: &[&str] = &[
     "TestHttpRequestPolicy",
     "TestIsolation",
     "TestPermissions",
+    "TestType",
 ];
 // behavior-coverage: validation-only end
 
@@ -2059,6 +2062,17 @@ mod tests {
         // A TryFunction returns a Boolean without declaring one (corpus errors/lt-error-handling/ErTTryBasics.al:81).
         let try_fn = "codeunit 50001 C { [TryFunction] local procedure TryOk() begin end; procedure Run1() var Ok: Boolean; begin Ok := TryOk(); end; }";
         assert!(codes(&[try_fn]).is_empty(), "{:?}", messages(try_fn));
+    }
+
+    // TestType on a Test codeunit compiles on BC (corpus al-language/codeunit/lt-x-object-props/XObjectProps.al:11,
+    // codeunits 75020-75023, every value of the enum: UnitTest, IntegrationTest, Uncategorized, AITest).
+    #[test]
+    fn al0124_testtype_on_a_test_codeunit_compiles() {
+        for value in ["UnitTest", "IntegrationTest", "Uncategorized", "AITest"] {
+            let cu =
+                format!("codeunit 50001 C {{ Subtype = Test; TestType = {value}; RequiredTestIsolation = None; }}");
+            assert!(codes(&[&cu]).is_empty(), "{value}: {:?}", messages(&cu));
+        }
     }
 
     // must-not-compile 0305 to 0310, 0312, 0315: a property the object type does not have.

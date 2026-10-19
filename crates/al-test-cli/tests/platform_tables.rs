@@ -1104,7 +1104,7 @@ codeunit 50000 "T" { Subtype = Test;
 
 /// A column of a table of `PINNED_COLUMNS` that the list does not name is unknown in every row the provider lists
 /// (`platform::mark_unpinned`): a dynamic read of it is refused, the pinned columns of the same row read as before.
-/// Column 7 of Table Metadata is not pinned; ID (1) and Name (3) are (record/TestTableMetadataVirtualTable.al).
+/// Column 14 of Table Metadata is not pinned (column 7 is since corpus bump 27); ID (1) and Name (3) are (record/TestTableMetadataVirtualTable.al).
 #[test]
 fn an_unpinned_column_of_a_listed_platform_table_is_unknown_in_every_row() {
     let o = outcomes(
@@ -1114,7 +1114,7 @@ codeunit 50000 "T" { Subtype = Test;
     M.Get(50005); R.GetTable(M);
     if Format(R.Field(3).Value) <> 'Probe Tbl' then Error('name %1', R.Field(3).Value); end;
   [Test] procedure UnpinnedColumnIsRefused() var M: Record "Table Metadata"; R: RecordRef; T: Text; begin
-    M.Get(50005); R.GetTable(M); T := Format(R.Field(7).Value); end; }"#,
+    M.Get(50005); R.GetTable(M); T := Format(R.Field(14).Value); end; }"#,
     );
     passes(&o, "PinnedColumnReads");
     let why = not_run(&o, "UnpinnedColumnIsRefused");

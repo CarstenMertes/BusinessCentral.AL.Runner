@@ -1538,7 +1538,8 @@ fn a_filter_on_a_field_the_data_item_link_joins_runs() {
 // handlers/TestReportCurrReportLanguage.al:TestReport_SettingCurrReportLanguage_RunsAndIsReadableBack (:58-84):
 // a language set in a trigger reads back at once (1031, not the session's 1033); FormatRegion set in
 // OnPreReport reads back empty for a SaveAs-Xml run. In a report started by Run it is kept and reads back
-// (misc/lt-probes-needed-3/PnC06ReportLanguage.al:Language_SetAndRead), so this test, which uses Run, expects it.
+// (misc/lt-probes-needed-3/PnC06ReportLanguage.al:Language_SetAndRead), except `en-US`, the session's own region, which reads
+// back empty (misc/lt-probes-needed-8/PnH4CurrReport.al:244).
 #[test]
 fn curr_report_language_reads_back_and_format_region_is_kept_by_run() {
     assert_eq!(
@@ -1550,7 +1551,9 @@ fn curr_report_language_reads_back_and_format_region_is_kept_by_run() {
             exit(Format(Log.GetReads()) + '|' + Format(Log.GetLang()) + '|[' + Log.GetRegion() + ']');
         end;"
         ),
-        "1|1031|[en-US]"
+        // `en-US` set in OnPreReport, before the language changes, reads back empty
+        // (misc/lt-probes-needed-8/PnH4CurrReport.al:244 `region=[]`).
+        "1|1031|[]"
     );
 }
 

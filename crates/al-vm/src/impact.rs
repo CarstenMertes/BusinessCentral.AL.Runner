@@ -29,6 +29,9 @@ pub struct Touches {
     pub pages: HashSet<u32>,
     /// Reports that were used.
     pub reports: HashSet<u32>,
+    /// Enums whose values were read: names, ordinals or captions listed, a value formatted, evaluated from text or
+    /// shown on a page, an interface dispatched on a value.
+    pub enums: HashSet<u32>,
 }
 
 impl Touches {
@@ -38,6 +41,7 @@ impl Touches {
             && self.writes.is_empty()
             && self.pages.is_empty()
             && self.reports.is_empty()
+            && self.enums.is_empty()
     }
 }
 
@@ -90,6 +94,16 @@ impl crate::Session {
         }
         if let Some(t) = self.coverage.impact.borrow_mut().as_mut() {
             t.pages.insert(page as u32);
+        }
+    }
+
+    #[inline]
+    pub(crate) fn note_enum(&self, id: u32) {
+        if !self.coverage.impact_on {
+            return;
+        }
+        if let Some(t) = self.coverage.impact.borrow_mut().as_mut() {
+            t.enums.insert(id);
         }
     }
 

@@ -6,7 +6,9 @@
 //!
 //! - `event <kind> <id> <event>` and `event <kind> <id> <event>/<element>`: an event raised (`al_vm::impact`);
 //! - `table <id>`: a record operation on the table; `write <id>`: one that wrote it;
-//! - `page <id>`: a page whose instance was made; `report <id>`: a report that was used.
+//! - `page <id>`: a page whose instance was made; `report <id>`: a report that was used;
+//! - `enum <id>`: an enum whose values were read (names, ordinals, captions, a value formatted or evaluated, an
+//!   interface dispatched on a value).
 
 use al_ir::{ObjKind, Program};
 use al_vm::impact::Touches;
@@ -43,6 +45,7 @@ pub fn keys(program: &Program, t: &Touches) -> Vec<String> {
         (&t.writes, "write"),
         (&t.pages, "page"),
         (&t.reports, "report"),
+        (&t.enums, "enum"),
     ] {
         out.extend(set.iter().filter_map(|&o| object_key(program, what, o)));
     }
@@ -83,8 +86,23 @@ pub enum Matcher {
     /// A test that wrote any table (a `Global Triggers` subscriber to the database events: BC raises them for
     /// every table whose setup asks for them).
     AnyWrite,
+    /// A test that has one of these keys (the tables install code can write).
+    AnyKey(Vec<String>),
     /// The index cannot select for it: the run takes every test codeunit (the reason says what is missing).
     Unsupported(String),
+}
+
+/// What stands for an impact point in the static graph (`impact_static`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Site {
+    /// An event, keyed as `al_vm::events::Registry` keys it: (publisher object, lower-case event name).
+    Event(usize, String),
+    /// Any use of the object: a table, page, report or enum (an index into `program.objects`).
+    Object(usize),
+    /// Any use of one of these tables (the tables install code can write).
+    Tables(Vec<usize>),
+    /// Nothing in the program stands for it; the text says why.
+    None(String),
 }
 
 /// One place where Microsoft's code runs, shows or reads something the extension adds (ADR-043 section 1).
@@ -93,6 +111,8 @@ pub struct ImpactPoint {
     /// What it is, for the report: `subscriber "Ext"."Proc" to codeunit 22 OnBeforeX`.
     pub what: String,
     pub matcher: Matcher,
+    /// What stands for it in the static graph.
+    pub site: Site,
     /// It runs extension code when it is reached (a subscriber, a trigger), so reaching it while the install
     /// baseline runs changes the data every test starts from.
     pub runs_code: bool,
@@ -104,6 +124,7 @@ impl ImpactPoint {
         match &self.matcher {
             Matcher::Key(k) => has(k),
             Matcher::AnyWrite => keys.iter().any(|k| k.starts_with("write ")),
+            Matcher::AnyKey(list) => list.iter().any(|k| has(k)),
             Matcher::Unsupported(_) => true,
         }
     }
@@ -114,19 +135,7 @@ fn routine_label(program: &Program, object: usize, routine: usize) -> String {
     format!("\"{}\".{}", o.name, o.routines[routine].name)
 }
 
-/// The `Global Triggers` events the runtime raises for table writes (`al_vm` globaltriggers.rs).
-const GLOBAL_WRITE_EVENTS: [&str; 10] = [
-    "getglobaltabletriggermask",
-    "getdatabasetabletriggersetup",
-    "onglobalinsert",
-    "onglobalmodify",
-    "onglobaldelete",
-    "onglobalrename",
-    "ondatabaseinsert",
-    "ondatabasemodify",
-    "ondatabasedelete",
-    "ondatabaserename",
-];
+use crate::impact_static::GLOBAL_WRITE_EVENTS;
 
 /// The table, page and report events whose raises `al_vm::impact` notes.
 const TABLE_EVENTS: [&str; 10] = [
@@ -156,7 +165,8 @@ const PAGE_EVENTS: [&str; 11] = [
 ];
 
 /// The impact points of the objects `is_extension` accepts (an index into `program.objects`), in program order.
-pub fn impact_points(program: &Program, is_extension: impl Fn(usize) -> bool) -> Vec<ImpactPoint> {
+pub fn impact_points(lowered: &al_sema::lower::Lowered, is_extension: impl Fn(usize) -> bool) -> Vec<ImpactPoint> {
+    let program = &lowered.program;
     let registry = al_vm::events::Registry::build(program);
     let mut out = Vec::new();
     // Event subscribers, in the order of their codeunits.
@@ -190,8 +200,9 @@ pub fn impact_points(program: &Program, is_extension: impl Fn(usize) -> bool) ->
             .publishers
             .values()
             .any(|p| p.object == object && p.event == event);
+        let global_write = object == registry.global_key && GLOBAL_WRITE_EVENTS.contains(&event.as_str());
         let matcher = if object == registry.global_key {
-            if GLOBAL_WRITE_EVENTS.contains(&event.as_str()) {
+            if global_write {
                 Matcher::AnyWrite
             } else {
                 Matcher::Unsupported(format!("{what}: the index does not note this Global Triggers event"))
@@ -205,9 +216,20 @@ pub fn impact_points(program: &Program, is_extension: impl Fn(usize) -> bool) ->
         } else {
             Matcher::Unsupported(format!("{what}: the index does not note raises of this event"))
         };
+        // Static reach sees an event raised by a publisher routine, by a use of its table, page or report, and the
+        // Global Triggers write events by a record write. The platform raises the others where no code shows it.
+        let site = if routine_publisher
+            || global_write
+            || matches!(kind, Some(ObjKind::Table | ObjKind::Page | ObjKind::Report))
+        {
+            Site::Event(object, event.clone())
+        } else {
+            Site::None("the platform raises this event where no code in the program shows it".into())
+        };
         out.push(ImpactPoint {
             what,
             matcher,
+            site,
             runs_code: true,
         });
     }
@@ -227,10 +249,10 @@ pub fn impact_points(program: &Program, is_extension: impl Fn(usize) -> bool) ->
     for (oi, o) in program.objects.iter().enumerate().filter(|(oi, _)| is_extension(*oi)) {
         let label = format!("{} \"{}\"", o.kind.label(), o.name);
         let triggers = o.routines.iter().any(|r| r.is_trigger);
-        let of_base = |what: &str| -> Option<(String, String)> {
+        let of_base = |what: &str| -> Option<(String, String, usize)> {
             let b = *base.get(&oi)?;
             let id = program.objects[b].id?;
-            Some((format!("{what} {id}"), program.objects[b].name.clone()))
+            Some((format!("{what} {id}"), program.objects[b].name.clone(), b))
         };
         let point = match o.kind {
             ObjKind::TableExtension | ObjKind::PageExtension | ObjKind::ReportExtension => {
@@ -242,36 +264,63 @@ pub fn impact_points(program: &Program, is_extension: impl Fn(usize) -> bool) ->
                 match of_base(what) {
                     // A table extension's fields, keys and triggers are reached through any record operation on the
                     // table; a page or report extension through any use of its page or report.
-                    Some((key, name)) => ImpactPoint {
+                    Some((key, name, b)) => ImpactPoint {
                         what: format!("{label} of {what} \"{name}\""),
                         matcher: Matcher::Key(key),
+                        site: Site::Object(b),
                         runs_code: triggers || o.kind != ObjKind::TableExtension,
                     },
-                    None => ImpactPoint {
-                        what: label.clone(),
-                        matcher: Matcher::Unsupported(format!("{label}: its base object is not in the program")),
-                        runs_code: true,
-                    },
+                    None => unsupported(&label, "its base object is not in the program"),
                 }
             }
-            ObjKind::EnumExtension => ImpactPoint {
-                what: label.clone(),
-                matcher: Matcher::Unsupported(format!(
-                    "{label}: the index does not note reads of enum value lists (ADR-043 section 1)"
-                )),
-                runs_code: true,
-            },
+            // A new value shows wherever the enum's values are read: its names, ordinals or captions, a value
+            // formatted or evaluated, an interface dispatched on a value (`al_vm::impact`, the `enum` key).
+            ObjKind::EnumExtension => {
+                let b = o.extends_id.and_then(|id| {
+                    program
+                        .objects
+                        .iter()
+                        .position(|e| e.kind == ObjKind::Enum && e.id == Some(id))
+                });
+                match b {
+                    Some(b) => ImpactPoint {
+                        what: format!("{label} of enum \"{}\"", program.objects[b].name),
+                        matcher: Matcher::Key(format!("enum {}", program.objects[b].id.unwrap_or_default())),
+                        site: Site::Object(b),
+                        runs_code: true,
+                    },
+                    None => unsupported(&label, "its base enum is not in the program"),
+                }
+            }
+            // Install code changes the data tests start from: it selects the tests that use a table its static reach
+            // can write (ADR-043 section 1).
             ObjKind::Codeunit
                 if o.properties
                     .iter()
                     .any(|(k, v)| k.eq_ignore_ascii_case("Subtype") && v.trim().eq_ignore_ascii_case("Install")) =>
             {
-                ImpactPoint {
-                    what: label.clone(),
-                    matcher: Matcher::Unsupported(format!(
-                        "{label}: install code changes the data every test starts from, which the index does not cover yet"
-                    )),
-                    runs_code: true,
+                let mut writes = std::collections::BTreeSet::new();
+                let mut any = false;
+                for (ri, _) in o.routines.iter().enumerate().filter(|(_, r)| r.is_trigger) {
+                    let f = crate::runtime::reach_facts_in(&registry, lowered, oi, ri);
+                    writes.extend(f.writes);
+                    any |= f.writes_any;
+                }
+                if any {
+                    unsupported(&label, "its install code writes a table the program does not name")
+                } else {
+                    let tables: Vec<usize> = writes.iter().map(|&t| t as usize).collect();
+                    ImpactPoint {
+                        what: format!("{label} (install code)"),
+                        matcher: Matcher::AnyKey(
+                            tables
+                                .iter()
+                                .filter_map(|&t| object_key(program, "table", t as u32))
+                                .collect(),
+                        ),
+                        site: Site::Tables(tables),
+                        runs_code: false,
+                    }
                 }
             }
             // New objects are reached only through one of the points above; permission sets do nothing here (the
@@ -286,15 +335,21 @@ pub fn impact_points(program: &Program, is_extension: impl Fn(usize) -> bool) ->
             | ObjKind::Interface
             | ObjKind::PermissionSet
             | ObjKind::PermissionSetExtension => continue,
-            ObjKind::Profile | ObjKind::Other => ImpactPoint {
-                what: label.clone(),
-                matcher: Matcher::Unsupported(format!("{label}: the index does not cover this kind of object")),
-                runs_code: true,
-            },
+            ObjKind::Profile | ObjKind::Other => unsupported(&label, "the index does not cover this kind of object"),
         };
         out.push(point);
     }
     out
+}
+
+/// An impact point neither the index nor static reach can select for.
+fn unsupported(label: &str, why: &str) -> ImpactPoint {
+    ImpactPoint {
+        what: label.to_string(),
+        matcher: Matcher::Unsupported(format!("{label}: {why}")),
+        site: Site::None(why.to_string()),
+        runs_code: true,
+    }
 }
 
 #[cfg(test)]

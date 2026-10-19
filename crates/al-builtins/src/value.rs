@@ -143,6 +143,10 @@ pub enum Value {
     Query(Rc<RefCell<QueryState>>),
     /// A `DotNet` object (ADR-014). `:=` shares the reference (assumed BC rule, probe pending).
     DotNet(Rc<DotNetObject>),
+    /// A column of a platform table row whose value nothing pins (ADR-013 decision 7, hard rule 3): the
+    /// provider leaves it unknown instead of giving it a default. It only ever sits in a record buffer or a
+    /// listed row; every read of it is refused with the reason it holds, and writing the field replaces it.
+    Unknown(std::sync::Arc<str>),
 }
 
 /// What a `Value::DotNet` refers to.
@@ -1224,7 +1228,16 @@ impl Value {
                 | Value::Option(..)
                 | Value::Enum(..)
                 | Value::Blob(_)
+                | Value::Unknown(_)
         )
+    }
+
+    /// Why the value cannot be read, for a column a platform provider left unknown.
+    pub fn unknown(&self) -> Option<&str> {
+        match self {
+            Value::Unknown(why) => Some(why),
+            _ => None,
+        }
     }
 
     pub fn default_for(t: &RtType) -> Value {
@@ -1320,6 +1333,8 @@ impl Value {
             Value::TestPage(_) | Value::TestControl(_) | Value::Query(_) => false,
             Value::Blob(_) => false,
             Value::DotNet(_) => k == "dotnet",
+            // Never reached: a read of an unknown column is refused before its value reaches a Variant.
+            Value::Unknown(_) => false,
         }
     }
 }

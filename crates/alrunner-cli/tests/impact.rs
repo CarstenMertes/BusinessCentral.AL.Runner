@@ -157,20 +157,51 @@ fn outcomes_do_not_depend_on_the_selection_or_on_an_unrelated_app_in_the_compile
 }
 
 #[test]
-fn an_impact_run_without_an_index_runs_both_sides_and_says_how_to_build_the_index() {
-    let (tests, ext, lib) = (fixture("tests"), fixture("ext"), fixture("lib"));
-    // No index cached: every selected test runs without and with the extension (ADR-043 owner decision 1, until
-    // static selection exists), with a warning before the run and again above the summary.
+fn without_an_index_the_run_selects_by_static_reach_and_says_what_that_misses() {
+    let (tests, ext, lib, unrelated) = (fixture("tests"), fixture("ext"), fixture("lib"), fixture("unrelated"));
+    // No index cached: static selection (ADR-043 owner decision 1), with a warning before the run and again above
+    // the summary that says what static reach misses and how to build the index.
     let o = alrunner(&["test", &tests, "--impact-of", &ext, "--dep", &lib]);
     let t = text(&o);
     assert_eq!(code(&o), 1, "{t}");
     assert_eq!(t.matches("warning: no impact index").count(), 2, "{t}");
-    assert!(t.contains("alrunner impact-index build"), "{t}");
-    assert!(t.contains("1 newly failing"), "{t}");
-    // Static selection is ADR-043 step 5.
+    assert!(t.contains("tests were selected by static reach, which misses"), "{t}");
+    assert!(t.contains("RecordRef on a table number from a variable"), "{t}");
+    assert!(
+        t.contains("0 selected tests reach such a site (\"cannot rule out\")"),
+        "{t}"
+    );
+    assert!(
+        t.contains("Build the index once with: alrunner impact-index build"),
+        "{t}"
+    );
+    // Only codeunit 50510 calls the publisher the extension subscribes to; both sides run it.
+    assert!(t.contains("static selection: selected 1 of 2 test codeunits"), "{t}");
+    assert!(t.contains("\nwithout the extension:"), "{t}");
+    assert!(
+        t.contains(
+            "Impact: 4 tests: 1 newly failing, 0 fails differently, 0 newly refused, 0 selection miss, 0 newly passing, 0 newly runs, 1 same (reached), 2 same (not reached), 0 not verified"
+        ),
+        "{t}"
+    );
+    assert!(t.contains("not selected: 1 test in 1 codeunit"), "{t}");
+    let failing = section(&t, "newly failing");
+    assert!(
+        failing.contains("50510 Imp Tests.PostKeepsALargeAmount: pass -> fail: amount 20"),
+        "{t}"
+    );
+    assert!(failing.contains("reached: subscriber"), "{t}");
+    // `--impact static` asks for the same selection: no warning.
     let o = alrunner(&["test", &tests, "--impact-of", &ext, "--impact", "static", "--dep", &lib]);
-    assert_eq!(code(&o), 2, "{}", text(&o));
-    assert!(text(&o).contains("not built yet"), "{}", text(&o));
+    let t = text(&o);
+    assert_eq!(code(&o), 1, "{t}");
+    assert!(!t.contains("warning: no impact index"), "{t}");
+    assert!(t.contains("static selection: selected 1 of 2 test codeunits"), "{t}");
+    // An extension that reaches nothing the tests reach selects nothing.
+    let o = alrunner(&["test", &tests, "--impact-of", &unrelated, "--dep", &lib]);
+    let t = text(&o);
+    assert_eq!(code(&o), 0, "{t}");
+    assert!(t.contains("static selection: selected 0 of 2 test codeunits"), "{t}");
     // `--impact` without `--impact-of` has nothing to compare.
     let o = alrunner(&["test", &tests, "--impact", "all", "--dep", &lib]);
     assert_eq!(code(&o), 2, "{}", text(&o));
@@ -253,6 +284,46 @@ fn with_an_index_the_run_selects_the_codeunits_that_reach_the_extension_and_runs
     let t = text(&o);
     assert_eq!(code(&o), 1, "{t}");
     assert!(t.contains("\nwithout the extension:"), "{t}");
+}
+
+#[test]
+fn tests_the_index_run_refused_get_the_static_verdict() {
+    let (tests, ext, lib) = (fixture("refused-tests"), fixture("ext"), fixture("lib"));
+    let cache = tempfile::tempdir().unwrap();
+    let o = alrunner_in(cache.path(), &["impact-index", "build", &tests, "--dep", &lib]);
+    assert_eq!(code(&o), 0, "{}", text(&o));
+    let o = alrunner_in(cache.path(), &["test", &tests, "--impact-of", &ext, "--dep", &lib]);
+    let t = text(&o);
+    // Neither test recorded anything in the index's run: dynamic selection leaves their codeunit out.
+    assert!(t.contains("selected 0 of 1 test codeunits"), "{t}");
+    let refused = section(&t, "refused in the index's run");
+    assert!(
+        refused.contains("refused in the index's run (2): the index holds nothing for them; static reach: 1 reaches an impact point, 0 cannot rule one out, 1 reaches none"),
+        "{t}"
+    );
+    assert!(
+        refused.contains("50520 Imp Refused Tests.PostsAfterARefusal: static: reaches subscriber"),
+        "{t}"
+    );
+    assert!(!refused.contains("RefusesOnly"), "{t}");
+}
+
+#[test]
+fn static_reach_covers_what_the_index_recorded() {
+    let (tests, lib) = (fixture("tests"), fixture("lib"));
+    let cache = tempfile::tempdir().unwrap();
+    // Without an index there is nothing to check against.
+    let o = alrunner_in(cache.path(), &["impact-index", "check-static", &tests, "--dep", &lib]);
+    assert_eq!(code(&o), 2, "{}", text(&o));
+    assert!(text(&o).contains("no impact index"), "{}", text(&o));
+    let o = alrunner_in(cache.path(), &["impact-index", "build", &tests, "--dep", &lib]);
+    assert_eq!(code(&o), 0, "{}", text(&o));
+    // Every key a test recorded is in its static reach: no miss, exit 0.
+    let o = alrunner_in(cache.path(), &["impact-index", "check-static", &tests, "--dep", &lib]);
+    let t = text(&o);
+    assert_eq!(code(&o), 0, "{t}");
+    assert!(t.contains("static reach covers every key of 5 tests"), "{t}");
+    assert!(t.contains("missed: 0"), "{t}");
 }
 
 #[test]

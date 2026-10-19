@@ -1,5 +1,5 @@
 //! Running the test codeunits of one compiled program, each test on a session of its own.
-use super::written::{ReachFacts, ReachIndex, reach_facts, settled_flags};
+use super::written::{ReachFacts, ReachIndex, reach_facts, settled_flags, unfinished_reach_facts};
 use super::*;
 
 /// Outcomes of every `[Test]` procedure of test codeunit `object`, in order.
@@ -469,21 +469,31 @@ pub(crate) fn run_codeunit_core(
             Outcome::Fail(m) if !unfinished.is_empty() => {
                 let engine = session.engine.clone();
                 let index = reach_index.get_or_insert_with(|| ReachIndex::new(&engine.events, lowered));
-                let mine = reach_facts(&engine.events, lowered, index, object, r);
+                // This test's reach is walked only when an unfinished test's reach is fully known: an unknown part
+                // decides alone (`changes_read_by`), and a walk costs about 150 ms with Microsoft's apps.
+                let mut mine: Option<ReachFacts> = None;
                 let found = unfinished.iter_mut().find_map(|u| {
+                    // A failed test counts only through the `Random` sequence, which matters only when this test drew.
+                    if u.ended == Ended::Failed && !drew {
+                        return None;
+                    }
                     let facts = u
                         .facts
-                        .get_or_insert_with(|| reach_facts(&engine.events, lowered, index, object, u.routine));
+                        .get_or_insert_with(|| unfinished_reach_facts(&engine.events, lowered, index, object, u.routine));
                     match u.ended {
-                        Ended::Failed => (drew && facts.random()).then(|| {
+                        Ended::Failed => facts.random().then(|| {
                             format!(
                                 "a test before this one in the codeunit did not pass ({}) and could draw random numbers, and this test draws random numbers: the shared sequence is not BC's",
                                 u.what
                             )
                         }),
-                        Ended::RefusedBeforeStart | Ended::RefusedMidRun => facts
-                            .changes_read_by(&mine, checkpoint.is_none(), drew, &settled, lowered)
-                            .map(|what| {
+                        Ended::RefusedBeforeStart | Ended::RefusedMidRun => {
+                            // An unknown part of the earlier reach answers without this test's reach.
+                            let later = match facts.unknown {
+                                Some(_) => &ReachFacts::default(),
+                                None => mine.get_or_insert_with(|| reach_facts(&engine.events, lowered, index, object, r)),
+                            };
+                            facts.changes_read_by(later, checkpoint.is_none(), drew, &settled, lowered).map(|what| {
                                 let when = if u.ended == Ended::RefusedMidRun {
                                     "refused while it ran"
                                 } else {
@@ -493,7 +503,8 @@ pub(crate) fn run_codeunit_core(
                                     "an earlier test of this codeunit was {when} ({}): {what}, so the state it would have left is not BC's",
                                     u.what
                                 )
-                            }),
+                            })
+                        }
                     }
                 });
                 match found {

@@ -239,6 +239,32 @@ pub(crate) fn reach_facts(
     object: usize,
     routine: usize,
 ) -> ReachFacts {
+    walk_reach(events, lowered, index, object, routine, false)
+}
+
+/// The reach facts of an unfinished test (the earlier side of [`ReachFacts::changes_read_by`]): the walk stops at
+/// the first part of the reach that is not known, because that alone decides both questions asked of it
+/// (`changes_read_by` and `random` answer from `unknown` before anything else). The rest of the facts are then
+/// incomplete and must not be read. A walk of the whole reach visits about 49 000 routines with Microsoft's apps
+/// (150 ms), once per unfinished test of a codeunit.
+pub(crate) fn unfinished_reach_facts(
+    events: &al_vm::events::Registry,
+    lowered: &Lowered,
+    index: &ReachIndex,
+    object: usize,
+    routine: usize,
+) -> ReachFacts {
+    walk_reach(events, lowered, index, object, routine, true)
+}
+
+fn walk_reach(
+    events: &al_vm::events::Registry,
+    lowered: &Lowered,
+    index: &ReachIndex,
+    object: usize,
+    routine: usize,
+    stop_at_unknown: bool,
+) -> ReachFacts {
     let mut walk = Walk {
         events,
         lowered,
@@ -250,6 +276,9 @@ pub(crate) fn reach_facts(
         global_triggers: false,
     };
     while let Some((o, r)) = walk.stack.pop() {
+        if stop_at_unknown && walk.out.unknown.is_some() {
+            break;
+        }
         if walk.seen.insert((o, r)) {
             walk.routine(o, r);
         }

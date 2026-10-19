@@ -259,6 +259,12 @@ registry! {
         tests: "ERM Sales Subform (InvoiceAddingLinesUpdatesTotals) and about 120 more Tests-ERM tests whose sales and purchase subforms refresh.",
         probe: "The same list with 1, 2, 5 and 25 rows and the cursor on the first, last and a middle row; a list with OnFindRecord only; a list part of a card.",
     },
+    ListOpenFullWindowRowsBefore => {
+        id: "list-open-full-window-rows-before",
+        assumed: "The open read of a list or part with OnFindRecord, OnNextRecord and OnAfterGetRecord but no OnAfterGetCurrRecord, whose first window of 20 rows is full and whose OnNextRecord(-1) from the first row answers a step, ends as a list with OnAfterGetCurrRecord does: OnFindRecord('=') and the first row read again (`R20;R1;N(-1);F(=);R1`). Pinned only with OnAfterGetCurrRecord (PnF06FindListMoves.al FindList_Ascending_25Rows) and, without it, for an OnNextRecord(-1) that answers 0.",
+        tests: "ERM Base Calendar (BaseCalendarEntriesShowCorrespondingRecords): Base Calendar Entries Subform keeps its position on the Date table in a global that OnAfterGetRecord sets.",
+        probe: "A temporary ListPart whose OnFindRecord and OnNextRecord walk a position global (rows on every day, inserted on demand) and whose OnAfterGetRecord sets that global from Rec, logging each call; the host card refills it from its OnAfterGetRecord (DeleteAll, CurrPage.Update). Log the reads at open and after the host moves with Next, and read a part field before and after. The same list as a page of its own, opened on day 10 of 40.",
+    },
     SetValueWholeNumberIntoTextControl => {
         id: "setvalue-whole-number-into-text-control",
         assumed: "TestPage SetValue of an Integer, BigInteger or whole Decimal (below 1000 in size) on a Text or Code control enters the number's digits.",

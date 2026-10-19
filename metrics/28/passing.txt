@@ -6833,6 +6833,9 @@
 70121 NullAppId
 70122 P147_Filter_ProcedureFilterVsStored
 70122 P147_Filter_SetTableViewVsStored
+70127 ColumnNo_Aggregated
+70127 ColumnNo_Plain
+70127 FilterElement_And_OtherColumns
 70127 ThreeFilters_EntryTxtQty_AllOrders
 70128 CloseSetRangeReopen
 70128 SetRangeAndOpenAfterRead
@@ -11414,6 +11417,8 @@
 74046 P133_Evaluate_DecimalText_IntoInteger
 74046 P133_FormatRecord_FilledFields
 74046 P133_FormatRecord_Temporary_AndCopies
+74062 P133_Query_CountColumnFilterZero_OverTheOuterItem
+74062 P133_Query_CountZero_NoChildrenAtAll
 74062 P133_Query_StaticFiltersOnTheOuterItem_TableAndColumn
 74064 Option_FromBigInteger_InRangeAndLacking
 74068 Validate_ByConst_QuotedFilter
@@ -12496,6 +12501,7 @@
 77532 AC_Attr_InDataSet_ReportXml
 77532 AC_Attr_Procedures
 77532 AC_Attr_ReportHandler_RunReport
+77532 AC_Attr_SecurityFiltering_Variable
 77532 AC_Attr_TestPermissions_Disabled
 77532 AC_Attr_TestPermissions_NonRestrictive
 77532 AC_Attr_TestPermissions_Restrictive

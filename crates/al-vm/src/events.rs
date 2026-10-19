@@ -55,6 +55,10 @@ pub struct Registry {
     /// no code for (`Program::uncompiled_subscribers`, and subscribers whose publisher cannot be
     /// told apart from another object of the same name). Raising such an event is refused.
     pub missing: HashMap<(usize, String), Vec<Missing>>,
+    /// Publisher object -> (object, routine) of every subscriber of any of its events: `subscribers` grouped by
+    /// object, built at the first [`Registry::subscribers_of`]. The registry does not change once the engine holds it
+    /// (ADR-001).
+    by_publisher: std::sync::OnceLock<HashMap<usize, Vec<(usize, usize)>>>,
 }
 
 /// A subscriber that is declared and not compiled.
@@ -75,6 +79,7 @@ impl Default for Registry {
             has_global_triggers: false,
             unavailable_global: Default::default(),
             missing: HashMap::new(),
+            by_publisher: Default::default(),
         }
     }
 }
@@ -336,6 +341,23 @@ impl Registry {
             });
         }
         reg
+    }
+
+    /// (object, routine) of every subscriber (manual or not, any element) of every event of `publisher`: what a scan of
+    /// all keys of `subscribers` for that object finds, without the scan. Static reach (`al-testrun` blocked.rs) asks
+    /// this for each table a reached routine has a record of.
+    pub fn subscribers_of(&self, publisher: usize) -> &[(usize, usize)] {
+        let index = self.by_publisher.get_or_init(|| {
+            let mut index: HashMap<usize, Vec<(usize, usize)>> = HashMap::new();
+            for ((p, _), list) in &self.subscribers {
+                index
+                    .entry(*p)
+                    .or_default()
+                    .extend(list.iter().map(|s| (s.object, s.routine)));
+            }
+            index
+        });
+        index.get(&publisher).map_or(&[], Vec::as_slice)
     }
 
     /// Whether any subscriber (manual or not) listens to `event` of `object`, or one that is
@@ -609,6 +631,55 @@ mod tests {
         assert!(absent.is_subscribed(CAPTION_CLASS, "onresolvecaptionclass"));
         let present = registry(&format!("codeunit 42 \"Caption Class\" {{ }}\n{sub}"));
         assert!(present.is_subscribed(CAPTION_CLASS, "onresolvecaptionclass"));
+    }
+
+    /// `subscribers_of` is the scan of every key of `subscribers` for one publisher object, done once per object.
+    #[test]
+    fn the_subscribers_of_an_object_are_those_of_every_event_it_publishes() {
+        let (_ws, l) = al_sema::lower::compile(
+            vec![al_sema::workspace::AppSource {
+                id: "a".into(),
+                name: "a".into(),
+                dependencies: vec![],
+                files: vec![(
+                    "f.al".into(),
+                    "table 50300 T { fields { field(1; K; Code[10]) { } } }
+                    codeunit 50301 Pub {
+                        [IntegrationEvent(false, false)] procedure OnA() begin end;
+                        [IntegrationEvent(false, false)] procedure OnB() begin end; }
+                    codeunit 50302 Sub {
+                        [EventSubscriber(ObjectType::Codeunit, Codeunit::Pub, 'OnA', '', false, false)]
+                        local procedure A() begin end;
+                        [EventSubscriber(ObjectType::Codeunit, Codeunit::Pub, 'OnB', '', false, false)]
+                        local procedure B() begin end;
+                        [EventSubscriber(ObjectType::Table, Database::T, 'OnAfterInsertEvent', '', false, false)]
+                        local procedure C(var Rec: Record T) begin end; }
+                    codeunit 50303 Manual { EventSubscriberInstance = Manual;
+                        [EventSubscriber(ObjectType::Codeunit, Codeunit::Pub, 'OnA', '', false, false)]
+                        local procedure D() begin end; }"
+                        .into(),
+                )],
+            }],
+            &Default::default(),
+        );
+        let reg = Registry::build(&l.program);
+        let index = |name: &str| l.program.objects.iter().position(|o| o.name == name).unwrap();
+        let scanned = |publisher: usize| {
+            let mut all: Vec<(usize, usize)> = (reg.subscribers.iter())
+                .filter(|((p, _), _)| *p == publisher)
+                .flat_map(|(_, list)| list.iter().map(|s| (s.object, s.routine)))
+                .collect();
+            all.sort();
+            all
+        };
+        for (publisher, count) in [(index("Pub"), 3), (index("T"), 1)] {
+            let mut got = reg.subscribers_of(publisher).to_vec();
+            got.sort();
+            assert_eq!(got.len(), count, "{got:?}");
+            assert_eq!(got, scanned(publisher));
+        }
+        assert!(reg.subscribers_of(index("Sub")).is_empty());
+        assert!(reg.subscribers_of(usize::MAX).is_empty());
     }
 
     #[test]

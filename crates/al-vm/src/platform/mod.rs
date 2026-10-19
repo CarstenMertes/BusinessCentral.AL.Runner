@@ -175,8 +175,9 @@ pub(crate) struct Providers {
     /// `Engine::uid` of that engine.
     engine_uid: u64,
     ident: Ident,
-    /// Per object index: the provider of that table, if it is a virtual platform table.
-    served: Vec<Option<Virtual>>,
+    /// Per object index: the provider of that table, if it is a virtual platform table ([`served_tables`], once per
+    /// engine).
+    served: Arc<[Option<Virtual>]>,
     /// Tables listed in full, once (they depend on the program and the host only).
     listed: RefCell<HashMap<Virtual, Listed>>,
     /// The Aggregate Permission Set rows with the tenant's own sets in them, and the stamp of the
@@ -190,6 +191,35 @@ pub(crate) struct Providers {
     event_index: RefCell<Option<EventIndex>>,
 }
 
+/// Per object index of the engine's program: the provider of that table, if it is a virtual platform table. It depends on
+/// the program only, so it is worked out once per engine (`Engine::served_tables`), not for every session.
+fn served_tables(engine: &Engine) -> Arc<[Option<Virtual>]> {
+    engine
+        .program
+        .objects
+        .iter()
+        .map(|o| {
+            if !o.is_kind(al_ir::ObjKind::Table) {
+                return None;
+            }
+            let id = o.id?;
+            match al_builtins::platform::provider(id) {
+                Some(_) => al_builtins::platform::virtual_table(id),
+                // A table of the platform app that nothing provides: its rows are refused.
+                None if engine
+                    .program
+                    .apps
+                    .get(o.app as usize)
+                    .is_some_and(|a| a.id.eq_ignore_ascii_case(objects::al_sema_platform_app_id())) =>
+                {
+                    Some(Virtual::Unprovided)
+                }
+                None => None,
+            }
+        })
+        .collect()
+}
+
 impl Providers {
     pub(crate) fn new(
         engine: &Arc<Engine>,
@@ -197,30 +227,7 @@ impl Providers {
         events: Rc<EventStats>,
         media: al_builtins::media::MediaStore,
     ) -> Providers {
-        let served = engine
-            .program
-            .objects
-            .iter()
-            .map(|o| {
-                if !o.is_kind(al_ir::ObjKind::Table) {
-                    return None;
-                }
-                let id = o.id?;
-                match al_builtins::platform::provider(id) {
-                    Some(_) => al_builtins::platform::virtual_table(id),
-                    // A table of the platform app that nothing provides: its rows are refused.
-                    None if engine
-                        .program
-                        .apps
-                        .get(o.app as usize)
-                        .is_some_and(|a| a.id.eq_ignore_ascii_case(objects::al_sema_platform_app_id())) =>
-                    {
-                        Some(Virtual::Unprovided)
-                    }
-                    None => None,
-                }
-            })
-            .collect();
+        let served = engine.served_tables.get_or_init(|| served_tables(engine)).clone();
         Providers {
             engine: Arc::downgrade(engine),
             engine_uid: engine.uid,

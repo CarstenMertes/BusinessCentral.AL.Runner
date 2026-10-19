@@ -242,7 +242,7 @@ pub(crate) fn run_codeunit_core(
     let runner = if execute {
         runner_reset::RunnerReset::default()
     } else {
-        runner_reset::RunnerReset::of(&lowered.program)
+        runner_reset::RunnerReset::of(engine)
     };
     if let Some(on_run) = (0..obj.routines.len())
         .find(|&r| obj.routines[r].is_trigger && obj.routines[r].name.eq_ignore_ascii_case("OnRun"))
@@ -275,8 +275,9 @@ pub(crate) fn run_codeunit_core(
     // Every earlier test of the codeunit that did not run to its end: refused before it started, refused while it ran,
     // or failed. A later failure is not trusted when such a test could have changed what it reads (`written.rs`).
     let mut unfinished: Vec<Unfinished> = Vec::new();
-    // Built at the first failure that has an unfinished test before it.
-    let mut reach_index: Option<ReachIndex> = None;
+    // Taken at the first failure that has an unfinished test before it; built once per engine, as it depends on the
+    // program only.
+    let mut reach_index: Option<Arc<ReachIndex>> = None;
     let flags = settled_flags(lowered, object);
     let mut panicked = false;
     for r in tests.iter().copied() {
@@ -468,7 +469,8 @@ pub(crate) fn run_codeunit_core(
         let outcome = match outcome {
             Outcome::Fail(m) if !unfinished.is_empty() => {
                 let engine = session.engine.clone();
-                let index = reach_index.get_or_insert_with(|| ReachIndex::new(&engine.events, lowered));
+                let index: &ReachIndex =
+                    reach_index.get_or_insert_with(|| engine.derived(|| ReachIndex::new(&engine.events, lowered)));
                 // This test's reach is walked only when an unfinished test's reach is fully known: an unknown part
                 // decides alone (`changes_read_by`), and a walk costs about 150 ms with Microsoft's apps.
                 let mut mine: Option<ReachFacts> = None;

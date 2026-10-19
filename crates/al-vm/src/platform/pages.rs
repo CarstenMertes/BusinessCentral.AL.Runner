@@ -193,10 +193,8 @@ pub(super) fn page_metadata_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
 /// the same property are not pinned.
 fn effective_prop<'a>(c: &'a Catalog, o: &'a Object, name: &str) -> Result<Option<&'a str>, String> {
     let own = o.id.filter(|_| o.kind == al_ir::ObjKind::Page);
-    let from_extensions: Vec<&str> = c
-        .objects
-        .iter()
-        .filter(|e| e.kind == al_ir::ObjKind::PageExtension && e.extends_id.is_some() && e.extends_id == own)
+    // From the catalog's index: this runs four times for every page of the program when Page Metadata is first read.
+    let from_extensions: Vec<&str> = (c.page_extensions_of(own).iter())
         .filter_map(|e| prop(e, name))
         .collect();
     match from_extensions.as_slice() {

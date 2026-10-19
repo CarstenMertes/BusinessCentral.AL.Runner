@@ -227,10 +227,10 @@ fn a_column_nothing_pins_is_refused_where_code_reads_it() {
     let o = outcomes(
         r#"codeunit 50000 "T" { Subtype = Test;
   [Test] procedure ReadsAPinnedColumn() var F: Record Field; begin F.SetRange(TableNo, 50000); if F.IsEmpty() then; end;
-  [Test] procedure ReadsAnUnpinnedColumn() var F: Record Field; L: Text; begin L := F."Type Name"; end; }"#,
+  [Test] procedure ReadsAnUnpinnedColumn() var F: Record Field; L: Text; begin L := F.ExternalName; end; }"#,
     );
     let why = not_run(&o, "ReadsAnUnpinnedColumn");
-    assert!(why.contains("column 9 of platform table 'Field'"), "{why}");
+    assert!(why.contains("column 10 of platform table 'Field'"), "{why}");
     assert!(
         !matches!(o.iter().find(|(n, _)| n == "ReadsAPinnedColumn").map(|(_, o)| o), Some(Outcome::NotRun(w)) if w.contains("column")),
         "{o:?}"
@@ -1017,4 +1017,26 @@ codeunit 50000 "T" { Subtype = Test;
             "{t}: {why}"
         );
     }
+}
+
+/// A column of a table of `PINNED_COLUMNS` that the list does not name is unknown in every row the provider lists
+/// (`platform::mark_unpinned`): a dynamic read of it is refused, the pinned columns of the same row read as before.
+/// Column 7 of Table Metadata is not pinned; ID (1) and Name (3) are (record/TestTableMetadataVirtualTable.al).
+#[test]
+fn an_unpinned_column_of_a_listed_platform_table_is_unknown_in_every_row() {
+    let o = outcomes(
+        r#"table 50005 "Probe Tbl" { fields { field(1; K; Integer) { } } }
+codeunit 50000 "T" { Subtype = Test;
+  [Test] procedure PinnedColumnReads() var M: Record "Table Metadata"; R: RecordRef; begin
+    M.Get(50005); R.GetTable(M);
+    if Format(R.Field(3).Value) <> 'Probe Tbl' then Error('name %1', R.Field(3).Value); end;
+  [Test] procedure UnpinnedColumnIsRefused() var M: Record "Table Metadata"; R: RecordRef; T: Text; begin
+    M.Get(50005); R.GetTable(M); T := Format(R.Field(7).Value); end; }"#,
+    );
+    passes(&o, "PinnedColumnReads");
+    let why = not_run(&o, "UnpinnedColumnIsRefused");
+    assert!(
+        why.contains("platform table 'Table Metadata' is not known for any row"),
+        "{why}"
+    );
 }

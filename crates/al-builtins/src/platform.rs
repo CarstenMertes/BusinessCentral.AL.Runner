@@ -275,88 +275,139 @@ pub fn virtual_table(id: u32) -> Option<Virtual> {
 
 /// The columns of a registered table that a provider fills with a value something pins, by table
 /// id. A table that is not listed has every column filled; for a table that is, a column outside
-/// the list (and below the system fields) is not known, and code that uses it is refused where it
-/// is lowered (`al-sema`), never given a default (ADR-013 decision 7; hard rule 3).
-pub const PINNED_COLUMNS: &[(u32, &[u32])] = &[
-    // AllObj: record/TestAllObjVirtualTable.al, TestAllObjOwningAppPerKind.al. "AL Namespace" (62) is not read.
-    (2_000_000_038, &[1, 3, 4, 60, 61]),
-    // AllObjWithCaption: same files. "AL Namespace" (63) is not read.
-    (2_000_000_058, &[1, 3, 4, 20, 30, 60, 61, 62]),
-    // CodeUnit Metadata: record/TestCodeunitMetadataVirtualTable.al, TestCodeunitInventoryOrder.al. "App ID" (6) is not read.
-    (2_000_000_137, &[1, 2, 3, 4, 5, 7, 8, 9, 10, 11]),
-    // Table Metadata: record/TestTableMetadataVirtualTable.al.
-    (2_000_000_136, &[1, 2, 3, 4, 5, 6, 11, 12, 13, 15]),
-    // Field: record/TestField*VirtualTable.al, TestFieldDataClassificationInheritance.al. TableName, Class, Enabled and "Field Caption"
-    // are read from the declaration (probe batch 5); IsPartOfPrimaryKey (28): metadata/lt-platform-metadata-columns/PlatformMetadataColumnValues.al:237-268; Len (6) from the type (record/TestFieldLenAndFeatureKeyContracts.al); Type Name (9), ExternalName (10) and the rest are not.
-    (2_000_000_041, &[1, 2, 3, 4, 5, 6, 7, 8, 20, 21, 22, 24, 25, 26, 27, 28]),
-    // Feature Key: ID (1), Enabled (2), Mandatory By (5), Can Try (6), Is One Way (7), Data Update Required (8) and Mandatory By Version (9),
-    // record/PFFeatureKeyColumns.al, TestFieldLenAndFeatureKeyContracts.al, TestFeatureKeyEnabledContracts.al.
-    (2_000_000_211, &[1, 2, 5, 6, 7, 8, 9]),
-    // Key: record/TestKeyVirtualTable.al.
-    (2_000_000_063, &[1, 2, 4, 7, 9, 10, 11, 13]),
-    // Page Metadata: record/TestPageMetadata*.al. Caption (3) and CardPageID (6) are read from the declaration (probe batch 5). InsertAllowed, ModifyAllowed and DeleteAllowed (16 to 18): pageext/lt-z-page-ext-props/ZPageExtProps.al.
+/// the list (and below the system fields) is not known: code that uses it is refused where it is
+/// lowered (`al-sema`), never given a default (ADR-013 decision 7; hard rule 3), and the provider
+/// leaves it `Value::Unknown` (`al-vm/src/platform/mod.rs`). Generated from the corpus
+/// (`al_test_cli::platform_columns`): the columns a corpus file names, and `PINNED_ELSEWHERE`.
+pub const PINNED_COLUMNS: &[(u32, &[u32])] = crate::pinned_columns::GENERATED;
+
+/// The platform tables whose columns `PINNED_COLUMNS` lists.
+pub const PINNED_TABLES: &[u32] = &[
+    2_000_000_038,
+    2_000_000_058,
+    2_000_000_137,
+    2_000_000_136,
+    2_000_000_041,
+    2_000_000_211,
+    2_000_000_063,
+    2_000_000_138,
+    2_000_000_192,
+    2_000_000_153,
+    2_000_000_206,
+    2_000_000_157,
+    2_000_000_212,
+    2_000_000_250,
+    2_000_000_004,
+    2_000_000_167,
+    2_000_000_251,
+    2_000_000_254,
+    2_000_000_005,
+    2_000_000_178,
+    2_000_000_234,
+    2_000_000_139,
+    2_000_000_203,
+    2_000_000_280,
+    2_000_000_142,
+    2_000_000_140,
+    2_000_000_143,
+    2_000_000_141,
+    2_000_000_049,
+    2_000_000_288,
+    2_000_000_289,
+    2_000_000_045,
+    2_000_000_009,
+    2_000_000_110,
+];
+
+/// Columns the corpus pins without naming them in a corpus file: read by number through a
+/// `RecordRef` (often a loop over `FieldIndex`), through Microsoft's code, by `Get` on the primary
+/// key, or as the target of a FlowField. Each as (table id, field id or name, the corpus test).
+pub const PINNED_ELSEWHERE: &[(u32, &str, &str)] = &[
     (
-        2_000_000_138,
-        &[
-            1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 26, 27, 28, 30, 31, 32,
-        ],
+        2_000_000_041,
+        "28",
+        "metadata/lt-platform-metadata-columns/PlatformMetadataColumnValues.al:237-268",
     ),
-    // Page Control Field: record/TestPageControlField*.al. "ControlId" (2) is not read; Sequence (11): record/TestTableRelationsSequenceMetadataContracts.al.
-    (2_000_000_192, &[1, 3, 4, 5, 6, 7, 8, 9, 10, 11]),
-    // NAV App Installed App: record/TestNavAppInstalledAppSysTable.al. The compatibility, hash and extension columns are not read.
-    (2_000_000_153, &[1, 2, 3, 4, 5, 6, 7, 8]),
-    // Published Application: install/TestRetenPolAllowedTables_Tests.al reads the package ids through System Application code;
-    // the identity and version columns mirror NAV App Installed App. "Tenant ID" (12) is read only through the filter
-    // `'' | TenantId` that the same test passes through (see apps.rs). Installed (13), "Tenant Visible" (30) and
-    // "PerTenant Or Installed" (31): record/TestPublishedApplicationSysTable.al:275-365 (true for every listed app).
-    (2_000_000_206, &[1, 2, 3, 4, 5, 6, 7, 8, 9, 12, 13, 30, 31]),
-    // NAV App Extra: "Runtime Package ID" (1), "Tenant Visible" (2), "PerTenant Or Installed" (3), the targets of the Lookup
-    // FlowFields of Published Application (record/TestPublishedApplicationSysTable.al:294-365). "Package ID" (4) is not read.
-    (2_000_000_157, &[1, 2, 3]),
-    // Installed Application: "Runtime Package ID" (1), the match column of the Exist FlowField Published Application.Installed
-    // (record/TestPublishedApplicationSysTable.al:275-290, :342-365). "Package ID" (2) and "Tenant ID" (3) are not read.
-    (2_000_000_212, &[1]),
-    // Metadata Permission Set: permissions/TestMetadataPermissionSet.al, TestPermissionSetUndeclaredAssignable.al.
-    (2_000_000_250, &[1, 2, 3, 4]),
-    // Permission Set: permissions/TestPermissionSetTable.al.
-    (2_000_000_004, &[1, 2, 3]),
-    // Aggregate Permission Set: access-control/TestAggregatePermissionSetTable.al, permissions/TestPermissionSetTable.al.
-    (2_000_000_167, &[1, 2, 3, 4, 5]),
-    // Metadata Permission, Expanded Permission: permissions/TestMetadataExpandedPermission.al. The role and object names and
-    // the security filter are not read.
-    (2_000_000_251, &[1, 2, 4, 5, 7, 8, 9, 10, 11, 12]),
-    (2_000_000_254, &[1, 2, 4, 5, 7, 8, 9, 10, 11, 14]),
-    // Permission: permissions/TestPermissionSetGrants.al.
-    (2_000_000_005, &[1, 3, 4, 6, 7, 8, 9, 10]),
-    // All Profile: profile/TestAllProfileTable.al, TestCopyProfile.al. The obsolete columns and "Disable Personalization" are not read.
-    (2_000_000_178, &[1, 2, 3, 4, 5, 6, 14, 15, 16, 17]),
-    // Report Layout List: handlers/TestSourceReportLayoutFlags.al, TestPrecompiledReportLayouts.al; Caption (3) and Description (10): record/TestEventSubscriptionColumnsReportLayoutListContracts.al.
-    (2_000_000_234, &[1, 2, 3, 7, 10, 11, 16, 17]),
-    // Report Metadata, Report Data Items: handlers/TestReportMetadataColumns.al.
-    (2_000_000_139, &[1, 4, 9, 17, 18, 30, 31]),
-    (2_000_000_203, &[1, 2, 3, 4, 5, 6, 7, 8]),
-    // XmlPort Metadata: xmlport/TestXmlPortMetadataVirtualTable.al, and Encoding (7) from
-    // xmlport/TestPlatformMetadataDefaultsContracts.al:93. The Inherent* columns are not read.
-    (2_000_000_280, &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]),
-    // Query Metadata: query/TestQueryMetadataVirtualTable.al. Category (9) is not read.
-    (2_000_000_142, &[1, 2, 3, 4, 5, 6, 7, 8, 10]),
-    // Event Subscription: record/TestEventSubscriptionVirtualTable.al. "Number of Calls" (8), "Error Information" (9), "Subscriber Instance" (12) and "Active Manual Instances" (13): record/TestEventSubscriptionColumnsReportLayoutListContracts.al. "Originating App Name" (11): events/lt-event-subscription-trigger-rows/EventSubscriptionTriggerRows.al. The package id (10) is only read masked.
-    (2_000_000_140, &[1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12, 13]),
-    // Page Action: record/TestPageActionVirtualTable.al. Captions, tool tips, Promoted and the Run* columns but RunObjectID are not read.
-    (2_000_000_143, &[1, 2, 3, 4, 5, 6, 8, 16]),
-    // Table Relations Metadata: record/TestTableRelationsMetadataVirtualTable.al. The condition type, value and the two flags: record/TestTableRelationsSequenceMetadataContracts.al. The names are not read.
-    (2_000_000_141, &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]),
-    // Code Coverage tables: codeunit/TestCodeCoverageTable.al, TestCodeCoveragePerTest.al, and "Line" (5) and
-    // "Code Coverage Status" (7) from TestCodeCoverageLineTextContracts.al. The method id of a line is not read.
-    (2_000_000_049, &[1, 2, 3, 4, 5, 6, 7]),
-    (2_000_000_288, &[1, 2, 3, 4]),
-    (2_000_000_289, &[1, 2, 3, 4, 5]),
-    // Windows Language: record/TestWindowsLanguageTable.al.
-    (2_000_000_045, &[1, 2, 10, 11, 30, 35]),
-    // Session: session/TestSessionVirtualTable.al. "Login Type" (18) is not read.
-    (2_000_000_009, &[1, 2, 3, 5, 6, 16, 17, 19]),
-    // Active Session: session/TestActiveSessionTable.al, TestSessionVirtualTable.al. "Server Instance Name", "Server Computer Name" and "Client Computer Name": session/TestActiveSessionHostColumnsContracts.al (shape only).
-    (2_000_000_110, &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]),
+    (
+        2_000_000_041,
+        "ExternalName",
+        "FieldRows_AllColumns_OfLivePendingAndRemovedField (codeunit 69351)",
+    ),
+    (
+        2_000_000_211,
+        "2",
+        "record/PFFeatureKeyColumns.al:24, record/TestFeatureKeyEnabledContracts.al",
+    ),
+    (2_000_000_211, "9", "record/PFFeatureKeyColumns.al:24"),
+    // Read through the filter `'' | TenantId` of System Application code (al-vm/src/platform/apps.rs).
+    (2_000_000_206, "12", "install/TestRetenPolAllowedTables_Tests.al"),
+    // The targets of the Lookup and Exist FlowFields of Published Application.
+    (2_000_000_157, "1", "record/TestPublishedApplicationSysTable.al:294-365"),
+    (2_000_000_157, "2", "record/TestPublishedApplicationSysTable.al:294-365"),
+    (2_000_000_157, "3", "record/TestPublishedApplicationSysTable.al:294-365"),
+    (
+        2_000_000_212,
+        "1",
+        "record/TestPublishedApplicationSysTable.al:275-290, :342-365",
+    ),
+    (2_000_000_254, "5", "permissions/TestMetadataExpandedPermission.al"),
+    (
+        2_000_000_005,
+        "4",
+        "permissions/W6PermissionColumns.al:166, permissions/TestPermissionSetGrants.al",
+    ),
+    (2_000_000_178, "6", "profile/TestAllProfileTable.al"),
+    (2_000_000_139, "1", "handlers/TestReportMetadataColumns.al:49"),
+    (2_000_000_139, "30", "handlers/TestReportMetadataColumns.al"),
+    (2_000_000_139, "31", "handlers/TestReportMetadataColumns.al"),
+    (
+        2_000_000_139,
+        "Name",
+        "ReportMetadata_Defaults (codeunit 71138), ReportMeta_ProcessingOnly_RowAndColumnsPresent (71698)",
+    ),
+    (
+        2_000_000_139,
+        "EnableExternalImages",
+        "report/lt-y-report-props/YReportPropsTests.al:34-160; FormatRegion_* (codeunit 75510)",
+    ),
+    (
+        2_000_000_139,
+        "DefaultLayout",
+        "DefaultLayout_BaseWithExtension_IsRdlc (codeunit 71699), ReportParts_MetadataRow (75571)",
+    ),
+    (
+        2_000_000_139,
+        "DefaultLayoutName",
+        "ReportMetadata_DefaultLayoutName_OwnAndBase (codeunit 71394)",
+    ),
+    (
+        2_000_000_136,
+        "DataIsExternal",
+        "TableMetadata_DataIsExternal_OwnAndBase (codeunit 71394)",
+    ),
+    (
+        2_000_000_063,
+        "SumIndexFields",
+        "KeyTable_SumIndexFields_BaseApp, KeyTable_SumIndexFields_OwnTable (codeunit 71394)",
+    ),
+    (
+        2_000_000_234,
+        "Layout Subtype",
+        "ReportParts_LayoutListRows (codeunit 75571), for a layout that declares a Subtype",
+    ),
+    (2_000_000_280, "1", "xmlport/TestXmlPortMetadataVirtualTable.al:42"),
+    (
+        2_000_000_280,
+        "InherentPermissions",
+        "RequestFilterHeading_XmlPort_Metadata (codeunit 75514)",
+    ),
+    (2_000_000_142, "1", "query/TestQueryMetadataVirtualTable.al:44"),
+    (
+        2_000_000_140,
+        "11",
+        "events/lt-event-subscription-trigger-rows/EventSubscriptionTriggerRows.al:131",
+    ),
+    (2_000_000_110, "8", "session/TestActiveSessionTable.al"),
 ];
 
 /// Why column `field` of platform table `table` cannot be read, if it cannot.

@@ -432,8 +432,16 @@ impl Providers {
         Ok(m)
     }
 
-    /// The rows of the table of `kind`, worked out from the program and the host.
+    /// The rows of the table of `kind`, worked out from the program and the host, with the
+    /// columns nothing pins left unknown ([`mark_unpinned`]).
     fn list_rows(&self, t: &TableDef, kind: Virtual) -> Vec<mat::Entry> {
+        let mut rows = self.provided_rows(t, kind);
+        mark_unpinned(t, &mut rows);
+        rows
+    }
+
+    /// The rows a provider fills for the table of `kind`.
+    fn provided_rows(&self, t: &TableDef, kind: Virtual) -> Vec<mat::Entry> {
         match kind {
             Virtual::ApiWebhookEntity | Virtual::TenantMedia | Virtual::Unprovided => {
                 unreachable!("refused or listed before")
@@ -471,6 +479,53 @@ impl Providers {
             Virtual::Key => fields::key_rows(self, t),
             Virtual::Integer | Virtual::Date | Virtual::WindowsLanguage | Virtual::LicensePermission => {
                 unreachable!("generated, never listed")
+            }
+        }
+    }
+}
+
+/// Columns a provider fills although `PINNED_COLUMNS` does not list them, kept because a corpus
+/// case that passes on real BC reads them without asserting the value: each with that case.
+/// Marking one of them unknown would refuse the case.
+pub(crate) const KEEP_FILLED: &[(u32, u32, &str)] = &[
+    // Event Subscription "Originating Package ID": a loop over every column reads it, and the observer masks
+    // the value to `x` (_fixtures/ProbeObserver.Codeunit.al:88; EventSubscriptionTriggerRows.al:163-222,
+    // EventSubscription_TableTriggerEvents_AllRows in codeunit 69519).
+    (
+        2_000_000_140,
+        10,
+        "events/lt-event-subscription-trigger-rows/EventSubscriptionTriggerRows.al:163",
+    ),
+];
+
+/// Leaves every column of a table of `PINNED_COLUMNS` that the list does not name, outside the
+/// primary key, the FlowFields and the system fields, `Value::Unknown` in every row: a read of it is refused
+/// (ADR-013 decision 7; hard rule 3), a copy keeps the marker. `KEEP_FILLED` lists the exceptions.
+pub(crate) fn mark_unpinned(t: &TableDef, rows: &mut [mat::Entry]) {
+    let Some(id) = al_builtins::platform::REGISTRY
+        .iter()
+        .chain(al_builtins::platform::LATER_MAJORS)
+        .find(|(_, n, _)| n.eq_ignore_ascii_case(&t.name))
+        .map(|(i, _, _)| *i)
+    else {
+        return;
+    };
+    let Some((_, pinned)) = al_builtins::platform::PINNED_COLUMNS.iter().find(|(i, _)| *i == id) else {
+        return;
+    };
+    for (pos, f) in t.fields.iter().enumerate() {
+        if f.id >= al_builtins::platform::SYSTEM_OBJECT_BASE
+            || !f.stored
+            || pinned.contains(&f.id)
+            || t.keys[0].contains(&pos)
+            || KEEP_FILLED.iter().any(|(ti, fi, _)| *ti == id && *fi == f.id)
+        {
+            continue;
+        }
+        let why = Value::Unknown(unknown_why(t, f.id, "any row"));
+        for e in rows.iter_mut() {
+            if !matches!(e.row[pos], Value::Unknown(_)) {
+                e.row[pos] = why.clone();
             }
         }
     }

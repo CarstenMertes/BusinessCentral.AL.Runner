@@ -610,6 +610,17 @@ impl Session {
         // handlers/ProbeTestPageForms.al:227-253, where a row with the last key, added below row 2,
         // is followed by row 3 and not by the blank line).
         let cursor_now = st.borrow().cursor;
+        // The client keeps a saved new line where it was typed, below its anchor. Where First or Previous go when that is not the
+        // row's place in the key order is not pinned (record/lt-loadfields-pagesource-validate/P81PageTempSource.al:238-242
+        // RunModal_TempRecord_NewRow: `N1`, typed below `T1`, is the second row the client shows): refused. Last goes to the last
+        // row by key (misc/lt-probes-needed-7/PnGTempSource.al:101 NewRowOfTheTemporarySource `last-no = C`).
+        if let (PageMethod::First | PageMethod::Previous, Some(a), Cursor::Row) = (how, &anchor, cursor_now) {
+            if self.saved_out_of_key_order(st, a.clone())? {
+                return unsupported(
+                    "First or Previous right after a new line saved below a row it does not follow in the key order (the client's row order is not pinned)",
+                );
+            }
+        }
         if let (PageMethod::Next, Some(anchor), Cursor::Row) = (how, anchor, cursor_now) {
             if self.next_below_anchor(st, anchor)? {
                 st.borrow_mut().cursor = Cursor::Row;
@@ -640,6 +651,27 @@ impl Session {
 
     /// Moves the page's record to the row after `anchor` in key order, when there is one and it is
     /// not the row just saved; else leaves the record as it was and answers false.
+    /// Whether the row the page stands on (a new line just saved) is not the row after `anchor` in the view's order.
+    fn saved_out_of_key_order(&mut self, st: &St, anchor: Vec<Value>) -> Result<bool, Signal> {
+        if self.declares(st, "onnextrecord") || self.declares(st, "onfindrecord") {
+            return Ok(false);
+        }
+        let rec = self.page_rec(st);
+        let saved = self.row_key(&rec)?;
+        let probe = Rc::new(RefCell::new(rec.borrow().clone()));
+        probe.borrow_mut().fields = anchor;
+        let table = self.table(&probe)?;
+        let mut pk = table.primary_key(&probe.borrow().fields);
+        self.ret_used = true;
+        if !matches!(self.record_op(RecordOp::Get, &probe, &mut pk)?, Value::Boolean(true)) {
+            return Ok(false);
+        }
+        self.ret_used = true;
+        let moved =
+            matches!(self.record_op(RecordOp::Next, &probe, &mut [Value::Integer(1)])?, Value::Integer(n) if n != 0);
+        Ok(!moved || !Self::same_key(&self.row_key(&probe)?, &saved))
+    }
+
     pub(super) fn next_below_anchor(&mut self, st: &St, anchor: Vec<Value>) -> Result<bool, Signal> {
         if self.declares(st, "onnextrecord") || self.declares(st, "onfindrecord") {
             return Ok(false);

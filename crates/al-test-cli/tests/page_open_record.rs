@@ -163,3 +163,65 @@ fn a_missing_page_run_in_a_try_function_names_the_test_codeunit() {
         [TryFunction] local procedure TryRun(Id: Integer) begin Page.Run(Id); end;",
     );
 }
+
+const TREE: &str = r#"
+table 62520 "OR Tree Row" { fields { field(1; Id; Code[10]) { } field(2; Lvl; Integer) { } } keys { key(PK; Id) { } } }
+page 62521 "OR Tree"
+{
+    PageType = List; SourceTable = "OR Tree Row";
+    layout { area(Content) { repeater(R) { IndentationColumn = Rec.Lvl; ShowAsTree = true; field(IdCtl; Rec.Id) { } } } }
+}
+codeunit 62522 T
+{
+    Subtype = Test;
+    procedure Check(Expected: Text; Actual: Text) begin if Expected <> Actual then Error('expected <%1> got <%2>', Expected, Actual); end;
+    local procedure Add(Id: Code[10]; Lvl: Integer) var R: Record "OR Tree Row"; begin R.Id := Id; R.Lvl := Lvl; R.Insert(); end;
+    local procedure Rows(var P: TestPage "OR Tree"): Text
+    var Result: Text;
+    begin
+        if P.First() then repeat Result += P.IdCtl.Value() + ' '; until not P.Next();
+        exit(Result);
+    end;
+    [Test] [HandlerFunctions('TreeH')]
+    procedure Tree()
+    begin
+        Add('T1', 0); Add('T2', 1); Add('T3', 2); Add('T4', 1); Add('T5', 0);
+        Page.Run(Page::"OR Tree");
+    end;
+    [PageHandler] procedure TreeH(var P: TestPage "OR Tree")
+    begin
+        Check('T1 T5 ', Rows(P));
+        P.First(); Check('No', Format(P.IsExpanded()));
+        P.Expand(true); Check('Yes', Format(P.IsExpanded()));
+        Check('T1 T2 T4 T5 ', Rows(P));
+        P.GoToKey('T1'); P.Expand(false);
+        Check('T1 T5 ', Rows(P));
+        Check('No', Format(P.GoToKey('T2')));
+        P.GoToKey('T5'); Check('No', Format(P.IsExpanded()));
+    end;
+}
+"#;
+
+// pages/lt-ah-pages/AhPageTests.al:981 Tree_ThroughPageRun: a tree offers no blank new line; Expand(true) shows the direct
+// children of the row, Expand(false) hides them again.
+#[test]
+fn expand_on_a_tree_shows_and_hides_the_direct_children() {
+    let o = al_testkit::outcomes_in(TREE, "T");
+    assert_eq!(o, vec![("Tree".to_string(), Outcome::Pass)]);
+}
+
+// record/lt-loadfields-pagesource-validate/P81PageTempSource.al:238-242 RunModal_TempRecord_NewRow: a new line saved below a row it
+// does not follow in the key order keeps its place in the client; where First goes then is not pinned, so it is refused.
+#[test]
+fn first_after_a_new_line_saved_out_of_key_order_is_refused() {
+    let o = outcomes(
+        "[Test] [HandlerFunctions('NewH')]
+        procedure NewRow() begin Seed(); Page.RunModal(Page::\"OR List\"); end;
+        [ModalPageHandler] procedure NewH(var P: TestPage \"OR List\") begin
+            P.First(); P.New(); P.NoCtl.SetValue('0'); P.First(); end;",
+    );
+    assert!(
+        matches!(&o[0].1, Outcome::NotRun(why) if why.contains("client's row order")),
+        "{o:?}"
+    );
+}

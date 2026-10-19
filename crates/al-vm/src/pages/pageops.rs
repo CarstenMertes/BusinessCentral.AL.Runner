@@ -270,8 +270,7 @@ impl Session {
             }
             // A page that is not a tree has nothing to expand (docs only; the corpus calls them,
             // TestPageAdvanced.al:104, :283, asserting nothing about the answer).
-            // On a tree (a repeater with ShowAsTree) Expand shows the rows below the current one
-            // (pages/lt-ah-pages/AhPageTests.al:986-989, :1066-1068); the client keeps the rows collapsed, so it refuses.
+            // On a tree (a repeater with ShowAsTree) Expand shows or hides the rows below the current one (`tree_expand`).
             PageMethod::Expand => {
                 self.require_open(st)?;
                 let engine = self.engine();
@@ -280,14 +279,23 @@ impl Session {
                         && matches!(c.prop("showastree"), Some(ir::PropVal::Lit(v)) if unquote(v).eq_ignore_ascii_case("true"))
                 });
                 if tree {
-                    return unsupported(
-                        "Expand on a page whose repeater has ShowAsTree: the test client does not expand rows",
-                    );
+                    let on = match args.first() {
+                        Some(v) => ops::truthy(v)?,
+                        None => return unsupported("Expand without an argument on a tree page (not pinned)"),
+                    };
+                    self.tree_expand(st, on)?;
                 }
                 Ok(Value::Null)
             }
             PageMethod::IsExpanded => {
                 self.require_open(st)?;
+                // On a tree, whether the row was expanded with Expand(true) (pages/lt-ah-pages/AhPageTests.al:953-961).
+                if self.has_source(st) && self.tree_indentation(st).is_some() && st.borrow().cursor == Cursor::Row {
+                    let key = self.row_key(&self.page_rec(st))?;
+                    return Ok(Value::Boolean(
+                        st.borrow().expanded.iter().any(|k| Self::same_key(k, &key)),
+                    ));
+                }
                 Ok(Value::Boolean(false))
             }
             PageMethod::SaveAsXml => self.request_save_as_xml(st, args),

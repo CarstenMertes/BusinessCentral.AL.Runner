@@ -35,15 +35,13 @@ pub(crate) struct RunnerReset {
 }
 
 impl RunnerReset {
-    pub(crate) fn of(program: &al_ir::Program) -> RunnerReset {
+    /// Found in the engine's index of codeunits by id: this runs for every test codeunit, and a scan of the objects
+    /// of a program with Microsoft's apps for each of the four ids was a measurable part of a run.
+    pub(crate) fn of(engine: &Engine) -> RunnerReset {
         let [mock, reset_state, set_state, block_changes] = al_sema::check::demand::TEST_RUNNER_CODEUNITS.map(|id| {
-            program
-                .objects
-                .iter()
-                .find(|o| {
-                    (o.is_kind(al_ir::ObjKind::Codeunit) || o.is_shell_of(al_ir::ObjKind::Codeunit)) && o.id == Some(id)
-                })
-                .map(|o| (id, o.name.clone()))
+            engine
+                .codeunit_object(Some(id))
+                .map(|o| (id, engine.program.objects[o].name.clone()))
         });
         RunnerReset {
             mock,

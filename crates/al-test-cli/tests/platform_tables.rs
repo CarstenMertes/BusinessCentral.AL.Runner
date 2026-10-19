@@ -522,6 +522,34 @@ codeunit 50000 "T" { Subtype = Test;
     passes(&o, "CardPage");
 }
 
+/// "Page Metadata" reads a property as the page's extensions leave it: one extension's value wins over the page's
+/// (pageext/lt-z-page-ext-props/ZPageExtProps.al:629, 685-1110), an extension of another page changes nothing, and two
+/// extensions that set it are not pinned, so the row is refused.
+#[test]
+fn a_page_metadata_property_is_the_one_extension_value_and_two_extensions_are_refused() {
+    let o = outcomes(
+        r#"table 50001 "Thing" { fields { field(1; "No."; Integer) { } } keys { key(PK; "No.") { Clustered = true; } } }
+page 50002 "Card" { PageType = Card; SourceTable = Thing; layout { area(Content) { field(No; Rec."No.") { } } } }
+page 50003 "Other" { PageType = Card; SourceTable = Thing; InsertAllowed = false; layout { area(Content) { field(No; Rec."No.") { } } } }
+page 50004 "Twice" { PageType = Card; SourceTable = Thing; layout { area(Content) { field(No; Rec."No.") { } } } }
+pageextension 50010 "Card Ext" extends "Card" { InsertAllowed = false; }
+pageextension 50011 "Twice A" extends "Twice" { ModifyAllowed = false; }
+pageextension 50012 "Twice B" extends "Twice" { ModifyAllowed = false; }
+codeunit 50000 "T" { Subtype = Test;
+  [Test] procedure OneExtension() var M: Record "Page Metadata"; begin
+    M.Get(50002); if M.InsertAllowed then Error('card'); if not M.ModifyAllowed then Error('card modify');
+    M.Get(50003); if M.InsertAllowed then Error('other'); end;
+  [Test] procedure TwoExtensions() var M: Record "Page Metadata"; begin
+    M.Get(50004); end; }"#,
+    );
+    passes(&o, "OneExtension");
+    let why = match o.iter().find(|(n, _)| n == "TwoExtensions").map(|(_, o)| o) {
+        Some(Outcome::NotRun(why) | Outcome::Fail(why)) => why.clone(),
+        other => panic!("TwoExtensions was expected to be refused, got {other:?}"),
+    };
+    assert!(why.contains("2 page extensions set ModifyAllowed"), "{why}");
+}
+
 /// Page Action (record/TestPageActionVirtualTable.al): the area is a container row, a group and its
 /// actions nest under it.
 #[test]

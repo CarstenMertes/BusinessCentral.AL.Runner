@@ -334,6 +334,16 @@ apps in `tests/fixtures/impact`, including the selection-independence test).
    counts an untrusted failure as a failure ("newly failing" or "fails differently"): both sides refuse the same earlier
    tests, so what those tests did not write cannot be what differs. In the Tests-Resource example (codeunit 136403)
    the two breakages are "newly failing" again.
+   **Changed (untrusted-failure-3, 2026-10-19):** every earlier test that did not run to its end counts: refused
+   before it started, refused while it ran, or failed. A failure is not trusted when such a test's static reach can
+   change what the failing test reads: a table (not under Function isolation), a global of a codeunit, or session
+   state (`WorkDate`, language, number sequences, isolated storage, bound subscribers; `al-testrun/src/runtime/
+   written.rs`). A refused construct or a run by an id known only at run time in that reach counts as "may change
+   anything" (coordinator's decision 2026-10-19). A failed earlier test counts only through the `Random` sequence,
+   and only when the failing test drew numbers before anything reseeded the sequence: BC's test runner reseeds it
+   before every test method when Tests-TestLibraries is loaded (codeunit 130301, ADR-013 "The test runner's steps
+   around each test method"), so in Microsoft's buckets a failed test no longer makes a later failure doubtful. The
+   report rule above is unchanged.
 
 ## Step 2 as built (impact-2, 2026-10-18)
 

@@ -91,13 +91,19 @@ before you open a source file.
 - Demand-driven against eager compile of the Microsoft apps (ADR-013, CI runs it): `tools/demand_vs_eager.sh run`
   (about 3 min, release binary needed) compares the main app and the OnPrem and isolation suites for BC 27, 28, 29.
 - Core crates do no OS access (ADR-006).
-- Parallel work: one `git worktree` and branch per area
-  (`git worktree add ../wt-<area> -b <area> main`). Merge `main` into the branch
+- Parallel work: one `git worktree` and branch per area, inside the main
+  checkout (`/.worktrees/` is git-ignored): from the main checkout run
+  `git worktree add .worktrees/<area> -b <area> origin/main`. Never create a
+  worktree next to the repository (`../wt-<area>`). Merge `main` into the branch
   before handing it back, and regenerate the baseline after merging; never
   hand-merge `metrics/<major>/passing.txt`.
+- Logs and scratch files go to your session's scratch folder or under
+  `~/.cache/al-runtime/`, never into the worktree root or
+  `/home/stefan/Documents/Repos/community`.
 - Shell hygiene: never build a file list with `$(grep -l …)` that can come back
   empty. `grep PATTERN` with no files waits on stdin forever; use `grep -rn
-  PATTERN dir/`.
+  PATTERN dir/` with a real folder (`crates/`, `docs/`): `grep -rn` on `.` in
+  the main checkout also walks `.worktrees/` and `target/`.
 - Working method for implementation agents (gates, memory caps, report):
   `docs/agents/brief.md`.
 - A session on another machine that takes GitHub issues (setup and task loop):

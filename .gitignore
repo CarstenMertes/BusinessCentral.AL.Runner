@@ -3,3 +3,5 @@ target/
 __pycache__/
 # Never commit AL source extracted into the repo root (Microsoft code)
 /*.al
+# Worktrees live inside the main checkout (CLAUDE.md, "Parallel work")
+/.worktrees/

@@ -109,6 +109,21 @@ pub struct Engine {
     pub(crate) exec: exec::ExecProgram,
     /// Per object, the ids of its source positions in ascending order, found when the Code Coverage table is first built.
     pub(crate) positions_by_object: std::sync::OnceLock<Vec<Vec<u32>>>,
+    /// Codeunit objects by id (see [`Engine::compiled_codeunit`] and [`Engine::codeunit_object`]).
+    codeunits: std::collections::HashMap<Option<u32>, CodeunitsWithId>,
+    /// Per object, the provider of a virtual platform table, found when the first session is made (`platform/mod.rs`).
+    pub(crate) served_tables: std::sync::OnceLock<Arc<[Option<al_builtins::platform::Virtual>]>>,
+    /// What crates above the VM work out from this engine's program once, by type (see [`Engine::derived`]).
+    derived: std::sync::Mutex<std::collections::HashMap<std::any::TypeId, Arc<dyn std::any::Any + Send + Sync>>>,
+}
+
+/// The codeunit objects with one id, first in program order.
+#[derive(Clone, Copy, Default)]
+struct CodeunitsWithId {
+    /// The first compiled one (`Object::is_kind`).
+    compiled: Option<usize>,
+    /// The first one, compiled or a shell of a dependency app that was not compiled.
+    any: Option<usize>,
 }
 
 /// What a call of a routine asks of the routine's declaration, answered once when the engine is built instead of by
@@ -262,6 +277,16 @@ impl Engine {
             .map(|(i, _)| i)
             .collect();
         let exec = exec::ExecProgram::new(&program);
+        let mut codeunits: std::collections::HashMap<Option<u32>, CodeunitsWithId> = Default::default();
+        for (i, o) in program.objects.iter().enumerate() {
+            if o.kind == ir::ObjKind::Codeunit {
+                let e = codeunits.entry(o.id).or_default();
+                e.any.get_or_insert(i);
+                if o.is_kind(ir::ObjKind::Codeunit) {
+                    e.compiled.get_or_insert(i);
+                }
+            }
+        }
         Arc::new(Engine {
             program,
             blocked,
@@ -282,7 +307,35 @@ impl Engine {
             facts,
             exec,
             positions_by_object: Default::default(),
+            codeunits,
+            served_tables: Default::default(),
+            derived: Default::default(),
         })
+    }
+
+    /// The first compiled codeunit with this id, in program order: the object `Codeunit.Run(Id)` runs. Found in an index
+    /// built with the engine; the test runner runs codeunits by id around every test method (al-testrun runner_reset.rs).
+    pub fn compiled_codeunit(&self, id: Option<u32>) -> Option<usize> {
+        self.codeunits.get(&id).and_then(|c| c.compiled)
+    }
+
+    /// The first codeunit with this id in program order, compiled or a shell of a dependency app that was not compiled.
+    pub fn codeunit_object(&self, id: Option<u32>) -> Option<usize> {
+        self.codeunits.get(&id).and_then(|c| c.any)
+    }
+
+    /// The value of type `T` made from this engine's program, made by `make` the first time it is asked for and shared
+    /// by every session and thread of the engine after that: for data that depends on the program alone (al-testrun's
+    /// index of the static reach). `make` must not ask the engine for derived data itself.
+    pub fn derived<T: std::any::Any + Send + Sync>(&self, make: impl FnOnce() -> T) -> Arc<T> {
+        let mut slots = self.derived.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let slot = slots
+            .entry(std::any::TypeId::of::<T>())
+            .or_insert_with(|| Arc::new(make()) as Arc<dyn std::any::Any + Send + Sync>)
+            .clone();
+        drop(slots);
+        slot.downcast::<T>()
+            .expect("a derived value is stored under its own type")
     }
 }
 
@@ -367,6 +420,10 @@ pub struct Session {
     /// How many numbers `Random` has drawn in this session (a test that draws after tests that did not run sees another
     /// sequence than BC's).
     pub(crate) random_draws: u64,
+    /// Whether the test running has reseeded the `Random` sequence (`Randomize`); see [`Session::inherited_random_draws`].
+    pub(crate) reseeded_in_test: bool,
+    /// How many numbers `Random` has drawn from a sequence the test running did not seed itself.
+    pub(crate) inherited_draws: u64,
     /// How many `Randomize()` calls without a seed the session has seen.
     pub(crate) unseeded_randomizes: i32,
     pub(crate) next_row_version: i64,
@@ -556,6 +613,8 @@ impl Session {
             guid_seed: random_seed,
             rng: al_host::random::NetRandom::new(random_seed),
             random_draws: 0,
+            reseeded_in_test: false,
+            inherited_draws: 0,
             unseeded_randomizes: 0,
             next_row_version: 0,
             autoinc: Default::default(),
@@ -845,6 +904,20 @@ impl Session {
     /// How many numbers `Random` has drawn in this session.
     pub fn random_draws(&self) -> u64 {
         self.random_draws
+    }
+
+    /// How many numbers `Random` has drawn, in this session, before the test drawing them reseeded the sequence: those
+    /// numbers depend on what the tests before it drew. A draw after `Randomize` in the same test does not (the
+    /// sequence restarts from the seed), so it is not counted.
+    pub fn inherited_random_draws(&self) -> u64 {
+        self.inherited_draws
+    }
+
+    /// A test method begins, before the test runner's reset: until something reseeds the `Random` sequence (the reset's
+    /// `LibraryRandom.SetSeed(1)` included), what `Random` draws depends on the tests before (see
+    /// [`Session::inherited_random_draws`]).
+    pub fn start_random_scope(&mut self) {
+        self.reseeded_in_test = false;
     }
 
     pub fn instance(&mut self, object: usize) -> Rc<RefCell<Instance>> {

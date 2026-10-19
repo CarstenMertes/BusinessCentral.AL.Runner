@@ -50,3 +50,28 @@ every read, and by n milliseconds on `Sleep(n)`.
 - `crates/al-vm/tests/store/hostvalues.rs`: `every_read_of_the_clock_is_one_millisecond_later_than_the_last`,
   `sleep_moves_the_clock_by_the_time_waited`, `sleep_of_zero_is_allowed_and_a_negative_wait_is_refused`.
 - `crates/al-vm/tests/dotnet.rs`: `datetime_now_is_the_host_clock_and_needs_no_dotnet_host`.
+
+## Amendment: the run clock starts at noon UTC of the day (2026-10-19)
+
+### Decided without owner review (2026-10-19)
+
+1. **The host instant is 12:00:00.000 UTC of the UTC day the run first reads the clock**, not the wall time of that read
+   (`al-testrun/src/host.rs`, `run_clock_start`). The date stays the wall clock's, so `Today` is today; only the time of
+   day is fixed. A run that reads a kept install baseline still starts where that baseline's run started
+   (`SystemClock::begin_at`); the baseline cache key holds the day, so that is the same noon. `ALRUNNER_REAL_CLOCK=1`
+   is unchanged.
+2. **Why.** Item 6 above held only within a run. The instant came from the wall clock, so `Time` differed between runs,
+   and between selections: the kept baseline is keyed by the selection, so each selection replayed the instant of its
+   own first run. Microsoft's test libraries seed the session's random generator from the clock
+   (`Any.SetDefaultSeed` and `LibraryRandom.Init` call `Randomize(Time - 000000T)`), and the seed stays in force for the
+   rest of the codeunit. `Job Posting.PurchaseOrderFCYWithJob` (Tests-Job, codeunit 136309) failed with a rounding
+   difference or passed depending on which other codeunits were selected: an earlier test of its codeunit
+   (`PostingPurchaseOrderWithItemTracking`, through `CreateNoSeries`) calls `Any.SetDefaultSeed`. The ms phase of the
+   instant also decided at which read `Format(Time)` crosses a second. Both broke ADR-043 condition 1.
+3. **Why noon.** Any fixed time of day works; noon is the deterministic host's time of day (2024-01-15T12:00:00Z), and it
+   keeps the UTC date for every time zone between UTC-12 and UTC+12.
+4. **What BC does.** BC's `Time` is the wall clock, so a test that seeds from it draws other numbers in each run on BC
+   too. Microsoft's runner limits that to one test method: `ALTestRunner Reset Environment` (130453) runs
+   `Reset State Before Test Run` (130301), which calls `LibraryRandom.SetSeed(1)`, before every test method. This runner
+   does not do that yet (branch per-test-reset); until it does, the seed of one test reaches the later tests of its
+   codeunit, but now in the same way in every run.

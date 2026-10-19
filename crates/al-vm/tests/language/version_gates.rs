@@ -51,6 +51,10 @@ codeunit 50100 C
     procedure MinMax(): Boolean
     var H: Record "VG Head";
     begin Seed(); H.Get('D1'); H.CalcFields(MaxRv, MinRv); exit(H.MaxRv > H.MinRv); end;
+    procedure RowVersionExists(): Boolean
+    var R: RecordRef;
+    begin R.Open(60900); exit(R.FieldExist(2000000005)); end;
+
     procedure CountBig(): Integer
     var H: Record "VG Head";
     begin Seed(); H.Get('D1'); H.CalcFields(CntBig); exit(H.CntBig); end;
@@ -194,5 +198,21 @@ fn min_and_max_over_systemrowversion_refusal_has_the_pinned_text_and_code_on_bc_
 fn lookup_of_systemrowversion_calculates_on_every_version() {
     for bc in [Some("27.5"), Some("29.0"), None] {
         assert!(matches!(ok(run(bc, "Look")), Value::Boolean(true)), "BC {bc:?}");
+    }
+}
+
+// corpus recordref/lt-recordref-fieldref-members/P92Fields.al:72 (#if BC29PLUS): on BC 29 RecordRef.FieldExist(2000000005),
+// the rowversion's number, is true. Before 29 nothing pins it: refused.
+#[test]
+fn field_exist_of_the_rowversion_number_is_true_on_bc_29_and_refused_before() {
+    assert!(matches!(
+        ok(run(Some("29.0"), "RowVersionExists")),
+        Value::Boolean(true)
+    ));
+    for bc in ["27.5", "28.5"] {
+        match run(Some(bc), "RowVersionExists") {
+            Err(Signal::Unsupported(why)) => assert!(why.contains("2000000005"), "BC {bc}: {why}"),
+            other => panic!("BC {bc}: expected a refusal, got {other:?}"),
+        }
     }
 }

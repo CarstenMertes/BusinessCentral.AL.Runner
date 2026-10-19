@@ -12,7 +12,7 @@ The catalog of each area is what the AL language server offers in probe files (`
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
 | attributes | 42 | 32 | 76.2% | 28 | 66.7% | 0 | 14 | 2 |
 | events | 23 | 16 | 69.6% | 22 | 95.7% | 0 | 1 | 0 |
-| properties | 720 | 669 | 92.9% | 560 | 77.8% | 18 | 142 | 3 |
+| properties | 720 | 669 | 92.9% | 562 | 78.1% | 18 | 140 | 3 |
 | syntax | 16 | 16 | 100.0% | 16 | 100.0% | 0 | 0 | 0 |
 | triggers | 128 | 128 | 100.0% | 116 | 90.6% | 3 | 9 | 0 |
 
@@ -44,7 +44,7 @@ Left out: 293 presentation-only properties (Caption, ToolTip, ApplicationArea, .
 | Owner | Items | Pinned | Pinned % | Implemented | Implemented % | Refused | Unknown | MS-used unpinned |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
 | AllPageCustomization | 6 | 6 | 100.0% | 3 | 50.0% | 0 | 3 | 0 |
-| Codeunit | 17 | 16 | 94.1% | 12 | 70.6% | 0 | 5 | 0 |
+| Codeunit | 17 | 16 | 94.1% | 14 | 82.4% | 0 | 3 | 0 |
 | ControlAddInObject | 19 | 19 | 100.0% | 3 | 15.8% | 0 | 16 | 0 |
 | Entitlement | 5 | 5 | 100.0% | 2 | 40.0% | 0 | 3 | 0 |
 | EnumType | 9 | 9 | 100.0% | 8 | 88.9% | 0 | 1 | 0 |

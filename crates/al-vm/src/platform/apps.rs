@@ -62,6 +62,9 @@ pub(super) fn published_application_rows(p: &Providers, t: &TableDef) -> Vec<Ent
             for (n, part) in v.iter().enumerate() {
                 r[pos(t, 6 + n as u32)] = Value::Integer(*part);
             }
+            // Description holds the manifest's description (onprem session/PZPublishedApplicationColumns.al:55, :59);
+            // the program does not keep it (`AppInfo`), so the column is unknown rather than a blank Blob.
+            r[pos(t, 15)] = super::unknown(t, 15, "an app: the runtime does not keep the manifest's description");
             Some(Entry::ok(r))
         })
         .collect()

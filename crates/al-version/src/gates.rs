@@ -109,7 +109,8 @@ pub enum Gate {
     /// Exporting a Media from BC 29 writes the imported bytes back (types/W7Media.al, corpus bump 9). Not consumed yet.
     MediaExportKeepsTheImportedBytes,
     /// The platform metadata tables (All Obj, All Obj with Caption, Field, Key, Table and Codeunit Metadata) list other
-    /// columns and rows from BC 29 (metadata/W6*.al, corpus bump 9). Not consumed yet.
+    /// columns and rows from BC 29 (metadata/W6*.al, corpus bump 9). Consumed only by `RecordRef.FieldExist(2000000005)`
+    /// (al-vm refs.rs); the four BC 29 system fields of the Field table are not modelled (numbers not pinned).
     PlatformMetadataColumnsFrom29,
     /// `SetView` and `SetFilter` of text that is no table filter raise the Evaluate error `The value "..." can't be
     /// evaluated into type TableFilter.` from BC 28 (records/W4PlatformAndMeta.al, corpus bump 9). Not consumed yet.
@@ -516,6 +517,10 @@ impl Gate {
                 Evidence {
                     file: "metadata/W6TableCodeunitMetadata.al",
                     lines: "258",
+                },
+                Evidence {
+                    file: "recordref/lt-recordref-fieldref-members/P92Fields.al",
+                    lines: "72",
                 },
             ],
             Gate::TableFilterEvaluateError => &[Evidence {

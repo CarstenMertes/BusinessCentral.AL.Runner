@@ -143,6 +143,11 @@ const TABLE_TYPES: &[&str] = &[
 const QUERY_TYPES: &[&str] = &["Normal", "API"];
 const CODEUNIT_SUBTYPES: &[&str] = &["Normal", "Test", "TestRunner", "Upgrade", "Install"];
 
+/// The members of CodeUnit Metadata TestType and RequiredTestIsolation in ordinal order
+/// (codeunit/lt-x-object-props/XObjectProps.al:255-256, :267-268).
+const TEST_TYPES: &[&str] = &["None", "UnitTest", "IntegrationTest", "Uncategorized", "AITest"];
+const TEST_ISOLATIONS: &[&str] = &["None", "Disabled", "Codeunit", "Function"];
+
 /// What the program says about each object, by name and by owner.
 pub(super) struct Catalog<'a> {
     pub objects: &'a [Object],
@@ -390,7 +395,7 @@ fn runtime_package_id(c: &Catalog, o: &Object) -> [u8; 16] {
 pub(super) fn all_obj_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
     let engine = p.engine();
     let c = Catalog::new(&engine);
-    entries(
+    let mut out = entries(
         &c,
         t,
         |o| {
@@ -407,7 +412,26 @@ pub(super) fn all_obj_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
             r[pos(t, 62)] = Value::Text(namespace(o).into());
             Ok(())
         },
-    )
+    );
+    // BC lists one more row per table than the runtime does: a table, a codeunit and a page in one namespace count 4
+    // (metadata/lt-all-obj-namespace/AllObjNamespace.al:101). Most likely the TableData row (ordinal 0), whose
+    // columns no corpus test pins: each table gets that row poisoned, so a read that may land on it is refused and
+    // one that filters "Object Type" to another member is answered.
+    let blank = Blank::new(t);
+    for o in c.objects {
+        if let (Some(id), al_ir::ObjKind::Table) = (o.id, o.kind) {
+            let mut k = blank.row();
+            k[pos(t, 1)] = option(t, 1, 0);
+            k[pos(t, 3)] = Value::Integer(id as i32);
+            out.push(Entry::poisoned(
+                k,
+                format!(
+                    "the TableData row of table {id} in AllObj is not pinned (its existence and columns): no corpus test pins it (docs/probes-needed.md)"
+                ),
+            ));
+        }
+    }
+    out
 }
 
 pub(super) fn all_obj_with_caption_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
@@ -470,12 +494,28 @@ pub(super) fn codeunit_metadata_rows(p: &Providers, t: &TableDef) -> Vec<Entry> 
             r[pos(t, 6)] = Value::Guid(c.owner(o));
             r[pos(t, 7)] = Value::Text(truncate(&ident(prop(o, "InherentPermissions").unwrap_or("")), 5).into());
             r[pos(t, 8)] = Value::Text(truncate(&ident(prop(o, "InherentEntitlements").unwrap_or("")), 5).into());
-            // A test codeunit is a unit test; nothing else the corpus pins is anything but None
-            // (TestCodeunitMetadataVirtualTable.al, `TestCodeunit_ReportsTestTypeUnitTest`).
-            r[pos(t, 9)] = option(t, 9, i32::from(subtype == "Test"));
-            // RequiredTestIsolation reads None for every codeunit (same file,
-            // `RequiredTestIsolation_ReportsNoneForEveryCodeunit`).
-            r[pos(t, 10)] = option(t, 10, 0);
+            // TestType and RequiredTestIsolation read the declared member; a test codeunit without them reads
+            // UnitTest and None (codeunit/lt-x-object-props/XObjectProps.al:255-256, :267-268, :279), any other
+            // codeunit None and None (record/TestCodeunitMetadataVirtualTable.al:415-419, :456-459). A non-test
+            // codeunit that declares either is not pinned: refused.
+            let declared = |name: &str, members: &[&str]| -> Result<Option<i32>, String> {
+                match prop(o, name) {
+                    None => Ok(None),
+                    Some(_) if subtype != "Test" => Err(format!(
+                        "codeunit '{}': {name} on a codeunit that is not Subtype = Test is not pinned",
+                        o.name
+                    )),
+                    Some(v) => members
+                        .iter()
+                        .position(|m| m.eq_ignore_ascii_case(&ident(v)))
+                        .map(|i| Some(i as i32))
+                        .ok_or_else(|| format!("codeunit '{}': {name} `{v}` is not understood", o.name)),
+                }
+            };
+            let test_type = declared("TestType", TEST_TYPES)?.unwrap_or(i32::from(subtype == "Test"));
+            r[pos(t, 9)] = option(t, 9, test_type);
+            let isolation = declared("RequiredTestIsolation", TEST_ISOLATIONS)?.unwrap_or(0);
+            r[pos(t, 10)] = option(t, 10, isolation);
             r[pos(t, 11)] = Value::Text(namespace(o).into());
             Ok(())
         },

@@ -7,6 +7,7 @@ mod gone_row;
 mod pageext;
 mod pages;
 mod parts;
+mod row_window;
 mod run_record_group2;
 mod trap_reopen;
 mod trust_refusals;

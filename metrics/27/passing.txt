@@ -5591,6 +5591,7 @@
 69304 Editable_TrueOnAPageThatIsNotEditable
 69304 List_ActionDeletesTheOnlyRow_ThenUpdates
 69304 List_ActionDeletesTheOnlyRow_WithoutUpdate
+69304 List_BufferLeftByOnAfterGetRecord_AfterTheStoredRowChanged
 69304 List_BufferLeftByOnAfterGetRecord_WhileTheRowIsUnchanged
 69304 List_UpdateFalse_KeepsTheUnsavedEdit
 69304 TempSourcePage_ReadWriteLikeAStoredOne
@@ -6863,6 +6864,7 @@
 70175 GoToRecordFromTheFirstRow
 70176 ViewModeEmptyListInsertViaRec
 70177 BufferEditOfOnAfterGetRecordOnACard
+70177 BufferEditOfOnAfterGetRecordOnAList
 70177 CardOpenWithAndWithoutUpdateInOnOpenPage
 70177 ListLosesOnlyRowDeleteNoUpdate
 70177 ListLosesOnlyRowDeleteWithUpdate
@@ -6895,6 +6897,7 @@
 70180 PartControlEnabledAndVisible
 70180 PartModeFollowsHost
 70181 PendingPartRowSavedOnHostClose
+70181 PendingPartRowSavedWhenHostMoves
 70181 ReadOnlyPartSetValue
 70181 SubPageViewOnTheLinkedField
 70182 CardPendingNewRowSavedBeforeAction
@@ -8453,6 +8456,8 @@
 71246 P174_NonTempArray_SharesDatabaseTable
 71246 P174_TwoSeparateTempVars_DoNotShare
 71254 P174_OpenNew_KeyThenClose_WithoutOtherField
+71279 OpenEdit_GreaterThanTenView_ReadsAtOpen
+71279 OpenView_GreaterThanTenView_ReadsAtOpen
 71279 OpenView_GreaterThanTenView_RowsShownPerHostRow
 71290 OpenEdit_SixParts_ReadsPerPartLogged
 71290 OpenNew_SixParts_ReadsPerPartLogged
@@ -10271,6 +10276,7 @@
 73056 Run_Temp_ThreeRows
 73056 TestPage_Real_OpenEdit
 73056 TestPage_Real_OpenEdit_Empty
+73056 TestPage_Real_OpenNew
 73056 TestPage_Real_OpenView
 73073 Export_Declared
 73073 Export_EmptyTable
@@ -11195,6 +11201,8 @@
 73868 Action_List_ManyRows
 73874 FindList_Ascending_25Rows
 73874 FindList_Ascending_3Rows
+73874 FindList_Descending_25Rows
+73874 FindList_Descending_3Rows
 73874 FindList_PlainDescending
 73880 Transfer_EnumToEnum_SameType
 73880 Transfer_EnumToOption
@@ -11261,6 +11269,7 @@
 73932 FlowRelation_Code_AfterCalcFields
 73932 FlowRelation_Code_NoCalcFields
 73932 FlowRelation_Condition_AfterCalcFields
+73932 FlowRelation_Condition_NoCalcFields
 73932 FlowRelation_Integer_AfterCalcFields
 73932 FlowRelation_Integer_NoCalcFields
 73934 LoadFields_AfterGet_Assigned
@@ -11791,6 +11800,7 @@
 74463 Card_OpenNew_EmptyTable
 74463 Card_OpenNew_TableWithRows
 74463 List_OpenNew_EmptyTable
+74463 List_OpenNew_TableWithRows
 74466 Variant_CodeAndOtherTypes_ToDecimal
 74466 Variant_Text_ToDecimal
 74472 AddLoadFields_FlowFieldAndNormal
@@ -12444,6 +12454,8 @@
 77532 AC_Attr_TestPermissions_Disabled
 77532 AC_Attr_TestPermissions_NonRestrictive
 77532 AC_Attr_TestPermissions_Restrictive
+78006 UpperLimit_ErrorCode_ThenClear
+78006 UpperLimit_MoreThanOneRange_ErrorCode
 78008 Ties_AscendingFalseThenSetAscending
 78008 Ties_Basic
 78008 Ties_ExplicitPrimaryKeyInKey
@@ -12506,12 +12518,21 @@
 78860 Same_NavCurr
 78860 Same_PlainCurr
 78861 GoToRecord_BeforeAnyNavigation_Nav
+78861 GoToRecord_BeforeAnyNavigation_NavCurr
 78861 Next_EmptyList_Nav
+78861 Next_OneRow_Nav
+78861 Next_OneRow_NavCurr
+78861 Next_OneRow_Plain
+78861 Next_TwoRows_Nav
+78861 Next_TwoRows_NavCurr
 78861 Next_TwoRows_PlainCurr
 78861 OpenOnRow_SetPositionInOnOpenPage
+78861 OpenOnRow_SetPositionInOnOpenPage_LastRow
 78861 OpenOnRow_SetPositionInOnOpenPage_Next
 78862 PageRun_RecordOnFifthRow
 78862 PageRun_RecordWithFilterOnFifthRow
+78862 Paging_GoToKeyThenWalk_Nav
+78862 Paging_GoToKey_Nav
 78862 Paging_LastThenFirst_Nav
 78862 Paging_OpenThenNext_Nav
 78862 Paging_Open_Nav
@@ -12520,7 +12541,9 @@
 79201 PrefixAndSuffixFilters
 79201 TableWithOptimizedFieldInstallsAndStores
 79450 An01_DecimalBounds_MoreThanTwoDecimals
+79450 An02_Part_ConstLink_FiveRows
 79450 An02_Part_ConstLink_OneRow
+79450 An02_Part_FieldLink_FiveRows
 79450 An02_Part_FieldLink_OneRow
 79450 An08_DateShorthands
 79450 An14_RelationLookup_BlankField

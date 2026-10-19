@@ -212,6 +212,13 @@ impl Session {
         Ok(())
     }
 
+    /// `Codeunit.Run(id)` in its statement form, as the test runner's own AL code calls it (an error is not trapped).
+    pub fn run_codeunit_by_id(&mut self, id: u32) -> Result<(), Signal> {
+        let n = i32::try_from(id).map_err(|_| Signal::Unsupported(format!("codeunit id {id} out of range")))?;
+        self.codeunit_run(ids::CODEUNIT_RUN_3, None, &[Value::Integer(n)], false)
+            .map(|_| ())
+    }
+
     /// `Codeunit.Run`: `Codeunit.Run#1` is the instance form, `#3` the static form by id. The
     /// call is guarded when its result is used (`ret_used`).
     pub(crate) fn codeunit_run(

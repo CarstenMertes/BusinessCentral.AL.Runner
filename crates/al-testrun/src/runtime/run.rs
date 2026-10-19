@@ -237,6 +237,12 @@ pub(crate) fn run_codeunit_core(
         }
     };
     session.in_test_codeunit = true;
+    // What BC's AL test runner does around each test method (runner_reset.rs). A scratch run has no runner.
+    let runner = if execute {
+        runner_reset::RunnerReset::default()
+    } else {
+        runner_reset::RunnerReset::of(&lowered.program)
+    };
     if let Some(on_run) = (0..obj.routines.len())
         .find(|&r| obj.routines[r].is_trigger && obj.routines[r].name.eq_ignore_ascii_case("OnRun"))
         .filter(|_| !execute)
@@ -316,6 +322,8 @@ pub(crate) fn run_codeunit_core(
                     began = true;
                     session.last_error = Default::default();
                     al_builtins::assumptions::clear_hits();
+                    // The runner's steps before the method (runner_reset.rs); what they rely on counts for the test.
+                    let reset = runner.before(&mut session, obj, routine);
                     // The AL test runner enables every application area before each test method
                     // (corpus session/TestSessionApplicationAreaTestBoundary.al:67552).
                     session.start_test_method();
@@ -343,14 +351,18 @@ pub(crate) fn run_codeunit_core(
                     session.set_runner_frames(runner_frames(&lowered.program, engine));
                     // A panic in the test is a runtime bug: it is caught here, so that it ends this codeunit and not
                     // the process (a server must outlive it). The session is not trusted after it.
-                    let called = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        // A debugging aid: the named test panics here, to show that a panic ends one codeunit and not the
-                        // process (tests of `alrunner serve`). Not documented for users.
-                        if std::env::var("ALRUNNER_DEBUG_PANIC_IN").is_ok_and(|n| n == routine.name) {
-                            panic!("requested by ALRUNNER_DEBUG_PANIC_IN");
-                        }
-                        session.call(object, r, instance.clone(), Vec::new())
-                    }));
+                    let called = match reset {
+                        // A refused or failed reset: the test does not run, and what the reset changed stays.
+                        Err(why) => Ok(Err(Signal::Unsupported(why))),
+                        Ok(()) => std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            // A debugging aid: the named test panics here, to show that a panic ends one codeunit and not the
+                            // process (tests of `alrunner serve`). Not documented for users.
+                            if std::env::var("ALRUNNER_DEBUG_PANIC_IN").is_ok_and(|n| n == routine.name) {
+                                panic!("requested by ALRUNNER_DEBUG_PANIC_IN");
+                            }
+                            session.call(object, r, instance.clone(), Vec::new())
+                        })),
+                    };
                     let result = match called {
                         Ok(r) => r,
                         Err(p) => {
@@ -376,7 +388,7 @@ pub(crate) fn run_codeunit_core(
                     committed = session.commits != commits_before;
                     session.tx_model = al_vm::TxModel::AutoCommit;
                     let unexecuted = session.end_ui_scope();
-                    match result {
+                    let outcome = match result {
                         // AutoRollback rolls the test's work back the moment it finishes, pass
                         // or fail (record/TestTransactionModelAutoRollback.al:Test01-Test03).
                         Ok(_) if unexecuted.is_empty() && model == al_vm::TxModel::AutoRollback => {
@@ -417,7 +429,14 @@ pub(crate) fn run_codeunit_core(
                             Outcome::NotRun(r)
                         }
                         Err(other) => Outcome::Fail(format!("unexpected signal {}", other.describe())),
+                    };
+                    // The runner's step after the method. It only changes what later tests of the codeunit start
+                    // from; if it cannot run, their failures are not trusted.
+                    if let Err(why) = runner.after(&mut session) {
+                        session.rollback_transaction();
+                        refused_mid_run.get_or_insert_with(|| format!("after {}: {why}", routine.name));
                     }
+                    outcome
                 }
             }
         };

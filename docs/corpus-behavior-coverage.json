@@ -15253,7 +15253,7 @@
         "code": "Notification",
         "file": "crates/al-builtins/src/sessiontypes.rs",
         "generic": false,
-        "line": 313,
+        "line": 310,
         "pinned": true,
         "site": "errorinfo/lt-errnotif/EnTNotification.al:288",
         "template": "Message cannot be empty when sending a Notification."

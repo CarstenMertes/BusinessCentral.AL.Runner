@@ -642,15 +642,20 @@ impl Session {
         // A field whose source table field says `Editable = false` and whose control declares no Editable of its
         // own is not editable (pinned for a stored field: pages/lt-page-field-editable-source/PageFieldEditableSource.al:
         // Card_OpenEdit_FieldEditable `lockedNoProp`; a control with its own Editable = true is editable there
-        // `lockedEditableTrue`). A FlowField is not pinned; Microsoft's Payment Export Mgt Unit Test
-        // FilterByHasPaymentExportError needs it (assumption page-field-follows-source-field-editable-false).
+        // `lockedEditableTrue`). A FlowField is pinned too (below); a FlowFilter field is not
+        // (assumption page-field-follows-source-field-editable-false).
         if page_of(&engine, st).controls[idx].prop("editable").is_none() {
             if let Some(f) = self.control_field(st, idx) {
                 if f.properties
                     .iter()
                     .any(|(k, v)| k.eq_ignore_ascii_case("Editable") && v.trim().eq_ignore_ascii_case("false"))
                 {
-                    if !f.stored {
+                    // A FlowField is pinned (handlers/N582TestPageEdges.al:324 N582_Editable_FlowFieldNotEditable: Editable()
+                    // No on a card, a list and a view page); a FlowFilter field is the assumption.
+                    let flow_field = f.properties.iter().any(|(k, v)| {
+                        k.eq_ignore_ascii_case("FieldClass") && v.trim().eq_ignore_ascii_case("FlowField")
+                    });
+                    if !f.stored && !flow_field {
                         al_builtins::assumptions::assume(
                             al_builtins::assumptions::Assumption::PageFieldFollowsSourceFieldEditableFalse,
                         );

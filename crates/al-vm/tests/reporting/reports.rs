@@ -97,6 +97,30 @@ report 60541 "CRL Report"
     var LangToSet: Integer; RegionAfterSet: Text;
 }
 
+// Sets the language first, then the region (misc/lt-probes-needed-3/PnC06ReportLanguage.al:58-65).
+report 60542 "CRL Lang Then Region"
+{
+    ProcessingOnly = true;
+    UseRequestPage = false;
+    UsageCategory = None;
+    dataset
+    {
+        dataitem(Rows; "Num Row")
+        {
+            DataItemTableView = where(Number = const(1));
+        }
+    }
+    trigger OnPreReport()
+    var Log: Codeunit "CRL Log";
+    begin
+        CurrReport.Language := LangToSet;
+        CurrReport.FormatRegion := RegionToSet;
+        Log.Note(CurrReport.Language, CurrReport.FormatRegion);
+    end;
+    procedure Set(L: Integer; R: Text) begin LangToSet := L; RegionToSet := R; end;
+    var LangToSet: Integer; RegionToSet: Text;
+}
+
 // corpus handlers/TestReportOnInitReportTimingFixtures.al
 codeunit 60005 "OIR Log"
 {
@@ -1555,6 +1579,37 @@ fn curr_report_language_reads_back_and_format_region_is_kept_by_run() {
         // (misc/lt-probes-needed-8/PnH4CurrReport.al:244 `region=[]`).
         "1|1031|[]"
     );
+}
+
+// After `CurrReport.Language := 1031` the region `de-DE` is kept and reads back (misc/lt-probes-needed-3/PnC06ReportLanguage.al:
+// 58-65 `region1:de-DE`). Any other region set after a language change is not pinned (`en-US` reads back empty only while the
+// report keeps the session's language, misc/lt-probes-needed-8/PnH4CurrReport.al:244), so it is refused.
+#[test]
+fn format_region_after_a_language_change_is_pinned_for_de_de_only() {
+    let body = |lang: i32, region: &str| {
+        format!(
+            "var Probe: Report \"CRL Lang Then Region\"; Log: Codeunit \"CRL Log\"; H: Codeunit Helpers; begin
+            H.Seed();
+            Probe.Set({lang}, '{region}');
+            Probe.Run();
+            exit(Format(Log.GetLang()) + '|[' + Log.GetRegion() + ']');
+        end;"
+        )
+    };
+    assert_eq!(f(&body(1031, "de-DE")), "1031|[de-DE]");
+    for (lang, region) in [
+        (1031, "en-US"),
+        (1033, "en-US"),
+        (1036, "en-US"),
+        (1031, "fr-FR"),
+        (1036, "de-DE"),
+    ] {
+        let r = refusal(&body(lang, region));
+        assert!(
+            r.contains("CurrReport.FormatRegion") && r.contains(region),
+            "{lang} {region}: {r}"
+        );
+    }
 }
 
 // The same file :87-103 says BC rejects language 0 with an error that names the language; the text is

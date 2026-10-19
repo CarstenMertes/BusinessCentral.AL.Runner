@@ -1655,3 +1655,57 @@ fn a_subscriber_assignment_after_the_sender_call_wins() {
     let src = ALIAS_ORDER.replace("Count := 77; Sender.Mark();", "Sender.Mark(); Count := 99;");
     assert_eq!(int(run(&src, "F")), 99);
 }
+
+const INT_FILTER: &str = r#"
+table 50210 FRow
+{
+    fields { field(1; Id; Integer) { } }
+    keys { key(PK; Id) { Clustered = true; } }
+}
+codeunit 50211 FSub
+{
+    SingleInstance = true;
+    var Log: Text;
+    [EventSubscriber(ObjectType::Codeunit, Codeunit::"Filter Helper Triggers", 'MakeIntFilter', '', false, false)]
+    local procedure MakeIntFilter(var IntFilterText: Text)
+    begin
+        Log += 'MakeIntFilter(' + IntFilterText + ')';
+        if IntFilterText = 'abc' then
+            IntFilterText := '5';
+    end;
+    procedure Take(): Text var T: Text; begin T := Log; Log := ''; exit(T); end;
+}
+codeunit 50100 C
+{
+    procedure Word(): Text
+    var R: Record FRow; S: Codeunit FSub;
+    begin
+        R.SetFilter(Id, 'abc');
+        exit(R.GetFilter(Id) + '|' + S.Take());
+    end;
+    procedure Range(): Text
+    var R: Record FRow;
+    begin
+        R.SetFilter(Id, '1..x');
+        exit(R.GetFilter(Id));
+    end;
+}
+"#;
+
+// events/lt-platform-triggers/PtObserve.al:Bad_Int (:276-286): a filter text of one word of letters on an Integer field raises
+// `MakeIntFilter` with the text, and the text a subscriber writes is read instead (m3 `res=5`).
+#[test]
+fn make_int_filter_is_raised_for_a_word_of_letters() {
+    assert_eq!(text(run(INT_FILTER, "Word")), "5|MakeIntFilter(abc)");
+}
+
+// Whether BC raises `MakeIntFilter` for another text that does not evaluate (`1..x`, `1.5`, `*`) is not pinned: with a subscriber
+// present the SetFilter is refused, not answered with the evaluate error of record/lt-record-read/RcAFilters.al:392-414 (measured
+// with subscribers that change nothing) (docs/probes-needed.md, corpus #657).
+#[test]
+fn with_a_make_int_filter_subscriber_another_bad_text_is_refused() {
+    match run(INT_FILTER, "Range") {
+        Err(Signal::Unsupported(r)) => assert!(r.contains("MakeIntFilter") && r.contains("1..x"), "{r}"),
+        other => panic!("{other:?}"),
+    }
+}

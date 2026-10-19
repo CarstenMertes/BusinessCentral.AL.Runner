@@ -267,9 +267,37 @@ pub struct Phases {
     /// The test codeunits (object id, name) that took longest, slowest first (at most
     /// [`SLOWEST`]).
     pub slowest: Vec<CodeunitTime>,
+    /// The tests ran on a lean compile (`al_sema::check::Roots::lean`): (workspace objects it left out, workspace
+    /// objects). `None`: the compile was complete.
+    pub lean: Option<(usize, usize)>,
+    /// A lean run met a routine the lean compile had left out, so the tests ran again on the complete compile; the
+    /// outcomes are the second run's.
+    pub lean_redone: bool,
+    /// How many times the apps were compiled for the run: 2 when a compile without the baseline was thrown away
+    /// because the rule said "may observe", or when a lean run ran again.
+    pub compiles: usize,
 }
 
 impl Phases {
+    /// One line for `--timings` about a lean compile or a compile that was done twice, `None` when there was one
+    /// complete compile.
+    pub fn compile_line(&self) -> Option<String> {
+        match (self.lean, self.lean_redone) {
+            (_, true) => Some(
+                "compile: lean, and a selected test met an object the lean compile left out, so the tests ran again on the complete compile"
+                    .into(),
+            ),
+            (Some((out, all)), false) => Some(format!(
+                "compile: lean, {out} of {all} workspace objects left out (no selected test names them)"
+            )),
+            (None, false) if self.compiles > 1 => Some(
+                "compile: twice, the compile without the install baseline was thrown away (a selected test may observe the baseline)"
+                    .into(),
+            ),
+            (None, false) => None,
+        }
+    }
+
     /// One line for `--timings`: whether the install baseline ran, and if the rule that skips it
     /// was tried and said no, the first construct a selected test reaches that could observe it.
     /// `None` when there was nothing to say (no dependency app).
@@ -605,6 +633,7 @@ mod run;
 mod runner_reset;
 #[cfg(test)]
 mod tests;
+pub(crate) mod written;
 
 pub use self::blocked::*;
 pub use self::cache::*;

@@ -6,17 +6,31 @@ use std::path::{Component, PathBuf};
 use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// The system clock, read once: the instant the run first asked for the time. Every later answer
-/// is that instant (the session adds 1 ms per read and the time `Sleep` has waited, ADR-045, and keeps
-/// system stamps strictly increasing, see `al-host`). A clock that ran with the wall would make an outcome depend on the
-/// load of the machine: `Item.OnModify` sets "Last Time Modified" to `Time`, and
+/// The system clock, read once: 12:00:00 UTC of the day the run first asked for the time ([`run_clock_start`]).
+/// Every later answer is that instant (the session adds 1 ms per read and the time `Sleep` has waited, ADR-045, and
+/// keeps system stamps strictly increasing, see `al-host`). A clock that ran with the wall would make an outcome depend
+/// on the load of the machine: `Item.OnModify` sets "Last Time Modified" to `Time`, and
 /// `Format(xRec) <> Format(Rec)` is then true only when a second passed between the insert and the
-/// modify, which decides whether Base Application's workflow subscriber runs. The wall clock is
+/// modify, which decides whether Base Application's workflow subscriber runs. A clock that started at the wall time
+/// of the first read would make it depend on when the run began (ADR-045 amendment, 2026-10-19). The wall clock is
 /// back with `ALRUNNER_REAL_CLOCK=1`.
 pub struct SystemClock;
 
 /// The instant the run began: set by the first read of [`SystemClock`], or by [`SystemClock::begin_at`] before it.
 static RUN_START: OnceLock<i64> = OnceLock::new();
+
+/// Milliseconds in a day.
+const MS_PER_DAY: i64 = 86_400_000;
+
+/// Where the run clock starts when the wall clock reads `wall` (Unix milliseconds): 12:00:00.000 UTC of that UTC day.
+/// The time of day is the same in every run, so an outcome that depends on `Time` (a generator seeded with
+/// `Randomize(Time - 000000T)`, as `Any.SetDefaultSeed` and `LibraryRandom.Init` of Microsoft's test libraries do, or
+/// a second boundary that `Format(Time)` crosses between two reads) does not depend on when the run began, and so not
+/// on which other test codeunits a run selected (ADR-043 condition 1). The date stays the wall clock's, so `Today` is
+/// today. Noon is the deterministic host's time of day too (`al-host`, 2024-01-15T12:00:00Z).
+pub fn run_clock_start(wall: i64) -> i64 {
+    wall.div_euclid(MS_PER_DAY) * MS_PER_DAY + MS_PER_DAY / 2
+}
 
 impl SystemClock {
     /// The wall clock, read now. It does not start the run clock.
@@ -34,7 +48,7 @@ impl Clock for SystemClock {
         if std::env::var_os("ALRUNNER_REAL_CLOCK").is_some() {
             return SystemClock::wall();
         }
-        *RUN_START.get_or_init(SystemClock::wall)
+        *RUN_START.get_or_init(|| run_clock_start(SystemClock::wall()))
     }
 }
 
@@ -217,6 +231,19 @@ impl FileSystem for DirFileSystem {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_run_clock_starts_at_noon_utc_of_the_wall_clocks_day() {
+        // 2026-10-19T12:00:00.000Z, from 2026-10-19T23:20:55.239Z and from midnight of that day.
+        let noon = 1_792_411_200_000;
+        assert_eq!(run_clock_start(1_792_452_055_239), noon);
+        assert_eq!(run_clock_start(noon - MS_PER_DAY / 2), noon);
+        assert_eq!(run_clock_start(noon + MS_PER_DAY / 2 - 1), noon);
+        // The next day starts its own noon.
+        assert_eq!(run_clock_start(noon + MS_PER_DAY / 2), noon + MS_PER_DAY);
+        // Before 1970: the day is still the one the instant lies in.
+        assert_eq!(run_clock_start(-1), -MS_PER_DAY / 2);
+    }
 
     #[test]
     fn a_named_company_is_what_company_name_answers() {

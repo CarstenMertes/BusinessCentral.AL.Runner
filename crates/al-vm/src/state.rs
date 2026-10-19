@@ -123,6 +123,9 @@ pub(crate) struct ReportState {
     pub(crate) format_region: Option<String>,
     /// The running SaveAs writes a report whose `FormatRegion` property is set: `CurrReport.FormatRegion` is not pinned there.
     pub(crate) region_property: bool,
+    /// While `OnInitReport` of a report with the `FormatRegion` property runs: that region. Which culture `Format` uses there is
+    /// not pinned, so a culture-dependent `Format` is refused (`FormatCtx::region_unpinned`).
+    pub(crate) region_in_init: Option<String>,
     /// The call depth of the `OnInitReport` trigger being run, and whether it called
     /// `CurrReport.Quit` (al-vm reports.rs).
     pub(crate) report_init_depth: Option<usize>,

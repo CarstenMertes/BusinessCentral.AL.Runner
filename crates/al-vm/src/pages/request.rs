@@ -53,6 +53,69 @@ impl Session {
         }
     }
 
+    /// Whether the request page's SourceTableView is the one shape the corpus pins: a SORTING that names the primary key and a
+    /// WHERE of CONST conditions only (report/lt-y-request-page/YRequestPageTests.al:72-87, the request page's `Rec` then has
+    /// neither the filter nor another key). Anything else is refused.
+    pub(super) fn request_source_view_pinned(&mut self, st: &St, view: &str) -> Result<(), Signal> {
+        let rec = self.page_rec(st);
+        let table = self.table(&rec)?;
+        let refuse = || unsupported(format!("a request page with SourceTableView = {view} (not pinned)"));
+        let mut rest = view.trim();
+        while !rest.is_empty() {
+            let Some(open) = rest.find('(') else {
+                return refuse();
+            };
+            let word = rest[..open].trim().to_ascii_lowercase();
+            let mut depth = 0i32;
+            let mut close = None;
+            for (i, c) in rest[open..].char_indices() {
+                match c {
+                    '(' => depth += 1,
+                    ')' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            close = Some(open + i);
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            let Some(close) = close else {
+                return refuse();
+            };
+            let inner = &rest[open + 1..close];
+            match word.as_str() {
+                "sorting" => {
+                    let named: Vec<String> = split_conditions(inner)
+                        .iter()
+                        .map(|f| f.trim().trim_matches('"').to_ascii_lowercase())
+                        .collect();
+                    let pk: Vec<String> = table
+                        .keys
+                        .first()
+                        .map(|k| k.iter().map(|&i| table.fields[i].name.to_ascii_lowercase()).collect())
+                        .unwrap_or_default();
+                    if named != pk {
+                        return refuse();
+                    }
+                }
+                "where" => {
+                    let all_const = split_conditions(inner).iter().all(|c| {
+                        c.split_once('=')
+                            .is_some_and(|(_, cond)| cond.trim().to_ascii_lowercase().starts_with("const("))
+                    });
+                    if !all_const {
+                        return refuse();
+                    }
+                }
+                _ => return refuse(),
+            }
+            rest = rest[close + 1..].trim();
+        }
+        Ok(())
+    }
+
     /// Opens the request page of the report `inst` is an instance of, hands it to the bound
     /// `[RequestPageHandler]` and reports how the handler closed it. The page's `OnInit` and
     /// `OnOpenPage` run before the handler sees it, and write the report's own variables

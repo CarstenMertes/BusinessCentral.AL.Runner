@@ -572,6 +572,14 @@ pub(crate) fn build_shared<'a>(
                 _ => page_reasons[oi].push(format!("source table: {}", ws.outside_workspace(ObjKind::Table, &t))),
             }
         }
+        // `SourceTableTemporary = true` gives the request page a temporary `Rec`: empty at OnOpenPage, and what it inserts stays out
+        // of the table (report/lt-y-request-page/YRequestPageTests.al:99-113).
+        page_temporary[oi] = request_section.as_ref().is_some_and(|s| {
+            s.properties().any(|p| {
+                p.name().eq_ignore_ascii_case("SourceTableTemporary")
+                    && p.value_text().trim().eq_ignore_ascii_case("true")
+            })
+        });
         // Its variables would follow the base items' records in the extension's globals, which the
         // slots the request page binds to do not account for.
         for (e, _) in &exts {
@@ -839,6 +847,7 @@ pub(crate) fn lower_core(
         pos_ranges: Vec::new(),
         checker_diags: checked.from_checker.clone(),
         skipped: checked.skipped.clone(),
+        left_out: (0..ws.objects.len()).map(|oi| checked.is_left_out(oi)).collect(),
     };
     if positions {
         program.sources = ws

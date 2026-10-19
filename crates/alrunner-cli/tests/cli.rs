@@ -1008,6 +1008,56 @@ fn isolation_decides_whether_the_database_is_rolled_back_between_the_tests_of_a_
     assert_eq!(code(&run(&["--isolation", "nope"])), 2);
 }
 
+/// A test that reports the time of day it reads, the way `Any.SetDefaultSeed` and `LibraryRandom.Init` seed the random
+/// generator from it (`Randomize(Time - 000000T)`).
+const CLOCK: &str = r#"
+codeunit 50310 "Clock Tests"
+{
+    Subtype = Test;
+
+    [Test]
+    procedure ReportsTheTime()
+    begin
+        Error('%1', Time - 000000T);
+    end;
+}
+"#;
+
+/// Two runs that start at different moments read the same time of day: the run clock starts at 12:00:00 UTC of the day
+/// (ADR-045 amendment), so an outcome that depends on `Time` does not depend on when the run, or the run that kept its
+/// install baseline, began. Before, the clock started at the wall time of the first read: `Job Posting.
+/// PurchaseOrderFCYWithJob` (Tests-Job, codeunit 136309) seeds `Random` from `Time` in an earlier test of its codeunit
+/// and passed or failed depending on which other codeunits were selected (ADR-043 condition 1).
+#[test]
+fn the_run_clock_starts_at_the_same_time_of_day_in_every_run() {
+    let d = tempfile::tempdir().unwrap();
+    let app = d.path().join("clock");
+    write(
+        &app,
+        "app.json",
+        &app_json("11111111-0000-0000-0000-000000000031", "Clock", &[]),
+    );
+    write(&app, "T.al", CLOCK);
+    let a = app.to_str().unwrap();
+    let time = || {
+        let o = alrunner(&["test", a, "--no-download", "--no-test-data", "--output-json"]);
+        assert_eq!(code(&o), 1, "{}", text(&o));
+        row(&json_of(&o), "Codeunit50310.ReportsTheTime")["message"]
+            .as_str()
+            .expect("a message")
+            .to_string()
+    };
+    let first = time();
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    let second = time();
+    assert_eq!(
+        first, second,
+        "the time of day a test reads depends on when its run began"
+    );
+    // The first read of a session is the run clock's start: noon (12 h after midnight, in ms).
+    assert_eq!(first.replace(',', ""), "43200000");
+}
+
 #[test]
 fn define_adds_a_preprocessor_symbol_and_the_v2_flags_are_accepted() {
     let d = tempfile::tempdir().unwrap();

@@ -5,6 +5,10 @@ use super::*;
 /// OnInstallAppPerDatabase with no company chosen (the order measured on BC 27.5), and commits
 /// after each. An installer that cannot run is skipped; returned are the tables it touches and
 /// why, so tests that touch them can be reported not run.
+///
+/// An installer a lean compile left out (`Lowered::left_out`) does not run: the compile is lean only for tests that
+/// read no data (`observe.rs`), and BC runs install code in the session that publishes the app, so nothing else of it
+/// reaches a test's session (the install baseline, which runs it once in a session of its own, gives the same).
 pub(crate) fn run_install_codeunits(lowered: &Lowered, session: &mut Session) -> Vec<(BTreeSet<u32>, String)> {
     let mut skipped = Vec::new();
     let installers: Vec<usize> = lowered
@@ -15,6 +19,7 @@ pub(crate) fn run_install_codeunits(lowered: &Lowered, session: &mut Session) ->
         .filter(|(oi, o)| {
             o.is_kind(al_ir::ObjKind::Codeunit)
                 && !lowered.dependency[*oi]
+                && !lowered.left_out.get(*oi).copied().unwrap_or(false)
                 && o.properties
                     .iter()
                     .any(|(k, v)| k.eq_ignore_ascii_case("Subtype") && v.trim().eq_ignore_ascii_case("Install"))
@@ -93,122 +98,6 @@ pub(crate) fn tables_touched(lowered: &Lowered, object: usize, routine: usize) -
     out
 }
 
-/// What the static reach of a routine holds (calls, then the subscribers of the events it can set off): the tables it
-/// reads or writes and whether it can draw a random number. Used to decide whether a failure after a refused test is
-/// doubtful (`run.rs`). Writes are the record methods that change the database (Insert, Modify, Delete, DeleteAll,
-/// ModifyAll, Rename) on a record of a known table, plus the source table of a page variable.
-#[derive(Debug, Default, Clone)]
-pub(crate) struct ReachFacts {
-    /// Tables whose records appear in a slot of anything reached.
-    pub touched: BTreeSet<u32>,
-    /// Tables a reached routine writes.
-    pub writes: BTreeSet<u32>,
-    /// A write whose table is not known statically (a record in a field, a report or xmlport variable): it may write any table.
-    pub writes_any: bool,
-    /// A reached routine calls `Random` or `Randomize`.
-    pub random: bool,
-}
-
-impl ReachFacts {
-    /// Whether what is written here can be read from `tables`.
-    pub fn writes_meet(&self, tables: &BTreeSet<u32>) -> bool {
-        self.writes_any && !tables.is_empty() || !self.writes.is_disjoint(tables)
-    }
-}
-
-pub(crate) fn reach_facts(engine: &Engine, lowered: &Lowered, object: usize, routine: usize) -> ReachFacts {
-    reach_facts_in(&engine.events, lowered, object, routine)
-}
-
-/// [`reach_facts`] with the program's event registry instead of an engine.
-pub(crate) fn reach_facts_in(
-    events: &al_vm::events::Registry,
-    lowered: &Lowered,
-    object: usize,
-    routine: usize,
-) -> ReachFacts {
-    use al_builtins::value::RtType;
-    let objs = &lowered.program.objects;
-    let mut out = ReachFacts::default();
-    let mut seen = BTreeSet::new();
-    let mut stack = vec![(object, routine)];
-    stack.extend(subscribers_reached_in(events, lowered, object, routine));
-    while let Some((o, r)) = stack.pop() {
-        if !seen.insert((o, r)) {
-            continue;
-        }
-        let obj = &objs[o];
-        let rt = &obj.routines[r];
-        for s in rt.locals.iter().chain(&obj.globals) {
-            let mut ty = &s.ty;
-            while let RtType::Array(_, inner) = ty {
-                ty = inner;
-            }
-            match ty {
-                RtType::Record(t, _) => {
-                    out.touched.insert(*t);
-                }
-                // A page writes its source table; the table is the record of the page's `Rec` slot.
-                RtType::Page(p) | RtType::TestPage(p) => {
-                    let page = &objs[*p as usize];
-                    match page.rec_slot.map(|i| &page.globals[i].ty) {
-                        Some(RtType::Record(t, _)) => {
-                            out.touched.insert(*t);
-                            out.writes.insert(*t);
-                        }
-                        _ => out.writes_any = true,
-                    }
-                }
-                RtType::Library(_) | RtType::DotNet(_) => {}
-                _ => {}
-            }
-        }
-        let slot_ty = |p: &al_ir::Place| -> Option<RtType> {
-            let mut p = p;
-            while let al_ir::Place::Index(b, _) = p {
-                p = b;
-            }
-            let mut ty = match p {
-                al_ir::Place::Local(i) => &rt.locals.get(*i)?.ty,
-                al_ir::Place::Global(i) => &obj.globals.get(*i)?.ty,
-                _ => return None,
-            };
-            while let RtType::Array(_, inner) = ty {
-                ty = inner;
-            }
-            Some(ty.clone())
-        };
-        al_ir::types::for_each_expr_post(&rt.body, &mut |e| {
-            let al_ir::Expr::Builtin { id, receiver, .. } = e else {
-                return;
-            };
-            let name = id.name();
-            if name.starts_with("System.Random") {
-                out.random = true;
-            } else if name.starts_with("Record.")
-                && matches!(
-                    id.method(),
-                    "Insert" | "Modify" | "Delete" | "DeleteAll" | "ModifyAll" | "Rename"
-                )
-            {
-                let table = receiver.as_deref().and_then(|a| match a {
-                    al_ir::Arg::Ref(p) => slot_ty(p),
-                    al_ir::Arg::Value(al_ir::Expr::Load(p)) => slot_ty(p),
-                    _ => None,
-                });
-                match table {
-                    Some(RtType::Record(t, _)) => {
-                        out.writes.insert(t);
-                    }
-                    _ => out.writes_any = true,
-                }
-            }
-        });
-        lowered.calls_into(o, r, &mut stack);
-    }
-    out
-}
-
 /// Subscriber routines (object, routine) that `routine` of `object` can set off
 /// through static calls: those of the events it publishes, and those of the table
 /// events of every table whose records it uses -- followed through the routines
@@ -237,23 +126,32 @@ fn subscribers_reached_in(
             continue;
         }
         lowered.calls_into(o, r, &mut stack);
-        let mut keys = Vec::new();
+        let mut reach = |sub: (usize, usize)| {
+            if reached.insert(sub) {
+                stack.push(sub);
+            }
+        };
         if let Some(p) = events.publishers.get(&(o, r)) {
-            keys.push((p.object, p.event.clone()));
+            for sub in events
+                .subscribers
+                .get(&(p.object, p.event.clone()))
+                .into_iter()
+                .flatten()
+            {
+                reach((sub.object, sub.routine));
+            }
         }
-        // Table events fire for any table whose record the routine uses.
+        // Table events fire for any table whose record the routine uses: every event of the table object. The result is
+        // a set, so the order the subscribers are found in does not matter.
         let mut tables = BTreeSet::new();
         for s in objs[o].routines[r].locals.iter().chain(&objs[o].globals) {
             if let al_builtins::value::RtType::Record(t, _) = &s.ty {
                 tables.insert(*t as usize);
             }
         }
-        keys.extend(events.subscribers.keys().filter(|(po, _)| tables.contains(po)).cloned());
-        for k in keys {
-            for sub in events.subscribers.get(&k).into_iter().flatten() {
-                if reached.insert((sub.object, sub.routine)) {
-                    stack.push((sub.object, sub.routine));
-                }
+        for t in tables {
+            for &sub in events.subscribers_of(t) {
+                reach(sub);
             }
         }
     }

@@ -109,6 +109,21 @@ pub struct Engine {
     pub(crate) exec: exec::ExecProgram,
     /// Per object, the ids of its source positions in ascending order, found when the Code Coverage table is first built.
     pub(crate) positions_by_object: std::sync::OnceLock<Vec<Vec<u32>>>,
+    /// Codeunit objects by id (see [`Engine::compiled_codeunit`] and [`Engine::codeunit_object`]).
+    codeunits: std::collections::HashMap<Option<u32>, CodeunitsWithId>,
+    /// Per object, the provider of a virtual platform table, found when the first session is made (`platform/mod.rs`).
+    pub(crate) served_tables: std::sync::OnceLock<Arc<[Option<al_builtins::platform::Virtual>]>>,
+    /// What crates above the VM work out from this engine's program once, by type (see [`Engine::derived`]).
+    derived: std::sync::Mutex<std::collections::HashMap<std::any::TypeId, Arc<dyn std::any::Any + Send + Sync>>>,
+}
+
+/// The codeunit objects with one id, first in program order.
+#[derive(Clone, Copy, Default)]
+struct CodeunitsWithId {
+    /// The first compiled one (`Object::is_kind`).
+    compiled: Option<usize>,
+    /// The first one, compiled or a shell of a dependency app that was not compiled.
+    any: Option<usize>,
 }
 
 /// What a call of a routine asks of the routine's declaration, answered once when the engine is built instead of by
@@ -262,6 +277,16 @@ impl Engine {
             .map(|(i, _)| i)
             .collect();
         let exec = exec::ExecProgram::new(&program);
+        let mut codeunits: std::collections::HashMap<Option<u32>, CodeunitsWithId> = Default::default();
+        for (i, o) in program.objects.iter().enumerate() {
+            if o.kind == ir::ObjKind::Codeunit {
+                let e = codeunits.entry(o.id).or_default();
+                e.any.get_or_insert(i);
+                if o.is_kind(ir::ObjKind::Codeunit) {
+                    e.compiled.get_or_insert(i);
+                }
+            }
+        }
         Arc::new(Engine {
             program,
             blocked,
@@ -282,9 +307,42 @@ impl Engine {
             facts,
             exec,
             positions_by_object: Default::default(),
+            codeunits,
+            served_tables: Default::default(),
+            derived: Default::default(),
         })
     }
+
+    /// The first compiled codeunit with this id, in program order: the object `Codeunit.Run(Id)` runs. Found in an index
+    /// built with the engine; the test runner runs codeunits by id around every test method (al-testrun runner_reset.rs).
+    pub fn compiled_codeunit(&self, id: Option<u32>) -> Option<usize> {
+        self.codeunits.get(&id).and_then(|c| c.compiled)
+    }
+
+    /// The first codeunit with this id in program order, compiled or a shell of a dependency app that was not compiled.
+    pub fn codeunit_object(&self, id: Option<u32>) -> Option<usize> {
+        self.codeunits.get(&id).and_then(|c| c.any)
+    }
+
+    /// The value of type `T` made from this engine's program, made by `make` the first time it is asked for and shared
+    /// by every session and thread of the engine after that: for data that depends on the program alone (al-testrun's
+    /// index of the static reach). `make` must not ask the engine for derived data itself.
+    pub fn derived<T: std::any::Any + Send + Sync>(&self, make: impl FnOnce() -> T) -> Arc<T> {
+        let mut slots = self.derived.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let slot = slots
+            .entry(std::any::TypeId::of::<T>())
+            .or_insert_with(|| Arc::new(make()) as Arc<dyn std::any::Any + Send + Sync>)
+            .clone();
+        drop(slots);
+        slot.downcast::<T>()
+            .expect("a derived value is stored under its own type")
+    }
 }
+
+/// How many emptied vectors a session keeps for the next calls, and the largest capacity it keeps (`Session::spare_vec`):
+/// as many as calls are nested in a deep stack of ordinary code, none of the large ones.
+const SPARE_VECS: usize = 64;
+const SPARE_CAPACITY: usize = 256;
 
 /// The reason `Signal::Unsupported` carries when the runner stopped the test (`Session::stop_flag`).
 pub const STOPPED: &str = "the runner stopped the test";
@@ -327,6 +385,9 @@ pub struct Session {
     pub engine: Arc<Engine>,
     pub last_error: AlError,
     depth: usize,
+    /// Emptied vectors of call values (arguments, a frame's slots, a builtin's operands), taken again by the next call
+    /// (`spare_vec`, `return_vec`): a call of a procedure or a builtin allocates nothing once there are some.
+    spare_vecs: Vec<Vec<Value>>,
     /// The objects of the routines on the call stack, innermost last (builtins scoped to an app,
     /// `NavApp.GetCallerModuleInfo`).
     pub(crate) frames: Vec<usize>,
@@ -367,6 +428,10 @@ pub struct Session {
     /// How many numbers `Random` has drawn in this session (a test that draws after tests that did not run sees another
     /// sequence than BC's).
     pub(crate) random_draws: u64,
+    /// Whether the test running has reseeded the `Random` sequence (`Randomize`); see [`Session::inherited_random_draws`].
+    pub(crate) reseeded_in_test: bool,
+    /// How many numbers `Random` has drawn from a sequence the test running did not seed itself.
+    pub(crate) inherited_draws: u64,
     /// How many `Randomize()` calls without a seed the session has seen.
     pub(crate) unseeded_randomizes: i32,
     pub(crate) next_row_version: i64,
@@ -547,6 +612,7 @@ impl Session {
             engine,
             last_error: AlError::default(),
             depth: 0,
+            spare_vecs: Vec::new(),
             singletons: Default::default(),
             store,
             temps: Default::default(),
@@ -556,6 +622,8 @@ impl Session {
             guid_seed: random_seed,
             rng: al_host::random::NetRandom::new(random_seed),
             random_draws: 0,
+            reseeded_in_test: false,
+            inherited_draws: 0,
             unseeded_randomizes: 0,
             next_row_version: 0,
             autoinc: Default::default(),
@@ -643,6 +711,7 @@ impl Session {
                 curr_report_language: None,
                 format_region: None,
                 region_property: false,
+                region_in_init: None,
                 report_init_depth: None,
                 report_quit: false,
                 report_trigger: None,
@@ -824,6 +893,23 @@ impl Session {
     }
 
     /// The identity of a new private table for a temporary record.
+    /// An empty vector with room for `n` values of a call, from the spares when there is one.
+    #[inline]
+    pub(crate) fn spare_vec(&mut self, n: usize) -> Vec<Value> {
+        let mut v = self.spare_vecs.pop().unwrap_or_default();
+        v.reserve(n);
+        v
+    }
+
+    /// Gives `v` back to the spares, emptied (its values are dropped in order, as a drop of the vector does).
+    #[inline]
+    pub(crate) fn return_vec(&mut self, mut v: Vec<Value>) {
+        v.clear();
+        if v.capacity() != 0 && self.spare_vecs.len() < SPARE_VECS && v.capacity() <= SPARE_CAPACITY {
+            self.spare_vecs.push(v);
+        }
+    }
+
     pub(crate) fn new_temp_id(&mut self) -> al_builtins::value::TempId {
         self.next_temp += 1;
         al_builtins::value::TempId::new(self.next_temp, self.temp_release.clone())
@@ -845,6 +931,20 @@ impl Session {
     /// How many numbers `Random` has drawn in this session.
     pub fn random_draws(&self) -> u64 {
         self.random_draws
+    }
+
+    /// How many numbers `Random` has drawn, in this session, before the test drawing them reseeded the sequence: those
+    /// numbers depend on what the tests before it drew. A draw after `Randomize` in the same test does not (the
+    /// sequence restarts from the seed), so it is not counted.
+    pub fn inherited_random_draws(&self) -> u64 {
+        self.inherited_draws
+    }
+
+    /// A test method begins, before the test runner's reset: until something reseeds the `Random` sequence (the reset's
+    /// `LibraryRandom.SetSeed(1)` included), what `Random` draws depends on the tests before (see
+    /// [`Session::inherited_random_draws`]).
+    pub fn start_random_scope(&mut self) {
+        self.reseeded_in_test = false;
     }
 
     pub fn instance(&mut self, object: usize) -> Rc<RefCell<Instance>> {
@@ -987,16 +1087,19 @@ impl Session {
         // The bytecode, if the mode asks for it. Whether a capture watches the routine is only known once its frame is
         // entered (`cap_enter_frame`); a capture watches the captured form of the bytecode.
         let chunk = engine.exec.chunk(&engine.program, object, routine);
-        let mut locals: Vec<Value> = Vec::with_capacity(r.locals.len() + chunk.map_or(0, |c| usize::from(c.temps)));
+        let mut locals = self.spare_vec(r.locals.len() + chunk.map_or(0, |c| usize::from(c.temps)));
+        let passed = args.len().min(r.params);
         for (i, s) in r.locals.iter().enumerate() {
-            // The default of an array parameter that is passed in is never seen: the argument replaces it.
-            if i < r.params && i < args.len() && matches!(&s.ty, RtType::Array(_, el) if plain_default(el)) {
+            // The default of a parameter that is passed in is never seen: the argument replaces it. One with state of
+            // its own (a record takes the number of a temporary table) is still made, as the values are made in order.
+            if i < passed && (plain_default(&s.ty) || matches!(&s.ty, RtType::Array(_, el) if plain_default(el))) {
                 locals.push(Value::Null);
             } else {
                 locals.push(self.default_value(&s.ty));
             }
         }
-        for (i, a) in args.into_iter().enumerate().take(r.params) {
+        let mut args = args;
+        for (i, a) in args.drain(..).enumerate().take(r.params) {
             locals[i] = match (a, r.by_var.get(i).copied().unwrap_or(false)) {
                 // A temporary record handed to a Variant parameter keeps its table: the callee counts the
                 // caller's rows through the Variant, though a by-value copy is an empty buffer
@@ -1065,9 +1168,10 @@ impl Session {
                 ) if matches!(r.locals[i].ty, RtType::Text(_) | RtType::Code(_)) => {
                     return Err(self.variant_to_text_error(matches!(r.locals[i].ty, RtType::Code(_))));
                 }
-                (a, _) => ops::convert(a, &r.locals[i].ty)?,
+                (a, _) => ops::convert_plain(a, &r.locals[i].ty)?,
             };
         }
+        self.return_vec(args);
         let mut frame = Frame {
             object,
             routine,
@@ -1140,7 +1244,7 @@ impl Session {
             }
             frame
                 .locals
-                .resize(r.locals.len() + usize::from(chunk.temps), Value::Null);
+                .resize_with(r.locals.len() + usize::from(chunk.temps), || Value::Null);
             self.run_chunk(chunk, &mut frame)
         } else {
             // The bytecode names a register with 16 bits; a routine that needs more is refused, never run in part.
@@ -1189,7 +1293,7 @@ impl Session {
             }
         };
         let value = match (&r.ret, ret, r.ret_local) {
-            (Some(t), Some(v), _) => ops::convert(v, t)?,
+            (Some(t), Some(v), _) => ops::convert_plain(v, t)?,
             (Some(_), None, Some(l)) => frame.locals[l].clone(),
             (Some(t), None, None) => Value::default_for(t),
             (None, _, _) => Value::Null,

@@ -1,12 +1,12 @@
 {
-  "corpus_commit": "db082fc475847efdfa0a7d4cd10acc832a05555a",
+  "corpus_commit": "0f48ad6685ef280a2668b12bcaaf994ee280ae63",
   "dimensions": [
     {
       "catalog": 190,
       "dimension": "triggers",
       "items": [
         {
-          "corpus_uses": 413,
+          "corpus_uses": 425,
           "group": "page/action",
           "ms_uses": 6517,
           "name": "OnAction",
@@ -15,7 +15,7 @@
           "site": "_fixtures/pages/ALTCardPage.al:61"
         },
         {
-          "corpus_uses": 76,
+          "corpus_uses": 77,
           "group": "table/field",
           "ms_uses": 3994,
           "name": "OnValidate",
@@ -42,7 +42,7 @@
           "site": "errors/lt-ms-refusals-128/P128Callstack.al:108"
         },
         {
-          "corpus_uses": 202,
+          "corpus_uses": 210,
           "group": "page",
           "ms_uses": 1332,
           "name": "OnOpenPage",
@@ -51,7 +51,7 @@
           "site": "_fixtures/pages/ALTPageEvtRows.al:54"
         },
         {
-          "corpus_uses": 158,
+          "corpus_uses": 159,
           "group": "codeunit",
           "ms_uses": 1252,
           "name": "OnRun",
@@ -60,7 +60,7 @@
           "site": "_fixtures/ALTCodeunitMetaProbe.al:12"
         },
         {
-          "corpus_uses": 180,
+          "corpus_uses": 183,
           "group": "report/dataitem",
           "ms_uses": 1236,
           "name": "OnAfterGetRecord",
@@ -78,7 +78,7 @@
           "site": "_fixtures/reports/ALTManualReportIntegrationEvent.al:19"
         },
         {
-          "corpus_uses": 109,
+          "corpus_uses": 116,
           "group": "page",
           "ms_uses": 923,
           "name": "OnAfterGetRecord",
@@ -114,7 +114,7 @@
           "site": "_fixtures/xmlports/ALTVariableXmlPort.al:48"
         },
         {
-          "corpus_uses": 104,
+          "corpus_uses": 108,
           "group": "page",
           "ms_uses": 480,
           "name": "OnAfterGetCurrRecord",
@@ -186,7 +186,7 @@
           "site": "errors/lt-ms-refusals-128/P128ClearAllReport.al:83"
         },
         {
-          "corpus_uses": 45,
+          "corpus_uses": 46,
           "group": "page",
           "ms_uses": 282,
           "name": "OnNewRecord",
@@ -213,7 +213,7 @@
           "site": "_fixtures/tables/ALTErrorTrigger.al:40"
         },
         {
-          "corpus_uses": 64,
+          "corpus_uses": 67,
           "group": "page",
           "ms_uses": 192,
           "name": "OnQueryClosePage",
@@ -231,7 +231,7 @@
           "site": "_fixtures/reports/ALTSimpleReport.al:58"
         },
         {
-          "corpus_uses": 20,
+          "corpus_uses": 21,
           "group": "page",
           "ms_uses": 141,
           "name": "OnFindRecord",
@@ -276,7 +276,7 @@
           "site": "handlers/PRRequestPageUpdate.al:81"
         },
         {
-          "corpus_uses": 22,
+          "corpus_uses": 23,
           "group": "page",
           "ms_uses": 102,
           "name": "OnInsertRecord",
@@ -303,7 +303,7 @@
           "site": "errors/lt-ms-refusals-129/P129CallstackXmlPort.al:74"
         },
         {
-          "corpus_uses": 12,
+          "corpus_uses": 13,
           "group": "page",
           "ms_uses": 72,
           "name": "OnModifyRecord",
@@ -312,7 +312,7 @@
           "site": "_fixtures/pages/ALTPageEvtRows.al:81"
         },
         {
-          "corpus_uses": 14,
+          "corpus_uses": 15,
           "group": "page",
           "ms_uses": 69,
           "name": "OnNextRecord",
@@ -375,7 +375,7 @@
           "site": "errors/lt-ms-refusals-135/P135CallstackXmlportEtc.al:77"
         },
         {
-          "corpus_uses": 53,
+          "corpus_uses": 55,
           "group": "page",
           "ms_uses": 41,
           "name": "OnClosePage",
@@ -654,13 +654,13 @@
           "site": "misc/lt-probes-needed-2/PnBObjects.al:187"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "page",
           "ms_uses": 5,
           "name": "PageNotifier::PageReady",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "lt-al-dotnet/AlClientTriggers.al:97"
         },
         {
           "corpus_uses": 1,
@@ -753,22 +753,22 @@
           "site": "_fixtures/xmlports/ALTUniversalManualXmlPort.al:34"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "page",
           "ms_uses": 3,
           "name": "UserTours::IsTourInProgressResultReady",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "lt-al-dotnet/AlClientTriggers.al:90"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "page",
           "ms_uses": 3,
           "name": "UserTours::ShowTourWizard",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "lt-al-dotnet/AlClientTriggers.al:83"
         },
         {
           "corpus_uses": 1,
@@ -897,22 +897,22 @@
           "site": "events/lt-trigger-pins/PUpgradeTriggers.al:54"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "page",
           "ms_uses": 2,
           "name": "CameraProvider::PictureAvailable",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "lt-al-dotnet/AlClientTriggers.al:178"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "page",
           "ms_uses": 2,
           "name": "LocationProvider::LocationChanged",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "lt-al-dotnet/AlClientTriggers.al:215"
         },
         {
           "corpus_uses": 1,
@@ -1014,67 +1014,67 @@
           "site": "_fixtures/tables/ALTTriggeredOrder.TableExt.al:26"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "codeunit",
           "ms_uses": 1,
           "name": "EventReceiver::OnEventCheckEvent",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "lt-al-dotnet/AlEventReceiverTriggers.al:81"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "codeunit",
           "ms_uses": 1,
           "name": "EventReceiver::OnPermissionCheckEvent",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "lt-al-dotnet/AlEventReceiverTriggers.al:129"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "codeunit",
           "ms_uses": 1,
           "name": "EventReceiver::OnRecordingErrorOccurred",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "lt-al-dotnet/AlEventReceiverTriggers.al:93"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "codeunit",
           "ms_uses": 1,
           "name": "Timer::Elapsed",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "lt-al-dotnet/AlTimerTriggers.al:87"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "codeunit",
           "ms_uses": 1,
           "name": "Timer::ExceptionOccurred",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "lt-al-dotnet/AlTimerTriggers.al:96"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "page",
           "ms_uses": 1,
           "name": "Tour::SpotlightTourEnded",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "lt-al-dotnet/AlClientTriggers.al:141"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "page",
           "ms_uses": 1,
           "name": "Tour::TourEnded",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "lt-al-dotnet/AlClientTriggers.al:134"
         },
         {
           "corpus_uses": 1,
@@ -1716,10 +1716,10 @@
           "site": "pages/lt-ab-action-addin/ABActionAddIn.al:122"
         }
       ],
-      "pinned": 174
+      "pinned": 186
     },
     {
-      "catalog": 1252,
+      "catalog": 1334,
       "dimension": "properties",
       "items": [
         {
@@ -1732,7 +1732,7 @@
           "site": "_fixtures/pages/ALTControlTreePage.al:48"
         },
         {
-          "corpus_uses": 149,
+          "corpus_uses": 152,
           "group": "table/field",
           "ms_uses": 7976,
           "name": "TableRelation",
@@ -1768,7 +1768,7 @@
           "site": "_fixtures/tables/ALTParentChild.al:19"
         },
         {
-          "corpus_uses": 232,
+          "corpus_uses": 234,
           "group": "codeunit",
           "ms_uses": 2933,
           "name": "Locked",
@@ -1804,7 +1804,7 @@
           "site": "pages/lt-page-presentation-properties/P119PageExt.al:26"
         },
         {
-          "corpus_uses": 987,
+          "corpus_uses": 1018,
           "group": "page",
           "ms_uses": 2786,
           "name": "PageType",
@@ -1822,7 +1822,7 @@
           "site": "autoformat/TestAutoFormatExpressionTiming.al:322"
         },
         {
-          "corpus_uses": 253,
+          "corpus_uses": 258,
           "group": "table/field",
           "ms_uses": 2673,
           "name": "FieldClass",
@@ -1831,7 +1831,7 @@
           "site": "_fixtures/ALTRelationOwnDepImportedWriters.al:26"
         },
         {
-          "corpus_uses": 886,
+          "corpus_uses": 908,
           "group": "page",
           "ms_uses": 2619,
           "name": "SourceTable",
@@ -1849,7 +1849,7 @@
           "site": "_fixtures/Assert.al:21"
         },
         {
-          "corpus_uses": 219,
+          "corpus_uses": 222,
           "group": "table/field",
           "ms_uses": 2181,
           "name": "CalcFormula",
@@ -1912,7 +1912,7 @@
           "site": "errors/lt-ms-refusals-134/P134MinMaxDecimals.al:27"
         },
         {
-          "corpus_uses": 1303,
+          "corpus_uses": 1319,
           "group": "table/key",
           "ms_uses": 1769,
           "name": "Clustered",
@@ -1966,7 +1966,7 @@
           "site": "errors/lt-ms-refusals-130/P130ReportInclCap.al:20"
         },
         {
-          "corpus_uses": 120,
+          "corpus_uses": 123,
           "group": "table/field",
           "ms_uses": 1288,
           "name": "OptionMembers",
@@ -2020,7 +2020,7 @@
           "site": "handlers/TestPageActionEnabledSourceField_Objects.al:102"
         },
         {
-          "corpus_uses": 34,
+          "corpus_uses": 35,
           "group": "table/field",
           "ms_uses": 1145,
           "name": "OptionCaption",
@@ -2038,7 +2038,7 @@
           "site": "autoformat/AutoFormatCard.Page.al:76"
         },
         {
-          "corpus_uses": 42,
+          "corpus_uses": 45,
           "group": "page",
           "ms_uses": 1073,
           "name": "Editable",
@@ -2164,13 +2164,13 @@
           "site": "handlers/TestPageActionRunPageView.al:169"
         },
         {
-          "corpus_uses": 3,
+          "corpus_uses": 5,
           "group": "table/field",
           "ms_uses": 807,
           "name": "NotBlank",
           "pinned": true,
           "runtime_reads": true,
-          "site": "pages/lt-page-presentation-properties/P119Table.al:17"
+          "site": "pages/lt-ap-testpage-642/ApObjects.al:21"
         },
         {
           "corpus_uses": 4,
@@ -2209,7 +2209,7 @@
           "site": "handlers/TprlHeadList.Page.al:13"
         },
         {
-          "corpus_uses": 18,
+          "corpus_uses": 21,
           "group": "table/field",
           "ms_uses": 734,
           "name": "CaptionClass",
@@ -2218,7 +2218,7 @@
           "site": "events/lt-platform-triggers/PtObjects.al:20"
         },
         {
-          "corpus_uses": 105,
+          "corpus_uses": 110,
           "group": "page/part",
           "ms_uses": 716,
           "name": "SubPageLink",
@@ -2236,7 +2236,7 @@
           "site": "handlers/PRRequestPageUpdate.al:58"
         },
         {
-          "corpus_uses": 19,
+          "corpus_uses": 20,
           "group": "table",
           "ms_uses": 631,
           "name": "LookupPageId",
@@ -2299,7 +2299,7 @@
           "site": "metadata/W6TableCodeunitMetadata.al:26"
         },
         {
-          "corpus_uses": 35,
+          "corpus_uses": 36,
           "group": "codeunit",
           "ms_uses": 510,
           "name": "TableNo",
@@ -2326,7 +2326,7 @@
           "site": "handlers/CnhConfirmFalse.Page.al:27"
         },
         {
-          "corpus_uses": 3,
+          "corpus_uses": 5,
           "group": "table/field",
           "ms_uses": 484,
           "name": "BlankZero",
@@ -2344,7 +2344,7 @@
           "site": "misc/lt-probes-needed-7/PnGFixtures.al:660"
         },
         {
-          "corpus_uses": 18,
+          "corpus_uses": 23,
           "group": "permissionset",
           "ms_uses": 457,
           "name": "Assignable",
@@ -2362,13 +2362,13 @@
           "site": null
         },
         {
-          "corpus_uses": 9,
+          "corpus_uses": 10,
           "group": "enum",
           "ms_uses": 443,
           "name": "AssignmentCompatibility",
           "pinned": true,
           "runtime_reads": true,
-          "site": "errors/lt-ms-refusals-138/P138EnumGetNotFound.al:13"
+          "site": "codeunit/lt-x-object-props/XObjectProps.al:85"
         },
         {
           "corpus_uses": 7,
@@ -2380,7 +2380,7 @@
           "site": "_fixtures/tables/ALTRelationFieldClass.al:43"
         },
         {
-          "corpus_uses": 19,
+          "corpus_uses": 22,
           "group": "permissionset",
           "ms_uses": 424,
           "name": "Permissions",
@@ -2407,13 +2407,13 @@
           "site": "_fixtures/pages/ALTSourceObjectFlagsPage.al:21"
         },
         {
-          "corpus_uses": 5,
+          "corpus_uses": 7,
           "group": "page/field",
           "ms_uses": 409,
           "name": "ExtendedDatatype",
           "pinned": true,
           "runtime_reads": true,
-          "site": "pages/lt-page-presentation-properties/P119PageFields.al:42"
+          "site": "pages/lt-ap-testpage-642/ApObjects.al:364"
         },
         {
           "corpus_uses": 5,
@@ -2452,7 +2452,7 @@
           "site": "_fixtures/pages/ALTSourceObjectPropsPage.al:30"
         },
         {
-          "corpus_uses": 5,
+          "corpus_uses": 6,
           "group": "page",
           "ms_uses": 377,
           "name": "ModifyAllowed",
@@ -2488,7 +2488,7 @@
           "site": "ALTInternalPermissionSet.permissionset.al:4"
         },
         {
-          "corpus_uses": 13,
+          "corpus_uses": 17,
           "group": "report",
           "ms_uses": 339,
           "name": "DefaultLayout",
@@ -2578,7 +2578,7 @@
           "site": "_fixtures/pages/ALTPagePropertiesPage.al:16"
         },
         {
-          "corpus_uses": 5,
+          "corpus_uses": 6,
           "group": "page/action",
           "ms_uses": 286,
           "name": "ObsoleteReason",
@@ -2587,7 +2587,7 @@
           "site": "misc/lt-u-obsolete-pending/UObsoleteObjects.al:126"
         },
         {
-          "corpus_uses": 5,
+          "corpus_uses": 6,
           "group": "page/action",
           "ms_uses": 286,
           "name": "ObsoleteState",
@@ -2596,7 +2596,7 @@
           "site": "misc/lt-u-obsolete-pending/UObsoleteObjects.al:125"
         },
         {
-          "corpus_uses": 2,
+          "corpus_uses": 3,
           "group": "page/action",
           "ms_uses": 286,
           "name": "ObsoleteTag",
@@ -2605,7 +2605,7 @@
           "site": "misc/lt-u-obsolete-pending/UObsoleteObjects.al:127"
         },
         {
-          "corpus_uses": 307,
+          "corpus_uses": 311,
           "group": "report",
           "ms_uses": 270,
           "name": "ProcessingOnly",
@@ -2785,7 +2785,7 @@
           "site": "handlers/TestPageModalHandler_HostPage.al:32"
         },
         {
-          "corpus_uses": 1,
+          "corpus_uses": 3,
           "group": "permissionset",
           "ms_uses": 174,
           "name": "IncludedPermissionSets",
@@ -2875,7 +2875,7 @@
           "site": "report/lt-report-requestpage/RptFilters.al:110"
         },
         {
-          "corpus_uses": 361,
+          "corpus_uses": 370,
           "group": "codeunit",
           "ms_uses": 146,
           "name": "SingleInstance",
@@ -3361,7 +3361,7 @@
           "site": null
         },
         {
-          "corpus_uses": 4,
+          "corpus_uses": 5,
           "group": "table/field",
           "ms_uses": 86,
           "name": "AllowInCustomizations",
@@ -3406,13 +3406,13 @@
           "site": "platform/lt-ag-contoso/AgXmlPortImport.al:41"
         },
         {
-          "corpus_uses": 1,
+          "corpus_uses": 4,
           "group": "page/field",
           "ms_uses": 82,
           "name": "NotBlank",
           "pinned": true,
           "runtime_reads": true,
-          "site": "pages/lt-page-presentation-properties/P119PageFields.al:34"
+          "site": "pages/lt-ap-testpage-642/ApObjects.al:189"
         },
         {
           "corpus_uses": 3,
@@ -3559,7 +3559,7 @@
           "site": "pages/lt-obsolete-layout-parts/P117Pages.al:73"
         },
         {
-          "corpus_uses": 2,
+          "corpus_uses": 3,
           "group": "page/group",
           "ms_uses": 61,
           "name": "Enabled",
@@ -3595,7 +3595,7 @@
           "site": "_fixtures/xmlports/ALTUniversalManualXmlPort.al:21"
         },
         {
-          "corpus_uses": 2537,
+          "corpus_uses": 2561,
           "group": "codeunit",
           "ms_uses": 59,
           "name": "Subtype",
@@ -3622,7 +3622,7 @@
           "site": "misc/lt-probes-needed-7/PnGFixtures.al:654"
         },
         {
-          "corpus_uses": 181,
+          "corpus_uses": 183,
           "group": "query",
           "ms_uses": 58,
           "name": "QueryType",
@@ -3820,13 +3820,13 @@
           "site": "_fixtures/xmlports/ALTUniversalTemporaryXmlPort.al:18"
         },
         {
-          "corpus_uses": 8,
+          "corpus_uses": 10,
           "group": "profile",
           "ms_uses": 43,
           "name": "RoleCenter",
           "pinned": true,
           "runtime_reads": true,
-          "site": "pageext/lt-u-page-props/UPageObjects.al:398"
+          "site": "codeunit/lt-x-object-props/XObjectProps.al:163"
         },
         {
           "corpus_uses": 3,
@@ -3838,7 +3838,7 @@
           "site": "permissions/W6PermissionColumns.al:50"
         },
         {
-          "corpus_uses": 1,
+          "corpus_uses": 3,
           "group": "page/group",
           "ms_uses": 41,
           "name": "ObsoleteReason",
@@ -3847,7 +3847,7 @@
           "site": "misc/lt-u-obsolete-pending/UObsoleteObjects.al:95"
         },
         {
-          "corpus_uses": 1,
+          "corpus_uses": 3,
           "group": "page/group",
           "ms_uses": 41,
           "name": "ObsoleteState",
@@ -3856,7 +3856,7 @@
           "site": "misc/lt-u-obsolete-pending/UObsoleteObjects.al:94"
         },
         {
-          "corpus_uses": 1,
+          "corpus_uses": 3,
           "group": "page/group",
           "ms_uses": 41,
           "name": "ObsoleteTag",
@@ -3982,7 +3982,7 @@
           "site": "pages/lt-page-controls-aa/AaControls.al:284"
         },
         {
-          "corpus_uses": 6,
+          "corpus_uses": 7,
           "group": "page/view",
           "ms_uses": 36,
           "name": "Filters",
@@ -4117,7 +4117,7 @@
           "site": "misc/lt-probes-needed-3/PnC19XmlPort.al:162"
         },
         {
-          "corpus_uses": 1,
+          "corpus_uses": 3,
           "group": "table/field",
           "ms_uses": 25,
           "name": "ClosingDates",
@@ -4126,7 +4126,7 @@
           "site": "pages/lt-page-presentation-properties/P119Table.al:24"
         },
         {
-          "corpus_uses": 8,
+          "corpus_uses": 9,
           "group": "page/field",
           "ms_uses": 24,
           "name": "MinValue",
@@ -4135,7 +4135,7 @@
           "site": "errors/lt-ms-refusals-134/P134MinMaxDecimals.al:84"
         },
         {
-          "corpus_uses": 168,
+          "corpus_uses": 172,
           "group": "report",
           "ms_uses": 24,
           "name": "UseRequestPage",
@@ -4513,7 +4513,7 @@
           "site": "error-handling/lt-last-error-text-forms/InsertDuplicateKeyExcludeFlag.al:22"
         },
         {
-          "corpus_uses": 4,
+          "corpus_uses": 5,
           "group": "page/customaction",
           "ms_uses": 15,
           "name": "CustomActionType",
@@ -4585,7 +4585,7 @@
           "site": "pages/lt-report-page-properties/07-controladdin-size.al:14"
         },
         {
-          "corpus_uses": 8,
+          "corpus_uses": 9,
           "group": "page/field",
           "ms_uses": 13,
           "name": "MaxValue",
@@ -4630,22 +4630,22 @@
           "site": null
         },
         {
-          "corpus_uses": 6,
+          "corpus_uses": 8,
           "group": "controladdin",
           "ms_uses": 13,
           "name": "RequestedHeight",
           "pinned": true,
           "runtime_reads": false,
-          "site": "events/lt-system-events-upgrade-subs/P118RiskyUserControls.al:10"
+          "site": "codeunit/lt-x-object-props/XObjectProps.al:48"
         },
         {
-          "corpus_uses": 6,
+          "corpus_uses": 7,
           "group": "controladdin",
           "ms_uses": 13,
           "name": "RequestedWidth",
           "pinned": true,
           "runtime_reads": false,
-          "site": "events/lt-system-events-upgrade-subs/P118RiskyUserControls.al:11"
+          "site": "codeunit/lt-x-object-props/XObjectProps.al:49"
         },
         {
           "corpus_uses": 1,
@@ -5026,6 +5026,15 @@
           "site": "pages/lt-report-page-properties/06-xmlport-maxocc.al:23"
         },
         {
+          "corpus_uses": 0,
+          "group": "page",
+          "ms_uses": 7,
+          "name": "HelpLink",
+          "pinned": false,
+          "runtime_reads": true,
+          "site": null
+        },
+        {
           "corpus_uses": 1,
           "group": "page/actionref",
           "ms_uses": 7,
@@ -5080,22 +5089,22 @@
           "site": "pages/lt-report-page-properties/07-controladdin-size.al:15"
         },
         {
-          "corpus_uses": 1,
+          "corpus_uses": 2,
           "group": "controladdin",
           "ms_uses": 7,
           "name": "MinimumHeight",
           "pinned": true,
           "runtime_reads": false,
-          "site": "pages/lt-report-page-properties/07-controladdin-size.al:11"
+          "site": "codeunit/lt-x-object-props/XObjectProps.al:46"
         },
         {
-          "corpus_uses": 1,
+          "corpus_uses": 2,
           "group": "controladdin",
           "ms_uses": 7,
           "name": "MinimumWidth",
           "pinned": true,
           "runtime_reads": false,
-          "site": "pages/lt-report-page-properties/07-controladdin-size.al:12"
+          "site": "codeunit/lt-x-object-props/XObjectProps.al:47"
         },
         {
           "corpus_uses": 1,
@@ -5105,15 +5114,6 @@
           "pinned": true,
           "runtime_reads": false,
           "site": "pages/lt-report-page-properties/07-controladdin-size.al:16"
-        },
-        {
-          "corpus_uses": 0,
-          "group": "page",
-          "ms_uses": 7,
-          "name": "HelpLink",
-          "pinned": false,
-          "runtime_reads": false,
-          "site": null
         },
         {
           "corpus_uses": 2,
@@ -5197,7 +5197,7 @@
           "site": "pages/lt-page-presentation-properties/P119UserControl.al:30"
         },
         {
-          "corpus_uses": 2,
+          "corpus_uses": 3,
           "group": "pagecustomization/modify",
           "ms_uses": 6,
           "name": "Visible",
@@ -5458,13 +5458,13 @@
           "site": "misc/lt-u-obsolete-pending/UObsoleteObjects.al:29"
         },
         {
-          "corpus_uses": 1,
+          "corpus_uses": 2,
           "group": "page/field",
           "ms_uses": 4,
           "name": "Numeric",
           "pinned": true,
           "runtime_reads": true,
-          "site": "pages/lt-page-presentation-properties/P119PageNumeric.al:21"
+          "site": "pages/lt-ap-testpage-642/ApObjects.al:376"
         },
         {
           "corpus_uses": 1,
@@ -6376,22 +6376,22 @@
           "site": "pages/lt-report-page-properties/08-permissionsetext.al:23"
         },
         {
-          "corpus_uses": 2,
+          "corpus_uses": 4,
           "group": "query",
           "ms_uses": 2,
           "name": "EntityName",
           "pinned": true,
           "runtime_reads": true,
-          "site": "handlers/ProbeObjectMetadataTables.al:98"
+          "site": "codeunit/lt-x-object-props/XObjectProps.al:189"
         },
         {
-          "corpus_uses": 2,
+          "corpus_uses": 4,
           "group": "query",
           "ms_uses": 2,
           "name": "EntitySetName",
           "pinned": true,
           "runtime_reads": true,
-          "site": "handlers/ProbeObjectMetadataTables.al:99"
+          "site": "codeunit/lt-x-object-props/XObjectProps.al:190"
         },
         {
           "corpus_uses": 1,
@@ -11389,7 +11389,7 @@
           "site": "pages/lt-report-page-properties/06-xmlport-linkforce.al:24"
         },
         {
-          "corpus_uses": 2424,
+          "corpus_uses": 2443,
           "group": "codeunit",
           "ms_uses": 0,
           "name": "TestPermissions",
@@ -11464,6 +11464,33 @@
           "corpus_uses": 1,
           "group": "page/customaction",
           "ms_uses": 0,
+          "name": "ObsoleteReason",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:147"
+        },
+        {
+          "corpus_uses": 1,
+          "group": "page/customaction",
+          "ms_uses": 0,
+          "name": "ObsoleteState",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:146"
+        },
+        {
+          "corpus_uses": 1,
+          "group": "page/customaction",
+          "ms_uses": 0,
+          "name": "ObsoleteTag",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:148"
+        },
+        {
+          "corpus_uses": 1,
+          "group": "page/customaction",
+          "ms_uses": 0,
           "name": "Scope",
           "pinned": true,
           "runtime_reads": true,
@@ -11506,6 +11533,33 @@
           "site": "pages/lt-page-controls-aa/AaFieldProps.al:55"
         },
         {
+          "corpus_uses": 1,
+          "group": "page/fileuploadaction",
+          "ms_uses": 0,
+          "name": "ObsoleteReason",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:138"
+        },
+        {
+          "corpus_uses": 1,
+          "group": "page/fileuploadaction",
+          "ms_uses": 0,
+          "name": "ObsoleteState",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:137"
+        },
+        {
+          "corpus_uses": 1,
+          "group": "page/fileuploadaction",
+          "ms_uses": 0,
+          "name": "ObsoleteTag",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:139"
+        },
+        {
           "corpus_uses": 3,
           "group": "page/fixed",
           "ms_uses": 0,
@@ -11531,6 +11585,33 @@
           "pinned": true,
           "runtime_reads": true,
           "site": "pages/lt-ab-group-properties/ABGroupFixtures.al:133"
+        },
+        {
+          "corpus_uses": 1,
+          "group": "page/fixed",
+          "ms_uses": 0,
+          "name": "ObsoleteReason",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:199"
+        },
+        {
+          "corpus_uses": 1,
+          "group": "page/fixed",
+          "ms_uses": 0,
+          "name": "ObsoleteState",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:198"
+        },
+        {
+          "corpus_uses": 1,
+          "group": "page/fixed",
+          "ms_uses": 0,
+          "name": "ObsoleteTag",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:200"
         },
         {
           "corpus_uses": 1,
@@ -11567,6 +11648,33 @@
           "pinned": true,
           "runtime_reads": true,
           "site": "pages/lt-ab-group-properties/ABGroupFixtures.al:238"
+        },
+        {
+          "corpus_uses": 1,
+          "group": "page/grid",
+          "ms_uses": 0,
+          "name": "ObsoleteReason",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:188"
+        },
+        {
+          "corpus_uses": 1,
+          "group": "page/grid",
+          "ms_uses": 0,
+          "name": "ObsoleteState",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:187"
+        },
+        {
+          "corpus_uses": 1,
+          "group": "page/grid",
+          "ms_uses": 0,
+          "name": "ObsoleteTag",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:189"
         },
         {
           "corpus_uses": 1,
@@ -11632,6 +11740,33 @@
           "site": "pages/lt-page-controls-aa/AaPartsLists.al:112"
         },
         {
+          "corpus_uses": 1,
+          "group": "page/repeater",
+          "ms_uses": 0,
+          "name": "ObsoleteReason",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:79"
+        },
+        {
+          "corpus_uses": 1,
+          "group": "page/repeater",
+          "ms_uses": 0,
+          "name": "ObsoleteState",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:78"
+        },
+        {
+          "corpus_uses": 1,
+          "group": "page/repeater",
+          "ms_uses": 0,
+          "name": "ObsoleteTag",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:80"
+        },
+        {
           "corpus_uses": 5,
           "group": "page/systemaction",
           "ms_uses": 0,
@@ -11662,6 +11797,33 @@
           "corpus_uses": 1,
           "group": "page/systempart",
           "ms_uses": 0,
+          "name": "ObsoleteReason",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:92"
+        },
+        {
+          "corpus_uses": 1,
+          "group": "page/systempart",
+          "ms_uses": 0,
+          "name": "ObsoleteState",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:91"
+        },
+        {
+          "corpus_uses": 1,
+          "group": "page/systempart",
+          "ms_uses": 0,
+          "name": "ObsoleteTag",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:93"
+        },
+        {
+          "corpus_uses": 1,
+          "group": "page/systempart",
+          "ms_uses": 0,
           "name": "Provider",
           "pinned": true,
           "runtime_reads": true,
@@ -11675,6 +11837,60 @@
           "pinned": true,
           "runtime_reads": true,
           "site": "pages/lt-page-controls-aa/AaControls.al:141"
+        },
+        {
+          "corpus_uses": 1,
+          "group": "page/usercontrol",
+          "ms_uses": 0,
+          "name": "ObsoleteReason",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:211"
+        },
+        {
+          "corpus_uses": 1,
+          "group": "page/usercontrol",
+          "ms_uses": 0,
+          "name": "ObsoleteState",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:210"
+        },
+        {
+          "corpus_uses": 1,
+          "group": "page/usercontrol",
+          "ms_uses": 0,
+          "name": "ObsoleteTag",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:212"
+        },
+        {
+          "corpus_uses": 1,
+          "group": "page/view",
+          "ms_uses": 0,
+          "name": "ObsoleteReason",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:160"
+        },
+        {
+          "corpus_uses": 1,
+          "group": "page/view",
+          "ms_uses": 0,
+          "name": "ObsoleteState",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:159"
+        },
+        {
+          "corpus_uses": 1,
+          "group": "page/view",
+          "ms_uses": 0,
+          "name": "ObsoleteTag",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:161"
         },
         {
           "corpus_uses": 1,
@@ -11702,6 +11918,33 @@
           "pinned": true,
           "runtime_reads": true,
           "site": "pages/lt-z-page-customization/ZPageCustomization.al:113"
+        },
+        {
+          "corpus_uses": 1,
+          "group": "pagecustomization",
+          "ms_uses": 0,
+          "name": "ObsoleteReason",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:221"
+        },
+        {
+          "corpus_uses": 1,
+          "group": "pagecustomization",
+          "ms_uses": 0,
+          "name": "ObsoleteState",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:220"
+        },
+        {
+          "corpus_uses": 1,
+          "group": "pagecustomization",
+          "ms_uses": 0,
+          "name": "ObsoleteTag",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:222"
         },
         {
           "corpus_uses": 2,
@@ -11875,31 +12118,175 @@
           "site": "pageext/lt-z-modify-controls/ZModifyControls.al:94"
         },
         {
-          "corpus_uses": 2,
+          "corpus_uses": 1,
+          "group": "permissionset",
+          "ms_uses": 0,
+          "name": "ExcludedPermissionSets",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "codeunit/lt-x-object-props/XObjectProps.al:142"
+        },
+        {
+          "corpus_uses": 1,
+          "group": "permissionset",
+          "ms_uses": 0,
+          "name": "ObsoleteReason",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:251"
+        },
+        {
+          "corpus_uses": 1,
+          "group": "permissionset",
+          "ms_uses": 0,
+          "name": "ObsoleteState",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:250"
+        },
+        {
+          "corpus_uses": 1,
+          "group": "permissionset",
+          "ms_uses": 0,
+          "name": "ObsoleteTag",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:252"
+        },
+        {
+          "corpus_uses": 1,
+          "group": "profile",
+          "ms_uses": 0,
+          "name": "ObsoleteReason",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:242"
+        },
+        {
+          "corpus_uses": 1,
+          "group": "profile",
+          "ms_uses": 0,
+          "name": "ObsoleteState",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:241"
+        },
+        {
+          "corpus_uses": 1,
+          "group": "profile",
+          "ms_uses": 0,
+          "name": "ObsoleteTag",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:243"
+        },
+        {
+          "corpus_uses": 4,
           "group": "query",
           "ms_uses": 0,
           "name": "APIGroup",
           "pinned": true,
           "runtime_reads": true,
-          "site": "handlers/ProbeObjectMetadataTables.al:97"
+          "site": "codeunit/lt-x-object-props/XObjectProps.al:187"
         },
         {
-          "corpus_uses": 2,
+          "corpus_uses": 4,
           "group": "query",
           "ms_uses": 0,
           "name": "APIPublisher",
           "pinned": true,
           "runtime_reads": true,
-          "site": "handlers/ProbeObjectMetadataTables.al:96"
+          "site": "codeunit/lt-x-object-props/XObjectProps.al:186"
         },
         {
-          "corpus_uses": 2,
+          "corpus_uses": 4,
           "group": "query",
           "ms_uses": 0,
           "name": "APIVersion",
           "pinned": true,
           "runtime_reads": true,
-          "site": "handlers/ProbeObjectMetadataTables.al:97"
+          "site": "codeunit/lt-x-object-props/XObjectProps.al:188"
+        },
+        {
+          "corpus_uses": 1,
+          "group": "query",
+          "ms_uses": 0,
+          "name": "EntityCaption",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "codeunit/lt-x-object-props/XObjectProps.al:191"
+        },
+        {
+          "corpus_uses": 1,
+          "group": "query",
+          "ms_uses": 0,
+          "name": "EntitySetCaption",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "codeunit/lt-x-object-props/XObjectProps.al:192"
+        },
+        {
+          "corpus_uses": 1,
+          "group": "query",
+          "ms_uses": 0,
+          "name": "HelpLink",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "codeunit/lt-x-object-props/XObjectProps.al:193"
+        },
+        {
+          "corpus_uses": 1,
+          "group": "query/column",
+          "ms_uses": 0,
+          "name": "ObsoleteReason",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:264"
+        },
+        {
+          "corpus_uses": 1,
+          "group": "query/column",
+          "ms_uses": 0,
+          "name": "ObsoleteState",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:263"
+        },
+        {
+          "corpus_uses": 1,
+          "group": "query/column",
+          "ms_uses": 0,
+          "name": "ObsoleteTag",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:265"
+        },
+        {
+          "corpus_uses": 1,
+          "group": "query/filter",
+          "ms_uses": 0,
+          "name": "ObsoleteReason",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:271"
+        },
+        {
+          "corpus_uses": 1,
+          "group": "query/filter",
+          "ms_uses": 0,
+          "name": "ObsoleteState",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:270"
+        },
+        {
+          "corpus_uses": 1,
+          "group": "query/filter",
+          "ms_uses": 0,
+          "name": "ObsoleteTag",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:272"
         },
         {
           "corpus_uses": 1,
@@ -11981,6 +12368,42 @@
           "pinned": true,
           "runtime_reads": true,
           "site": "report/W3ReportActions.al:68"
+        },
+        {
+          "corpus_uses": 2,
+          "group": "report/column",
+          "ms_uses": 0,
+          "name": "OptionCaptionML",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "record/lt-x-table-props/XTableObjects.al:254"
+        },
+        {
+          "corpus_uses": 2,
+          "group": "report/dataitem",
+          "ms_uses": 0,
+          "name": "ObsoleteReason",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:289"
+        },
+        {
+          "corpus_uses": 2,
+          "group": "report/dataitem",
+          "ms_uses": 0,
+          "name": "ObsoleteState",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:288"
+        },
+        {
+          "corpus_uses": 2,
+          "group": "report/dataitem",
+          "ms_uses": 0,
+          "name": "ObsoleteTag",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:290"
         },
         {
           "corpus_uses": 1,
@@ -12073,6 +12496,15 @@
           "site": "handlers/PSRequestPageEditable.al:120"
         },
         {
+          "corpus_uses": 1,
+          "group": "report/requestpage",
+          "ms_uses": 0,
+          "name": "HelpLink",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "report/lt-y-request-page/YRequestPage.al:296"
+        },
+        {
           "corpus_uses": 2,
           "group": "report/requestpage",
           "ms_uses": 0,
@@ -12098,6 +12530,33 @@
           "pinned": true,
           "runtime_reads": true,
           "site": "report/lt-y-request-page/YRequestPage.al:239"
+        },
+        {
+          "corpus_uses": 1,
+          "group": "report/requestpage",
+          "ms_uses": 0,
+          "name": "ObsoleteReason",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:311"
+        },
+        {
+          "corpus_uses": 1,
+          "group": "report/requestpage",
+          "ms_uses": 0,
+          "name": "ObsoleteState",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:309"
+        },
+        {
+          "corpus_uses": 1,
+          "group": "report/requestpage",
+          "ms_uses": 0,
+          "name": "ObsoleteTag",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:313"
         },
         {
           "corpus_uses": 1,
@@ -12208,13 +12667,22 @@
           "site": "report/lt-y-report-props/YReportExt.al:101"
         },
         {
-          "corpus_uses": 1,
+          "corpus_uses": 3,
           "group": "table/field",
           "ms_uses": 0,
           "name": "CharAllowed",
           "pinned": true,
           "runtime_reads": true,
           "site": "pages/lt-page-controls-aa/AaObjects.al:24"
+        },
+        {
+          "corpus_uses": 1,
+          "group": "table/field",
+          "ms_uses": 0,
+          "name": "DateFormula",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "record/lt-x-table-props/XTableObjects.al:19"
         },
         {
           "corpus_uses": 4,
@@ -12224,6 +12692,60 @@
           "pinned": true,
           "runtime_reads": true,
           "site": "record/TestPlatformMetadataDeclarationContracts.al:83"
+        },
+        {
+          "corpus_uses": 2,
+          "group": "table/field",
+          "ms_uses": 0,
+          "name": "OptionCaptionML",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "record/lt-x-table-props/XTableObjects.al:25"
+        },
+        {
+          "corpus_uses": 3,
+          "group": "table/field",
+          "ms_uses": 0,
+          "name": "SQLDataType",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "record/lt-x-table-props/XTableObjects.al:127"
+        },
+        {
+          "corpus_uses": 2,
+          "group": "table/field",
+          "ms_uses": 0,
+          "name": "Width",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "record/lt-x-table-props/XTableObjects.al:29"
+        },
+        {
+          "corpus_uses": 1,
+          "group": "table/fieldgroup",
+          "ms_uses": 0,
+          "name": "ObsoleteReason",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:31"
+        },
+        {
+          "corpus_uses": 1,
+          "group": "table/fieldgroup",
+          "ms_uses": 0,
+          "name": "ObsoleteState",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:30"
+        },
+        {
+          "corpus_uses": 1,
+          "group": "table/fieldgroup",
+          "ms_uses": 0,
+          "name": "ObsoleteTag",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:32"
         },
         {
           "corpus_uses": 5,
@@ -12254,6 +12776,33 @@
         },
         {
           "corpus_uses": 1,
+          "group": "tableextension",
+          "ms_uses": 0,
+          "name": "DataCaptionFields",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "record/lt-x-table-props/XTableObjects.al:65"
+        },
+        {
+          "corpus_uses": 1,
+          "group": "tableextension",
+          "ms_uses": 0,
+          "name": "DrillDownPageId",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "record/lt-x-table-props/XTableObjects.al:66"
+        },
+        {
+          "corpus_uses": 1,
+          "group": "tableextension",
+          "ms_uses": 0,
+          "name": "LookupPageId",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "record/lt-x-table-props/XTableObjects.al:67"
+        },
+        {
+          "corpus_uses": 1,
           "group": "tableextension/key",
           "ms_uses": 0,
           "name": "ObsoleteReason",
@@ -12278,6 +12827,51 @@
           "pinned": true,
           "runtime_reads": true,
           "site": "recordref/TestKeyMetadataRowVersionRemoved.Fixtures.al:152"
+        },
+        {
+          "corpus_uses": 2,
+          "group": "tableextension/modify",
+          "ms_uses": 0,
+          "name": "BlankZero",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "record/lt-x-table-props/XTableObjects.al:71"
+        },
+        {
+          "corpus_uses": 2,
+          "group": "tableextension/modify",
+          "ms_uses": 0,
+          "name": "CaptionClass",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "record/lt-x-table-props/XTableObjects.al:73"
+        },
+        {
+          "corpus_uses": 1,
+          "group": "tableextension/modify",
+          "ms_uses": 0,
+          "name": "OptionCaption",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "record/lt-x-table-props/XTableObjects.al:77"
+        },
+        {
+          "corpus_uses": 1,
+          "group": "tableextension/modify",
+          "ms_uses": 0,
+          "name": "OptionCaptionML",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "record/lt-x-table-props/XTableObjects.al:78"
+        },
+        {
+          "corpus_uses": 2,
+          "group": "tableextension/modify",
+          "ms_uses": 0,
+          "name": "Width",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "record/lt-x-table-props/XTableObjects.al:79"
         },
         {
           "corpus_uses": 2,
@@ -12514,13 +13108,58 @@
           "site": "xmlport/lt-y-xmlport-props/YXmlPortProps.al:368"
         },
         {
-          "corpus_uses": 6,
+          "corpus_uses": 4,
+          "group": "codeunit",
+          "ms_uses": 0,
+          "name": "RequiredTestIsolation",
+          "pinned": true,
+          "runtime_reads": false,
+          "site": "codeunit/lt-x-object-props/XObjectProps.al:13"
+        },
+        {
+          "corpus_uses": 8,
           "group": "codeunit",
           "ms_uses": 0,
           "name": "TestHttpRequestPolicy",
           "pinned": true,
           "runtime_reads": false,
-          "site": "network/TestHttpClientBlockNoHandler.al:26"
+          "site": "network/HttpClientAuthConfig.al:11"
+        },
+        {
+          "corpus_uses": 4,
+          "group": "codeunit",
+          "ms_uses": 0,
+          "name": "TestType",
+          "pinned": true,
+          "runtime_reads": false,
+          "site": "codeunit/lt-x-object-props/XObjectProps.al:12"
+        },
+        {
+          "corpus_uses": 2,
+          "group": "controladdin",
+          "ms_uses": 0,
+          "name": "MaximumHeight",
+          "pinned": true,
+          "runtime_reads": false,
+          "site": "codeunit/lt-x-object-props/XObjectProps.al:44"
+        },
+        {
+          "corpus_uses": 2,
+          "group": "controladdin",
+          "ms_uses": 0,
+          "name": "MaximumWidth",
+          "pinned": true,
+          "runtime_reads": false,
+          "site": "codeunit/lt-x-object-props/XObjectProps.al:45"
+        },
+        {
+          "corpus_uses": 1,
+          "group": "enum",
+          "ms_uses": 0,
+          "name": "AssignmentCompatibilityReason",
+          "pinned": true,
+          "runtime_reads": false,
+          "site": "codeunit/lt-x-object-props/XObjectProps.al:86"
         },
         {
           "corpus_uses": 1,
@@ -12577,7 +13216,7 @@
           "site": "pages/lt-page-controls-aa/AaControls.al:315"
         },
         {
-          "corpus_uses": 2,
+          "corpus_uses": 3,
           "group": "page/customaction",
           "ms_uses": 0,
           "name": "FlowId",
@@ -12829,6 +13468,33 @@
           "site": "pageext/lt-z-modify-controls/ZModifyControls.al:93"
         },
         {
+          "corpus_uses": 1,
+          "group": "profile",
+          "ms_uses": 0,
+          "name": "ProfileDescriptionML",
+          "pinned": true,
+          "runtime_reads": false,
+          "site": "codeunit/lt-x-object-props/XObjectProps.al:162"
+        },
+        {
+          "corpus_uses": 1,
+          "group": "query",
+          "ms_uses": 0,
+          "name": "EntityCaptionML",
+          "pinned": true,
+          "runtime_reads": false,
+          "site": "codeunit/lt-x-object-props/XObjectProps.al:213"
+        },
+        {
+          "corpus_uses": 1,
+          "group": "query",
+          "ms_uses": 0,
+          "name": "EntitySetCaptionML",
+          "pinned": true,
+          "runtime_reads": false,
+          "site": "codeunit/lt-x-object-props/XObjectProps.al:214"
+        },
+        {
           "corpus_uses": 4,
           "group": "report",
           "ms_uses": 0,
@@ -12956,21 +13622,57 @@
         },
         {
           "corpus_uses": 1,
-          "group": "report/requestpage",
-          "ms_uses": 0,
-          "name": "HelpLink",
-          "pinned": true,
-          "runtime_reads": false,
-          "site": "report/lt-y-request-page/YRequestPage.al:296"
-        },
-        {
-          "corpus_uses": 1,
           "group": "reportextension/labels",
           "ms_uses": 0,
           "name": "ExtLabel",
           "pinned": true,
           "runtime_reads": false,
           "site": "report/PZReportLabels.al:67"
+        },
+        {
+          "corpus_uses": 1,
+          "group": "table",
+          "ms_uses": 0,
+          "name": "AllowInCustomizations",
+          "pinned": true,
+          "runtime_reads": false,
+          "site": "record/lt-x-table-props/XTableObjects.al:12"
+        },
+        {
+          "corpus_uses": 1,
+          "group": "table",
+          "ms_uses": 0,
+          "name": "ColumnStoreIndex",
+          "pinned": true,
+          "runtime_reads": false,
+          "site": "record/lt-x-table-props/XTableObjects.al:87"
+        },
+        {
+          "corpus_uses": 1,
+          "group": "table",
+          "ms_uses": 0,
+          "name": "LinkedInTransaction",
+          "pinned": true,
+          "runtime_reads": false,
+          "site": "record/lt-x-table-props/XTableObjects.al:106"
+        },
+        {
+          "corpus_uses": 1,
+          "group": "table",
+          "ms_uses": 0,
+          "name": "LinkedObject",
+          "pinned": true,
+          "runtime_reads": false,
+          "site": "record/lt-x-table-props/XTableObjects.al:105"
+        },
+        {
+          "corpus_uses": 3,
+          "group": "table/field",
+          "ms_uses": 0,
+          "name": "MaskType",
+          "pinned": true,
+          "runtime_reads": false,
+          "site": "record/lt-x-table-props/XTableObjects.al:20"
         },
         {
           "corpus_uses": 1,
@@ -12982,6 +13684,24 @@
           "site": "types/PWMisc.al:27"
         },
         {
+          "corpus_uses": 1,
+          "group": "table/field",
+          "ms_uses": 0,
+          "name": "SignDisplacement",
+          "pinned": true,
+          "runtime_reads": false,
+          "site": "record/lt-x-table-props/XTableObjects.al:27"
+        },
+        {
+          "corpus_uses": 1,
+          "group": "table/field",
+          "ms_uses": 0,
+          "name": "SQLTimestamp",
+          "pinned": true,
+          "runtime_reads": false,
+          "site": "record/lt-x-table-props/XTableObjects.al:28"
+        },
+        {
           "corpus_uses": 4,
           "group": "table/field",
           "ms_uses": 0,
@@ -12989,9 +13709,27 @@
           "pinned": true,
           "runtime_reads": false,
           "site": "handlers/ProbeObjectMetadataTables.al:162"
+        },
+        {
+          "corpus_uses": 1,
+          "group": "tableextension",
+          "ms_uses": 0,
+          "name": "AllowInCustomizations",
+          "pinned": true,
+          "runtime_reads": false,
+          "site": "record/lt-x-table-props/XTableObjects.al:64"
+        },
+        {
+          "corpus_uses": 2,
+          "group": "tableextension/modify",
+          "ms_uses": 0,
+          "name": "ClosingDates",
+          "pinned": true,
+          "runtime_reads": false,
+          "site": "record/lt-x-table-props/XTableObjects.al:75"
         }
       ],
-      "pinned": 703
+      "pinned": 785
     },
     {
       "catalog": 123,
@@ -14112,7 +14850,7 @@
       "dimension": "syntax",
       "items": [
         {
-          "corpus_uses": 671908,
+          "corpus_uses": 679344,
           "group": "expression",
           "ms_uses": 1807758,
           "name": "NameRef",
@@ -14121,7 +14859,7 @@
           "site": "ALTCallstackModuleInfos.al:9"
         },
         {
-          "corpus_uses": 245450,
+          "corpus_uses": 248327,
           "group": "expression",
           "ms_uses": 474879,
           "name": "MemberExpr",
@@ -14130,7 +14868,7 @@
           "site": "ALTCallstackModuleInfos.al:9"
         },
         {
-          "corpus_uses": 292256,
+          "corpus_uses": 295407,
           "group": "expression",
           "ms_uses": 389287,
           "name": "CallExpr",
@@ -14139,7 +14877,7 @@
           "site": "ALTCallstackModuleInfos.al:9"
         },
         {
-          "corpus_uses": 206224,
+          "corpus_uses": 208481,
           "group": "statement",
           "ms_uses": 248561,
           "name": "ExprStmt",
@@ -14148,7 +14886,7 @@
           "site": "ALTCallstackModuleInfos.al:26"
         },
         {
-          "corpus_uses": 31390,
+          "corpus_uses": 31743,
           "group": "statement",
           "ms_uses": 187658,
           "name": "Block",
@@ -14157,7 +14895,7 @@
           "site": "ALTCallstackModuleInfos.al:8"
         },
         {
-          "corpus_uses": 30064,
+          "corpus_uses": 30394,
           "group": "statement",
           "ms_uses": 136362,
           "name": "AssignStmt",
@@ -14166,7 +14904,7 @@
           "site": "ALTInternalCodeunit.al:19"
         },
         {
-          "corpus_uses": 4343,
+          "corpus_uses": 4409,
           "group": "statement",
           "ms_uses": 101593,
           "name": "IfStmt",
@@ -14175,7 +14913,7 @@
           "site": "ALTIsolatedStorageOwner.al:25"
         },
         {
-          "corpus_uses": 5118,
+          "corpus_uses": 5166,
           "group": "statement",
           "ms_uses": 79996,
           "name": "ExitStmt",
@@ -14184,7 +14922,7 @@
           "site": "ALTCallstackModuleInfos.al:9"
         },
         {
-          "corpus_uses": 46346,
+          "corpus_uses": 46575,
           "group": "expression",
           "ms_uses": 77686,
           "name": "Literal:Integer",
@@ -14193,7 +14931,7 @@
           "site": "ALTInternalCodeunit.al:7"
         },
         {
-          "corpus_uses": 7022,
+          "corpus_uses": 7072,
           "group": "expression",
           "ms_uses": 71172,
           "name": "ScopeExpr",
@@ -14202,7 +14940,7 @@
           "site": "ALTIsolatedStorageOwner.al:41"
         },
         {
-          "corpus_uses": 257356,
+          "corpus_uses": 259813,
           "group": "expression",
           "ms_uses": 54237,
           "name": "Literal:StringLit",
@@ -14211,7 +14949,7 @@
           "site": "TestDotNetValueKindsContracts.al:72"
         },
         {
-          "corpus_uses": 2116,
+          "corpus_uses": 2136,
           "group": "expression",
           "ms_uses": 33690,
           "name": "BinExpr =",
@@ -14229,7 +14967,7 @@
           "site": "_fixtures/Assert.al:176"
         },
         {
-          "corpus_uses": 2837,
+          "corpus_uses": 2852,
           "group": "expression",
           "ms_uses": 24498,
           "name": "Literal:false",
@@ -14238,7 +14976,7 @@
           "site": "_fixtures/ALTFixtureCleanup.al:28"
         },
         {
-          "corpus_uses": 858,
+          "corpus_uses": 871,
           "group": "expression",
           "ms_uses": 24370,
           "name": "PrefixExpr not",
@@ -14247,7 +14985,7 @@
           "site": "_fixtures/Assert.al:56"
         },
         {
-          "corpus_uses": 3634,
+          "corpus_uses": 3652,
           "group": "expression",
           "ms_uses": 23439,
           "name": "Literal:true",
@@ -14256,7 +14994,7 @@
           "site": "_fixtures/ALTImplicitReturnCallee.al:19"
         },
         {
-          "corpus_uses": 534,
+          "corpus_uses": 540,
           "group": "expression",
           "ms_uses": 23304,
           "name": "BinExpr <>",
@@ -14265,7 +15003,7 @@
           "site": "TestDotNetValueKindsContracts.al:230"
         },
         {
-          "corpus_uses": 1258,
+          "corpus_uses": 1278,
           "group": "expression",
           "ms_uses": 21542,
           "name": "IndexExpr",
@@ -14274,7 +15012,7 @@
           "site": "_fixtures/ProbeObserver.Codeunit.al:27"
         },
         {
-          "corpus_uses": 2280,
+          "corpus_uses": 2294,
           "group": "statement",
           "ms_uses": 15938,
           "name": "CaseBranch",
@@ -14283,7 +15021,7 @@
           "site": "_fixtures/Assert.al:428"
         },
         {
-          "corpus_uses": 21984,
+          "corpus_uses": 22335,
           "group": "expression",
           "ms_uses": 15738,
           "name": "BinExpr +",
@@ -14301,7 +15039,7 @@
           "site": "_fixtures/Assert.al:186"
         },
         {
-          "corpus_uses": 357,
+          "corpus_uses": 363,
           "group": "statement",
           "ms_uses": 6695,
           "name": "RepeatStmt",
@@ -14328,7 +15066,7 @@
           "site": "TestDotNetValueKindsContracts.al:161"
         },
         {
-          "corpus_uses": 403,
+          "corpus_uses": 408,
           "group": "statement",
           "ms_uses": 4793,
           "name": "CaseStmt",
@@ -14337,7 +15075,7 @@
           "site": "_fixtures/Assert.al:427"
         },
         {
-          "corpus_uses": 700,
+          "corpus_uses": 710,
           "group": "expression",
           "ms_uses": 3898,
           "name": "BinExpr >",
@@ -14346,7 +15084,7 @@
           "site": "TestDotNetValueKindsContracts.al:402"
         },
         {
-          "corpus_uses": 269,
+          "corpus_uses": 270,
           "group": "expression",
           "ms_uses": 3188,
           "name": "BinExpr *",
@@ -14355,7 +15093,7 @@
           "site": "ALTInternalCodeunit.al:7"
         },
         {
-          "corpus_uses": 2615,
+          "corpus_uses": 2641,
           "group": "statement",
           "ms_uses": 3049,
           "name": "AssignStmt +=",
@@ -14373,7 +15111,7 @@
           "site": "calcfields/lt-upperlimit-single-value/UpperLimitSingleValue.al:127"
         },
         {
-          "corpus_uses": 1434,
+          "corpus_uses": 1437,
           "group": "expression",
           "ms_uses": 2426,
           "name": "PrefixExpr -",
@@ -14391,7 +15129,7 @@
           "site": "collections/DictKeys.al:185"
         },
         {
-          "corpus_uses": 334,
+          "corpus_uses": 335,
           "group": "expression",
           "ms_uses": 2169,
           "name": "BinExpr <",
@@ -14418,7 +15156,7 @@
           "site": "_fixtures/Assert.al:299"
         },
         {
-          "corpus_uses": 37,
+          "corpus_uses": 39,
           "group": "statement",
           "ms_uses": 1202,
           "name": "CaseElse",
@@ -14445,7 +15183,7 @@
           "site": "_fixtures/Assert.al:415"
         },
         {
-          "corpus_uses": 944,
+          "corpus_uses": 949,
           "group": "statement",
           "ms_uses": 743,
           "name": "ForStmt",
@@ -14454,7 +15192,7 @@
           "site": "TestDotNetValueKindsContracts.al:162"
         },
         {
-          "corpus_uses": 471,
+          "corpus_uses": 478,
           "group": "statement",
           "ms_uses": 561,
           "name": "WhileStmt",
@@ -14463,7 +15201,7 @@
           "site": "_fixtures/ProbeObserver.Codeunit.al:103"
         },
         {
-          "corpus_uses": 390,
+          "corpus_uses": 394,
           "group": "statement",
           "ms_uses": 455,
           "name": "ForeachStmt",
@@ -14490,7 +15228,7 @@
           "site": "handlers/ProbeEventSubscriberOrder.al:80"
         },
         {
-          "corpus_uses": 1551,
+          "corpus_uses": 1569,
           "group": "expression",
           "ms_uses": 279,
           "name": "Literal:Decimal",
@@ -14661,7 +15399,7 @@
           "site": null
         },
         {
-          "corpus_uses": 4103,
+          "corpus_uses": 4120,
           "group": "statement",
           "ms_uses": 0,
           "name": "AssertErrorStmt",
@@ -14695,7 +15433,7 @@
       "dimension": "attributes",
       "items": [
         {
-          "corpus_uses": 83,
+          "corpus_uses": 84,
           "group": "procedure",
           "ms_uses": 23738,
           "name": "IntegrationEvent",
@@ -14704,7 +15442,7 @@
           "site": "ALTInternalCodeunit.al:10"
         },
         {
-          "corpus_uses": 525,
+          "corpus_uses": 526,
           "group": "procedure",
           "ms_uses": 3349,
           "name": "EventSubscriber",
@@ -14731,7 +15469,7 @@
           "site": "lt-ac/ACAttributes.al:334"
         },
         {
-          "corpus_uses": 1,
+          "corpus_uses": 2,
           "group": "procedure",
           "ms_uses": 854,
           "name": "NonDebuggable",
@@ -14740,7 +15478,7 @@
           "site": "_fixtures/ALTTryFunctionNoExitProbe.al:43"
         },
         {
-          "corpus_uses": 2193,
+          "corpus_uses": 2225,
           "group": "procedure",
           "ms_uses": 603,
           "name": "TryFunction",
@@ -14848,7 +15586,7 @@
           "site": "errors/lt-ms-refusals-133/P133MessageInHandlers.al:71"
         },
         {
-          "corpus_uses": 306,
+          "corpus_uses": 314,
           "group": "procedure",
           "ms_uses": 0,
           "name": "ModalPageHandler",
@@ -14875,7 +15613,7 @@
           "site": "record/TestFilterAdvancedContracts.al:15"
         },
         {
-          "corpus_uses": 109,
+          "corpus_uses": 110,
           "group": "procedure",
           "ms_uses": 0,
           "name": "PageHandler",
@@ -14929,7 +15667,7 @@
           "site": "errors/lt-ms-refusals-133/P133MessageInHandlers.al:100"
         },
         {
-          "corpus_uses": 15209,
+          "corpus_uses": 15341,
           "group": "procedure",
           "ms_uses": 0,
           "name": "Test",
@@ -14974,7 +15712,7 @@
           "site": "events/lt-platform-triggers/PtObserve.al:610"
         },
         {
-          "corpus_uses": 1152,
+          "corpus_uses": 1165,
           "group": "procedure",
           "ms_uses": 0,
           "name": "HandlerFunctions",
@@ -15129,7 +15867,7 @@
         "generic": false,
         "line": 269,
         "pinned": true,
-        "site": "session/PZMediaImportFile.al:58",
+        "site": "media/MediaFiles.al:203",
         "template": "The specified path is invalid."
       },
       {
@@ -15138,7 +15876,7 @@
         "generic": false,
         "line": 272,
         "pinned": true,
-        "site": "session/PZMediaImportFile.al:56",
+        "site": "media/MediaFiles.al:205",
         "template": "Could not find a part of the path '%'."
       },
       {
@@ -15163,7 +15901,7 @@
         "code": "AL:DivideByZero",
         "file": "crates/al-builtins/src/ops.rs",
         "generic": false,
-        "line": 439,
+        "line": 453,
         "pinned": true,
         "site": "errors/lt-error-handling/ErTRuntimeErrors.al:91",
         "template": "Attempted to divide by zero."
@@ -15172,7 +15910,7 @@
         "code": "AL:DivideByZero",
         "file": "crates/al-builtins/src/ops.rs",
         "generic": false,
-        "line": 642,
+        "line": 656,
         "pinned": true,
         "site": "errors/lt-error-handling/ErTRuntimeErrors.al:91",
         "template": "Attempted to divide by zero."
@@ -15181,7 +15919,7 @@
         "code": "InvalidTime",
         "file": "crates/al-builtins/src/ops.rs",
         "generic": false,
-        "line": 812,
+        "line": 826,
         "pinned": true,
         "site": "misc/lt-probes-needed-6/PnF31TimeArithmetic.al:81",
         "template": "Adding to an undefined (0T) time."
@@ -15190,7 +15928,7 @@
         "code": "InvalidTime",
         "file": "crates/al-builtins/src/ops.rs",
         "generic": false,
-        "line": 866,
+        "line": 880,
         "pinned": true,
         "site": "misc/lt-probes-needed-6/PnF31TimeArithmetic.al:116",
         "template": "Subtracting from an undefined (0T) time."
@@ -15199,7 +15937,7 @@
         "code": "AL:Overflow",
         "file": "crates/al-builtins/src/ops.rs",
         "generic": false,
-        "line": 894,
+        "line": 908,
         "pinned": true,
         "site": "errors/lt-error-handling/ErTRuntimeErrors.al:97",
         "template": "Arithmetic operation resulted in an overflow."
@@ -15208,7 +15946,7 @@
         "code": "AL:Overflow",
         "file": "crates/al-builtins/src/ops.rs",
         "generic": false,
-        "line": 902,
+        "line": 916,
         "pinned": true,
         "site": "errors/lt-error-handling/ErTRuntimeErrors.al:97",
         "template": "Arithmetic operation resulted in an overflow."
@@ -15217,7 +15955,7 @@
         "code": "AL:DivideByZero",
         "file": "crates/al-builtins/src/ops.rs",
         "generic": false,
-        "line": 927,
+        "line": 941,
         "pinned": true,
         "site": "errors/lt-error-handling/ErTRuntimeErrors.al:91",
         "template": "Attempted to divide by zero."
@@ -15226,7 +15964,7 @@
         "code": "AL:DivideByZero",
         "file": "crates/al-builtins/src/ops.rs",
         "generic": false,
-        "line": 952,
+        "line": 966,
         "pinned": true,
         "site": "errors/lt-error-handling/ErTRuntimeErrors.al:91",
         "template": "Attempted to divide by zero."
@@ -15235,7 +15973,7 @@
         "code": "AL:Overflow",
         "file": "crates/al-builtins/src/ops.rs",
         "generic": false,
-        "line": 981,
+        "line": 995,
         "pinned": true,
         "site": "errors/lt-error-handling/ErTRuntimeErrors.al:97",
         "template": "Arithmetic operation resulted in an overflow."
@@ -15244,7 +15982,7 @@
         "code": "AL:Overflow",
         "file": "crates/al-builtins/src/ops.rs",
         "generic": false,
-        "line": 986,
+        "line": 1000,
         "pinned": true,
         "site": "errors/lt-error-handling/ErTRuntimeErrors.al:97",
         "template": "Arithmetic operation resulted in an overflow."
@@ -15253,7 +15991,7 @@
         "code": "DateInvalid",
         "file": "crates/al-builtins/src/ops.rs",
         "generic": false,
-        "line": 1014,
+        "line": 1028,
         "pinned": true,
         "site": "errors/lt-ms-refusals-131/P131EvalScalars.al:376",
         "template": "The date is not valid."
@@ -15370,7 +16108,7 @@
         "code": "AssertError",
         "file": "crates/al-vm/src/exec/run.rs",
         "generic": false,
-        "line": 426,
+        "line": 430,
         "pinned": true,
         "site": "types/TestFormatEvaluateTextContracts.al:228",
         "template": "An error was expected inside an ASSERTERROR statement."
@@ -15379,7 +16117,7 @@
         "code": "AL:InvalidOperation",
         "file": "crates/al-vm/src/exec/run.rs",
         "generic": false,
-        "line": 567,
+        "line": 571,
         "pinned": true,
         "site": "TestDotNetValueKindsContracts.al:312",
         "template": "Collection was modified; enumeration operation may not execute."
@@ -15424,7 +16162,7 @@
         "code": "NotSupportedOperation",
         "file": "crates/al-vm/src/interp.rs",
         "generic": false,
-        "line": 813,
+        "line": 816,
         "pinned": true,
         "site": "recordref/lt-recordref-variant-record/RecordRefVariantToRecord.al:147",
         "template": "The requested operation is not supported."
@@ -15433,7 +16171,7 @@
         "code": "IndexOutOfBounds",
         "file": "crates/al-vm/src/interp.rs",
         "generic": false,
-        "line": 1050,
+        "line": 1053,
         "pinned": true,
         "site": "collections/lt-array-rows/ArrayRows.al:185",
         "template": "Index out of bounds."
@@ -15442,7 +16180,7 @@
         "code": "IndexOutOfBounds",
         "file": "crates/al-vm/src/interp.rs",
         "generic": false,
-        "line": 1127,
+        "line": 1130,
         "pinned": true,
         "site": "collections/lt-array-rows/ArrayRows.al:185",
         "template": "Index out of bounds."
@@ -15451,7 +16189,7 @@
         "code": "IndexOutOfBounds",
         "file": "crates/al-vm/src/interp.rs",
         "generic": false,
-        "line": 1137,
+        "line": 1140,
         "pinned": true,
         "site": "collections/lt-array-rows/ArrayRows.al:185",
         "template": "Index out of bounds."
@@ -15460,7 +16198,7 @@
         "code": "StackOverflow",
         "file": "crates/al-vm/src/lib.rs",
         "generic": false,
-        "line": 948,
+        "line": 1048,
         "pinned": true,
         "site": "record/TestCalcFieldsTruncateUniqueContracts.al:179",
         "template": "There is insufficient memory to execute this function. This can be caused by recursive function calls. Contact your system administrator."
@@ -15469,7 +16207,7 @@
         "code": "",
         "file": "crates/al-vm/src/queries.rs",
         "generic": false,
-        "line": 279,
+        "line": 280,
         "pinned": true,
         "site": "query/TestQueryTopProperty.al:179",
         "template": "Top number of rows cannot be negative"
@@ -15478,7 +16216,7 @@
         "code": "QueryNoDataSet",
         "file": "crates/al-vm/src/queries.rs",
         "generic": false,
-        "line": 607,
+        "line": 601,
         "pinned": true,
         "site": "xmlport/lt-xmlport-query-datatransfer/XpTQueryBasic.al:84",
         "template": "You have not yet retrieved a dataset for this query. The READ function can only be called after the dataset is retrieved with a call to the OPEN function."
@@ -15487,7 +16225,7 @@
         "code": "Query",
         "file": "crates/al-vm/src/queries.rs",
         "generic": false,
-        "line": 615,
+        "line": 609,
         "pinned": true,
         "site": "errors/lt-ms-refusals-131/P131QuerySetRangeAfterRead.al:111",
         "template": "The READ function is called on a query after query metadata has been changed by one of the following: SETFILTER, SETRANGE, SECURITYFILTERING, or TOPNUMBEROFROWS. After metadata changes, you must reopen the query by calling the OPEN function before calling the READ function."
@@ -15514,7 +16252,7 @@
         "code": "RenameArgument",
         "file": "crates/al-vm/src/records.rs",
         "generic": false,
-        "line": 2431,
+        "line": 2438,
         "pinned": true,
         "site": "recordref/lt-refs/RfTWrite.al:223",
         "template": "The number of field arguments does not match the primary key size."
@@ -17783,9 +18521,9 @@
         "ms_uses": 0,
         "name": "RequiredTestIsolation",
         "owner": "Codeunit",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
-        "site": null,
+        "site": "codeunit/lt-x-object-props/XObjectProps.al:13",
         "state": "unknown"
       },
       {
@@ -17858,7 +18596,7 @@
         "owner": "Codeunit",
         "pinned": true,
         "scope": "",
-        "site": "network/TestHttpClientBlockNoHandler.al:26",
+        "site": "network/HttpClientAuthConfig.al:11",
         "state": "unknown"
       },
       {
@@ -17901,9 +18639,9 @@
         "ms_uses": 0,
         "name": "TestType",
         "owner": "Codeunit",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
-        "site": null,
+        "site": "codeunit/lt-x-object-props/XObjectProps.al:12",
         "state": "unknown"
       },
       {
@@ -17961,9 +18699,9 @@
         "ms_uses": 0,
         "name": "MaximumHeight",
         "owner": "ControlAddInObject",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
-        "site": null,
+        "site": "codeunit/lt-x-object-props/XObjectProps.al:44",
         "state": "unknown"
       },
       {
@@ -17976,9 +18714,9 @@
         "ms_uses": 0,
         "name": "MaximumWidth",
         "owner": "ControlAddInObject",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
-        "site": null,
+        "site": "codeunit/lt-x-object-props/XObjectProps.al:45",
         "state": "unknown"
       },
       {
@@ -17993,7 +18731,7 @@
         "owner": "ControlAddInObject",
         "pinned": true,
         "scope": "",
-        "site": "pages/lt-report-page-properties/07-controladdin-size.al:11",
+        "site": "codeunit/lt-x-object-props/XObjectProps.al:46",
         "state": "unknown"
       },
       {
@@ -18008,7 +18746,7 @@
         "owner": "ControlAddInObject",
         "pinned": true,
         "scope": "",
-        "site": "pages/lt-report-page-properties/07-controladdin-size.al:12",
+        "site": "codeunit/lt-x-object-props/XObjectProps.al:47",
         "state": "unknown"
       },
       {
@@ -18098,7 +18836,7 @@
         "owner": "ControlAddInObject",
         "pinned": true,
         "scope": "",
-        "site": "events/lt-system-events-upgrade-subs/P118RiskyUserControls.al:10",
+        "site": "codeunit/lt-x-object-props/XObjectProps.al:48",
         "state": "unknown"
       },
       {
@@ -18113,7 +18851,7 @@
         "owner": "ControlAddInObject",
         "pinned": true,
         "scope": "",
-        "site": "events/lt-system-events-upgrade-subs/P118RiskyUserControls.al:11",
+        "site": "codeunit/lt-x-object-props/XObjectProps.al:49",
         "state": "unknown"
       },
       {
@@ -18293,7 +19031,7 @@
         "owner": "EnumType",
         "pinned": true,
         "scope": "",
-        "site": "errors/lt-ms-refusals-138/P138EnumGetNotFound.al:13",
+        "site": "codeunit/lt-x-object-props/XObjectProps.al:85",
         "state": "implemented"
       },
       {
@@ -18306,9 +19044,9 @@
         "ms_uses": 0,
         "name": "AssignmentCompatibilityReason",
         "owner": "EnumType",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
-        "site": null,
+        "site": "codeunit/lt-x-object-props/XObjectProps.al:86",
         "state": "unknown"
       },
       {
@@ -18651,9 +19389,9 @@
         "ms_uses": 0,
         "name": "DateFormula",
         "owner": "Field",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
-        "site": null,
+        "site": "record/lt-x-table-props/XTableObjects.al:19",
         "state": "implemented"
       },
       {
@@ -18801,9 +19539,9 @@
         "ms_uses": 0,
         "name": "MaskType",
         "owner": "Field",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
-        "site": null,
+        "site": "record/lt-x-table-props/XTableObjects.al:20",
         "state": "unknown"
       },
       {
@@ -18878,7 +19616,7 @@
         "owner": "Field",
         "pinned": true,
         "scope": "",
-        "site": "pages/lt-page-presentation-properties/P119Table.al:17",
+        "site": "pages/lt-ap-testpage-642/ApObjects.al:21",
         "state": "implemented"
       },
       {
@@ -18981,9 +19719,9 @@
         "ms_uses": 0,
         "name": "OptionCaptionML",
         "owner": "Field",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
-        "site": null,
+        "site": "record/lt-x-table-props/XTableObjects.al:25",
         "state": "implemented"
       },
       {
@@ -19026,9 +19764,9 @@
         "ms_uses": 0,
         "name": "SignDisplacement",
         "owner": "Field",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
-        "site": null,
+        "site": "record/lt-x-table-props/XTableObjects.al:27",
         "state": "unknown"
       },
       {
@@ -19041,10 +19779,10 @@
         "ms_uses": 0,
         "name": "SqlDataType",
         "owner": "Field",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
-        "site": null,
-        "state": "unknown"
+        "site": "record/lt-x-table-props/XTableObjects.al:127",
+        "state": "implemented"
       },
       {
         "area": "properties",
@@ -19056,9 +19794,9 @@
         "ms_uses": 0,
         "name": "SqlTimestamp",
         "owner": "Field",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
-        "site": null,
+        "site": "record/lt-x-table-props/XTableObjects.al:28",
         "state": "unknown"
       },
       {
@@ -19146,9 +19884,9 @@
         "ms_uses": 0,
         "name": "Width",
         "owner": "Field",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
-        "site": null,
+        "site": "record/lt-x-table-props/XTableObjects.al:29",
         "state": "implemented"
       },
       {
@@ -19161,9 +19899,9 @@
         "ms_uses": 0,
         "name": "ObsoleteReason",
         "owner": "FieldGroup",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
-        "site": null,
+        "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:31",
         "state": "implemented"
       },
       {
@@ -19176,9 +19914,9 @@
         "ms_uses": 0,
         "name": "ObsoleteState",
         "owner": "FieldGroup",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
-        "site": null,
+        "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:30",
         "state": "implemented"
       },
       {
@@ -19191,9 +19929,9 @@
         "ms_uses": 0,
         "name": "ObsoleteTag",
         "owner": "FieldGroup",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
-        "site": null,
+        "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:32",
         "state": "implemented"
       },
       {
@@ -19206,9 +19944,9 @@
         "ms_uses": 0,
         "name": "BlankZero",
         "owner": "FieldModify",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
-        "site": null,
+        "site": "record/lt-x-table-props/XTableObjects.al:71",
         "state": "implemented"
       },
       {
@@ -19221,9 +19959,9 @@
         "ms_uses": 0,
         "name": "CaptionClass",
         "owner": "FieldModify",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
-        "site": null,
+        "site": "record/lt-x-table-props/XTableObjects.al:73",
         "state": "implemented"
       },
       {
@@ -19236,9 +19974,9 @@
         "ms_uses": 0,
         "name": "ClosingDates",
         "owner": "FieldModify",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
-        "site": null,
+        "site": "record/lt-x-table-props/XTableObjects.al:75",
         "state": "unknown"
       },
       {
@@ -19266,9 +20004,9 @@
         "ms_uses": 0,
         "name": "OptionCaption",
         "owner": "FieldModify",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
-        "site": null,
+        "site": "record/lt-x-table-props/XTableObjects.al:77",
         "state": "implemented"
       },
       {
@@ -19281,9 +20019,9 @@
         "ms_uses": 0,
         "name": "OptionCaptionML",
         "owner": "FieldModify",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
-        "site": null,
+        "site": "record/lt-x-table-props/XTableObjects.al:78",
         "state": "implemented"
       },
       {
@@ -19311,9 +20049,9 @@
         "ms_uses": 0,
         "name": "Width",
         "owner": "FieldModify",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
-        "site": null,
+        "site": "record/lt-x-table-props/XTableObjects.al:79",
         "state": "implemented"
       },
       {
@@ -19899,7 +20637,7 @@
         "pinned": false,
         "scope": "",
         "site": null,
-        "state": "unknown"
+        "state": "implemented"
       },
       {
         "area": "properties",
@@ -21486,9 +22224,9 @@
         "ms_uses": 0,
         "name": "ObsoleteReason",
         "owner": "PageCustomAction",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
-        "site": null,
+        "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:147",
         "state": "implemented"
       },
       {
@@ -21501,9 +22239,9 @@
         "ms_uses": 0,
         "name": "ObsoleteState",
         "owner": "PageCustomAction",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
-        "site": null,
+        "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:146",
         "state": "implemented"
       },
       {
@@ -21516,9 +22254,9 @@
         "ms_uses": 0,
         "name": "ObsoleteTag",
         "owner": "PageCustomAction",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
-        "site": null,
+        "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:148",
         "state": "implemented"
       },
       {
@@ -21651,9 +22389,9 @@
         "ms_uses": 0,
         "name": "ObsoleteReason",
         "owner": "PageCustomizationObject",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
-        "site": null,
+        "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:221",
         "state": "implemented"
       },
       {
@@ -21666,9 +22404,9 @@
         "ms_uses": 0,
         "name": "ObsoleteState",
         "owner": "PageCustomizationObject",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
-        "site": null,
+        "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:220",
         "state": "implemented"
       },
       {
@@ -21681,9 +22419,9 @@
         "ms_uses": 0,
         "name": "ObsoleteTag",
         "owner": "PageCustomizationObject",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
-        "site": null,
+        "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:222",
         "state": "implemented"
       },
       {
@@ -22148,7 +22886,7 @@
         "owner": "PageField",
         "pinned": true,
         "scope": "",
-        "site": "pages/lt-page-presentation-properties/P119PageFields.al:42",
+        "site": "pages/lt-ap-testpage-642/ApObjects.al:364",
         "state": "implemented"
       },
       {
@@ -22313,7 +23051,7 @@
         "owner": "PageField",
         "pinned": true,
         "scope": "",
-        "site": "pages/lt-page-presentation-properties/P119PageFields.al:34",
+        "site": "pages/lt-ap-testpage-642/ApObjects.al:189",
         "state": "implemented"
       },
       {
@@ -22328,7 +23066,7 @@
         "owner": "PageField",
         "pinned": true,
         "scope": "",
-        "site": "pages/lt-page-presentation-properties/P119PageNumeric.al:21",
+        "site": "pages/lt-ap-testpage-642/ApObjects.al:376",
         "state": "implemented"
       },
       {
@@ -22686,9 +23424,9 @@
         "ms_uses": 0,
         "name": "ObsoleteReason",
         "owner": "PageFileUploadAction",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
-        "site": null,
+        "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:138",
         "state": "implemented"
       },
       {
@@ -22701,9 +23439,9 @@
         "ms_uses": 0,
         "name": "ObsoleteState",
         "owner": "PageFileUploadAction",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
-        "site": null,
+        "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:137",
         "state": "implemented"
       },
       {
@@ -22716,9 +23454,9 @@
         "ms_uses": 0,
         "name": "ObsoleteTag",
         "owner": "PageFileUploadAction",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
-        "site": null,
+        "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:139",
         "state": "implemented"
       },
       {
@@ -22896,9 +23634,9 @@
         "ms_uses": 0,
         "name": "ObsoleteReason",
         "owner": "PageFixed",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
-        "site": null,
+        "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:199",
         "state": "implemented"
       },
       {
@@ -22911,9 +23649,9 @@
         "ms_uses": 0,
         "name": "ObsoleteState",
         "owner": "PageFixed",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
-        "site": null,
+        "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:198",
         "state": "implemented"
       },
       {
@@ -22926,9 +23664,9 @@
         "ms_uses": 0,
         "name": "ObsoleteTag",
         "owner": "PageFixed",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
-        "site": null,
+        "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:200",
         "state": "implemented"
       },
       {
@@ -23136,9 +23874,9 @@
         "ms_uses": 0,
         "name": "ObsoleteReason",
         "owner": "PageGrid",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
-        "site": null,
+        "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:188",
         "state": "implemented"
       },
       {
@@ -23151,9 +23889,9 @@
         "ms_uses": 0,
         "name": "ObsoleteState",
         "owner": "PageGrid",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
-        "site": null,
+        "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:187",
         "state": "implemented"
       },
       {
@@ -23166,9 +23904,9 @@
         "ms_uses": 0,
         "name": "ObsoleteTag",
         "owner": "PageGrid",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
-        "site": null,
+        "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:189",
         "state": "implemented"
       },
       {
@@ -24081,9 +24819,9 @@
         "ms_uses": 0,
         "name": "ObsoleteReason",
         "owner": "PageRepeater",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
-        "site": null,
+        "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:79",
         "state": "implemented"
       },
       {
@@ -24096,9 +24834,9 @@
         "ms_uses": 0,
         "name": "ObsoleteState",
         "owner": "PageRepeater",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
-        "site": null,
+        "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:78",
         "state": "implemented"
       },
       {
@@ -24111,9 +24849,9 @@
         "ms_uses": 0,
         "name": "ObsoleteTag",
         "owner": "PageRepeater",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
-        "site": null,
+        "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:80",
         "state": "implemented"
       },
       {
@@ -24261,9 +24999,9 @@
         "ms_uses": 0,
         "name": "ObsoleteReason",
         "owner": "PageSystemPart",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
-        "site": null,
+        "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:92",
         "state": "implemented"
       },
       {
@@ -24276,9 +25014,9 @@
         "ms_uses": 0,
         "name": "ObsoleteState",
         "owner": "PageSystemPart",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
-        "site": null,
+        "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:91",
         "state": "implemented"
       },
       {
@@ -24291,9 +25029,9 @@
         "ms_uses": 0,
         "name": "ObsoleteTag",
         "owner": "PageSystemPart",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
-        "site": null,
+        "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:93",
         "state": "implemented"
       },
       {
@@ -24396,9 +25134,9 @@
         "ms_uses": 0,
         "name": "ObsoleteReason",
         "owner": "PageUserControl",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
-        "site": null,
+        "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:211",
         "state": "implemented"
       },
       {
@@ -24411,9 +25149,9 @@
         "ms_uses": 0,
         "name": "ObsoleteState",
         "owner": "PageUserControl",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
-        "site": null,
+        "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:210",
         "state": "implemented"
       },
       {
@@ -24426,9 +25164,9 @@
         "ms_uses": 0,
         "name": "ObsoleteTag",
         "owner": "PageUserControl",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
-        "site": null,
+        "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:212",
         "state": "implemented"
       },
       {
@@ -24471,9 +25209,9 @@
         "ms_uses": 0,
         "name": "ObsoleteReason",
         "owner": "PageView",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
-        "site": null,
+        "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:160",
         "state": "implemented"
       },
       {
@@ -24486,9 +25224,9 @@
         "ms_uses": 0,
         "name": "ObsoleteState",
         "owner": "PageView",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
-        "site": null,
+        "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:159",
         "state": "implemented"
       },
       {
@@ -24501,9 +25239,9 @@
         "ms_uses": 0,
         "name": "ObsoleteTag",
         "owner": "PageView",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
-        "site": null,
+        "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:161",
         "state": "implemented"
       },
       {
@@ -24591,9 +25329,9 @@
         "ms_uses": 0,
         "name": "ExcludedPermissionSets",
         "owner": "PermissionSet",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
-        "site": null,
+        "site": "codeunit/lt-x-object-props/XObjectProps.al:142",
         "state": "implemented"
       },
       {
@@ -24621,9 +25359,9 @@
         "ms_uses": 0,
         "name": "ObsoleteReason",
         "owner": "PermissionSet",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
-        "site": null,
+        "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:251",
         "state": "implemented"
       },
       {
@@ -24636,9 +25374,9 @@
         "ms_uses": 0,
         "name": "ObsoleteState",
         "owner": "PermissionSet",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
-        "site": null,
+        "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:250",
         "state": "implemented"
       },
       {
@@ -24651,9 +25389,9 @@
         "ms_uses": 0,
         "name": "ObsoleteTag",
         "owner": "PermissionSet",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
-        "site": null,
+        "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:252",
         "state": "implemented"
       },
       {
@@ -24741,9 +25479,9 @@
         "ms_uses": 0,
         "name": "ObsoleteReason",
         "owner": "Profile",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
-        "site": null,
+        "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:242",
         "state": "implemented"
       },
       {
@@ -24756,9 +25494,9 @@
         "ms_uses": 0,
         "name": "ObsoleteState",
         "owner": "Profile",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
-        "site": null,
+        "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:241",
         "state": "implemented"
       },
       {
@@ -24771,9 +25509,9 @@
         "ms_uses": 0,
         "name": "ObsoleteTag",
         "owner": "Profile",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
-        "site": null,
+        "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:243",
         "state": "implemented"
       },
       {
@@ -24801,9 +25539,9 @@
         "ms_uses": 0,
         "name": "ProfileDescriptionML",
         "owner": "Profile",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
-        "site": null,
+        "site": "codeunit/lt-x-object-props/XObjectProps.al:162",
         "state": "unknown"
       },
       {
@@ -24818,7 +25556,7 @@
         "owner": "Profile",
         "pinned": true,
         "scope": "",
-        "site": "pageext/lt-u-page-props/UPageObjects.al:398",
+        "site": "codeunit/lt-x-object-props/XObjectProps.al:163",
         "state": "implemented"
       },
       {
@@ -24833,7 +25571,7 @@
         "owner": "Query",
         "pinned": true,
         "scope": "",
-        "site": "handlers/ProbeObjectMetadataTables.al:97",
+        "site": "codeunit/lt-x-object-props/XObjectProps.al:187",
         "state": "implemented"
       },
       {
@@ -24848,7 +25586,7 @@
         "owner": "Query",
         "pinned": true,
         "scope": "",
-        "site": "handlers/ProbeObjectMetadataTables.al:96",
+        "site": "codeunit/lt-x-object-props/XObjectProps.al:186",
         "state": "implemented"
       },
       {
@@ -24863,7 +25601,7 @@
         "owner": "Query",
         "pinned": true,
         "scope": "",
-        "site": "handlers/ProbeObjectMetadataTables.al:97",
+        "site": "codeunit/lt-x-object-props/XObjectProps.al:188",
         "state": "implemented"
       },
       {
@@ -24921,9 +25659,9 @@
         "ms_uses": 0,
         "name": "EntityCaption",
         "owner": "Query",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
-        "site": null,
+        "site": "codeunit/lt-x-object-props/XObjectProps.al:191",
         "state": "implemented"
       },
       {
@@ -24936,9 +25674,9 @@
         "ms_uses": 0,
         "name": "EntityCaptionML",
         "owner": "Query",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
-        "site": null,
+        "site": "codeunit/lt-x-object-props/XObjectProps.al:213",
         "state": "refused"
       },
       {
@@ -24953,7 +25691,7 @@
         "owner": "Query",
         "pinned": true,
         "scope": "",
-        "site": "handlers/ProbeObjectMetadataTables.al:98",
+        "site": "codeunit/lt-x-object-props/XObjectProps.al:189",
         "state": "implemented"
       },
       {
@@ -24966,9 +25704,9 @@
         "ms_uses": 0,
         "name": "EntitySetCaption",
         "owner": "Query",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
-        "site": null,
+        "site": "codeunit/lt-x-object-props/XObjectProps.al:192",
         "state": "implemented"
       },
       {
@@ -24981,9 +25719,9 @@
         "ms_uses": 0,
         "name": "EntitySetCaptionML",
         "owner": "Query",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
-        "site": null,
+        "site": "codeunit/lt-x-object-props/XObjectProps.al:214",
         "state": "refused"
       },
       {
@@ -24998,7 +25736,7 @@
         "owner": "Query",
         "pinned": true,
         "scope": "",
-        "site": "handlers/ProbeObjectMetadataTables.al:99",
+        "site": "codeunit/lt-x-object-props/XObjectProps.al:190",
         "state": "implemented"
       },
       {
@@ -25011,10 +25749,10 @@
         "ms_uses": 0,
         "name": "HelpLink",
         "owner": "Query",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
-        "site": null,
-        "state": "refused"
+        "site": "codeunit/lt-x-object-props/XObjectProps.al:193",
+        "state": "implemented"
       },
       {
         "area": "properties",
@@ -25221,9 +25959,9 @@
         "ms_uses": 0,
         "name": "ObsoleteReason",
         "owner": "QueryColumn",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
-        "site": null,
+        "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:264",
         "state": "implemented"
       },
       {
@@ -25236,9 +25974,9 @@
         "ms_uses": 0,
         "name": "ObsoleteState",
         "owner": "QueryColumn",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
-        "site": null,
+        "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:263",
         "state": "implemented"
       },
       {
@@ -25251,9 +25989,9 @@
         "ms_uses": 0,
         "name": "ObsoleteTag",
         "owner": "QueryColumn",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
-        "site": null,
+        "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:265",
         "state": "implemented"
       },
       {
@@ -25341,9 +26079,9 @@
         "ms_uses": 0,
         "name": "ObsoleteReason",
         "owner": "QueryFilter",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
-        "site": null,
+        "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:271",
         "state": "implemented"
       },
       {
@@ -25356,9 +26094,9 @@
         "ms_uses": 0,
         "name": "ObsoleteState",
         "owner": "QueryFilter",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
-        "site": null,
+        "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:270",
         "state": "implemented"
       },
       {
@@ -25371,9 +26109,9 @@
         "ms_uses": 0,
         "name": "ObsoleteTag",
         "owner": "QueryFilter",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
-        "site": null,
+        "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:272",
         "state": "implemented"
       },
       {
@@ -26057,9 +26795,9 @@
         "ms_uses": 0,
         "name": "OptionCaptionML",
         "owner": "ReportColumn",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
-        "site": null,
+        "site": "record/lt-x-table-props/XTableObjects.al:254",
         "state": "implemented"
       },
       {
@@ -26162,9 +26900,9 @@
         "ms_uses": 0,
         "name": "ObsoleteReason",
         "owner": "ReportDataItem",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
-        "site": null,
+        "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:289",
         "state": "implemented"
       },
       {
@@ -26177,9 +26915,9 @@
         "ms_uses": 0,
         "name": "ObsoleteState",
         "owner": "ReportDataItem",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
-        "site": null,
+        "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:288",
         "state": "implemented"
       },
       {
@@ -26192,9 +26930,9 @@
         "ms_uses": 0,
         "name": "ObsoleteTag",
         "owner": "ReportDataItem",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
-        "site": null,
+        "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:290",
         "state": "implemented"
       },
       {
@@ -26639,7 +27377,7 @@
         "pinned": true,
         "scope": "",
         "site": "report/lt-y-request-page/YRequestPage.al:296",
-        "state": "refused"
+        "state": "implemented"
       },
       {
         "area": "properties",
@@ -26711,9 +27449,9 @@
         "ms_uses": 0,
         "name": "ObsoleteReason",
         "owner": "RequestPage",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
-        "site": null,
+        "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:311",
         "state": "implemented"
       },
       {
@@ -26726,9 +27464,9 @@
         "ms_uses": 0,
         "name": "ObsoleteState",
         "owner": "RequestPage",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
-        "site": null,
+        "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:309",
         "state": "implemented"
       },
       {
@@ -26741,9 +27479,9 @@
         "ms_uses": 0,
         "name": "ObsoleteTag",
         "owner": "RequestPage",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
-        "site": null,
+        "site": "pages/lt-x-obsolete-pending/XObsoletePending.al:313",
         "state": "implemented"
       },
       {
@@ -26876,9 +27614,9 @@
         "ms_uses": 0,
         "name": "AllowInCustomizations",
         "owner": "Table",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
-        "site": null,
+        "site": "record/lt-x-table-props/XTableObjects.al:12",
         "state": "unknown"
       },
       {
@@ -26891,9 +27629,9 @@
         "ms_uses": 0,
         "name": "ColumnStoreIndex",
         "owner": "Table",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
-        "site": null,
+        "site": "record/lt-x-table-props/XTableObjects.al:87",
         "state": "unknown"
       },
       {
@@ -27026,9 +27764,9 @@
         "ms_uses": 0,
         "name": "LinkedInTransaction",
         "owner": "Table",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
-        "site": null,
+        "site": "record/lt-x-table-props/XTableObjects.al:106",
         "state": "unknown"
       },
       {
@@ -27041,9 +27779,9 @@
         "ms_uses": 0,
         "name": "LinkedObject",
         "owner": "Table",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
-        "site": null,
+        "site": "record/lt-x-table-props/XTableObjects.al:105",
         "state": "unknown"
       },
       {
@@ -27221,9 +27959,9 @@
         "ms_uses": 0,
         "name": "AllowInCustomizations",
         "owner": "TableExtension",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
-        "site": null,
+        "site": "record/lt-x-table-props/XTableObjects.al:64",
         "state": "unknown"
       },
       {
@@ -27236,9 +27974,9 @@
         "ms_uses": 0,
         "name": "DataCaptionFields",
         "owner": "TableExtension",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
-        "site": null,
+        "site": "record/lt-x-table-props/XTableObjects.al:65",
         "state": "implemented"
       },
       {
@@ -27251,9 +27989,9 @@
         "ms_uses": 0,
         "name": "DrillDownPageId",
         "owner": "TableExtension",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
-        "site": null,
+        "site": "record/lt-x-table-props/XTableObjects.al:66",
         "state": "implemented"
       },
       {
@@ -27266,9 +28004,9 @@
         "ms_uses": 0,
         "name": "LookupPageId",
         "owner": "TableExtension",
-        "pinned": false,
+        "pinned": true,
         "scope": "",
-        "site": null,
+        "site": "record/lt-x-table-props/XTableObjects.al:67",
         "state": "implemented"
       },
       {

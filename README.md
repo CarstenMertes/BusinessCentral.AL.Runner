@@ -203,9 +203,10 @@ code as an unprobed assumption (`crates/al-builtins/src/assumptions.rs`; the lis
 2. A behavior is not measured on real BC yet.
 3. The test failed, but its failure is not trusted. An earlier test in the same codeunit did
    not run to its end, and it could have changed what this test sees: a table this test
-   reads, the codeunit's shared state, or the sequence of random numbers. The reason says
-   "this failure is not trusted" and keeps the original error. A test stopped by the time
-   limit counts as such an earlier test.
+   reads, the codeunit's shared state, or the sequence of random numbers. When part of what the
+   earlier test would have done is not known (it reaches code the runtime refuses), it may have
+   changed anything. The reason says "this failure is not trusted" and keeps the original
+   error. A test stopped by the time limit counts as such an earlier test.
 
 **A failure** means the test ran and raised an error or failed an assertion, and no earlier
 refused test can explain it. Without test data (`--no-test-data`), Microsoft's tests fail mostly

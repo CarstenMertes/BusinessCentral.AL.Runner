@@ -8,7 +8,7 @@
 //! loaded: a verdict that needs them is "not checked", never a guess.
 
 use al_sema::alcodes::{self, AppContext, AppTarget};
-use al_sema::workspace::{AppSource, Workspace};
+use al_sema::workspace::{AppSource, Diagnostic, Workspace};
 use std::path::{Path, PathBuf};
 
 /// One parsed case.
@@ -165,34 +165,8 @@ pub fn run_case(case: &Case, bc_major: u16) -> Outcome {
         out.verdict = Verdict::Skipped(format!("the verdict holds for {range}, this is BC {major}"));
         return out;
     }
-    let ws = Workspace::load(
-        vec![AppSource {
-            id: "mnc".into(),
-            name: "Must Not Compile by AL Language".into(),
-            dependencies: Vec::new(),
-            files: vec![("src/case.al".into(), case.source.clone())],
-        }],
-        &al_version::corpus_symbols(bc_major),
-    );
-    let members = al_sema::members::build(&ws);
-    let checked = al_sema::check::check(&ws, &members, &al_builtins::catalog::Catalog::load());
-    let ctx = AppContext {
-        target: case.target,
-        // The corpus apps' runtime on this leg (`oracle.toml` app_runtime): 16.1, 17.1, 18.0.
-        runtime: case.appjson_runtime.or_else(|| {
-            let r = al_version::Runtime::max_for_bc(bc_major);
-            Some((u32::from(r.major), u32::from(r.minor)))
-        }),
-        app_json_keys: case.appjson_keys.clone(),
-        bc_major: Some(major),
-    };
-    let mut got: Vec<(String, String)> = checked
-        .diagnostics
-        .iter()
-        .chain(alcodes::check_context(&ws, 0, &ctx).iter())
-        .filter(|d| d.code.starts_with("AL"))
-        .map(|d| (d.code.to_string(), d.message.clone()))
-        .collect();
+    let (_, _, diags) = compile(case, bc_major);
+    let mut got: Vec<(String, String)> = diags.iter().map(|d| (d.code.to_string(), d.message.clone())).collect();
     got.sort();
     out.got = got.clone();
     let mut want = case.expect.clone();
@@ -218,6 +192,85 @@ pub fn run_case(case: &Case, bc_major: u16) -> Outcome {
         }
     }
     out
+}
+
+/// Compiles `case` alone at `bc_major`: the workspace, the check, and the AL diagnostics of the
+/// checker and of the app context (unsorted).
+fn compile(case: &Case, bc_major: u16) -> (Workspace, al_sema::check::CheckResult, Vec<Diagnostic>) {
+    let major = u32::from(bc_major);
+    let ws = Workspace::load(
+        vec![AppSource {
+            id: "mnc".into(),
+            name: "Must Not Compile by AL Language".into(),
+            dependencies: Vec::new(),
+            files: vec![("src/case.al".into(), case.source.clone())],
+        }],
+        &al_version::corpus_symbols(bc_major),
+    );
+    let members = al_sema::members::build(&ws);
+    let checked = al_sema::check::check(&ws, &members, &al_builtins::catalog::Catalog::load());
+    let ctx = AppContext {
+        target: case.target,
+        // The corpus apps' runtime on this leg (`oracle.toml` app_runtime): 16.1, 17.1, 18.0.
+        runtime: case.appjson_runtime.or_else(|| {
+            let r = al_version::Runtime::max_for_bc(bc_major);
+            Some((u32::from(r.major), u32::from(r.minor)))
+        }),
+        app_json_keys: case.appjson_keys.clone(),
+        bc_major: Some(major),
+    };
+    let diags: Vec<Diagnostic> = checked
+        .diagnostics
+        .iter()
+        .cloned()
+        .chain(alcodes::check_context(&ws, 0, &ctx))
+        .filter(|d| d.code.starts_with("AL"))
+        .collect();
+    (ws, checked, diags)
+}
+
+/// The builtin overloads a case that holds for every BC major pins as not compiling:
+/// a call whose method the text of an expected diagnostic names in quotes (`'Prev' is not available
+/// in runtime version` names `Prev`), and, when our codes match the case's, every call on a line
+/// where we report one of them. Other calls of the file (a `Message` that only completes the code)
+/// pin nothing. Site: `must-not-compile/cases/<name>.al`. 0561-testpage-prev.al pins `TestPage.Prev`.
+pub fn pinned_calls(case: &Case, catalog: &al_builtins::catalog::Catalog) -> Vec<crate::coverage::Call> {
+    // A case for some majors only (`@from`, `@until`: a member a later runtime has) leaves the
+    // item's behavior on the other majors open, so it pins nothing.
+    if case.from.is_some() || case.until.is_some() {
+        return Vec::new();
+    }
+    let (ws, checked, diags) = compile(case, al_version::MIN_BC_MAJOR);
+    let mut got: Vec<&str> = diags.iter().map(|d| d.code).collect();
+    let mut want: Vec<&str> = case.expect.iter().map(|(c, _)| c.as_str()).collect();
+    got.sort_unstable();
+    want.sort_unstable();
+    let text = ws.text(0);
+    let line = |off: usize| text[..off.min(text.len())].matches('\n').count() + 1;
+    let lines: std::collections::BTreeSet<usize> = if got == want {
+        diags.iter().map(|d| line(d.offset)).collect()
+    } else {
+        Default::default()
+    };
+    // The quoted names of the expected texts: every second piece between single quotes.
+    let named: Vec<String> = case
+        .expect
+        .iter()
+        .flat_map(|(_, t)| t.split('\'').skip(1).step_by(2).map(str::to_ascii_lowercase))
+        .collect();
+    crate::coverage::collect_calls(&ws, &checked, catalog)
+        .into_iter()
+        .filter(|c| {
+            lines.contains(&c.line)
+                || catalog
+                    .by_id(&c.id)
+                    .is_some_and(|s| named.contains(&s.name.to_ascii_lowercase()))
+        })
+        .map(|c| crate::coverage::Call {
+            file: format!("must-not-compile/cases/{}.al", case.name),
+            ..c
+        })
+        .collect()
 }
 
 /// Totals over a run.
@@ -343,5 +396,32 @@ mod tests {
         let o = run_case(&parse_case("x", src).unwrap(), 27);
         assert_eq!(o.verdict, Verdict::Match);
         assert_eq!(o.text_notes.len(), 1, "{:?}", o.text_notes);
+    }
+
+    /// A case pins the builtin call on the line of the diagnostic it expects (corpus
+    /// must-not-compile/cases/0561-testpage-prev.al), not the other calls of the file.
+    #[test]
+    fn a_case_pins_the_call_on_the_line_of_its_expected_diagnostic() {
+        let case = parse_case(
+            "0561-testpage-prev",
+            "// @expect AL0666 | 'Prev' is not available in runtime version '
+codeunit 50561 \"MNC O 0561\"
+{
+    procedure Probe()
+    var Pg: TestPage \"Customer List\";
+    begin
+        Pg.Prev();
+        Message('x');
+    end;
+}
+",
+        )
+        .unwrap();
+        let catalog = al_builtins::catalog::Catalog::load();
+        let calls = pinned_calls(&case, &catalog);
+        let ids: Vec<&str> = calls.iter().map(|c| c.id.as_str()).collect();
+        assert_eq!(ids, ["TestPage.Prev#1"]);
+        assert_eq!(calls[0].file, "must-not-compile/cases/0561-testpage-prev.al");
+        assert_eq!(calls[0].line, 7);
     }
 }

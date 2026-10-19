@@ -265,6 +265,38 @@ page 51052 "PT Link Card"
         }
     }
 }
+page 51054 "PT Flag Card"
+{
+    PageType = Card;
+    SourceTable = "PT Header";
+    layout
+    {
+        area(Content)
+        {
+            field(No; Rec."No.") { }
+            part(EdExpr; "PT Link Part") { SubPageLink = "Header No." = field("No."); Editable = Flag; }
+            part(EnExpr; "PT Link Part") { SubPageLink = "Header No." = field("No."); Enabled = Flag; }
+            part(EnOff; "PT Link Part") { SubPageLink = "Header No." = field("No."); Enabled = false; }
+        }
+    }
+    var Flag: Boolean;
+}
+page 51055 "PT Flag On Card"
+{
+    PageType = Card;
+    SourceTable = "PT Header";
+    layout
+    {
+        area(Content)
+        {
+            field(No; Rec."No.") { }
+            part(EdExpr; "PT Link Part") { SubPageLink = "Header No." = field("No."); Editable = Flag; }
+            part(EnExpr; "PT Link Part") { SubPageLink = "Header No." = field("No."); Enabled = Flag; }
+        }
+    }
+    var Flag: Boolean;
+    trigger OnOpenPage() begin Flag := true; end;
+}
 page 51053 "PT Provider Card"
 {
     PageType = Card;
@@ -987,5 +1019,89 @@ fn a_part_viewing_its_linked_field_reads_its_rows_backwards_once_at_open() {
     assert_eq!(
         text(r),
         "P1/10000;P1/20000;P1/10000;P2/10000;P2/20000;P2/10000;P3/10000;P3/20000;P3/10000;P4/10000;P4/20000;P4/10000;P5/10000;P5/20000;P5/10000;P6/20000;P6/10000;"
+    );
+}
+
+// misc/lt-probes-needed-7/PnGPartRows.al:117 ReadOnlyPartSetValue `ro-descr-editable` No: a field of a part whose control
+// says the literal `Editable = false` is not editable.
+#[test]
+fn a_field_of_a_part_with_a_literal_editable_false_reads_not_editable() {
+    let r = run(
+        "procedure F(): Text var H: Record \"PT Header\"; L: Record \"PT Link Row\"; C: TestPage \"PT Link Card\"; begin
+            H.\"No.\" := 'H1'; H.Insert(); L.\"Header No.\" := 'H1'; L.\"Line No.\" := 10; L.Insert();
+            C.OpenEdit(); C.GoToKey('H1'); C.RO.First();
+            exit(Format(C.RO.Info.Editable()) + '/' + Format(C.Keyed.Info.Editable()));
+        end;",
+        "F",
+    );
+    assert_eq!(text(r), "No/Yes");
+}
+
+// Hard rule 4: what an Editable or Enabled expression on a part control (or Enabled = false) does to the fields of the part
+// is not pinned (the corpus pins only TestPart.Editable()/Enabled() of the part itself,
+// pages/lt-page-controls-aa/AaControls.al:AA_Controls_PartState). Tests-ERM ERM Sales Quotes BlankSalesQuoteLinesUneditable
+// reads `SalesLines.Description.Editable()` behind `Editable = IsSalesLinesEditable`: refused, not answered Yes.
+#[test]
+fn editable_and_enabled_of_a_field_behind_a_part_expression_are_refused() {
+    for (part, method) in [
+        ("EdExpr", "Editable"),
+        ("EdExpr", "Enabled"),
+        ("EnExpr", "Editable"),
+        ("EnExpr", "Enabled"),
+        ("EnOff", "Editable"),
+        ("EnOff", "Enabled"),
+    ] {
+        let r = run(
+            &format!(
+                "procedure F(): Boolean var H: Record \"PT Header\"; C: TestPage \"PT Flag Card\"; begin
+                    H.\"No.\" := 'H1'; H.Insert();
+                    C.OpenEdit(); C.GoToKey('H1');
+                    exit(C.{part}.Info.{method}());
+                end;"
+            ),
+            "F",
+        );
+        assert!(
+            matches!(&r, Err(Signal::Unsupported(m)) if m.contains("part")),
+            "{part}.{method}: {r:?}"
+        );
+    }
+}
+
+// Enabled() of a field behind a part control with `Editable = false` is not pinned (PnGPartRows.al pins Editable() only).
+#[test]
+fn enabled_of_a_field_behind_a_read_only_part_is_refused() {
+    let r = run(
+        "procedure F(): Boolean var H: Record \"PT Header\"; C: TestPage \"PT Link Card\"; begin
+            H.\"No.\" := 'H1'; H.Insert();
+            C.OpenEdit(); C.GoToKey('H1');
+            exit(C.RO.Info.Enabled());
+        end;",
+        "F",
+    );
+    assert!(
+        matches!(&r, Err(Signal::Unsupported(m)) if m.contains("Editable = false")),
+        "{r:?}"
+    );
+}
+
+// Assumption part-field-under-true-part-expression: an Editable or Enabled expression on a part control that comes out true
+// leaves the fields of the part answering by themselves, as without the property (Tests-ERM sales and purchase document
+// tests read fields of `SalesLines` behind `Editable = IsSalesLinesEditable; Enabled = IsSalesLinesEditable;`).
+#[test]
+fn a_part_expression_that_is_true_leaves_its_fields_answering_by_themselves() {
+    al_builtins::assumptions::clear_hits();
+    let r = run(
+        "procedure F(): Text var H: Record \"PT Header\"; C: TestPage \"PT Flag On Card\"; begin
+            H.\"No.\" := 'H1'; H.Insert();
+            C.OpenEdit(); C.GoToKey('H1');
+            exit(Format(C.EdExpr.Info.Editable()) + Format(C.EdExpr.Info.Enabled()) + Format(C.EnExpr.Info.Editable()) + Format(C.EnExpr.Info.Enabled()));
+        end;",
+        "F",
+    );
+    assert_eq!(text(r), "YesYesYesYes");
+    assert!(
+        al_builtins::assumptions::take_hits()
+            .contains(&al_builtins::assumptions::Assumption::PartFieldUnderTruePartExpression)
     );
 }

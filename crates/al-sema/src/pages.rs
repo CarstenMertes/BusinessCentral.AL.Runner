@@ -243,7 +243,32 @@ pub fn expand(src: &str, symbols: &BTreeSet<String>) -> Option<String> {
 /// `expand`, with the byte ranges of the added text in the returned text (source positions
 /// subtract them to give the author's lines).
 pub fn expand_ranges(src: &str, symbols: &BTreeSet<String>) -> Option<(String, Vec<(usize, usize)>)> {
+    match expand_or_parse(src, symbols) {
+        Expansion::Expanded(text, ranges) => Some((text, ranges)),
+        Expansion::Unchanged(_) => None,
+    }
+}
+
+/// What [`expand_or_parse`] found.
+pub enum Expansion {
+    /// The text with the synthetic routines added, and the byte ranges of the added text (as [`expand_ranges`]).
+    Expanded(String, Vec<(usize, usize)>),
+    /// Nothing to add: the parse of the text as it is. A parse is a function of the text and the symbols, so this is
+    /// the tree a parse of the file gives, and the caller need not parse the file again.
+    Unchanged(al_syntax::Parse),
+}
+
+/// [`expand_ranges`], keeping the parse when nothing is added: every file the workspace parses at load goes through
+/// here first, and most add nothing.
+pub fn expand_or_parse(src: &str, symbols: &BTreeSet<String>) -> Expansion {
     let parse = crate::workspace::with_tree_cache(|cache| al_syntax::parse_with_cache(src, symbols, cache));
+    match expansion(src, &parse) {
+        Some((text, ranges)) => Expansion::Expanded(text, ranges),
+        None => Expansion::Unchanged(parse),
+    }
+}
+
+fn expansion(src: &str, parse: &al_syntax::Parse) -> Option<(String, Vec<(usize, usize)>)> {
     let root = ast::SourceFile::cast(parse.syntax())?;
     let mut inserts: Vec<(usize, String)> = Vec::new();
     for obj in root.objects() {
@@ -409,8 +434,10 @@ struct Area {
     children: Vec<usize>,
 }
 
-/// Areas of the `actions` section a page extension may add to although the page declares none.
-const IMPLICIT_ACTION_AREAS: &[&str] = &["Processing", "Prompting"];
+/// Areas of the `actions` section a page extension may add to although the page declares none. Navigation, Creation and
+/// Reporting: pages/W1ActionAreas.al:44-115 and :137-157 (ExtensionActions_InImplicitAreas_Run adds to all five on a page
+/// with no actions, and each added action runs). The order of the areas among themselves is not pinned.
+const IMPLICIT_ACTION_AREAS: &[&str] = &["Processing", "Prompting", "Navigation", "Creation", "Reporting"];
 
 /// Promoted category groups of `actions` that a page extension may place actionrefs after although the page declares none.
 const IMPLICIT_PROMOTED_CATEGORIES: &[&str] = &["Category_Process"];
@@ -701,8 +728,8 @@ impl Tree {
                 }
             }
         }
-        // The areas of `actions` that every page has, declared or not. Only the two names corpus tests
-        // reach are listed (see the test `an_extension_adds_to_the_processing_area_of_a_page_that_declares_none`).
+        // The areas of `actions` that every page has, declared or not. Only the names corpus tests
+        // reach are listed (see `IMPLICIT_ACTION_AREAS` and the test `an_extension_adds_to_the_processing_area_of_a_page_that_declares_none`).
         for op in &pending {
             let kind = op.section.name().to_ascii_lowercase();
             let target = op.section.args().first().cloned().unwrap_or_default();
@@ -979,6 +1006,34 @@ pub fn parse_sub_page_link(text: &str) -> Result<Vec<(String, LinkRhs)>, String>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `expand_or_parse` hands back the parse of a text it adds nothing to: the tree a parse of that text gives, so the
+    /// workspace need not parse the file a second time.
+    #[test]
+    fn a_text_with_nothing_to_expand_comes_back_with_its_parse() {
+        let symbols = BTreeSet::new();
+        let plain = [
+            "codeunit 50100 C { procedure P() begin end; }",
+            "table 50101 T { fields { field(1; K; Code[10]) { } } }\npage 50102 P { SourceTable = T; layout { area(Content) { field(K; Rec.K) { } } } }",
+            "codeunit 50103 Broken { procedure P( begin end; }",
+        ];
+        for src in plain {
+            match expand_or_parse(src, &symbols) {
+                Expansion::Unchanged(parse) => {
+                    let again = al_syntax::parse(src, &symbols);
+                    assert_eq!(parse.green, again.green, "{src}");
+                    assert_eq!(parse.errors, again.errors, "{src}");
+                }
+                Expansion::Expanded(..) => panic!("nothing to add to {src}"),
+            }
+            assert_eq!(expand_ranges(src, &symbols), None);
+        }
+        let page = "table 50101 T { fields { field(1; K; Code[10]) { } } }\npage 50102 P { SourceTable = T; layout { area(Content) { field(K; Rec.K) { Visible = Flag; } } } var Flag: Boolean; }";
+        match expand_or_parse(page, &symbols) {
+            Expansion::Expanded(text, ranges) => assert_eq!(Some((text, ranges)), expand_ranges(page, &symbols)),
+            Expansion::Unchanged(_) => panic!("Visible = Flag is expanded"),
+        }
+    }
 
     fn routines(src: &str) -> Vec<String> {
         let parse = al_syntax::parse(src, &Default::default());

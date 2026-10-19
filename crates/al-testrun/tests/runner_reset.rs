@@ -157,6 +157,26 @@ codeunit 50912 "Reset Method Disabled"
     end;
 }
 
+codeunit 50914 "Reset Random Failure"
+{
+    Subtype = Test;
+    TestPermissions = Disabled;
+
+    [Test]
+    procedure A_FailsAfterDrawing()
+    begin
+        if Random(10) > 0 then
+            Error('first');
+    end;
+
+    [Test]
+    procedure B_FailsAfterDrawing()
+    begin
+        if Random(10) > 0 then
+            Error('second');
+    end;
+}
+
 codeunit 50913 "Reset Refused"
 {
     Subtype = Test;
@@ -244,4 +264,13 @@ fn a_reset_that_is_refused_refuses_the_test_and_names_the_codeunit() {
         ),
         other => panic!("{other:?}"),
     }
+}
+
+/// 130301 reseeds the `Random` sequence before every test method (`LibraryRandom.SetSeed(1)`), so what a test draws
+/// does not depend on what the tests before it drew: a failure after a failed test that drew is trusted.
+#[test]
+fn after_the_runners_reseed_a_failure_that_draws_does_not_depend_on_earlier_draws() {
+    let rt = run();
+    assert_eq!(outcome(&rt, "A_FailsAfterDrawing"), Outcome::Fail("first".into()));
+    assert_eq!(outcome(&rt, "B_FailsAfterDrawing"), Outcome::Fail("second".into()));
 }

@@ -37,7 +37,9 @@ struct Bench {
 }
 
 /// Limits: the measured value of the day plus 10 % (instructions), and three times the CPU time of this machine (fallback).
-/// Each fast path of ADR-031 that merges lowers them.
+/// Each fast path of ADR-031 that merges lowers them. CallLoop, TextLoop and BuiltinLoop were set on 2026-10-19 from 2295,
+/// 5342 and 5697 (spare value vectors for calls, the short path of a builtin whose operands are all values); the others
+/// are older and lower than their value plus 10 %.
 const BENCHES: &[Bench] = &[
     Bench {
         name: "IntLoop",
@@ -57,21 +59,21 @@ const BENCHES: &[Bench] = &[
         name: "CallLoop",
         codeunit: 70004,
         iterations: 100_000,
-        limit_instructions: 2686,
+        limit_instructions: 2525,
         limit_cpu_ns: 2300,
     },
     Bench {
         name: "TextLoop",
         codeunit: 70005,
         iterations: 30_000,
-        limit_instructions: 6300,
+        limit_instructions: 5876,
         limit_cpu_ns: 4400,
     },
     Bench {
         name: "BuiltinLoop",
         codeunit: 70006,
         iterations: 50_000,
-        limit_instructions: 6353,
+        limit_instructions: 6267,
         limit_cpu_ns: 6000,
     },
     Bench {

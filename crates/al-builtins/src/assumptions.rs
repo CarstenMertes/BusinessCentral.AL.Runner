@@ -105,9 +105,9 @@ registry! {
     },
     QueryClosedAfterLastRow => {
         id: "query-closed-after-last-row",
-        assumed: "A query whose Read has returned false after its last row is closed: SetRange and SetFilter take a new filter and Open runs it again.",
-        tests: "Workflow Step Instance.SetTableRelationValues (one query variable, filtered and opened once per table relation); 125 Tests-Workflow tests.",
-        probe: "Open a query, Read to false, SetRange on a column, Open and Read again; the same without the SetRange; Open twice after the last row. Asked in corpus #651.",
+        assumed: "Open on a query whose Read has returned false after its last row runs the query again, with the filters set since then (a SetRange or SetFilter there is pinned: it takes the filter and a Read before the next Open raises, errors/lt-ms-refusals-131/P131QuerySetRangeAfterRead.al:154-170).",
+        tests: "Workflow Step Instance.SetTableRelationValues (one query variable, filtered and opened once per table relation); 190 Tests-Workflow tests (2026-10-19).",
+        probe: "Open a query, Read to false, SetRange on a column, Open and Read again (no asserterror in between, it rolls back the rows); the same without the SetRange; Open twice after the last row. Asked in corpus #651.",
     },
     XmlportExportsFlowfieldCalculated => {
         id: "xmlport-exports-flowfield-calculated",
@@ -150,6 +150,18 @@ registry! {
         assumed: "TestPageField.SetValue of a blank text on an Option control whose first member has no OptionCaption (the member name is blank) selects that member. A control with an OptionCaption starting with ' ' is pinned.",
         tests: "Tests-Marketing Marketing Matrix Management.TaskWithStatus* (Tasks.StatusFilter.SetValue(StatusFilter::\" \") resets the filter); 7 tests.",
         probe: "A page with an Option variable control without OptionCaption whose first member is \" \": TestPage SetValue(' ') after SetValue(A), then Value.",
+    },
+    TestPageSetValueBlankEnumMember => {
+        id: "testpage-setvalue-blank-enum-member",
+        assumed: "TestPageField.SetValue of an Integer on a control bound to an Enum page variable selects the value of that ordinal when its caption is blank (all spaces, e.g. value(0; \" \") { Caption = ' '; }), although the caption text trims to '' and an empty text is refused (controls/W2ValueControls.al:Enum_VariableControl_OtherSpellings `empty`). Only that shape; a table-field control and a text argument are not covered.",
+        tests: "Tests-ERM ERM Budget (134922, 36 tests) and ERM Budget UI (134927, 11 tests): Initialize calls Budget.GLAccCategory.SetValue(0) on page 113 Budget, a control over GLAccCategoryFilter: Enum \"G/L Account Category\" (value 0 \" \", Caption ' ').",
+        probe: "A page with an Enum variable control and an Enum table-field control, value 0 with Caption = ' ': after SetValue(1), SetValue(0), SetValue(' '), SetValue('') and SetValue(Integer ordinal 1), each then Value() and the ordinal (errors with text and code). Also SetValue(Integer) on an Enum control without a blank caption (by ordinal or through the caption text?).",
+    },
+    PartFieldUnderTruePartExpression => {
+        id: "part-field-under-true-part-expression",
+        assumed: "TestField.Editable()/Enabled() of a field of a part whose part control has an Editable or Enabled expression that comes out true answer as without the property. An expression that comes out false is refused; a literal Editable = false is pinned (PnGPartRows.al:117).",
+        tests: "Tests-ERM sales and purchase document tests that read fields of a lines part behind `Editable = IsSalesLinesEditable; Enabled = IsSalesLinesEditable;` (and the purchase twins), about 170 passes in Tests-ERM.",
+        probe: "A host card with parts `Editable = Flag` and `Enabled = Flag`: with Flag false and true (set in OnOpenPage, then changed by an action), a part field's Editable() and Enabled(), and SetValue through the part.",
     },
     EvaluateTimeDigitForms => {
         id: "evaluate-time-digit-forms",
@@ -258,6 +270,18 @@ registry! {
         assumed: "CurrPage.Update on a list with OnFindRecord (with or without OnNextRecord) reads the rows as the pinned table of 3 rows with the cursor on the middle one does (misc/W2FindRecordUpdate.al), for any number of rows and any cursor position below a window.",
         tests: "ERM Sales Subform (InvoiceAddingLinesUpdatesTotals) and about 120 more Tests-ERM tests whose sales and purchase subforms refresh.",
         probe: "The same list with 1, 2, 5 and 25 rows and the cursor on the first, last and a middle row; a list with OnFindRecord only; a list part of a card.",
+    },
+    ListOpenFullWindowRowsBefore => {
+        id: "list-open-full-window-rows-before",
+        assumed: "The open read of a list or part with OnFindRecord, OnNextRecord and OnAfterGetRecord but no OnAfterGetCurrRecord, whose first window of 20 rows is full and whose OnNextRecord(-1) from the first row answers a step, ends as a list with OnAfterGetCurrRecord does: OnFindRecord('=') and the first row read again (`R20;R1;N(-1);F(=);R1`). Pinned only with OnAfterGetCurrRecord (PnF06FindListMoves.al FindList_Ascending_25Rows) and, without it, for an OnNextRecord(-1) that answers 0.",
+        tests: "ERM Base Calendar (BaseCalendarEntriesShowCorrespondingRecords): Base Calendar Entries Subform keeps its position on the Date table in a global that OnAfterGetRecord sets.",
+        probe: "A temporary ListPart whose OnFindRecord and OnNextRecord walk a position global (rows on every day, inserted on demand) and whose OnAfterGetRecord sets that global from Rec, logging each call; the host card refills it from its OnAfterGetRecord (DeleteAll, CurrPage.Update). Log the reads at open and after the host moves with Next, and read a part field before and after. The same list as a page of its own, opened on day 10 of 40.",
+    },
+    PageRunRecordOnFindRecordCard => {
+        id: "page-run-record-onfindrecord-card",
+        assumed: "A card (a page without a repeater) with OnFindRecord, run with a record (Page.Run(id, Rec)), is asked OnFindRecord('=>') for that record as the page holds it after OnOpenPage, without reading the row again from the table, as a list is (pinned for a list: AiListOrderTests.al PageRun_RecordOnFifthRow).",
+        tests: "ERM Accounts (AnalysisViewWithUpdate): Analysis by Dimensions (page 554) sets Rec.\"Account Filter\" in OnOpenPage without Modify; the matrix it opens must see that filter.",
+        probe: "A card over a temporary table, run with Page.Run(id, TempRec) for a row inserted with one field set; OnOpenPage sets a second field on Rec without Modify; OnFindRecord logs Which and exits true without touching Rec. Log the Which strings, read the second field from a control, and from an action's OnAction. The same card without OnFindRecord.",
     },
     SetValueWholeNumberIntoTextControl => {
         id: "setvalue-whole-number-into-text-control",

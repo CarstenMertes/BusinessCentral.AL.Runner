@@ -38,8 +38,11 @@ pub struct CheckResult {
     /// With dependency apps: which of their objects and routines the workspace reaches.
     /// `None` when every object is checked.
     pub demand: Option<demand::Demand>,
-    /// Per object: a test codeunit a selection left out (`Roots::only_tests`). Empty without one.
+    /// Per object: a test codeunit a selection left out (`Roots::only_tests`), or an object a lean compile left out
+    /// (`Roots::lean`). Empty without one.
     pub skipped: Vec<bool>,
+    /// Per object: left out by a lean compile (`Roots::lean`); its routines refuse with [`LEFT_OUT`]. Empty without one.
+    pub left_out: Vec<bool>,
     /// Checks that panicked, by (object, routine offset) -- `ANY_ROUTINE` for the whole object --
     /// with the panic message. A panic is a bug in the compiler; the routine (or object) is lowered
     /// as a refusal, so the run goes on and the tests that reach it are not run.
@@ -49,6 +52,11 @@ pub struct CheckResult {
     pub from_checker: Vec<Diagnostic>,
     pub from_codes: Vec<Diagnostic>,
 }
+
+/// Why a routine of an object a lean compile left out (`Roots::lean`) does not run. A run that meets it was compiled for
+/// less than it needs: the runner compiles completely and runs the tests again.
+pub const LEFT_OUT: &str =
+    "not compiled: the compile for the selected tests left this object out, as no selected test names it";
 
 /// The routine offset of a [`CheckResult::panicked`] entry that covers every routine of the object.
 pub const ANY_ROUTINE: usize = usize::MAX;
@@ -74,6 +82,11 @@ impl CheckResult {
     /// Whether object `oi` was left out of the check by a test selection.
     pub fn is_skipped(&self, oi: usize) -> bool {
         self.skipped.get(oi).copied().unwrap_or(false)
+    }
+
+    /// Whether object `oi` was left out by a lean compile (`Roots::lean`).
+    pub fn is_left_out(&self, oi: usize) -> bool {
+        self.left_out.get(oi).copied().unwrap_or(false)
     }
 }
 
@@ -163,6 +176,12 @@ pub struct Roots {
     /// that weighs whether a pure test needs the install baseline: code beside the test that touches
     /// tables must not drag the dependency apps in.
     pub reach_only: bool,
+    /// With `only_tests` and `reach_only`: a workspace object that no selected test codeunit names, directly or through the
+    /// objects it names, is left out as well: it is neither checked nor compiled, and its routines refuse with [`LEFT_OUT`]
+    /// (see `lean_left_out`). For the compile that weighs whether pure tests need the install baseline, and runs them when
+    /// they do not: the tables, pages, listeners and install code beside them reach most of Base Application through the
+    /// demand. The caller must run the tests again on a complete compile when one of them meets a routine left out.
+    pub lean: bool,
     /// Check and lower every dependency routine instead of what the workspace reaches. The
     /// environment variable `AL_EAGER_DEPENDENCIES` does the same for a whole process. Used to
     /// compare the demand-driven compile with the complete one (outcomes must not differ).
@@ -194,6 +213,20 @@ const ABSENT_ENUM_MEMBERS: &[(&str, &[&str])] = &[(
     &["Install", "Uninstall", "Upgrade", "Report", "Profile"],
 )];
 
+/// Names the platform gives some objects as variables. A bare name like these is never judged unknown
+/// (not every object type models all of them).
+const SYSTEM_VARIABLES: &[&str] = &[
+    "this",
+    "rec",
+    "xrec",
+    "currfieldno",
+    "currpage",
+    "currreport",
+    "currxmlport",
+    "currquery",
+    "requestoptionspage",
+];
+
 pub fn check(ws: &Workspace, members: &MemberTable<'_>, catalog: &Catalog) -> CheckResult {
     check_with(ws, members, catalog, Roots::default())
 }
@@ -214,6 +247,21 @@ pub fn check_with(ws: &Workspace, members: &MemberTable<'_>, catalog: &Catalog, 
                 _ => unselected_test(ws, oi, keep),
             })
             .collect(),
+    };
+    // A lean compile also leaves out the workspace objects no selected test names (`Roots::lean`); a test codeunit
+    // the selection left out keeps its own reason.
+    let left_out: Vec<bool> = match &roots.only_tests {
+        Some(keep) if roots.lean && roots.reach_only && roots.only_objects.is_none() => lean_left_out(ws, keep)
+            .into_iter()
+            .zip(&skipped)
+            .map(|(out, unselected)| out && !unselected)
+            .collect(),
+        _ => Vec::new(),
+    };
+    let skipped: Vec<bool> = if left_out.is_empty() {
+        skipped
+    } else {
+        skipped.iter().zip(&left_out).map(|(s, l)| *s || *l).collect()
     };
     let skip = |oi: usize| skipped.get(oi).copied().unwrap_or(false);
     if narrate {
@@ -323,6 +371,7 @@ pub fn check_with(ws: &Workspace, members: &MemberTable<'_>, catalog: &Catalog, 
         queries,
         demand,
         skipped,
+        left_out,
         panicked: c.panicked,
         from_checker,
         from_codes,
@@ -340,6 +389,71 @@ fn check_workers() -> usize {
         .and_then(|v| v.parse().ok())
         .unwrap_or_else(|| std::thread::available_parallelism().map_or(1, |n| n.get()))
         .clamp(1, 32)
+}
+
+/// The workspace objects a lean compile leaves out (`Roots::lean`): the ones [`lean_named`] does not name. Dependency
+/// objects are not decided here: the demand does that.
+fn lean_left_out(ws: &Workspace, keep: &[(usize, u32)]) -> Vec<bool> {
+    lean_named(ws, keep)
+        .into_iter()
+        .enumerate()
+        .map(|(oi, named)| !ws.is_dependency(oi) && !named)
+        .collect()
+}
+
+/// Per object: a workspace object the selected test codeunits (`keep`, app index and id) name, directly or through the
+/// objects they name; what a lean compile compiles of the workspace (`Roots::lean`). A name is an identifier or quoted
+/// identifier that is a workspace object's name, or an integer literal that is a workspace object's id, anywhere in a
+/// named object's text: a superset of what its code and properties can refer to (as in `unreached_routines`). The
+/// extensions of a named object, and the object a named extension extends, are named with it. Dependency objects are
+/// `false`.
+pub fn lean_named(ws: &Workspace, keep: &[(usize, u32)]) -> Vec<bool> {
+    let n = ws.objects.len();
+    let mut by_name: HashMap<String, Vec<usize>> = HashMap::default();
+    let mut by_id: HashMap<u32, Vec<usize>> = HashMap::default();
+    let mut queue = Vec::new();
+    for (oi, o) in ws.objects.iter().enumerate() {
+        if ws.is_dependency(oi) {
+            continue;
+        }
+        by_name.entry(o.name.to_lowercase()).or_default().push(oi);
+        if let Some(id) = o.id {
+            by_id.entry(id).or_default().push(oi);
+            if o.kind == ObjKind::Codeunit && keep.contains(&(o.app, id)) {
+                queue.push(oi);
+            }
+        }
+    }
+    let mut named = vec![false; n];
+    for &oi in &queue {
+        named[oi] = true;
+    }
+    let name = |oi: usize, named: &mut Vec<bool>, queue: &mut Vec<usize>| {
+        if !ws.is_dependency(oi) && !named[oi] {
+            named[oi] = true;
+            queue.push(oi);
+        }
+    };
+    while let Some(oi) = queue.pop() {
+        if let Some(t) = ws.extension_target(oi) {
+            name(t, &mut named, &mut queue);
+        }
+        for &e in ws.extensions_of(oi) {
+            name(e, &mut named, &mut queue);
+        }
+        for e in ws.object_ast(oi).syntax().descendants_with_tokens() {
+            let Some(t) = e.into_token() else { continue };
+            let hits = match t.kind() {
+                SyntaxKind::Ident | SyntaxKind::QuotedIdent => by_name.get(&ast::ident_text(&t).to_lowercase()),
+                SyntaxKind::Integer => t.text().parse::<u32>().ok().and_then(|id| by_id.get(&id)),
+                _ => None,
+            };
+            for &h in hits.into_iter().flatten() {
+                name(h, &mut named, &mut queue);
+            }
+        }
+    }
+    named
 }
 
 /// The procedures of the workspace's normal codeunits that no root names (`Roots::reach_only`). The
@@ -561,6 +675,8 @@ pub(crate) struct Checker<'a> {
     resolved: std::cell::RefCell<Resolved>,
     /// Checks that panicked (see [`CheckResult::panicked`]).
     panicked: HashMap<(usize, usize), String>,
+    /// The result type of the routine being checked (`None`: a trigger or a procedure without a result).
+    cur_ret: Option<Ty>,
 }
 
 /// Names resolved so far, by (file, kind) and then name; see [`Checker::resolved`].

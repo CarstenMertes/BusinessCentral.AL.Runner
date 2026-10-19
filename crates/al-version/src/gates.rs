@@ -76,6 +76,10 @@ pub enum Gate {
     FullyQualifiedNameRunAndOpenFrom28,
     /// Setting a field whose control add-in was not created raises `NSValidationFailed:DotNetControlAddInNotCreated` from BC 28 (lt-ac/ACControlAddIn.al, corpus bump 26). Not consumed yet.
     ControlAddInNotInstantiatedErrorFrom28,
+    /// `JsonObject.SelectTokens` and `JsonArray.SelectTokens` into a List of [JsonToken] need app runtime 17: the test file is
+    /// compiled from BC 28 on, and BC 27 refuses the methods at compile time (json/lt-json-selecttokens/SelectTokensList.al,
+    /// corpus bump 27). Not consumed yet.
+    JsonSelectTokensListFrom28,
     /// The system table Windows Language has 212 rows from BC 29 (208 before) (platform/lt-ag-contoso/AgWindowsLanguage.al, corpus bump 26). Not consumed yet.
     WindowsLanguageRowsFrom29,
     /// The platform table Language Selection has the row ff-NG and other rows from BC 29 (platform/lt-platform-rows-fresh/PlatformRowsLanguageSelection.al, corpus bump 26). Not consumed yet.
@@ -166,6 +170,7 @@ impl Gate {
         Gate::MetadataNotFoundNamesTheCallerFrom28,
         Gate::FullyQualifiedNameRunAndOpenFrom28,
         Gate::ControlAddInNotInstantiatedErrorFrom28,
+        Gate::JsonSelectTokensListFrom28,
         Gate::WindowsLanguageRowsFrom29,
         Gate::LanguageSelectionRowsFrom29,
         Gate::DatasetHeaderCompanyAddressLinesFrom29,
@@ -232,7 +237,8 @@ impl Gate {
             | Gate::OptionFieldRefSetEvaluateErrorFrom28
             | Gate::MetadataNotFoundNamesTheCallerFrom28
             | Gate::FullyQualifiedNameRunAndOpenFrom28
-            | Gate::ControlAddInNotInstantiatedErrorFrom28 => 28,
+            | Gate::ControlAddInNotInstantiatedErrorFrom28
+            | Gate::JsonSelectTokensListFrom28 => 28,
         }
     }
 
@@ -342,6 +348,10 @@ impl Gate {
             Gate::ControlAddInNotInstantiatedErrorFrom28 => &[Evidence {
                 file: "lt-ac/ACControlAddIn.al",
                 lines: "99",
+            }],
+            Gate::JsonSelectTokensListFrom28 => &[Evidence {
+                file: "json/lt-json-selecttokens/SelectTokensList.al",
+                lines: "8",
             }],
             Gate::WindowsLanguageRowsFrom29 => &[Evidence {
                 file: "platform/lt-ag-contoso/AgWindowsLanguage.al",

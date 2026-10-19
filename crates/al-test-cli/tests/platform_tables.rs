@@ -227,10 +227,12 @@ fn a_column_nothing_pins_is_refused_where_code_reads_it() {
     let o = outcomes(
         r#"codeunit 50000 "T" { Subtype = Test;
   [Test] procedure ReadsAPinnedColumn() var F: Record Field; begin F.SetRange(TableNo, 50000); if F.IsEmpty() then; end;
-  [Test] procedure ReadsAnUnpinnedColumn() var F: Record Field; L: Text; begin L := F."Type Name"; end; }"#,
+  [Test] procedure ReadsAnUnpinnedColumn() var R: Record "Report Metadata"; L: Integer; begin L := R.MaxRows; end; }"#,
     );
+    // The corpus pins every Field column up to 28 (record/PZFieldObsoleteRows.al:39-58); Report Metadata
+    // MaxRows (19) is read by no corpus test.
     let why = not_run(&o, "ReadsAnUnpinnedColumn");
-    assert!(why.contains("column 9 of platform table 'Field'"), "{why}");
+    assert!(why.contains("column 19 of platform table 'Report Metadata'"), "{why}");
     assert!(
         !matches!(o.iter().find(|(n, _)| n == "ReadsAPinnedColumn").map(|(_, o)| o), Some(Outcome::NotRun(w)) if w.contains("column")),
         "{o:?}"
@@ -470,6 +472,59 @@ codeunit 50000 "T" { Subtype = Test;
     }
 }
 
+/// Report Metadata TransactionType (11) is UpdateNoLocks for a report that declares none
+/// (metadata/lt-report-metadata-columns/ReportMetadata.al:210, :236, :262). A declared one is pinned by no
+/// corpus test: reading it is refused.
+#[test]
+fn report_metadata_transaction_type_is_update_no_locks_when_not_declared() {
+    let o = outcomes(
+        r#"report 50002 "Plain" { ProcessingOnly = true; }
+report 50003 "Snap" { ProcessingOnly = true; TransactionType = Snapshot; }
+codeunit 50000 "T" { Subtype = Test;
+  [Test] procedure Undeclared() var M: Record "Report Metadata"; begin M.Get(50002); if Format(M.TransactionType) <> 'UpdateNoLocks' then Error('got %1', M.TransactionType); end;
+  [Test] procedure Declared() var M: Record "Report Metadata"; begin M.Get(50003); if Format(M.TransactionType) = '' then; end; }"#,
+    );
+    passes(&o, "Undeclared");
+    let why = not_run(&o, "Declared");
+    assert!(why.contains("TransactionType"), "{why}");
+}
+
+/// Report Metadata EnableExternalAssemblies (8) is No for a report that declares none (report/lt-y-report-props/
+/// YReportPropsTests.al:45); a declared one is pinned by no corpus test, so reading it is refused.
+#[test]
+fn report_metadata_enable_external_assemblies_is_refused_when_declared() {
+    let o = outcomes(
+        r#"report 50002 "Plain" { ProcessingOnly = true; }
+report 50003 "Ext" { ProcessingOnly = true; EnableExternalAssemblies = true; }
+codeunit 50000 "T" { Subtype = Test;
+  [Test] procedure Undeclared() var M: Record "Report Metadata"; begin M.Get(50002); if M.EnableExternalAssemblies then Error('yes'); end;
+  [Test] procedure Declared() var M: Record "Report Metadata"; begin M.Get(50003); if M.EnableExternalAssemblies then; end; }"#,
+    );
+    passes(&o, "Undeclared");
+    let why = not_run(&o, "Declared");
+    assert!(why.contains("EnableExternalAssemblies"), "{why}");
+}
+
+/// Field ExternalName (10) is blank and SQLDataType (23) Varchar for a Text field that declares neither
+/// (record/PZFieldObsoleteRows.al:48, :52). A declared ExternalName and the SQLDataType of any other type are
+/// pinned by no corpus test: reading them is refused.
+#[test]
+fn field_external_name_and_sql_data_type_are_answered_only_where_pinned() {
+    let o = outcomes(
+        r#"table 50001 "Thing" { fields { field(1; "No."; Integer) { } field(2; Name; Text[30]) { } field(3; Ext; Text[30]) { ExternalName = 'ext_col'; } }
+  keys { key(PK; "No.") { Clustered = true; } } }
+codeunit 50000 "T" { Subtype = Test;
+  [Test] procedure TextField() var F: Record Field; begin F.Get(50001, 2); if F.ExternalName <> '' then Error('ext'); if Format(F.SQLDataType) <> 'Varchar' then Error('sql %1', F.SQLDataType); end;
+  [Test] procedure DeclaredExternalName() var F: Record Field; begin F.Get(50001, 3); if F.ExternalName = '' then; end;
+  [Test] procedure IntegerSqlDataType() var F: Record Field; begin F.Get(50001, 1); if Format(F.SQLDataType) = '' then; end; }"#,
+    );
+    passes(&o, "TextField");
+    let why = not_run(&o, "DeclaredExternalName");
+    assert!(why.contains("ExternalName"), "{why}");
+    let why = not_run(&o, "IntegerSqlDataType");
+    assert!(why.contains("SQLDataType"), "{why}");
+}
+
 /// XmlPort Metadata and Query Metadata (xmlport/TestXmlPortMetadataVirtualTable.al,
 /// query/TestQueryMetadataVirtualTable.al).
 #[test]
@@ -520,6 +575,34 @@ codeunit 50000 "T" { Subtype = Test;
     M.Get(50004); if M.CardPageID <> 0 then Error('plain %1', M.CardPageID); end; }"#,
     );
     passes(&o, "CardPage");
+}
+
+/// "Page Metadata" reads a property as the page's extensions leave it: one extension's value wins over the page's
+/// (pageext/lt-z-page-ext-props/ZPageExtProps.al:629, 685-1110), an extension of another page changes nothing, and two
+/// extensions that set it are not pinned, so the row is refused.
+#[test]
+fn a_page_metadata_property_is_the_one_extension_value_and_two_extensions_are_refused() {
+    let o = outcomes(
+        r#"table 50001 "Thing" { fields { field(1; "No."; Integer) { } } keys { key(PK; "No.") { Clustered = true; } } }
+page 50002 "Card" { PageType = Card; SourceTable = Thing; layout { area(Content) { field(No; Rec."No.") { } } } }
+page 50003 "Other" { PageType = Card; SourceTable = Thing; InsertAllowed = false; layout { area(Content) { field(No; Rec."No.") { } } } }
+page 50004 "Twice" { PageType = Card; SourceTable = Thing; layout { area(Content) { field(No; Rec."No.") { } } } }
+pageextension 50010 "Card Ext" extends "Card" { InsertAllowed = false; }
+pageextension 50011 "Twice A" extends "Twice" { ModifyAllowed = false; }
+pageextension 50012 "Twice B" extends "Twice" { ModifyAllowed = false; }
+codeunit 50000 "T" { Subtype = Test;
+  [Test] procedure OneExtension() var M: Record "Page Metadata"; begin
+    M.Get(50002); if M.InsertAllowed then Error('card'); if not M.ModifyAllowed then Error('card modify');
+    M.Get(50003); if M.InsertAllowed then Error('other'); end;
+  [Test] procedure TwoExtensions() var M: Record "Page Metadata"; begin
+    M.Get(50004); end; }"#,
+    );
+    passes(&o, "OneExtension");
+    let why = match o.iter().find(|(n, _)| n == "TwoExtensions").map(|(_, o)| o) {
+        Some(Outcome::NotRun(why) | Outcome::Fail(why)) => why.clone(),
+        other => panic!("TwoExtensions was expected to be refused, got {other:?}"),
+    };
+    assert!(why.contains("2 page extensions set ModifyAllowed"), "{why}");
 }
 
 /// Page Action (record/TestPageActionVirtualTable.al): the area is a container row, a group and its
@@ -1017,4 +1100,26 @@ codeunit 50000 "T" { Subtype = Test;
             "{t}: {why}"
         );
     }
+}
+
+/// A column of a table of `PINNED_COLUMNS` that the list does not name is unknown in every row the provider lists
+/// (`platform::mark_unpinned`): a dynamic read of it is refused, the pinned columns of the same row read as before.
+/// Column 14 of Table Metadata is not pinned (column 7 is since corpus bump 27); ID (1) and Name (3) are (record/TestTableMetadataVirtualTable.al).
+#[test]
+fn an_unpinned_column_of_a_listed_platform_table_is_unknown_in_every_row() {
+    let o = outcomes(
+        r#"table 50005 "Probe Tbl" { fields { field(1; K; Integer) { } } }
+codeunit 50000 "T" { Subtype = Test;
+  [Test] procedure PinnedColumnReads() var M: Record "Table Metadata"; R: RecordRef; begin
+    M.Get(50005); R.GetTable(M);
+    if Format(R.Field(3).Value) <> 'Probe Tbl' then Error('name %1', R.Field(3).Value); end;
+  [Test] procedure UnpinnedColumnIsRefused() var M: Record "Table Metadata"; R: RecordRef; T: Text; begin
+    M.Get(50005); R.GetTable(M); T := Format(R.Field(14).Value); end; }"#,
+    );
+    passes(&o, "PinnedColumnReads");
+    let why = not_run(&o, "UnpinnedColumnIsRefused");
+    assert!(
+        why.contains("platform table 'Table Metadata' is not known for any row"),
+        "{why}"
+    );
 }

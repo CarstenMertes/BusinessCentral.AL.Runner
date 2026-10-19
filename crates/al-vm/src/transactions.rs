@@ -239,22 +239,12 @@ impl Session {
                 let Some(Value::Integer(n)) = args.first() else {
                     return unsupported("Codeunit.Run with an id that is not an integer");
                 };
-                let Some(object) = self
-                    .engine
-                    .program
-                    .objects
-                    .iter()
-                    .position(|o| o.is_kind(al_ir::ObjKind::Codeunit) && o.id == u32::try_from(*n).ok())
-                else {
+                let id = u32::try_from(*n).ok();
+                let Some(object) = self.engine.compiled_codeunit(id) else {
                     // A codeunit of a dependency app that nothing reached is not compiled (ADR-013);
-                    // BC has it, so this is not the missing-object error.
-                    if self
-                        .engine
-                        .program
-                        .objects
-                        .iter()
-                        .any(|o| o.is_shell_of(al_ir::ObjKind::Codeunit) && o.id == u32::try_from(*n).ok())
-                    {
+                    // BC has it, so this is not the missing-object error. (With no compiled codeunit of the id, the
+                    // first codeunit object of the id is a shell.)
+                    if self.engine.codeunit_object(id).is_some() {
                         return unsupported(format!(
                             "Codeunit.Run of codeunit {n}, which belongs to a dependency app and was not compiled (no code the workspace reaches uses it)"
                         ));

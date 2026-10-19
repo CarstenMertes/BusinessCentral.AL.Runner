@@ -403,6 +403,10 @@ pub struct Session {
     /// How many numbers `Random` has drawn in this session (a test that draws after tests that did not run sees another
     /// sequence than BC's).
     pub(crate) random_draws: u64,
+    /// Whether the test running has reseeded the `Random` sequence (`Randomize`); see [`Session::inherited_random_draws`].
+    pub(crate) reseeded_in_test: bool,
+    /// How many numbers `Random` has drawn from a sequence the test running did not seed itself.
+    pub(crate) inherited_draws: u64,
     /// How many `Randomize()` calls without a seed the session has seen.
     pub(crate) unseeded_randomizes: i32,
     pub(crate) next_row_version: i64,
@@ -592,6 +596,8 @@ impl Session {
             guid_seed: random_seed,
             rng: al_host::random::NetRandom::new(random_seed),
             random_draws: 0,
+            reseeded_in_test: false,
+            inherited_draws: 0,
             unseeded_randomizes: 0,
             next_row_version: 0,
             autoinc: Default::default(),
@@ -881,6 +887,20 @@ impl Session {
     /// How many numbers `Random` has drawn in this session.
     pub fn random_draws(&self) -> u64 {
         self.random_draws
+    }
+
+    /// How many numbers `Random` has drawn, in this session, before the test drawing them reseeded the sequence: those
+    /// numbers depend on what the tests before it drew. A draw after `Randomize` in the same test does not (the
+    /// sequence restarts from the seed), so it is not counted.
+    pub fn inherited_random_draws(&self) -> u64 {
+        self.inherited_draws
+    }
+
+    /// A test method begins, before the test runner's reset: until something reseeds the `Random` sequence (the reset's
+    /// `LibraryRandom.SetSeed(1)` included), what `Random` draws depends on the tests before (see
+    /// [`Session::inherited_random_draws`]).
+    pub fn start_random_scope(&mut self) {
+        self.reseeded_in_test = false;
     }
 
     pub fn instance(&mut self, object: usize) -> Rc<RefCell<Instance>> {

@@ -1,4 +1,5 @@
 //! Running the test codeunits of one compiled program, each test on a session of its own.
+use super::written::{ReachFacts, ReachIndex, reach_facts, settled_flags, unfinished_reach_facts};
 use super::*;
 
 /// Outcomes of every `[Test]` procedure of test codeunit `object`, in order.
@@ -271,15 +272,12 @@ pub(crate) fn run_codeunit_core(
         session.enable_capture(scratch.capture);
     }
     let mut out = Vec::new();
-    // Set by the first test that was refused while it ran: it stopped half way, so what it left in
-    // the codeunit's AL state (globals, single-instance codeunits) is not what BC would have left.
-    let mut refused_mid_run: Option<String> = None;
-    // Set by the first test of the codeunit that did not pass: it drew other numbers from `Random` than BC did, and the
-    // sequence is the session's.
-    let mut earlier_not_run: Option<String> = None;
-    // Every earlier test refused before it started that can write a table or draw a random number: its name and reason,
-    // and what its static reach holds.
-    let mut refused_before_start: Vec<(String, ReachFacts)> = Vec::new();
+    // Every earlier test of the codeunit that did not run to its end: refused before it started, refused while it ran,
+    // or failed. A later failure is not trusted when such a test could have changed what it reads (`written.rs`).
+    let mut unfinished: Vec<Unfinished> = Vec::new();
+    // Built at the first failure that has an unfinished test before it.
+    let mut reach_index: Option<ReachIndex> = None;
+    let flags = settled_flags(lowered, object);
     let mut panicked = false;
     for r in tests.iter().copied() {
         // A cancelled run starts no further test (the one running finishes).
@@ -288,12 +286,24 @@ pub(crate) fn run_codeunit_core(
         }
         crate::events::starting(obj.id.unwrap_or(0), &obj.routines[r].name);
         let test_started = std::time::Instant::now();
-        let draws_before = session.random_draws();
+        let draws_before = session.inherited_random_draws();
+        // The flags of the codeunit that already hold their only value when this test starts.
+        let settled: BTreeSet<(usize, usize)> = {
+            let inst = instance.borrow();
+            flags
+                .iter()
+                .filter(|(g, v)| matches!(inst.globals.get(*g), Some(al_builtins::value::Value::Boolean(b)) if b == v))
+                .map(|(g, _)| (object, *g))
+                .collect()
+        };
         let routine = &obj.routines[r];
         let handlers = resolve_handlers(lowered, object, r);
         let mut committed = false;
         let mut failure: Option<AlError> = None;
         let mut refused_in = None;
+        // Why a step of the test runner around this test was refused or failed (runner_reset.rs): what it left is not
+        // known, so a later failure of the codeunit is not trusted.
+        let mut runner_refused: Option<String> = None;
         session.clear_fault_site();
         al_builtins::assumptions::clear_hits();
         let mut began = false;
@@ -323,7 +333,12 @@ pub(crate) fn run_codeunit_core(
                     session.last_error = Default::default();
                     al_builtins::assumptions::clear_hits();
                     // The runner's steps before the method (runner_reset.rs); what they rely on counts for the test.
+                    // Its `LibraryRandom.SetSeed(1)` reseeds the sequence, so draws after it are not inherited.
+                    session.start_random_scope();
                     let reset = runner.before(&mut session, obj, routine);
+                    if let Err(why) = &reset {
+                        runner_refused = Some(why.clone());
+                    }
                     // The AL test runner enables every application area before each test method
                     // (corpus session/TestSessionApplicationAreaTestBoundary.al:67552).
                     session.start_test_method();
@@ -425,7 +440,6 @@ pub(crate) fn run_codeunit_core(
                         }
                         Err(Signal::Unsupported(r)) => {
                             session.rollback_transaction();
-                            refused_mid_run.get_or_insert_with(|| format!("{}: {r}", routine.name));
                             Outcome::NotRun(r)
                         }
                         Err(other) => Outcome::Fail(format!("unexpected signal {}", other.describe())),
@@ -434,83 +448,104 @@ pub(crate) fn run_codeunit_core(
                     // from; if it cannot run, their failures are not trusted.
                     if let Err(why) = runner.after(&mut session) {
                         session.rollback_transaction();
-                        refused_mid_run.get_or_insert_with(|| format!("after {}: {why}", routine.name));
+                        runner_refused.get_or_insert(why);
                     }
                     outcome
                 }
             }
         };
-        // A test refused before it started did not leave what BC would have left in the database: under TestIsolation =
-        // Codeunit a later test sees that. A failure of a later test is not trusted when what a refused test of the codeunit
-        // can write (its static reach, subscribers included) meets what this test can read (Tests-ERM "Discount Setup
-        // Notifications": the refused test would have reset the posting setups the test before it left blank). A refused
-        // test that writes nothing this test reads does not make its failure doubtful.
-        let facts_of_this = (matches!(outcome, Outcome::Fail(_)) || !began)
-            .then(|| reach_facts(&session.engine.clone(), lowered, object, r));
-        let outcome = match (outcome, &facts_of_this) {
-            (Outcome::Fail(m), Some(mine)) if checkpoint.is_none() => {
-                match refused_before_start.iter().find(|(_, w)| w.writes_meet(&mine.touched)) {
-                    Some((first, _)) => Outcome::NotRun(format!(
-                        "an earlier test of this codeunit was refused before it started ({first}) and can write a table this test reads, so the data it would have left is not BC's; this failure is not trusted: {m}"
-                    )),
+        // A test that did not run to its end (refused before it started, refused while it ran, failed) left the state the
+        // tests of the codeunit share other than BC did: the database (under TestIsolation = Codeunit), the globals of the
+        // codeunit and of the codeunits it holds, single-instance codeunits, and session state such as the `Random`
+        // sequence. A failure of a later test is not trusted when an unfinished test's static reach can change what the
+        // failing test reads (Tests-ERM "Discount Setup Notifications": the refused test would have reset the posting
+        // setups the test before it left blank). A refused test's partial run counts as its whole reach. A failed test
+        // counts only through the `Random` sequence: its draws are not rolled back, while its database writes are, as
+        // they are in BC when the test fails there too.
+        // The numbers this test drew from a sequence it did not seed itself: they depend on what earlier tests drew
+        // (Tests-SCM-Planning CalcPlanReqWkshForTransferLFLItem: a random end date before a random receipt date).
+        let drew = session.inherited_random_draws() > draws_before;
+        let outcome = match outcome {
+            Outcome::Fail(m) if !unfinished.is_empty() => {
+                let engine = session.engine.clone();
+                let index = reach_index.get_or_insert_with(|| ReachIndex::new(&engine.events, lowered));
+                // This test's reach is walked only when an unfinished test's reach is fully known: an unknown part
+                // decides alone (`changes_read_by`), and a walk costs about 150 ms with Microsoft's apps.
+                let mut mine: Option<ReachFacts> = None;
+                let found = unfinished.iter_mut().find_map(|u| {
+                    // A failed test counts only through the `Random` sequence, which matters only when this test drew.
+                    if u.ended == Ended::Failed && !drew {
+                        return None;
+                    }
+                    let facts = u
+                        .facts
+                        .get_or_insert_with(|| unfinished_reach_facts(&engine.events, lowered, index, object, u.routine));
+                    match u.ended {
+                        Ended::Failed => facts.random().then(|| {
+                            format!(
+                                "a test before this one in the codeunit did not pass ({}) and could draw random numbers, and this test draws random numbers: the shared sequence is not BC's",
+                                u.what
+                            )
+                        }),
+                        Ended::RefusedBeforeStart | Ended::RefusedMidRun => {
+                            // An unknown part of the earlier reach answers without this test's reach.
+                            let later = match facts.unknown {
+                                Some(_) => &ReachFacts::default(),
+                                None => mine.get_or_insert_with(|| reach_facts(&engine.events, lowered, index, object, r)),
+                            };
+                            facts.changes_read_by(later, checkpoint.is_none(), drew, &settled, lowered).map(|what| {
+                                let when = if u.ended == Ended::RefusedMidRun {
+                                    "refused while it ran"
+                                } else {
+                                    "refused before it started"
+                                };
+                                format!(
+                                    "an earlier test of this codeunit was {when} ({}): {what}, so the state it would have left is not BC's",
+                                    u.what
+                                )
+                            })
+                        }
+                    }
+                });
+                match found {
+                    Some(why) => Outcome::NotRun(format!("{why}; this failure is not trusted: {m}")),
                     None => Outcome::Fail(m),
                 }
             }
-            (o, _) => o,
+            o => o,
         };
-        if let (Outcome::NotRun(why), false, Some(facts)) = (&outcome, began, facts_of_this) {
-            if facts.random || !facts.writes.is_empty() || facts.writes_any {
-                refused_before_start.push((
-                    format!("{}: not run ({why})", routine.name).chars().take(120).collect(),
-                    facts,
-                ));
-            }
-        }
-        let drew = session.random_draws() > draws_before;
-        let fresh_not_run = match &outcome {
-            // A test refused before it started drew nothing, where BC drew; whether it could have is its static reach (below).
-            Outcome::NotRun(why) if began => Some(
-                format!("{}: did not run ({why})", routine.name)
-                    .chars()
-                    .take(120)
-                    .collect::<String>(),
-            ),
-            Outcome::Fail(why) => Some(
-                format!("{}: failed ({why})", routine.name)
-                    .chars()
-                    .take(120)
-                    .collect::<String>(),
-            ),
+        let ended = match &outcome {
+            Outcome::NotRun(_) if !began => Some(Ended::RefusedBeforeStart),
+            Outcome::NotRun(why) if why.contains("this failure is not trusted") => Some(Ended::Failed),
+            Outcome::NotRun(_) => Some(Ended::RefusedMidRun),
+            Outcome::Fail(_) => Some(Ended::Failed),
             _ => None,
         };
-        // A failure after a test that was refused mid-run is not trusted: the test may have set a
-        // global (an "initialized" flag, a binding) whose setup was rolled back with it, and the
-        // codeunit's tests share that state (TestIsolation keeps the instance). Passes stay.
-        let outcome = match (outcome, &refused_mid_run) {
-            (Outcome::Fail(m), Some(first)) => Outcome::NotRun(format!(
-                "an earlier test of this codeunit was refused while it ran ({first}), so its shared state is not BC's; this failure is not trusted: {m}"
-            )),
-            (o, _) => o,
-        };
-        // A failure of a test that draws random numbers after a test that did not pass is not trusted: the sequence of
-        // `Random` is shared by the tests of the session (Library - Random seeds it once), BC drew the numbers of the test that
-        // did not run, so this test sees other numbers than it does in BC (Tests-SCM-Planning
-        // CalcPlanReqWkshForTransferLFLItem: a random end date before a random receipt date).
-        let outcome = match (outcome, &earlier_not_run) {
-            (Outcome::Fail(m), Some(first)) if drew => Outcome::NotRun(format!(
-                "a test before this one in the codeunit did not pass ({first}) and this test draws random numbers: a test that stopped early or did not run leaves other numbers of the shared sequence than BC's; this failure is not trusted: {m}"
-            )),
-            (o, _) => o,
-        };
-        // The same for a test refused before it started whose static reach holds a `Random` call.
-        let outcome = match (outcome, refused_before_start.iter().find(|(_, f)| f.random)) {
-            (Outcome::Fail(m), Some((first, _))) if drew => Outcome::NotRun(format!(
-                "a test before this one in the codeunit did not run ({first}) and could draw random numbers, and this test draws random numbers: the shared sequence is not BC's; this failure is not trusted: {m}"
-            )),
-            (o, _) => o,
-        };
-        if let Some(why) = fresh_not_run {
-            earlier_not_run.get_or_insert(why);
+        if let (Some(ended), Outcome::NotRun(why) | Outcome::Fail(why)) = (ended, &outcome) {
+            let how = match ended {
+                Ended::RefusedBeforeStart => "not run",
+                Ended::RefusedMidRun => "did not run",
+                Ended::Failed => "failed",
+            };
+            unfinished.push(Unfinished {
+                routine: r,
+                what: format!("{}: {how} ({why})", routine.name).chars().take(120).collect(),
+                ended,
+                facts: None,
+            });
+        }
+        // A runner step that did not run to its end may have left anything (decision 2026-10-19: a refused construct
+        // in an earlier test's reach counts as "may change anything").
+        if let Some(why) = runner_refused {
+            unfinished.push(Unfinished {
+                routine: r,
+                what: format!("{}: {why}", routine.name).chars().take(120).collect(),
+                ended: Ended::RefusedMidRun,
+                facts: Some(ReachFacts {
+                    unknown: Some("a step of the test runner around it did not run to its end".into()),
+                    ..Default::default()
+                }),
+            });
         }
         // Whether a Commit() inside a test is kept or ignored under Function isolation is not
         // pinned (docs/probes-needed.md): a test that passed through one is not reported as run.
@@ -696,4 +731,22 @@ impl Watchdog {
         let _ = self.done.send(());
         self.thread.join().unwrap_or(false)
     }
+}
+
+/// How a test of the codeunit that did not run to its end ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Ended {
+    RefusedBeforeStart,
+    RefusedMidRun,
+    Failed,
+}
+
+/// A test of the codeunit that did not run to its end, for the trust of later failures.
+struct Unfinished {
+    routine: usize,
+    /// Its name and how it ended, for the reason text.
+    what: String,
+    ended: Ended,
+    /// Its reach facts, worked out at the first later failure that asks.
+    facts: Option<ReachFacts>,
 }

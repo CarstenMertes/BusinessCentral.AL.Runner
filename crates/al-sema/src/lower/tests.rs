@@ -167,6 +167,26 @@ reportextension 50101 Ext extends Base
     );
 }
 
+/// A report extension declares a `var` in its `requestpage`, with the name of a variable of its base report. Its request
+/// page triggers see their own variable, not the base's private one (AL0161) and not nothing (corpus
+/// report/lt-ab-request-page-triggers/ABRequestPageExt.al:63).
+#[test]
+fn a_request_page_variable_is_seen_by_the_request_page_triggers_of_a_report_extension() {
+    let (_, l) = lower_files(
+        &[(
+            "f.al",
+            "report 50100 Base { ProcessingOnly = true; requestpage { trigger OnOpenPage() begin Log := 1; end; var Log: Integer; } var Log: Integer; }
+reportextension 50101 Ext extends Base
+{
+    requestpage { trigger OnOpenPage() begin Log := 2; end; var Log: Integer; }
+}",
+        )],
+        true,
+    );
+    let reasons: Vec<&String> = l.unsupported.iter().flatten().flatten().collect();
+    assert!(reasons.is_empty(), "{reasons:?}");
+}
+
 const TWO_TESTS: &str = "codeunit 50100 \"Wanted\"
 {
     Subtype = Test;

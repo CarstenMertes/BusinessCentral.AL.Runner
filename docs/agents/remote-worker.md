@@ -65,13 +65,15 @@ Work on one issue at a time. Repeat until no issue is left.
 3. **Read the issue and the docs** named in `docs/agents/brief.md`. If the
    issue is unclear, comment one specific question, label it `blocked`
    (see "If you are blocked") and move on.
-4. **Make a worktree and branch** from current `origin/main`. The branch name is
+4. **Make a worktree and branch** from current `origin/main`, inside the clone
+   (`.worktrees/` is git-ignored; never next to the clone). Keep logs and
+   scratch files out of the clone and its parent folder. The branch name is
    `remote/<issue-number>-<slug>`, where the slug is two to five lowercase
    words from the title:
    ```
    git fetch origin
-   git worktree add ../wt-N-slug -b remote/N-slug origin/main
-   cd ../wt-N-slug
+   git worktree add .worktrees/N-slug -b remote/N-slug origin/main
+   cd .worktrees/N-slug
    git submodule update --init
    ```
    If a branch `remote/N-...` already exists on origin (for example after a
@@ -86,7 +88,7 @@ Work on one issue at a time. Repeat until no issue is left.
    Never push `main`. Never merge. Never open the merge yourself.
 8. **Report on the issue** (format below).
    `gh issue edit N --add-label ready-for-review --remove-label in-progress`
-9. **Clean up:** `cd` back to the clone and `git worktree remove ../wt-N-slug`.
+9. **Clean up:** `cd` back to the clone and `git worktree remove .worktrees/N-slug`.
    Then go to step 1.
 
 ### Report format

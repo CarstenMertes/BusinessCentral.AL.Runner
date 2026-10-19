@@ -91,10 +91,10 @@ impl AllVersions {
 fn every_oracle_case_is_reported_and_attributed_to_an_area() {
     // BC 29: the version a run without `--bc-version` picks.
     let r = all_versions().json("29");
-    assert_eq!(r["overall"]["total"], 15095);
+    assert_eq!(r["overall"]["total"], 15714);
     assert_eq!(r["unmapped"].as_array().unwrap().len(), 0, "{}", r["unmapped"]);
-    assert_eq!(r["areas"]["json"]["total"], 429);
-    assert_eq!(r["areas"]["record"]["total"], 2002);
+    assert_eq!(r["areas"]["json"]["total"], 442);
+    assert_eq!(r["areas"]["record"]["total"], 2080);
 }
 
 #[test]
@@ -106,7 +106,7 @@ fn oracle_pinned_to_a_different_corpus_commit_is_refused() {
     std::fs::write(
         &bad,
         t.replace(
-            "0f48ad6685ef280a2668b12bcaaf994ee280ae63",
+            "8b505c65999a82d2034ad84b25a68d8b442418c1",
             "0000000000000000000000000000000000000000",
         ),
     )
@@ -152,8 +152,9 @@ fn an_oracle_recorded_for_a_corpus_commit_that_changed_existing_tests_is_refused
     let (_dir, bad) = oracle_with_29_recorded_for("9df7c23c91095f6747ace1cefaebec7dd882410a");
     let (code, _, err) = cli(&["--bc-version", "29", "--oracle", bad.to_str().unwrap()]);
     assert_eq!(code, 2, "{err}");
+    // The list shows the first ten changed files; since corpus bump 28 (25 files) TestAutoIncrementExplicitKey.al is past them.
     assert!(
-        err.contains("TestAutoIncrementExplicitKey.al") && err.contains("29"),
+        err.contains("changes or removes existing test files") && err.contains("  M tests/") && err.contains("29"),
         "{err}"
     );
 }
@@ -346,7 +347,7 @@ fn markdown_summary_is_written() {
     let shared = all_versions();
     assert_eq!(shared.code, 0, "{}", shared.err);
     let md = std::fs::read_to_string(shared.file("pass-rate", "29", "md")).unwrap();
-    assert!(md.starts_with("- BC 29.0: ") && md.contains(" of 15095 ("), "{md}");
+    assert!(md.starts_with("- BC 29.0: ") && md.contains(" of 15714 ("), "{md}");
     assert_eq!(md.lines().count(), 1, "one line per version: {md}");
     // ... and `--markdown` of a single-version run writes the file it is given.
     let dir = tempfile::tempdir().unwrap();
@@ -411,7 +412,7 @@ fn every_bc_major_has_an_oracle_with_the_same_cases() {
     // 28 and 29 come from the hybrid runner: its OnRun pseudo-cases must be skipped, or the
     // run stops with exit 2 (ADR-015 1.6).
     // All three are recorded for the pinned corpus commit.
-    for (v, total) in [("27", 14974), ("28", 15039), ("29", 15095)] {
+    for (v, total) in [("27", 15562), ("28", 15647), ("29", 15714)] {
         let r = all_versions().json(v);
         assert_eq!(r["overall"]["total"], total, "BC {v}");
         assert_eq!(r["unmapped"].as_array().unwrap().len(), 0, "BC {v}");
@@ -448,11 +449,16 @@ fn all_versions_runs_each_oracle_writes_per_version_files_and_compares() {
     // (27, guarded by `#if not BC28PLUS`) and thirty-one guarded by `#if BC28PLUS` or `#if BC29PLUS` (corpus bump 10: the
     // BigInteger FlowField and query aggregate tests, the Base64 and conversion error texts that differ on 27.0 and 27.3,
     // and the interface collection codeunit).
-    assert!(out.contains("oracle: 123 case(s) differ between versions"), "{out}");
+    // Corpus bump 28 adds 31 more (the BC28PLUS and BC29PLUS guards that al-version/src/gates.rs cites for bump 28), which make it 154.
+    assert!(out.contains("oracle: 154 case(s) differ between versions"), "{out}");
     // The known BC 29 differences are gated (ADR-015 3.4), so the runtime passes the same cases on every version, among the
     // cases every oracle has. One difference is known and open (corpus bump 10, backlog): the runtime passes
     // 71500 Get_Uses_Primary_Key_Not_Current_Key on BC 27 only. A new difference would be listed here.
-    assert!(out.contains("runtime: 1 case(s) differ between versions"), "{out}");
+    // Corpus bump 28 adds four, all new cases, none in a baseline: 72786 BN_With_ImplicitWithInTableNoCodeunit fails on
+    // BC 29 (Record.IsDirty under implicit with, gate RecordIsDirtyFrom29 not consumed); 79926 Byte10 and Byte200 are refused
+    // from BC 28 (the escaped Byte form of TestFieldTypedValueTexts is not built); 81959 BM_CalcFormula_IntegerFilterFromBigInteger
+    // is refused on BC 29 (a BigInteger above the Integer range in an Integer filter).
+    assert!(out.contains("runtime: 5 case(s) differ between versions"), "{out}");
     assert!(out.contains("71500 Get_Uses_Primary_Key_Not_Current_Key: 27"), "{out}");
 }
 
@@ -490,7 +496,7 @@ fn require_dotnet_turns_an_unusable_dotnet_into_a_setup_error() {
 #[test]
 fn the_other_test_apps_are_reported_apart_from_the_main_one() {
     let r = all_versions().json("28");
-    assert_eq!(r["overall"]["total"], 15039);
+    assert_eq!(r["overall"]["total"], 15647);
     let suites = r["suites"].as_array().unwrap();
     let get = |n: &str| {
         suites
@@ -498,7 +504,7 @@ fn the_other_test_apps_are_reported_apart_from_the_main_one() {
             .find(|s| s["name"] == n)
             .unwrap_or_else(|| panic!("no suite {n}"))
     };
-    assert_eq!(get("onprem")["counts"]["total"], 267);
+    assert_eq!(get("onprem")["counts"]["total"], 304);
     assert_eq!(get("isolation-function")["counts"]["total"], 7);
     assert_eq!(get("isolation-function")["counts"]["pass"], 7);
     // The control: real BC fails T5 under Codeunit isolation, and the runtime fails it too.

@@ -1,5 +1,6 @@
-//! The lexer over every `.al` file in the corpus. BC compiles all of them, so
-//! the lexer must cover each byte exactly once and produce no `Error` token.
+//! The lexer over every `.al` file in the corpus. The lexer must cover each byte exactly once. BC compiles every file
+//! outside `tests/must-not-compile/`, so those produce no `Error` token and no preprocessor diagnostic; a must-not-compile
+//! case may be refused by the lexer or the preprocessor (corpus bump 28: 1386 `@abc`, 1575 `&&` and 1576 `==` in `#if`).
 
 use al_syntax::{SyntaxKind, lex};
 use std::path::{Path, PathBuf};
@@ -27,6 +28,10 @@ fn corpus_files() -> Vec<PathBuf> {
     out
 }
 
+fn must_not_compile(f: &Path) -> bool {
+    f.components().any(|c| c.as_os_str() == "must-not-compile")
+}
+
 #[test]
 fn every_corpus_file_round_trips_and_lexes_without_errors() {
     let mut failures = Vec::new();
@@ -45,7 +50,7 @@ fn every_corpus_file_round_trips_and_lexes_without_errors() {
         if pos != src.len() {
             failures.push(format!("{}: covered {pos} of {} bytes", f.display(), src.len()));
         }
-        if let Some(e) = first_error {
+        if let Some(e) = first_error.filter(|_| !must_not_compile(&f)) {
             failures.push(format!("{}: {e}", f.display()));
         }
     }
@@ -70,7 +75,7 @@ fn every_corpus_file_preprocesses_cleanly_for_bc27_5() {
         if covered != src.len() {
             failures.push(format!("{}: covered {covered} of {} bytes", f.display(), src.len()));
         }
-        for d in p.diagnostics {
+        for d in p.diagnostics.into_iter().filter(|_| !must_not_compile(&f)) {
             failures.push(format!("{}: {}", f.display(), d.message));
         }
         disabled_files += p.tokens.iter().any(|t| t.kind == SyntaxKind::DisabledText) as usize;

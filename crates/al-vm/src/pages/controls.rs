@@ -595,6 +595,7 @@ impl Session {
                 st.borrow_mut().errors.retain(|(i, _)| *i != idx);
                 st.borrow_mut().trigger_errors.retain(|(i, _)| *i != idx);
                 self.run_refresh(st)?;
+                self.refresh_caption_classes(st)?;
                 Ok(Value::Null)
             }
             Err(Signal::Error(e)) => {

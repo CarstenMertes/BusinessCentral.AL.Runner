@@ -15,6 +15,7 @@ table 60900 "VG Line"
         field(1; "Entry No."; Integer) { }
         field(2; "Doc No."; Code[20]) { }
         field(3; Qty; Integer) { }
+        field(4; Big; BigInteger) { }
     }
     keys { key(PK; "Entry No.") { Clustered = true; } }
 }
@@ -23,6 +24,8 @@ table 60901 "VG Head"
     fields
     {
         field(1; "No."; Code[20]) { }
+        field(2; IdInt; Integer) { }
+        field(14; CntBig; Integer) { FieldClass = FlowField; CalcFormula = count("VG Line" where(Big = field(IdInt))); }
         field(10; SumBig; BigInteger) { FieldClass = FlowField; CalcFormula = sum("VG Line".Qty where("Doc No." = field("No."))); }
         field(11; MaxRv; BigInteger) { FieldClass = FlowField; CalcFormula = max("VG Line".SystemRowVersion where("Doc No." = field("No."))); }
         field(12; MinRv; BigInteger) { FieldClass = FlowField; CalcFormula = min("VG Line".SystemRowVersion where("Doc No." = field("No."))); }
@@ -51,6 +54,10 @@ codeunit 50100 C
     procedure RowVersionExists(): Boolean
     var R: RecordRef;
     begin R.Open(60900); exit(R.FieldExist(2000000005)); end;
+
+    procedure CountBig(): Integer
+    var H: Record "VG Head";
+    begin Seed(); H.Get('D1'); H.CalcFields(CntBig); exit(H.CntBig); end;
     procedure Look(): Boolean
     var H: Record "VG Head";
     begin Seed(); H.Get('D1'); H.CalcFields(LookRv); exit(H.LookRv > 0); end;
@@ -117,6 +124,25 @@ fn integer_sum_into_a_biginteger_flowfield_is_refused_before_bc_29_and_calculate
     for bc in [Some("29.0"), Some("30"), None] {
         let v = ok(run(bc, "SumBig"));
         assert!(matches!(v, Value::BigInteger(7)), "BC {bc:?}: {v:?}");
+    }
+}
+
+// corpus calcfields/lt-bm-flowfield-conversions/BmFlowFieldConversions.al:166-186 (#if BC29PLUS): a count FlowField
+// whose filter links a BigInteger source field to an Integer field (`Big = field(Id)`) is refused when calculated on
+// BC 27 and 28 (DB:TypeMisMatch, source first); BC 29 counts.
+#[test]
+fn a_count_filter_biginteger_from_integer_is_refused_before_bc_29_and_counted_from_it() {
+    for bc in ["27.5", "28.5"] {
+        let m = message(run(Some(bc), "CountBig"));
+        assert_eq!(
+            m,
+            "The following fields must have the same type:\\\\Field: Big <-- IdInt\\Table: VG Line <-- VG Head\\Type: BigInteger <-- Integer",
+            "BC {bc}"
+        );
+    }
+    for bc in [Some("29.0"), None] {
+        let v = ok(run(bc, "CountBig"));
+        assert!(matches!(v, Value::Integer(2)), "BC {bc:?}: {v:?}");
     }
 }
 

@@ -60,9 +60,6 @@ pub enum Gate {
     /// "Header Part Name" and "Theme Part Name" (Text[300]); before, it ends at "App ID"
     /// (platform/lt-platform-tables/PtCloudTables.al, corpus bump 22). Not consumed yet.
     ReportLayoutSelectionPartNamesFrom29,
-    /// The `decimalformatter` attribute of a decimal column in the `Report.SaveAs` dataset XML is `#,##0.00###` from BC 28
-    /// and `#,##0.00` before (report/lt-y-report-props/YReportPropsTests.al, corpus bump 25). Not consumed yet.
-    ReportXmlDecimalFormatterFrom28,
     /// The report metadata properties `DefaultHeaderFooterPartName` and `DefaultThemePartName` exist from BC 29 (runtime 18.0,
     /// empty by default); before they are absent (report/lt-y-report-props/YReportPropsTests.al, corpus bump 25). Not consumed yet.
     ReportPartNamePropertiesFrom29,
@@ -156,10 +153,24 @@ pub enum Gate {
     HttpBlankHeaderNameIsFormatFrom29,
     /// The header name rules of `HttpHeaders.Add` are probed from BC 28: the test is `#if BC28PLUS` (network/lt-http/HttpHeaders.al:282).
     HttpHeaderNameRulesProbedFrom28,
+    /// `DataTransfer.AddDestinationFilter` needs app runtime 17: the corpus tests are compiled from BC 28 on and BC 27 refuses the
+    /// method at compile time (record/lt-as-records/AsDataTransferDestFilter.al, AsDtInstallRead.al, AsDtInstaller.al; must-not-compile
+    /// case 0365; corpus bump 28). Not consumed yet.
+    DataTransferAddDestinationFilterFrom28,
+    /// A `case` over a Time with a `0T:` label runs from BC 29; on BC 28.5 the server's generated C# for the codeunit does not compile
+    /// (types/TestCaseContracts.al:391-416, corpus bump 28). Not consumed yet.
+    CaseTimeZeroLabelFrom29,
+    /// A count FlowField whose filter links a BigInteger source field to an Integer field (`Big = field(Id)`) counts from BC 29;
+    /// before, CalcFields raises `The following fields must have the same type` (`DB:TypeMisMatch`)
+    /// (calcfields/lt-bm-flowfield-conversions/BmFlowFieldConversions.al:166-186, corpus bump 28).
+    FlowFieldCountFilterBigIntegerFromIntegerFrom29,
 }
 
 impl Gate {
     pub const ALL: &'static [Gate] = &[
+        Gate::FlowFieldCountFilterBigIntegerFromIntegerFrom29,
+        Gate::CaseTimeZeroLabelFrom29,
+        Gate::DataTransferAddDestinationFilterFrom28,
         Gate::FlowFieldSumIntegerIntoBigInteger,
         Gate::FlowFieldMinMaxOverRowVersionRefused,
         Gate::SuperPermissionSetIgnoresAppId,
@@ -172,7 +183,6 @@ impl Gate {
         Gate::PartLineBeforeHostKeyFrom28,
         Gate::RecordRefIsDirtyFrom28,
         Gate::ReportLayoutSelectionPartNamesFrom29,
-        Gate::ReportXmlDecimalFormatterFrom28,
         Gate::ReportPartNamePropertiesFrom29,
         Gate::GetTextArgumentEvaluateErrorFrom28,
         Gate::RequestPageExtensionRecordTriggerOrderFrom28,
@@ -234,6 +244,8 @@ impl Gate {
             | Gate::IsolatedStorageIsolationLevelOverloadsFrom29
             | Gate::RecordIsDirtyFrom29
             | Gate::HttpHandlerUnderBlockOutboundFrom29
+            | Gate::CaseTimeZeroLabelFrom29
+            | Gate::FlowFieldCountFilterBigIntegerFromIntegerFrom29
             | Gate::HttpBlankHeaderNameIsFormatFrom29 => 29,
             Gate::ReportSaveAsDataItemIdentity
             | Gate::FeatureKeyListChangedFrom28
@@ -246,7 +258,6 @@ impl Gate {
             | Gate::FileDownloadWithoutClientFrom28
             | Gate::GetTextArgumentEvaluateErrorFrom28
             | Gate::RecordRefIsDirtyFrom28
-            | Gate::ReportXmlDecimalFormatterFrom28
             | Gate::PartLineBeforeHostKeyFrom28
             | Gate::RequestPageExtensionRecordTriggerOrderFrom28
             | Gate::OptionFieldRefSetEvaluateErrorFrom28
@@ -254,6 +265,7 @@ impl Gate {
             | Gate::FullyQualifiedNameRunAndOpenFrom28
             | Gate::ControlAddInNotInstantiatedErrorFrom28
             | Gate::JsonSelectTokensListFrom28
+            | Gate::DataTransferAddDestinationFilterFrom28
             | Gate::HttpHeaderNameRulesProbedFrom28 => 28,
         }
     }
@@ -261,6 +273,28 @@ impl Gate {
     /// The corpus guards that pin both sides.
     pub fn evidence(self) -> &'static [Evidence] {
         match self {
+            Gate::FlowFieldCountFilterBigIntegerFromIntegerFrom29 => &[Evidence {
+                file: "calcfields/lt-bm-flowfield-conversions/BmFlowFieldConversions.al",
+                lines: "38,95,127,147,155,176,181",
+            }],
+            Gate::CaseTimeZeroLabelFrom29 => &[Evidence {
+                file: "types/TestCaseContracts.al",
+                lines: "391,399,416",
+            }],
+            Gate::DataTransferAddDestinationFilterFrom28 => &[
+                Evidence {
+                    file: "record/lt-as-records/AsDataTransferDestFilter.al",
+                    lines: "9",
+                },
+                Evidence {
+                    file: "record/lt-as-records/AsDtInstallRead.al",
+                    lines: "135",
+                },
+                Evidence {
+                    file: "record/lt-as-records/AsDtInstaller.al",
+                    lines: "26,182",
+                },
+            ],
             Gate::FlowFieldSumIntegerIntoBigInteger => &[
                 Evidence {
                     file: "record/TestCalcFormulaValidationTests.Codeunit.al",
@@ -307,30 +341,62 @@ impl Gate {
                 file: "permissions/W6PermissionColumns.al",
                 lines: "122",
             }],
-            Gate::BigIntegerToEnumVariableFrom29 => &[Evidence {
-                file: "types/lt-bigint-enum-option/BigIntToEnumOption.al",
-                lines: "8,28,39,145",
-            }],
-            Gate::ReportLayoutSelectionPartNamesFrom29 => &[Evidence {
-                file: "platform/lt-platform-tables/PtCloudTables.al",
-                lines: "109,115,121,129",
-            }],
-            Gate::GetTextArgumentEvaluateErrorFrom28 => &[Evidence {
-                file: "record/lt-get-text-argument/GetWithTextArgument.al",
-                lines: "103,109,115,150,155",
-            }],
-            Gate::RecordRefIsDirtyFrom28 => &[Evidence {
-                file: "recordref/lt-recordref-isdirty-edges/RecordRefIsDirtyEdges.al",
-                lines: "12",
-            }],
-            Gate::ReportXmlDecimalFormatterFrom28 => &[Evidence {
-                file: "report/lt-y-report-props/YReportPropsTests.al",
-                lines: "39,58,77,96,115,134",
-            }],
+            Gate::BigIntegerToEnumVariableFrom29 => &[
+                Evidence {
+                    file: "misc/lt-au-language-edges/AuEdgeTests.al",
+                    lines: "72",
+                },
+                Evidence {
+                    file: "types/lt-bigint-enum-option/BigIntToEnumOption.al",
+                    lines: "8,28,39,145",
+                },
+            ],
+            Gate::ReportLayoutSelectionPartNamesFrom29 => &[
+                Evidence {
+                    file: "platform/lt-aw-fresh-tenant/AwTests.al",
+                    lines: "227,243,259,275,291",
+                },
+                Evidence {
+                    file: "report/lt-aq/AqTests.al",
+                    lines: "275,291",
+                },
+                Evidence {
+                    file: "platform/lt-platform-tables/PtCloudTables.al",
+                    lines: "109,115,121,129",
+                },
+            ],
+            Gate::GetTextArgumentEvaluateErrorFrom28 => &[
+                Evidence {
+                    file: "record/lt-as-records/AsGetTextKey.al",
+                    lines: "95,110,152,167",
+                },
+                Evidence {
+                    file: "record/lt-get-text-argument/GetWithTextArgument.al",
+                    lines: "103,109,115,150,155",
+                },
+            ],
+            Gate::RecordRefIsDirtyFrom28 => &[
+                Evidence {
+                    file: "record/lt-as-records/AsGetTableIsDirty.al",
+                    lines: "9",
+                },
+                Evidence {
+                    file: "recordref/lt-recordref-isdirty-edges/RecordRefIsDirtyEdges.al",
+                    lines: "12",
+                },
+            ],
             Gate::ReportPartNamePropertiesFrom29 => &[
                 Evidence {
+                    file: "platform/lt-ba-columns/BaLayoutNoSubtype.al",
+                    lines: "40,93,102",
+                },
+                Evidence {
+                    file: "report/lt-aq/AqParts.al",
+                    lines: "10",
+                },
+                Evidence {
                     file: "report/lt-y-report-props/YReportPropsTests.al",
-                    lines: "44,63,82,101,120,139,154,170,188,206,256",
+                    lines: "45,60,75,90,105,120,135,151,169,187,237",
                 },
                 Evidence {
                     file: "report/lt-y-request-page/YRequestPageTests.al",
@@ -357,18 +423,30 @@ impl Gate {
                 file: "report/lt-t-validate-layout/TValidateLayout.al",
                 lines: "144,150",
             }],
-            Gate::FullyQualifiedNameRunAndOpenFrom28 => &[Evidence {
-                file: "report/lt-t-fqn-run/LtTFqnRun.al",
-                lines: "7",
-            }],
+            Gate::FullyQualifiedNameRunAndOpenFrom28 => &[
+                Evidence {
+                    file: "report/lt-bj-fqn-page-run/BjFqnPageRun.al",
+                    lines: "8",
+                },
+                Evidence {
+                    file: "report/lt-t-fqn-run/LtTFqnRun.al",
+                    lines: "7",
+                },
+            ],
             Gate::ControlAddInNotInstantiatedErrorFrom28 => &[Evidence {
                 file: "lt-ac/ACControlAddIn.al",
                 lines: "99",
             }],
-            Gate::JsonSelectTokensListFrom28 => &[Evidence {
-                file: "json/lt-json-selecttokens/SelectTokensList.al",
-                lines: "8",
-            }],
+            Gate::JsonSelectTokensListFrom28 => &[
+                Evidence {
+                    file: "json/lt-ay-json/AyJsonTokenSelectTokens.al",
+                    lines: "12",
+                },
+                Evidence {
+                    file: "json/lt-json-selecttokens/SelectTokensList.al",
+                    lines: "8",
+                },
+            ],
             Gate::WindowsLanguageRowsFrom29 => &[Evidence {
                 file: "platform/lt-ag-contoso/AgWindowsLanguage.al",
                 lines: "58",
@@ -401,10 +479,16 @@ impl Gate {
                 file: "lt-ac/ACIsolatedStorageIsolation.al",
                 lines: "7",
             }],
-            Gate::RecordIsDirtyFrom29 => &[Evidence {
-                file: "lt-ac/ACRecordIsDirty.al",
-                lines: "7",
-            }],
+            Gate::RecordIsDirtyFrom29 => &[
+                Evidence {
+                    file: "events/lt-with-statement-scopes/WithStatementAmbiguous.al",
+                    lines: "254,266,276,380",
+                },
+                Evidence {
+                    file: "lt-ac/ACRecordIsDirty.al",
+                    lines: "7",
+                },
+            ],
             Gate::PartLineBeforeHostKeyFrom28 => &[Evidence {
                 file: "pages/lt-part-line-before-host-key/PartLineBeforeHostKey.al",
                 lines: "322",
@@ -418,6 +502,10 @@ impl Gate {
                 lines: "145",
             }],
             Gate::PlatformMetadataColumnsFrom29 => &[
+                Evidence {
+                    file: "system-fields/W6SystemFieldStamps.al",
+                    lines: "182",
+                },
                 Evidence {
                     file: "metadata/W6AllObj.al",
                     lines: "207,212",
@@ -466,6 +554,18 @@ impl Gate {
                 lines: "43",
             }],
             Gate::ProbedValuesDifferFrom28 => &[
+                Evidence {
+                    file: "install/lt-bf-install-probes/BfInstallTests.al",
+                    lines: "84,89,124,131",
+                },
+                Evidence {
+                    file: "query/lt-az-query/AzQueryTests.al",
+                    lines: "262,284,291",
+                },
+                Evidence {
+                    file: "platform/lt-aw-fresh-tenant/AwTests.al",
+                    lines: "229,245,261,277,293,611",
+                },
                 Evidence {
                     file: "misc/lt-probes-needed-1/PnACalcFieldsBC29.al",
                     lines: "210",
@@ -521,6 +621,10 @@ impl Gate {
             ],
             Gate::ProbedValuesDifferFrom29 => &[
                 Evidence {
+                    file: "types/lt-bu-property-conversions/BuPropertyConversions.al",
+                    lines: "25,83",
+                },
+                Evidence {
                     file: "misc/lt-probes-needed-1/PnABlobLength.al",
                     lines: "34",
                 },
@@ -562,6 +666,10 @@ impl Gate {
                 lines: "83,88,231",
             }],
             Gate::TestFieldTypedValueTexts => &[
+                Evidence {
+                    file: "record/lt-as-records/AsTestFieldTexts.al",
+                    lines: "41,60,140,163",
+                },
                 Evidence {
                     file: "record/lt-testfield-typed-values/FieldRefTestFieldTypedNumeric.al",
                     lines: "143,165,175,207",
@@ -608,15 +716,29 @@ impl Gate {
                 file: "../al-language-onprem/lt-file-type/FileQProbes.al",
                 lines: "92",
             }],
-            Gate::MediaExportKeepsTheImportedBytes => &[Evidence {
-                file: "types/W7Media.al",
-                lines: "134,141,146",
-            }],
+            Gate::MediaExportKeepsTheImportedBytes => &[
+                Evidence {
+                    file: "report/lt-bc-xml-blob/BcXmlBlob.al",
+                    lines: "213,222",
+                },
+                Evidence {
+                    file: "types/W7Media.al",
+                    lines: "134,141,146",
+                },
+            ],
             Gate::FeatureKeyListChangedFrom28 => &[Evidence {
                 file: "record/TestFieldLenAndFeatureKeyContracts.al",
                 lines: "97",
             }],
             Gate::ReportSaveAsDataItemIdentity => &[
+                Evidence {
+                    file: "report/lt-aq/AqTests.al",
+                    lines: "170,232",
+                },
+                Evidence {
+                    file: "report/lt-bc-xml-blob/BcXmlBlob.al",
+                    lines: "101,118,148,224",
+                },
                 Evidence {
                     file: "handlers/TestReportSaveAsDatasetContracts.al",
                     lines: "299",

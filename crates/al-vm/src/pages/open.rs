@@ -2,7 +2,7 @@ use super::*;
 use al_builtins::record_op::RecordOp;
 
 /// The filter group of the cut that hides the rows below indentation 0 of a tree repeater.
-const TREE_GROUP: i32 = 6;
+pub(super) const TREE_GROUP: i32 = 6;
 
 impl Session {
     pub(super) fn page_open(&mut self, st: &St, mode: PageMode) -> Result<Value, Signal> {
@@ -68,7 +68,17 @@ impl Session {
         let inst = self.page_instance(st)?;
         if st.borrow().host.is_none() && !st.borrow().inited {
             st.borrow_mut().inited = true;
-            self.page_trigger(st, "oninit", vec![])?;
+            // OnInit reads the page's own Editable, not what the variable was set to before (handlers/PWPageVariableEditable.al:221-240;
+            // misc/lt-probes-needed-4/PnD13_PageEditableViewMode.al:197 ViewModePage_GivenEditableTrue `onInit = No` with SetRecord
+            // after the Editable call).
+            let preset = st.borrow_mut().editable_preset.take();
+            let r = self.page_trigger(st, "oninit", vec![]);
+            let mut s = st.borrow_mut();
+            if s.editable_preset.is_none() {
+                s.editable_preset = preset;
+            }
+            drop(s);
+            r?;
         }
         Ok(inst)
     }
@@ -171,6 +181,7 @@ impl Session {
             s.pending = None;
             s.result = None;
             s.editable_off = false;
+            s.expanded = Vec::new();
             // A caption assigned to the variable before its first run stays.
             // It stays for a second run too (types/lt-caption-assigned-before-run/CaptionAssignedBeforeRun.al:P187_SecondRun_NoReassign,
             // `OnOpenPage [Assigned One]` twice); a caption assigned while the page ran is dropped.
@@ -226,6 +237,11 @@ impl Session {
             dst.filters = src.filters.clone();
             dst.key = src.key;
             dst.adhoc = src.adhoc.clone();
+            // The marks and MarkedOnly come along: the page shows the marked rows only, of a real and of a temporary record
+            // (misc/lt-protected-var-abs-query-views/P146ViewMarkedTemp.al:304 P146_PageRunModal_MarkedOnly_Real, :362
+            // P146_PageRunModal_Temporary). A page variable's SetRecord or SetTableView with marks is refused there (not pinned).
+            dst.marks = src.marks.clone();
+            dst.marked_only = src.marked_only;
             // A record that is no temporary one (a view only, see SetTableView) leaves a page whose source table is temporary on its own rows.
             if src.temporary || !dst.temporary {
                 dst.temporary = src.temporary;
@@ -263,20 +279,7 @@ impl Session {
         // and a TestPage does not expand them (pages/lt-page-controls-aa/AaPartsLists.al:AA_Repeater_TreeExpandedRows line 272, ExpandAll;
         // pageext/lt-page-ext-properties/PageTree.al:P123_ShowAsTreeRows, CollapseAll). The rows are cut by a filter in a group of its own.
         if has_source {
-            let tree_field = {
-                let page = page_of(&engine, st);
-                page.controls
-                    .iter()
-                    .find(|c| {
-                        c.kind == ir::ControlKind::Repeater
-                            && matches!(c.prop("showastree"), Some(ir::PropVal::Lit(v)) if unquote(v).eq_ignore_ascii_case("true"))
-                    })
-                    .and_then(|c| match c.prop("indentationcolumn") {
-                        Some(ir::PropVal::Lit(v)) => Some(unquote(v)),
-                        _ => None,
-                    })
-            };
-            if let Some(expr) = tree_field {
+            if let Some(expr) = self.tree_indentation(st) {
                 let rec = self.page_rec(st);
                 let table = self.table(&rec)?;
                 let name = expr
@@ -449,6 +452,18 @@ impl Session {
                         return self.arrive(st);
                     }
                 }
+            }
+            // A record that names no row of the view (a blank one, a SetTableView, a row outside the view or not in the table)
+            // opens the page `=><` from the record's own values: the row itself, else the next one in the view's direction, else
+            // the one before. A descending view opened on a blank record lands on its last row (misc/W2PageProperties.al:234
+            // SetTableView_DescendingOrder `[A]`; pages/lt-page-sourceview-current-row/PageSourceViewCurrentRow.al:140
+            // P184_RunModal_NoRecord_DescendingView `1`, :192 P184_RunModal_RecordWithOwnFilterAndKey `1`), a record past the
+            // last row on the last row (platform/lt-xmlport-session-navapp-cookie/P94PageRun.al:88 Run_WithRecordNotInTable
+            // `id=3`, record/lt-loadfields-pagesource-validate/P81PageTempSource.al:358 PageVar_SetRecord_TempRecord `D2`).
+            // An action's RunPageView opens on the first row of its view instead (handlers/TestPageActionRunPageView.al:296
+            // RunPageView_OrderDescending_ReversesTheOpenedPage `cur=4`); `lenient_bind` marks that open (run_object_page).
+            if !self.declares(st, "onfindrecord") && !self.pages.lenient_bind {
+                return self.page_first_row_from(st, "=><", true);
             }
         }
         self.page_first_row(st)
@@ -796,6 +811,153 @@ impl Session {
         }
     }
 
+    /// The IndentationColumn of the page's repeater when it has ShowAsTree, as written.
+    pub(super) fn tree_indentation(&self, st: &St) -> Option<String> {
+        let engine = self.engine();
+        page_of(&engine, st)
+            .controls
+            .iter()
+            .find(|c| {
+                c.kind == ir::ControlKind::Repeater
+                    && matches!(c.prop("showastree"), Some(ir::PropVal::Lit(v)) if unquote(v).eq_ignore_ascii_case("true"))
+            })
+            .and_then(|c| match c.prop("indentationcolumn") {
+                Some(ir::PropVal::Lit(v)) => Some(unquote(v)),
+                _ => None,
+            })
+    }
+
+    /// The position of the Integer field a tree indents by, when the page is a tree over one.
+    pub(super) fn tree_level_field(&self, st: &St) -> Result<Option<usize>, Signal> {
+        let Some(expr) = self.tree_indentation(st) else {
+            return Ok(None);
+        };
+        let rec = self.page_rec(st);
+        let table = self.table(&rec)?;
+        let name = expr
+            .trim()
+            .strip_prefix("Rec.")
+            .unwrap_or(expr.trim())
+            .trim_matches('"')
+            .to_string();
+        Ok(table
+            .fields
+            .iter()
+            .position(|f| f.name.eq_ignore_ascii_case(&name) && matches!(f.ty, RtType::Integer)))
+    }
+
+    /// `Expand(on)` on the row a tree stands on: Expand(true) shows the row's direct children, Expand(false) hides them again, and
+    /// IsExpanded reads which (pages/lt-ah-pages/AhPageTests.al:950-961 Walk, :986-993 Tree_ThroughPageRun `T1 T5` -> `T1 T2 T4 T5`
+    /// -> `T1 T5`, GoToKey of a hidden child `No`). A row's parent is the nearest row before it, in the page's order, with a lower
+    /// level. Pinned only for a page without row triggers, a primary key of one field, expanding a row with children and collapsing
+    /// an expanded one; anything else is refused.
+    pub(super) fn tree_expand(&mut self, st: &St, on: bool) -> Result<(), Signal> {
+        for t in [
+            "onfindrecord",
+            "onnextrecord",
+            "onaftergetrecord",
+            "onaftergetcurrrecord",
+        ] {
+            if self.declares(st, t) {
+                return unsupported(
+                    "Expand on a tree page with row triggers (which rows are read again is not pinned)",
+                );
+            }
+        }
+        if st.borrow().cursor != Cursor::Row || st.borrow().draft {
+            return unsupported("Expand on a tree page that stands on no stored row (not pinned)");
+        }
+        let Some(level) = self.tree_level_field(st)? else {
+            return unsupported("Expand on a tree whose IndentationColumn is not an Integer field (not pinned)");
+        };
+        let rec = self.page_rec(st);
+        let table = self.table(&rec)?;
+        if table.keys[0].len() != 1 {
+            return unsupported("Expand on a tree over a table whose primary key has several fields (not pinned)");
+        }
+        let pk = table.keys[0][0];
+        let current = self.row_key(&rec)?;
+        // Every row of the view with its level, in the page's order, the tree's own cut left out.
+        let all = Rc::new(RefCell::new(rec.borrow().clone()));
+        all.borrow_mut().filters.retain(|f| f.group != TREE_GROUP);
+        let mut rows: Vec<(Vec<Value>, i32)> = Vec::new();
+        self.ret_used = true;
+        if matches!(self.record_op(RecordOp::FindSet, &all, &mut [])?, Value::Boolean(true)) {
+            loop {
+                let lvl = match &all.borrow().fields[level] {
+                    Value::Integer(n) => *n,
+                    _ => 0,
+                };
+                rows.push((self.row_key(&all)?, lvl));
+                self.ret_used = true;
+                if !matches!(self.record_op(RecordOp::Next, &all, &mut [Value::Integer(1)])?, Value::Integer(n) if n != 0)
+                {
+                    break;
+                }
+            }
+        }
+        let at = rows.iter().position(|(k, _)| Self::same_key(k, &current));
+        let has_children = at.is_some_and(|i| rows.get(i + 1).is_some_and(|(_, l)| *l > rows[i].1));
+        {
+            let mut s = st.borrow_mut();
+            let known = s.expanded.iter().position(|k| Self::same_key(k, &current));
+            match (on, known) {
+                (true, None) if has_children => s.expanded.push(current.clone()),
+                (false, Some(i)) => {
+                    s.expanded.remove(i);
+                }
+                _ => {
+                    return unsupported(
+                        "Expand(true) on a tree row without children or one already expanded, or Expand(false) on a row not expanded (not pinned)",
+                    );
+                }
+            }
+        }
+        // Which rows show: a row with no parent shows when it is at level 0 (the cut at open); any other row when its parent shows
+        // and is expanded.
+        let expanded = st.borrow().expanded.clone();
+        let mut stack: Vec<(i32, bool)> = Vec::new();
+        let mut shown: Vec<al_builtins::filter::FilterExpr> = Vec::new();
+        for (key, lvl) in &rows {
+            while stack.last().is_some_and(|(l, _)| *l >= *lvl) {
+                stack.pop();
+            }
+            let visible = match stack.last() {
+                None => *lvl == 0,
+                Some((_, open)) => *open,
+            };
+            let open = visible && expanded.iter().any(|k| Self::same_key(k, key));
+            stack.push((*lvl, open));
+            if visible {
+                shown.push(al_builtins::filter::FilterExpr::Eq(key[0].clone()));
+            }
+        }
+        {
+            let mut r = rec.borrow_mut();
+            r.filters.retain(|f| f.group != TREE_GROUP);
+            let expr = if expanded.is_empty() {
+                r.filters.push(al_builtins::filter::FieldFilter {
+                    field: level,
+                    expr: al_builtins::filter::FilterExpr::Eq(Value::Integer(0)),
+                    group: TREE_GROUP,
+                });
+                None
+            } else {
+                Some(al_builtins::filter::FilterExpr::Or(shown))
+            };
+            if let Some(expr) = expr {
+                r.filters.push(al_builtins::filter::FieldFilter {
+                    field: pk,
+                    expr,
+                    group: TREE_GROUP,
+                });
+            }
+        }
+        // The client reads the rows again from the row it stands on.
+        st.borrow_mut().window = Vec::new();
+        self.arrive(st)
+    }
+
     /// Whether the page carries the blank line past its data: an editable,
     /// insert-allowed repeater opened with OpenEdit (corpus
     /// handlers/TestPageNewRowLine_Tests.al:1-30, gating arms).
@@ -810,7 +972,11 @@ impl Session {
                 .iter()
                 .any(|(k, v)| k.eq_ignore_ascii_case(n) && v.trim().eq_ignore_ascii_case("false"))
         };
+        // A tree shows no blank line, opened by Page.Run, Page.RunModal or a Page variable (pages/lt-ah-pages/AhPageTests.al:986,
+        // :1006, :1026, :1044 `rows_initial = T1 T5`).
+        let tree = self.tree_indentation(st).is_some();
         Ok(has_repeater
+            && !tree
             && st.borrow().mode == PageMode::Edit
             // A list handed over in lookup mode has no new-row line (corpus
             // handlers/TestPageModalNewRowLine_Tests.al:209 Plain_LookupModeTrue_HasNoNewRowLine). Only a
@@ -878,6 +1044,28 @@ impl Session {
         } else {
             "-"
         };
+        self.page_first_row_from(st, which, false)
+    }
+
+    /// `page_first_row`, finding the first row with `which`. With `handed` (a `=><` from a handed record) a row other than the
+    /// first of the view starts a window that does not begin at the view's start.
+    fn page_first_row_from(&mut self, st: &St, which: &str, handed: bool) -> Result<(), Signal> {
+        // The first row of the view, to tell whether a `=><` landed on it (a copy of the record, so the page's own is not moved).
+        let first_key = if handed && self.is_list(st) {
+            let rec = self.page_rec(st);
+            let probe = Rc::new(RefCell::new(rec.borrow().clone()));
+            self.ret_used = true;
+            if matches!(
+                self.record_op(RecordOp::FindFirst, &probe, &mut [])?,
+                Value::Boolean(true)
+            ) {
+                Some(self.row_key(&probe)?)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
         if self.nav_find(st, which)? {
             st.borrow_mut().cursor = Cursor::Row;
             st.borrow_mut().landing_first = true;
@@ -894,7 +1082,10 @@ impl Session {
             };
             r?;
             // The window starts at the first row of the view.
-            let from_start = self.is_list(st);
+            let rec = self.page_rec(st);
+            let landed = self.row_key(&rec)?;
+            let from_start =
+                self.is_list(st) && (!handed || first_key.as_ref().is_some_and(|k| Self::same_key(k, &landed)));
             st.borrow_mut().window_from_start = from_start;
             Ok(())
         } else if st.borrow().new_line {

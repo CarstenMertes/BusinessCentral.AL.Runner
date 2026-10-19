@@ -411,21 +411,22 @@ pub fn lean_named(ws: &Workspace, keep: &[(usize, u32)]) -> Vec<bool> {
     let n = ws.objects.len();
     let mut by_name: HashMap<String, Vec<usize>> = HashMap::default();
     let mut by_id: HashMap<u32, Vec<usize>> = HashMap::default();
-    let mut named = vec![false; n];
     let mut queue = Vec::new();
-    for oi in 0..n {
+    for (oi, o) in ws.objects.iter().enumerate() {
         if ws.is_dependency(oi) {
             continue;
         }
-        let o = &ws.objects[oi];
         by_name.entry(o.name.to_lowercase()).or_default().push(oi);
         if let Some(id) = o.id {
             by_id.entry(id).or_default().push(oi);
             if o.kind == ObjKind::Codeunit && keep.contains(&(o.app, id)) {
-                named[oi] = true;
                 queue.push(oi);
             }
         }
+    }
+    let mut named = vec![false; n];
+    for &oi in &queue {
+        named[oi] = true;
     }
     let name = |oi: usize, named: &mut Vec<bool>, queue: &mut Vec<usize>| {
         if !ws.is_dependency(oi) && !named[oi] {

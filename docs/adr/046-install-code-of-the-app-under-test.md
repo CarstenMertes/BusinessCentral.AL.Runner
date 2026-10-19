@@ -1,6 +1,6 @@
 # ADR-046: The install code of the app under test runs in the install baseline; several companies only as an opt-in
 
-- Status: Proposed
+- Status: Accepted (owner, 2026-10-19, with the `--companies` flag)
 - Date: 2026-10-19
 - Amends: ADR-013 decision 5 (items 1 and 2) and its section "Install baseline and Global Triggers as built"
 
@@ -14,6 +14,8 @@ Owner decisions (2026-10-19):
   database, whatever the database holds.
 - **Several companies are an opt-in**, for partner tests that rely on several companies. Under the opt-in the app under
   test's install code runs once per company, session company first, then the per-database part once.
+- The opt-in is one flag that lists the companies to run, `--companies <NAME>[,<NAME>...]`, or `--companies all` for
+  every company in the database. Without the flag the run has one company, the session company.
 
 This ADR says what runs in each mode, how a test that observes another company is handled in the default mode, how
 the corpus run gets the opt-in, and what still needs a corpus probe before it is built.
@@ -82,11 +84,22 @@ company of the test session = Yes] but was []") and `EventLog_RowsWrittenBeforeT
    - **One company (the default).** The run has one company, the session company. The install baseline never runs for
      another company, whatever the database holds; a test-data backup with several companies (the demo backup holds
      "My Company" too, `docs/probes-needed.md:215`) is no exception.
-   - **Several companies (opt-in).** `--other-company NAME`, repeatable, on `alrunner test` and `al-test-cli` (later
-     `otherCompanies` in `alrunner serve`, ADR-028). The run then declares the complete company list of the database:
-     the session company first, then the named companies in the order given. The list is a host fact next to the
-     company name (`al-host` `Identity`, an added method whose default is the empty list) and part of the baseline cache
-     key, next to `company_name` (`runtime/corpus.rs:1151-1152`).
+   - **Several companies (opt-in).** One flag, `--companies <NAME>[,<NAME>...]`, on `alrunner test` and `al-test-cli`
+     (later `companies` in `alrunner serve`, ADR-028). It declares the complete company list of the database, in run
+     order. Two forms:
+     - **A list of names.** The first name is the session company. The session company is still chosen as today (the
+       company restored from the test data, `--test-data-company`, the recipe lane, or the default name); the first name
+       must be that company, or the runner stops with a usage error before anything runs. The other names follow in the
+       order given. A name given twice is a usage error. A name with a comma cannot be given (none is known to be
+       needed).
+     - **`all`.** Every company in the database the run starts from: the session company first, then the others in the
+       Company table's key order (the order of the opt-in is probe P2). The database the run starts from is the
+       test-data backup; a run without test data (`--no-test-data`, the corpus run) starts from an empty database, so
+       there `all` gives only the session company, the same as the default.
+
+     The resolved list is a host fact next to the company name (`al-host` `Identity`, an added method whose default is
+     the empty list, meaning one company) and part of the baseline cache key, next to `company_name`
+     (`runtime/corpus.rs:1151-1152`).
 
 3. **The steps of the install baseline**, once per run, on one fresh session:
 
@@ -159,16 +172,19 @@ company of the test session = Yes] but was []") and `EventLog_RowsWrittenBeforeT
 ### How the corpus run gets the opt-in
 
 The corpus CI database has two companies (facts 2 and 4). It is a fact of the oracle's run, like the Microsoft build
-of each major. So `oracle/oracle.toml` gets a top-level `companies` list (session company first), set at the corpus
-bump that brings probe P1 and citing it, in the same way as `bc_build`. A `[[version]]` table may override it if P1
-shows that the majors differ. `al-test-cli` runs every suite of the corpus job with that list as the opt-in. The OnPrem
+of each major. So `oracle/oracle.toml` gets a top-level `companies` key, set at the corpus bump that brings probe P1
+and citing it, in the same way as `bc_build`. It takes the same values as the flag: a list of names, session company
+first (`companies = ["CRONUS International Ltd.", "My Company"]` if P1 confirms those names), or `"all"`. Because the
+corpus run starts from an empty database, `"all"` gives the corpus only the session company; the corpus needs the
+list of names. A `[[version]]` table may override the key if P1 shows that the majors differ. `al-test-cli` runs every
+suite of the corpus job with that value as the opt-in; `--companies` on the command line overrides it. The OnPrem
 suites run in separate CI jobs of the same artifact (`.github/workflows/ci.yml` in the corpus, jobs `test-onprem` and
 `test-onprem-dotnet`); P1 checks their databases too.
 
 Until P1 lands, `companies` is absent and the corpus runs in the default mode: the two PeV tests are not run (item 4c).
 
 The default mode also needs coverage. A new check, `tools/company_mode_check.sh run`, runs the corpus with the opt-in
-and again without it, and compares the JUnit files (like `tools/baseline_rule_check.sh`). A case may differ only by
+(the `companies` value of `oracle.toml`) and again with one company (the run ignores `companies`), and compares the JUnit files (like `tools/baseline_rule_check.sh`). A case may differ only by
 being not run in the default mode. A case that passes or fails differently is an error. This shows that the default
 mode refuses what it cannot know and never answers it differently.
 
@@ -180,7 +196,7 @@ Each step is built only after the probes it names have landed and the submodule 
 - **Step A** (waits for P4, P6, P7): decision 1 for every app, step 4 per app in the default mode, decision 7, item
   4c, the two consumers below (demand roots, impact points), and the measurement under "Not decided". Expected: no
   baseline case lost; the two PeV tests become not run.
-- **Step B** (waits for P1 and P8): the opt-in (`--other-company`, the `Identity` method, `companies` in
+- **Step B** (waits for P1 and P8): the opt-in (`--companies`, the `Identity` method, `companies` in
   `oracle.toml`), step 4a per declared company, decisions 5 and 6, the default-mode refusals 4a and 4b, and
   `tools/company_mode_check.sh`. Items 4a and 4b come only together with the corpus opt-in, so the corpus cases that
   read the Company table or name a company keep passing. Two baseline cases of that kind: `Company_Names` counts the
@@ -225,7 +241,7 @@ Each step is built only after the probes it names have landed and the submodule 
   default mode they run in the session company, as today.
 - The refusals 4a and 4b can turn Microsoft tests that scan the Company table or name another company into not run.
   The buckets are run before and after step B, and the pull request lists every changed outcome. A recipe lane can use
-  the opt-in once its companies are known (P9).
+  the opt-in (`--companies` with a list, or `all` on a lane that restores a backup) once its companies are known (P9).
 
 **Partner runs.** NP Retail's 14 install codeunits are dependency roots in its run: unchanged. Its test app (1 install
 codeunit) runs as today in the default mode. Under the opt-in, each per-company routine of the apps under test runs once
@@ -247,7 +263,7 @@ items 1 to 3 ask related questions for install codeunits.
   table's key order, on BC 27, 28 and 29, in the main job and the two OnPrem jobs; check the Windows nightly too.
   Evidence so far, not a pin: the probe agent measured "CRONUS International Ltd." then "My Company"
   (`docs/probes-needed.md:29`), and the demo backup holds a second company "My Company" (`docs/probes-needed.md:215`).
-  Decides: `companies` in `oracle.toml`. Blocks step B.
+  Decides: the list of names in `companies` in `oracle.toml`. Blocks step B.
 - **P2. Under the opt-in, in which order do the companies get the per-company install code: the session company first,
   or the Company table's key order?** In the corpus CI the session company also sorts first by name, so
   `PeVTests.al:313-314` cannot tell the two apart. The corpus CI cannot vary its companies, so this needs another CI setup
@@ -307,7 +323,7 @@ items 1 to 3 ask related questions for install codeunits.
   extension that installs through them gets its install data.
 - In the default mode, tests that scan the Company table, name a company the run does not know, or read a shared table
   that per-company install code fills are not run, with the reason. Today they are answered. Partner tests that need
-  them use the opt-in with their CI's companies.
+  them use the opt-in: `--companies` with their CI's companies, or `--companies all` when the test data holds them.
 - With the corpus opt-in, `EventLog_InstallRowCompany` can pass after step B. `EventLog_RowsWrittenBeforeTheTestSessionStarted`
   also needs the Company Triggers change.
 - Two workspace apps with install code now run one after the other, not interleaved. No corpus app other than

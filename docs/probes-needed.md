@@ -910,3 +910,15 @@ Refused until a probe pins them. Each code path cites the corpus test that pins 
 | HTTP | `SetRequestUri` of a text `http:` or `https:` followed by something other than `//` (`http:x`); `http:` and `https:` alone are invalid (misc/lt-probes-needed-4/PnD06_SetRequestUri.al:65-66) | `http:x`, `http:/x`, `https:x.y` | `al-builtins/src/http.rs` `normalize_uri` |
 | Text | `Text.LastIndexOf('', 0)` on an empty text (`LastIndexOf('', 1)` is 1, text/lt-text-instance/Search1.Codeunit.al:351) | the result, or the error | `al-builtins/src/textfns.rs` |
 | RecordRef | Documentation-only assumption: `RecordRef.FieldIndex` lists a FlowFilter field among the other fields in id order; only FlowFields after the others is pinned (metadata/lt-custom-report-layout-columns/CustomReportLayoutColumns.al:33-44) | FieldIndex over a table with a FlowFilter field between normal fields and a FlowField | `al-vm/src/refs.rs` `enumerable_fields` |
+
+## Page row window (refused shapes, 2026-10-19)
+
+Refused in `al-vm/src/pages/rows.rs` until a probe pins them:
+- A move onto a held row of a page with OnFindRecord or OnNextRecord: whether the client reads the stored row again (pinned only for pages that read the table: pages/W1Update.al:836-840).
+- A move onto a held row that the table no longer has.
+- Last() on a list opened with OpenNew before a row is saved (First, Next, Previous are pinned: P84ListTemp.al:396-401, FilterChangeNewLine.al:191-195).
+- First/Previous/Last after a New() row was saved out of key order: the client keeps its own row order (P81PageTempSource.al:238-242 pins the order; the reads are not pinned).
+- GoToKey/GoToRecord on a find list with OnAfterGetCurrRecord from a row other than the first (AiListOrderTests.al:769 pins it from the first row only).
+- GoToKey past a full window of a find list: with OnAfterGetCurrRecord, a second block of 20 rows, or a key the view does not have (AiListOrderTests.al:999 pins 25 rows without that trigger).
+- A descending find list with OnAfterGetCurrRecord that opens on a row other than the last of its view, and First with a second full block above the window (PnF06FindListMoves.al:304, :318 pin 3 and 25 rows).
+- Not observed by its test: the read of the opening row before OnNextRecord(-1) when a find list opens on its last row and has rows above it (AiListOrderTests.al:825 OpenOnRow_SetPositionInOnOpenPage_LastRow; implemented as no read, the one-row rule).

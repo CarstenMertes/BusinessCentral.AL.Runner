@@ -67,6 +67,16 @@ page 64512 "DL Card"
         }
     }
 }
+report 64520 "DL Report"
+{
+    ProcessingOnly = true;
+    dataset { dataitem(Rows; "DL Item") { } }
+    requestpage
+    {
+        layout { area(Content) { field(Off; Txt) { DrillDown = false; trigger OnDrillDown() begin Error('drilled off'); end; } } }
+    }
+    var Txt: Text[30];
+}
 "#;
 
 fn outcomes(tests: &str) -> Vec<(String, Outcome)> {
@@ -261,4 +271,18 @@ fn control_lookup_page_without_relation_does_nothing() {
         procedure PageOnly() var C: TestPage \"DL Card\"; begin
             Seed(); C.OpenEdit(); C.PageOnly.SetValue('x'); C.PageOnly.Lookup(); Check('x', C.PageOnly.Value()); C.Close(); end;"
     ));
+}
+
+// Not pinned: `DrillDown = false` on a request page control (UPageProps.al pins it on pages only).
+#[test]
+fn drill_down_false_on_a_request_page_is_refused() {
+    refused(
+        &format!(
+            "{SEED}
+        [Test] [HandlerFunctions('Rp')]
+        procedure RpOff() var Probe: Report \"DL Report\"; begin Seed(); Commit(); Probe.Run(); end;
+        [RequestPageHandler] procedure Rp(var R: TestRequestPage \"DL Report\") begin R.Off.Drilldown(); end;"
+        ),
+        "DrillDown = false on a request page",
+    );
 }

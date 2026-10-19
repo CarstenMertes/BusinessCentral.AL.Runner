@@ -78,6 +78,13 @@ impl Session {
             // `DrillDown = false` refuses the drill-down before any trigger runs, for a control of the page and of a page
             // extension alike (pageext/lt-u-page-props/UPageProps.al:113-127, `base_off`, `ext_off`).
             if lit("drilldown").is_some_and(|v| v.eq_ignore_ascii_case("false")) {
+                // Pinned on pages only; on a request page it waits for a probe (docs/probes-needed.md).
+                if self.is_request_page(st) {
+                    return unsupported(format!(
+                        "TestRequestPage DrillDown on control {} with DrillDown = false on a request page (not pinned; probe wanted: its error text and code, and whether OnDrillDown runs)",
+                        ctl.name
+                    ));
+                }
                 return Err(error_code(
                     "The NavDrilldownAction method is not supported.",
                     "MethodNotSupported",

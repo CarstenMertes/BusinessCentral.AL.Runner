@@ -2,7 +2,7 @@
   "corpus_commit": "be87ec9ce1781c95c1513514c6a3e4df6721881e",
   "language": {
     "bc": "27-29",
-    "implemented": 1494,
+    "implemented": 1497,
     "methods": [
       {
         "bc": [
@@ -1179,7 +1179,7 @@
         "scope": "",
         "sig": "()",
         "site": "types/lt-totext-bigtext-codeunit-run/P93Date.al:16",
-        "state": "refused",
+        "state": "implemented",
         "type": "Date"
       },
       {
@@ -1211,7 +1211,7 @@
         "scope": "",
         "sig": "()",
         "site": "types/lt-totext-bigtext-codeunit-run/P93Date.al:16",
-        "state": "refused",
+        "state": "implemented",
         "type": "Date"
       },
       {
@@ -1259,7 +1259,7 @@
         "scope": "",
         "sig": "()",
         "site": "types/lt-totext-bigtext-codeunit-run/P93Date.al:16",
-        "state": "refused",
+        "state": "implemented",
         "type": "Date"
       },
       {
@@ -27947,7 +27947,7 @@
     ],
     "overloads": 1750,
     "pinned": 1530,
-    "refused": 227,
+    "refused": 224,
     "runtime_only": [
       "ErrorInfo.Create#3",
       "FieldRef.FieldError#2",

@@ -143,6 +143,15 @@ pub enum Gate {
     /// compiles on 28 and later and has no BC 27 counterpart (al-language-onprem/lt-file-type/FileQProbes.al:92, corpus bump 24).
     /// Not consumed yet; the test is refused by the runtime today.
     FileDownloadWithoutClientFrom28,
+    /// Under `TestHttpRequestPolicy = BlockOutboundRequests` an `[HttpClientHandler]` answers the request from BC 29; before,
+    /// the request raises the unhandled-request error as if no handler were bound, and the unused handler does not fail the test
+    /// (al-language-onprem/session/PZHttpBlock.al:43-58 passes on BC 27 and 28: oracle/27/junit-onprem.xml:430, oracle/28/junit-onprem.xml:445).
+    HttpHandlerUnderBlockOutboundFrom29,
+    /// `HttpHeaders.Add` with a name of blanks raises `InvalidHeader:Format` from BC 29 and `InvalidHeader:Argument` on BC 28
+    /// (network/lt-http/HttpHeaders.al:304-308).
+    HttpBlankHeaderNameIsFormatFrom29,
+    /// The header name rules of `HttpHeaders.Add` are probed from BC 28: the test is `#if BC28PLUS` (network/lt-http/HttpHeaders.al:282).
+    HttpHeaderNameRulesProbedFrom28,
 }
 
 impl Gate {
@@ -188,6 +197,9 @@ impl Gate {
         Gate::Base64TextIsWindows1252From28,
         Gate::TestFieldTypedValueTexts,
         Gate::FileDownloadWithoutClientFrom28,
+        Gate::HttpHandlerUnderBlockOutboundFrom29,
+        Gate::HttpBlankHeaderNameIsFormatFrom29,
+        Gate::HttpHeaderNameRulesProbedFrom28,
     ];
 
     /// The first BC major with the new behaviour.
@@ -215,7 +227,9 @@ impl Gate {
             | Gate::ModuleInfoAndNavAppResourceMethodsFrom29
             | Gate::DataSourceAndTestHandlerContextFrom29
             | Gate::IsolatedStorageIsolationLevelOverloadsFrom29
-            | Gate::RecordIsDirtyFrom29 => 29,
+            | Gate::RecordIsDirtyFrom29
+            | Gate::HttpHandlerUnderBlockOutboundFrom29
+            | Gate::HttpBlankHeaderNameIsFormatFrom29 => 29,
             Gate::ReportSaveAsDataItemIdentity
             | Gate::FeatureKeyListChangedFrom28
             | Gate::FromBase64InvalidTextRaises
@@ -233,7 +247,8 @@ impl Gate {
             | Gate::MetadataNotFoundNamesTheCallerFrom28
             | Gate::FullyQualifiedNameRunAndOpenFrom28
             | Gate::ControlAddInNotInstantiatedErrorFrom28
-            | Gate::JsonSelectTokensListFrom28 => 28,
+            | Gate::JsonSelectTokensListFrom28
+            | Gate::HttpHeaderNameRulesProbedFrom28 => 28,
         }
     }
 
@@ -563,6 +578,18 @@ impl Gate {
                     lines: "486,532,538,544",
                 },
             ],
+            Gate::HttpHandlerUnderBlockOutboundFrom29 => &[Evidence {
+                file: "../al-language-onprem/session/PZHttpBlock.al",
+                lines: "54-57",
+            }],
+            Gate::HttpBlankHeaderNameIsFormatFrom29 => &[Evidence {
+                file: "network/lt-http/HttpHeaders.al",
+                lines: "304-308",
+            }],
+            Gate::HttpHeaderNameRulesProbedFrom28 => &[Evidence {
+                file: "network/lt-http/HttpHeaders.al",
+                lines: "282",
+            }],
             Gate::FileDownloadWithoutClientFrom28 => &[Evidence {
                 file: "../al-language-onprem/lt-file-type/FileQProbes.al",
                 lines: "92",

@@ -4667,6 +4667,15 @@
         },
         {
           "corpus_uses": 1,
+          "group": "page/field",
+          "ms_uses": 12,
+          "name": "ValuesAllowed",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "pageext/lt-page-ext-properties/PageFieldValuesAllowed.al:42"
+        },
+        {
+          "corpus_uses": 1,
           "group": "pageextension/action",
           "ms_uses": 12,
           "name": "Enabled",
@@ -4709,15 +4718,6 @@
           "pinned": true,
           "runtime_reads": false,
           "site": "pages/lt-report-page-properties/07-controladdin-scripts.al:10"
-        },
-        {
-          "corpus_uses": 1,
-          "group": "page/field",
-          "ms_uses": 12,
-          "name": "ValuesAllowed",
-          "pinned": true,
-          "runtime_reads": false,
-          "site": "pageext/lt-page-ext-properties/PageFieldValuesAllowed.al:42"
         },
         {
           "corpus_uses": 1,
@@ -5071,6 +5071,15 @@
           "site": "pages/lt-report-page-properties/05-requestpage-capclass.al:29"
         },
         {
+          "corpus_uses": 1,
+          "group": "report/field",
+          "ms_uses": 7,
+          "name": "ValuesAllowed",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "pages/lt-report-page-properties/05-requestpage-valuesallowed.al:29"
+        },
+        {
           "corpus_uses": 2,
           "group": "table",
           "ms_uses": 7,
@@ -5132,15 +5141,6 @@
           "pinned": true,
           "runtime_reads": false,
           "site": "pages/lt-page-presentation-properties/P119Labels.al:38"
-        },
-        {
-          "corpus_uses": 1,
-          "group": "report/field",
-          "ms_uses": 7,
-          "name": "ValuesAllowed",
-          "pinned": true,
-          "runtime_reads": false,
-          "site": "pages/lt-report-page-properties/05-requestpage-valuesallowed.al:29"
         },
         {
           "corpus_uses": 2,
@@ -6421,6 +6421,15 @@
           "site": null
         },
         {
+          "corpus_uses": 1,
+          "group": "table/field",
+          "ms_uses": 2,
+          "name": "ValuesAllowed",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "pageext/lt-page-ext-properties/TableFieldValuesAllowed.al:22"
+        },
+        {
           "corpus_uses": 6,
           "group": "xmlport",
           "ms_uses": 2,
@@ -6680,15 +6689,6 @@
           "pinned": false,
           "runtime_reads": false,
           "site": null
-        },
-        {
-          "corpus_uses": 1,
-          "group": "table/field",
-          "ms_uses": 2,
-          "name": "ValuesAllowed",
-          "pinned": true,
-          "runtime_reads": false,
-          "site": "pageext/lt-page-ext-properties/TableFieldValuesAllowed.al:22"
         },
         {
           "corpus_uses": 1,
@@ -12079,7 +12079,7 @@
           "name": "LookupPageId",
           "pinned": true,
           "runtime_reads": true,
-          "site": "pageext/lt-z-modify-controls/ZModifyControls.al:175"
+          "site": "pageext/lt-z-modify-controls/ZModifyControls.al:179"
         },
         {
           "corpus_uses": 5,
@@ -12710,6 +12710,15 @@
           "pinned": true,
           "runtime_reads": true,
           "site": "record/lt-x-table-props/XTableObjects.al:127"
+        },
+        {
+          "corpus_uses": 1,
+          "group": "table/field",
+          "ms_uses": 0,
+          "name": "SQLTimestamp",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "record/lt-x-table-props/XTableObjects.al:28"
         },
         {
           "corpus_uses": 2,
@@ -13693,15 +13702,6 @@
           "site": "record/lt-x-table-props/XTableObjects.al:27"
         },
         {
-          "corpus_uses": 1,
-          "group": "table/field",
-          "ms_uses": 0,
-          "name": "SQLTimestamp",
-          "pinned": true,
-          "runtime_reads": false,
-          "site": "record/lt-x-table-props/XTableObjects.al:28"
-        },
-        {
           "corpus_uses": 4,
           "group": "table/field",
           "ms_uses": 0,
@@ -13892,6 +13892,15 @@
           "corpus_uses": 0,
           "group": "codeunit",
           "ms_uses": 0,
+          "name": "CaptionClassTranslate",
+          "pinned": false,
+          "runtime_reads": true,
+          "site": null
+        },
+        {
+          "corpus_uses": 0,
+          "group": "codeunit",
+          "ms_uses": 0,
           "name": "ChangeCompany",
           "pinned": false,
           "runtime_reads": true,
@@ -14009,6 +14018,15 @@
           "corpus_uses": 0,
           "group": "codeunit",
           "ms_uses": 0,
+          "name": "OnDocumentReady",
+          "pinned": false,
+          "runtime_reads": true,
+          "site": null
+        },
+        {
+          "corpus_uses": 0,
+          "group": "codeunit",
+          "ms_uses": 0,
           "name": "OnGlobalRename",
           "pinned": false,
           "runtime_reads": true,
@@ -14036,6 +14054,15 @@
           "corpus_uses": 0,
           "group": "codeunit",
           "ms_uses": 0,
+          "name": "SubstituteReport",
+          "pinned": false,
+          "runtime_reads": true,
+          "site": null
+        },
+        {
+          "corpus_uses": 0,
+          "group": "codeunit",
+          "ms_uses": 0,
           "name": "ApplicationReportMergeStrategy",
           "pinned": false,
           "runtime_reads": false,
@@ -14046,15 +14073,6 @@
           "group": "codeunit",
           "ms_uses": 0,
           "name": "AutoFormatTranslate",
-          "pinned": false,
-          "runtime_reads": false,
-          "site": null
-        },
-        {
-          "corpus_uses": 0,
-          "group": "codeunit",
-          "ms_uses": 0,
-          "name": "CaptionClassTranslate",
           "pinned": false,
           "runtime_reads": false,
           "site": null
@@ -14537,15 +14555,6 @@
           "site": null
         },
         {
-          "corpus_uses": 0,
-          "group": "codeunit",
-          "ms_uses": 0,
-          "name": "OnDocumentReady",
-          "pinned": false,
-          "runtime_reads": false,
-          "site": null
-        },
-        {
           "corpus_uses": 1,
           "group": "codeunit",
           "ms_uses": 0,
@@ -14819,15 +14828,6 @@
           "corpus_uses": 0,
           "group": "codeunit",
           "ms_uses": 0,
-          "name": "SubstituteReport",
-          "pinned": false,
-          "runtime_reads": false,
-          "site": null
-        },
-        {
-          "corpus_uses": 0,
-          "group": "codeunit",
-          "ms_uses": 0,
           "name": "WordDocumentMergerAppMode",
           "pinned": false,
           "runtime_reads": false,
@@ -14850,9 +14850,9 @@
       "dimension": "syntax",
       "items": [
         {
-          "corpus_uses": 679344,
+          "corpus_uses": 679347,
           "group": "expression",
-          "ms_uses": 1807758,
+          "ms_uses": 1807854,
           "name": "NameRef",
           "pinned": true,
           "runtime_reads": true,
@@ -14861,7 +14861,7 @@
         {
           "corpus_uses": 248327,
           "group": "expression",
-          "ms_uses": 474879,
+          "ms_uses": 474891,
           "name": "MemberExpr",
           "pinned": true,
           "runtime_reads": true,
@@ -14886,9 +14886,9 @@
           "site": "ALTCallstackModuleInfos.al:26"
         },
         {
-          "corpus_uses": 31743,
+          "corpus_uses": 31746,
           "group": "statement",
-          "ms_uses": 187658,
+          "ms_uses": 187733,
           "name": "Block",
           "pinned": true,
           "runtime_reads": true,
@@ -14913,9 +14913,9 @@
           "site": "ALTIsolatedStorageOwner.al:25"
         },
         {
-          "corpus_uses": 5166,
+          "corpus_uses": 5169,
           "group": "statement",
-          "ms_uses": 79996,
+          "ms_uses": 80071,
           "name": "ExitStmt",
           "pinned": true,
           "runtime_reads": true,
@@ -14924,7 +14924,7 @@
         {
           "corpus_uses": 46575,
           "group": "expression",
-          "ms_uses": 77686,
+          "ms_uses": 77689,
           "name": "Literal:Integer",
           "pinned": true,
           "runtime_reads": true,
@@ -14933,7 +14933,7 @@
         {
           "corpus_uses": 7072,
           "group": "expression",
-          "ms_uses": 71172,
+          "ms_uses": 71175,
           "name": "ScopeExpr",
           "pinned": true,
           "runtime_reads": true,
@@ -14951,7 +14951,7 @@
         {
           "corpus_uses": 2136,
           "group": "expression",
-          "ms_uses": 33690,
+          "ms_uses": 33696,
           "name": "BinExpr =",
           "pinned": true,
           "runtime_reads": true,
@@ -14960,7 +14960,7 @@
         {
           "corpus_uses": 566,
           "group": "expression",
-          "ms_uses": 25503,
+          "ms_uses": 25509,
           "name": "ParenExpr",
           "pinned": true,
           "runtime_reads": true,
@@ -14978,7 +14978,7 @@
         {
           "corpus_uses": 871,
           "group": "expression",
-          "ms_uses": 24370,
+          "ms_uses": 24382,
           "name": "PrefixExpr not",
           "pinned": true,
           "runtime_reads": true,
@@ -15032,7 +15032,7 @@
         {
           "corpus_uses": 247,
           "group": "expression",
-          "ms_uses": 11380,
+          "ms_uses": 11383,
           "name": "BinExpr and",
           "pinned": true,
           "runtime_reads": true,
@@ -15847,7 +15847,7 @@
         "code": "AL:Format",
         "file": "crates/al-builtins/src/http.rs",
         "generic": false,
-        "line": 397,
+        "line": 402,
         "pinned": true,
         "site": "network/lt-http/HttpRequest.al:73",
         "template": "The format of the HTTP method is invalid."
@@ -15865,7 +15865,7 @@
         "code": "InvalidPath",
         "file": "crates/al-builtins/src/media.rs",
         "generic": false,
-        "line": 269,
+        "line": 284,
         "pinned": true,
         "site": "media/MediaFiles.al:203",
         "template": "The specified path is invalid."
@@ -15874,7 +15874,7 @@
         "code": "InvalidPath",
         "file": "crates/al-builtins/src/media.rs",
         "generic": false,
-        "line": 272,
+        "line": 287,
         "pinned": true,
         "site": "media/MediaFiles.al:205",
         "template": "Could not find a part of the path '%'."
@@ -15896,6 +15896,15 @@
         "pinned": true,
         "site": "session/W5NavAppResources.al:31",
         "template": "A resource matching '%' could not be found in app '%'."
+      },
+      {
+        "code": "InvalidOperation",
+        "file": "crates/al-builtins/src/native.rs",
+        "generic": false,
+        "line": 696,
+        "pinned": true,
+        "site": "codeunit/TestInterfaceRuntimeContracts.al:85",
+        "template": "Interface not initialized"
       },
       {
         "code": "AL:DivideByZero",
@@ -16009,7 +16018,7 @@
         "code": "InvalidStreamData",
         "file": "crates/al-builtins/src/stream.rs",
         "generic": false,
-        "line": 586,
+        "line": 623,
         "pinned": true,
         "site": "lt-file-type/FileReadSeek.al:114",
         "template": "Invalid data encountered in stream, unable to read text."
@@ -16018,7 +16027,7 @@
         "code": "InvalidStreamData",
         "file": "crates/al-builtins/src/stream.rs",
         "generic": false,
-        "line": 748,
+        "line": 785,
         "pinned": true,
         "site": "lt-file-type/FileReadSeek.al:114",
         "template": "Invalid data encountered in stream, unable to read text."
@@ -16027,7 +16036,7 @@
         "code": "InvalidStreamData",
         "file": "crates/al-builtins/src/stream.rs",
         "generic": false,
-        "line": 908,
+        "line": 950,
         "pinned": true,
         "site": "lt-file-type/FileReadSeek.al:114",
         "template": "Invalid data encountered in stream, unable to read text."
@@ -16036,7 +16045,7 @@
         "code": "DateInvalid",
         "file": "crates/al-builtins/src/stream.rs",
         "generic": false,
-        "line": 940,
+        "line": 982,
         "pinned": true,
         "site": "errors/lt-ms-refusals-131/P131EvalScalars.al:376",
         "template": "The date is not valid."
@@ -16045,7 +16054,7 @@
         "code": "ALSystemString",
         "file": "crates/al-builtins/src/textfns.rs",
         "generic": false,
-        "line": 482,
+        "line": 492,
         "pinned": true,
         "site": "errors/lt-ms-refusals-136/P136Text.al:113",
         "template": "Incorrect use of the where parameter."
@@ -16054,7 +16063,7 @@
         "code": "AL:Overflow",
         "file": "crates/al-builtins/src/textfns.rs",
         "generic": false,
-        "line": 882,
+        "line": 892,
         "pinned": true,
         "site": "errors/lt-error-handling/ErTRuntimeErrors.al:97",
         "template": "Arithmetic operation resulted in an overflow."
@@ -16117,7 +16126,7 @@
         "code": "AL:InvalidOperation",
         "file": "crates/al-vm/src/exec/run.rs",
         "generic": false,
-        "line": 571,
+        "line": 575,
         "pinned": true,
         "site": "TestDotNetValueKindsContracts.al:312",
         "template": "Collection was modified; enumeration operation may not execute."
@@ -16171,7 +16180,7 @@
         "code": "IndexOutOfBounds",
         "file": "crates/al-vm/src/interp.rs",
         "generic": false,
-        "line": 1053,
+        "line": 1054,
         "pinned": true,
         "site": "collections/lt-array-rows/ArrayRows.al:185",
         "template": "Index out of bounds."
@@ -16180,7 +16189,7 @@
         "code": "IndexOutOfBounds",
         "file": "crates/al-vm/src/interp.rs",
         "generic": false,
-        "line": 1130,
+        "line": 1131,
         "pinned": true,
         "site": "collections/lt-array-rows/ArrayRows.al:185",
         "template": "Index out of bounds."
@@ -16189,7 +16198,7 @@
         "code": "IndexOutOfBounds",
         "file": "crates/al-vm/src/interp.rs",
         "generic": false,
-        "line": 1140,
+        "line": 1141,
         "pinned": true,
         "site": "collections/lt-array-rows/ArrayRows.al:185",
         "template": "Index out of bounds."
@@ -16198,7 +16207,7 @@
         "code": "StackOverflow",
         "file": "crates/al-vm/src/lib.rs",
         "generic": false,
-        "line": 1048,
+        "line": 1074,
         "pinned": true,
         "site": "record/TestCalcFieldsTruncateUniqueContracts.al:179",
         "template": "There is insufficient memory to execute this function. This can be caused by recursive function calls. Contact your system administrator."
@@ -16252,7 +16261,7 @@
         "code": "RenameArgument",
         "file": "crates/al-vm/src/records.rs",
         "generic": false,
-        "line": 2438,
+        "line": 2680,
         "pinned": true,
         "site": "recordref/lt-refs/RfTWrite.al:223",
         "template": "The number of field arguments does not match the primary key size."
@@ -16261,7 +16270,7 @@
         "code": "RecordNotOpened",
         "file": "crates/al-vm/src/refs.rs",
         "generic": false,
-        "line": 169,
+        "line": 179,
         "pinned": true,
         "site": "errors/lt-ms-refusals-131/P131RecordRefGet.al:183",
         "template": "The record is not open."
@@ -16270,7 +16279,7 @@
         "code": "RecordNotOpened",
         "file": "crates/al-vm/src/refs.rs",
         "generic": false,
-        "line": 296,
+        "line": 306,
         "pinned": true,
         "site": "errors/lt-ms-refusals-131/P131RecordRefGet.al:183",
         "template": "The record is not open."
@@ -16279,7 +16288,7 @@
         "code": "RecordAlreadyOpened",
         "file": "crates/al-vm/src/refs.rs",
         "generic": false,
-        "line": 326,
+        "line": 336,
         "pinned": true,
         "site": "recordref/lt-recordref-fieldref-members/P92Open.al:168",
         "template": "The record is already open."
@@ -16288,7 +16297,7 @@
         "code": "RecordNotOpened",
         "file": "crates/al-vm/src/refs.rs",
         "generic": false,
-        "line": 608,
+        "line": 618,
         "pinned": true,
         "site": "errors/lt-ms-refusals-131/P131RecordRefGet.al:183",
         "template": "The record is not open."
@@ -16297,7 +16306,7 @@
         "code": "IndexOutOfBounds",
         "file": "crates/al-vm/src/refs.rs",
         "generic": false,
-        "line": 857,
+        "line": 867,
         "pinned": true,
         "site": "collections/lt-array-rows/ArrayRows.al:185",
         "template": "Index out of bounds."
@@ -16306,7 +16315,7 @@
         "code": "DB:KeyNotFound",
         "file": "crates/al-vm/src/refs.rs",
         "generic": false,
-        "line": 877,
+        "line": 887,
         "pinned": true,
         "site": "recordref/TestRecordRefKeyIndexSetRecFilterContracts.al:103",
         "template": "The % table does not have an active key at index %."
@@ -16315,7 +16324,7 @@
         "code": "KeyRef.{other}",
         "file": "crates/al-vm/src/refs.rs",
         "generic": false,
-        "line": 972,
+        "line": 982,
         "pinned": true,
         "site": "collections/lt-array-rows/ArrayRows.al:185",
         "template": "Index out of bounds"
@@ -16324,10 +16333,19 @@
         "code": "NotInitialized",
         "file": "crates/al-vm/src/refs.rs",
         "generic": false,
-        "line": 992,
+        "line": 1002,
         "pinned": true,
         "site": "misc/lt-probes-needed-4/PnD05_UnassignedFieldRef.al:42",
         "template": "Microsoft.Dynamics.Nav.Runtime.NavFieldRef variable not initialized."
+      },
+      {
+        "code": "",
+        "file": "crates/al-vm/src/reports.rs",
+        "generic": false,
+        "line": 1908,
+        "pinned": true,
+        "site": "handlers/TestReportRuntimeContracts.al:413",
+        "template": "The object has been run. Use the function CLEAR(Report)."
       },
       {
         "code": "MissingUIHandler",
@@ -16342,7 +16360,7 @@
         "code": "MissingUIHandler",
         "file": "crates/al-vm/src/ui.rs",
         "generic": false,
-        "line": 440,
+        "line": 451,
         "pinned": true,
         "site": "controls/W2PageVariableInit.al:288",
         "template": "Unhandled UI: % %"
@@ -16351,7 +16369,7 @@
         "code": "MissingUIHandler",
         "file": "crates/al-vm/src/ui.rs",
         "generic": false,
-        "line": 468,
+        "line": 479,
         "pinned": true,
         "site": "controls/W2PageVariableInit.al:288",
         "template": "Unhandled UI: % %"
@@ -16375,8 +16393,8 @@
         "template": "Invalid expression of type: table view.%%"
       }
     ],
-    "pinned": 70,
-    "sites": 70
+    "pinned": 72,
+    "sites": 72
   },
   "language": {
     "bc": "27-29",
@@ -19797,7 +19815,7 @@
         "pinned": true,
         "scope": "",
         "site": "record/lt-x-table-props/XTableObjects.al:28",
-        "state": "unknown"
+        "state": "implemented"
       },
       {
         "area": "properties",
@@ -19872,7 +19890,7 @@
         "pinned": true,
         "scope": "",
         "site": "pageext/lt-page-ext-properties/TableFieldValuesAllowed.al:22",
-        "state": "unknown"
+        "state": "implemented"
       },
       {
         "area": "properties",
@@ -21686,7 +21704,7 @@
         "owner": "PageControlModify",
         "pinned": true,
         "scope": "",
-        "site": "pageext/lt-z-modify-controls/ZModifyControls.al:175",
+        "site": "pageext/lt-z-modify-controls/ZModifyControls.al:179",
         "state": "implemented"
       },
       {
@@ -23307,7 +23325,7 @@
         "pinned": true,
         "scope": "",
         "site": "pageext/lt-page-ext-properties/PageFieldValuesAllowed.al:42",
-        "state": "unknown"
+        "state": "implemented"
       },
       {
         "area": "properties",
@@ -29456,7 +29474,7 @@
           28,
           29
         ],
-        "ms_uses": 187658,
+        "ms_uses": 187733,
         "name": "begin",
         "owner": "keyword",
         "pinned": true,
@@ -29516,7 +29534,7 @@
           28,
           29
         ],
-        "ms_uses": 79996,
+        "ms_uses": 80071,
         "name": "exit",
         "owner": "keyword",
         "pinned": true,
@@ -29591,7 +29609,7 @@
           28,
           29
         ],
-        "ms_uses": 24370,
+        "ms_uses": 24382,
         "name": "not",
         "owner": "keyword",
         "pinned": true,
@@ -30105,7 +30123,7 @@
         "pinned": false,
         "scope": "",
         "site": null,
-        "state": "unknown"
+        "state": "implemented"
       },
       {
         "area": "attributes",
@@ -30298,7 +30316,7 @@
         "pinned": false,
         "scope": "",
         "site": null,
-        "state": "unknown"
+        "state": "implemented"
       }
     ],
     "keywords_without_item": [

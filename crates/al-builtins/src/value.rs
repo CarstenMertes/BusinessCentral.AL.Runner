@@ -72,11 +72,18 @@ pub enum RtType {
 pub struct ListVec {
     items: Vec<Value>,
     pub version: u64,
+    /// Reads by List methods whose effect on a `foreach` over the list is not pinned (`collections.rs`, `read_list_unpinned`):
+    /// a foreach that sees this change refuses (`exec/run.rs`).
+    pub unpinned_reads: u64,
 }
 
 impl From<Vec<Value>> for ListVec {
     fn from(items: Vec<Value>) -> Self {
-        ListVec { items, version: 0 }
+        ListVec {
+            items,
+            version: 0,
+            unpinned_reads: 0,
+        }
     }
 }
 
@@ -600,6 +607,9 @@ pub struct RecordState {
     /// (recordref/lt-recordref-fieldref-members/RecordRefIsDirtyEdges.al:IsDirty_TwoRefs_OtherModifies). `None` when the
     /// buffer came from elsewhere (GetTable, Init).
     pub dirty_base: Option<Vec<Value>>,
+    /// The row this variable's last Modify wrote. A later Modify of the unchanged buffer, after a rollback undid that write,
+    /// writes nothing (record/lt-record-conversion-assumptions/StaleBuffer.al:76-86).
+    pub last_modify: Option<Vec<Value>>,
     /// The table's and its extensions' global variables of this record variable (ADR-021).
     pub globals: TableGlobals,
 }
@@ -881,6 +891,9 @@ pub struct HttpContentState {
     pub stream_taken: bool,
     /// A `WriteFrom` has put a body here (a second one may add a Content-Length, see `write_body`).
     pub written: bool,
+    /// The value is a copy an assignment or a by-value parameter made (`deep_copy`), not the content a request handed out.
+    /// `ReadAs` on an uninitialized content runs only the shapes the corpus pins, and the two pins differ in this.
+    pub copied: bool,
 }
 
 impl Default for HttpContentState {
@@ -896,6 +909,7 @@ impl Default for HttpContentState {
             uninitialized: false,
             stream_taken: false,
             written: false,
+            copied: false,
         }
     }
 }

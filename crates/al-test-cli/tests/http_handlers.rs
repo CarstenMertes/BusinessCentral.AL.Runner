@@ -268,3 +268,72 @@ fn cache_control_is_written_in_net_order_and_a_lower_case_known_name_is_canonica
     end;"#,
     );
 }
+
+/// The tests of codeunit `T` on the target of BC `bc`.
+fn run_on(bc: &str, header: &str, body: &str) -> Vec<(String, Outcome)> {
+    let target = al_version::Target::for_bc(al_version::BcVersion::parse(bc).unwrap());
+    let (ws, l) = al_sema::lower::compile_for(
+        vec![AppSource {
+            id: "a".into(),
+            name: "a".into(),
+            dependencies: vec![],
+            files: vec![(
+                "f.al".into(),
+                format!("codeunit 69400 T {{ Subtype = Test; {header} {body} }}"),
+            )],
+        }],
+        &Default::default(),
+        &target,
+    );
+    assert!(ws.diagnostics.is_empty(), "{:?}", ws.diagnostics);
+    let oi = l.program.objects.iter().position(|o| o.name == "T").unwrap();
+    let blocked = l
+        .unsupported
+        .iter()
+        .map(|o| o.iter().map(|r| r.first().cloned()).collect())
+        .collect();
+    let engine = Engine::with_target(l.program.clone(), blocked, Some(target));
+    run_codeunit(&engine, &l, oi)
+}
+
+#[test]
+fn before_bc_29_a_handler_does_not_answer_under_block_outbound_requests() {
+    // al-language-onprem/session/PZHttpBlock.al:54-57 (Handler_UnderBlockOutboundRequests_StillAnswers): Yes on 29, the
+    // unhandled-request error before.
+    let body = |expected: &str| {
+        format!(
+            r#"
+    [TryFunction]
+    local procedure TryGet(Url: Text)
+    var Client: HttpClient; Resp: HttpResponseMessage;
+    begin
+        if not Client.Get(Url, Resp) then Error('get returned false');
+    end;
+    [HttpClientHandler]
+    procedure Handler(Request: TestHttpRequestMessage; var Response: TestHttpResponseMessage): Boolean
+    begin
+        Response.HttpStatusCode := 202;
+    end;
+    [Test]
+    [HandlerFunctions('Handler')]
+    procedure Handled()
+    var Ok: Boolean; Got: Text;
+    begin
+        Ok := TryGet('https://example.invalid/handled');
+        Got := Format(Ok) + ' ' + GetLastErrorText() + '|' + GetLastErrorCode();
+        if Got <> '{expected}' then Error('got %1', Got);
+    end;
+"#
+        )
+    };
+    let header = "TestHttpRequestPolicy = BlockOutboundRequests;";
+    for (name, outcome) in run_on("29.0", header, &body("Yes |")) {
+        assert_eq!(outcome, Outcome::Pass, "29: {name}");
+    }
+    let blocked = "No Unhandled outbound HTTP requests are not permitted when the TestHttpRequestPolicy property is set to ''BlockOutboundRequests''. Please ensure that an HTTP client handler is configured.|TestCodeunitUnhandledHttpRequest";
+    for bc in ["27.5", "28.5"] {
+        for (name, outcome) in run_on(bc, header, &body(blocked)) {
+            assert_eq!(outcome, Outcome::Pass, "{bc}: {name}");
+        }
+    }
+}

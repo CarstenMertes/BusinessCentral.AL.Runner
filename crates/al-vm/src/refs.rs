@@ -127,6 +127,16 @@ fn enumerable_fields(s: &Session, t: &TableDef) -> Vec<usize> {
     }) {
         let key = &t.keys[0];
         v.sort_by_key(|&i| (key.iter().position(|&k| k == i).unwrap_or(usize::MAX), t.fields[i].id));
+        return v;
+    }
+    // The FlowFields come after the other fields: Custom Report Layout lists 1, 2, 4, ..., 15 and then its FlowField 3
+    // (metadata/lt-custom-report-layout-columns/CustomReportLayoutColumns.al:33-44). Where a FlowFilter goes is not pinned.
+    let flow = |i: usize| {
+        s.field_property(t, i, "FieldClass")
+            .is_some_and(|c| c.trim().eq_ignore_ascii_case("FlowField"))
+    };
+    if v.iter().any(|&i| flow(i)) {
+        v.sort_by_key(|&i| (flow(i), t.fields[i].id));
     }
     v
 }
@@ -1027,11 +1037,9 @@ impl Session {
                 Some(v) => {
                     // Assigning Value does not run OnValidate (that is `Validate`). An Enum value goes into a Text or Code field as its caption
                     // (Code in upper case): types/lt-enum-to-text-fieldref/EnumToTextFieldRef.al:FieldRefValue_EnumToTextField_PerMember,
-                    // FieldRefValue_EnumToCodeField.
-                    let converted = match v {
-                        Value::Enum(..) => ops::number_into_text_field(v, &field.ty, &*self),
-                        _ => None,
-                    };
+                    // FieldRefValue_EnumToCodeField. A number goes in as its Format text; one longer than the field raises and leaves
+                    // the field as it was (types/lt-number-to-text/NumberToTextIsFormat.al:239-246, FieldRefSetValue_NumberOnCodeAndText_Result).
+                    let converted = ops::number_into_text_field(v, &field.ty, &*self);
                     let v = match converted {
                         Some(r) => r?,
                         None => ops::convert(v.clone(), &field.ty)?,
@@ -1283,6 +1291,15 @@ impl Session {
                 Ok(Some((true, members)))
             }
             RtType::Option(names) => {
+                // A table field's OptionCaptionML gives the captions of the session language (record/lt-x-table-props/
+                // XTablePropsTests.al:219-232); the runtime does not read it, so the captions are refused rather than
+                // taken from OptionCaption or the member names.
+                if self.field_property(t, pos, "OptionCaptionML").is_some() {
+                    return unsupported(format!(
+                        "OptionCaptionML of option field {} is not supported",
+                        t.fields[pos].name
+                    ));
+                }
                 let captions: Vec<String> = match self.field_property(t, pos, "OptionCaption") {
                     Some(v) => match crate::recmeta::string_literal(&v) {
                         Some(list) => list.split(',').map(str::to_string).collect(),

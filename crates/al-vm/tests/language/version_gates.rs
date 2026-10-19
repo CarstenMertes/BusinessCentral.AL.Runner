@@ -144,6 +144,25 @@ fn min_and_max_over_systemrowversion_calculate_before_bc_29_and_are_refused_from
     }
 }
 
+// corpus calcfields/W4CalcFields.al:134-135 and misc/lt-probes-needed-1/PnACalcFieldsBC29.al:225-243
+// (#if BC29PLUS) pin the whole text, with BC's backslash line breaks, and the code NDBCS:IncompatibleSqlType.
+#[test]
+fn min_and_max_over_systemrowversion_refusal_has_the_pinned_text_and_code_on_bc_29() {
+    for bc in [Some("29.0"), None] {
+        match run(bc, "Max") {
+            Err(Signal::Error(e)) => {
+                assert_eq!(
+                    e.message,
+                    "Table content in the VG Head table on SQL Server contains a value that is not compatible with the corresponding data type that is defined for the table.\\\\Field: MaxRv\\Type: BigInteger\\SQL type: timestamp\\\\The table design may have been changed outside Business Central.",
+                    "BC {bc:?}"
+                );
+                assert_eq!(e.code, "NDBCS:IncompatibleSqlType", "BC {bc:?}");
+            }
+            other => panic!("expected an AL error, got {other:?}"),
+        }
+    }
+}
+
 // corpus record/TestCalcFormulaSystemFieldsTests.Codeunit.al:300-303: lookup() of the same field
 // still calculates on BC 29 (Record_CalcFields_LooksUpSystemRowVersion).
 #[test]

@@ -387,20 +387,26 @@ pub fn format_value(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) 
             crate::value::LibraryValue::Version(v) => format!("{}.{}.{}.{}", v[0], v[1], v[2], v[3]),
             _ => return Err("Format of a Version nobody set".to_string().into()),
         },
-        // A SessionSettings renders its contents; the layout is not pinned, only that it shows the
-        // time zone and differs when a property differs (session/TestSessionSettings.al:457-493).
-        Value::Library(crate::library_kind::LibraryKind::SessionSettings, l) => match &*l.borrow() {
-            crate::value::LibraryValue::SessionSettings(s) => format!(
-                "Company={};LanguageId={};LocaleId={};TimeZone={};ProfileId={};ProfileAppId={}",
+        // A SessionSettings renders its properties in this layout (a fresh instance: session/lt-session-settings-fresh/
+        // SessionSettingsFreshReads.al:57); it shows the time zone and differs when a property differs
+        // (session/TestSessionSettings.al:457-493). ProfileSystemScope reads No (its setter keeps nothing, sessiontypes.rs).
+        Value::Library(crate::library_kind::LibraryKind::SessionSettings, l) => {
+            let fresh = crate::value::SessionSettingsState::default();
+            let b = l.borrow();
+            let s = match &*b {
+                crate::value::LibraryValue::SessionSettings(s) => s,
+                _ => &fresh,
+            };
+            format!(
+                "Company={}, ProfileId={}, LanguageId={}, LocaleId={}, TimeZone={}, ProfileAppId={}, ProfileSystemScope=False",
                 s.company,
-                s.language_id.map_or(String::new(), |v| v.to_string()),
-                s.locale_id.map_or(String::new(), |v| v.to_string()),
-                s.time_zone.clone().unwrap_or_default(),
                 s.profile_id.clone().unwrap_or_default(),
-                s.profile_app_id.map_or(String::new(), |g| format_guid(&g)),
-            ),
-            _ => "Company=;LanguageId=;LocaleId=;TimeZone=;ProfileId=;ProfileAppId=".to_string(),
-        },
+                s.language_id.unwrap_or(0),
+                s.locale_id.unwrap_or(0),
+                s.time_zone.clone().unwrap_or_default(),
+                format_guid(&s.profile_app_id.unwrap_or([0; 16])),
+            )
+        }
         // The text form of a FilterPageBuilder is only known to be non-empty
         // (filterpage/TestFilterPageBuilder.al:FilterPageBuilder_Format_ReturnsANonEmptyRendering).
         // A builder nobody added a control to formats as an empty text (filterpage/W3FilterPageBuilder.al:

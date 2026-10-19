@@ -2,6 +2,38 @@
 use super::*;
 
 impl Lowerer<'_> {
+    /// `Rec.SecurityFiltering()` read on a variable declared with `[SecurityFiltering(...)]` answers the declared value on
+    /// BC (al-language/lt-ac/ACAttributes.al:176-191); the runtime does not keep the declared value, so the read is refused.
+    fn security_filtering_read_refusal(&self, callee: &SyntaxNode, args: &[SyntaxNode]) -> L<()> {
+        if !args.is_empty() || callee.kind() != SyntaxKind::MemberExpr {
+            return Ok(());
+        }
+        let mut kids = callee.children();
+        let (Some(recv), Some(member)) = (kids.next(), kids.next()) else {
+            return Ok(());
+        };
+        if !member
+            .text()
+            .to_string()
+            .trim()
+            .eq_ignore_ascii_case("SecurityFiltering")
+        {
+            return Ok(());
+        }
+        let attrs = match self.res(&recv) {
+            Some(Res::Local(n)) => self.local_var_attrs.get(n),
+            Some(Res::Global(n)) => self.global_var_attrs.get(n),
+            _ => None,
+        };
+        if attrs.is_some_and(|a| a.iter().any(|a| a == "securityfiltering")) {
+            return Err(format!(
+                "SecurityFiltering() of `{}`, declared with the attribute SecurityFiltering: the declared value is not kept",
+                recv.text().to_string().trim()
+            ));
+        }
+        Ok(())
+    }
+
     /// A call resolved on `node` (the CallExpr, or the callee for a call without parentheses).
     pub(crate) fn call(&mut self, node: &SyntaxNode, callee: &SyntaxNode, args: &[SyntaxNode]) -> L<ir::Expr> {
         if let Some(Res::DotNetMember(name)) = self.res(node).cloned() {
@@ -13,6 +45,7 @@ impl Lowerer<'_> {
             };
             return self.dotnet_member(node, callee, &name, op, args);
         }
+        self.security_filtering_read_refusal(callee, args)?;
         // `this.Proc(...)` calls on the running instance, as the bare call does.
         let receiver_node = (callee.kind() == SyntaxKind::MemberExpr)
             .then(|| callee.children().next())
@@ -91,6 +124,7 @@ impl Lowerer<'_> {
                             out.push(ir::Arg::Value(value));
                             continue;
                         }
+                        self.refuse_textconst_into_variant(&p.ty, a)?;
                         out.push(ir::Arg::Value(self.convert_to(&p.ty, self.ty_ref(a), value)?));
                     }
                 }

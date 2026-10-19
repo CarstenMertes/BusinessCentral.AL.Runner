@@ -805,6 +805,7 @@ mod tests {
             name: "F".into(),
             ty: al_builtins::value::RtType::Variant,
             stored: true,
+            code_storage: Default::default(),
         });
         let with_handle = || mat::Mat::new(&t, vec![mat::Entry::ok(vec![Value::List(Default::default())])]);
         assert!(shared.listing(1, Virtual::Field, with_handle).is_none());

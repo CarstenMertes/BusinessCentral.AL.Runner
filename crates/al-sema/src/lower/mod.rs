@@ -167,6 +167,15 @@ pub(crate) struct Lowerer<'a> {
     /// Declared text of Label variables, by lowercase name; reads lower to that constant.
     global_labels: HashMap<String, String>,
     local_labels: HashMap<String, String>,
+    /// The Label-typed variables declared `TextConst`, by lowercase name (a Label and a TextConst share `Ty::Label`).
+    global_textconsts: std::collections::HashSet<String>,
+    local_textconsts: std::collections::HashSet<String>,
+    /// Attributes of variables the lowering reads (`shared::var_attribute_names`), by lowercase name.
+    global_var_attrs: HashMap<String, Vec<String>>,
+    local_var_attrs: HashMap<String, Vec<String>>,
+    /// The reasons `place` gave for a variable whose attribute is not supported: a statement that fails with one of them
+    /// refuses when it runs (`stmt_plain`) instead of refusing its routine.
+    run_refusals: std::collections::HashSet<String>,
     /// The record of each `with` statement being lowered, by the start offset of the statement.
     with_places: HashMap<usize, ir::Place>,
     reasons: Vec<String>,
@@ -198,6 +207,12 @@ pub(crate) struct Lowerer<'a> {
     ret_ty: Option<RtType>,
     /// While an OnQueryClosePage with a named Boolean return is lowered: its return local and the local that notes an assignment to it.
     qcp_ret: Option<(usize, usize)>,
+    /// Locals the lowering adds to the routine being lowered (after its declared ones, from `hidden_base`).
+    hidden_locals: Vec<ir::Slot>,
+    hidden_base: usize,
+    /// While a call statement is lowered: the `CurrFieldNo` arguments it passes to `var` parameters, as (the local that
+    /// stands in for it, the slot of the implicit Rec). `None` elsewhere.
+    curr_field_args: Option<Vec<(usize, usize)>>,
     /// The declared return type of the routine being lowered (an interface result converts in `exit`).
     ret_decl: Option<Ty>,
     /// The routine nodes of every object, numbered as `routine_at` numbers them.

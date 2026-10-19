@@ -4465,6 +4465,7 @@
 67726 SaveAs_ParametersWithoutDataItems_KeepsTheTableView
 67726 SaveAs_RecordRef_ReplacesOrIntersectsTheTableView
 67726 SaveAs_WriteInOnPostReport_SurvivesARollback
+67730 RunRequestPage_OrderOfReportAndRequestPageTriggers
 67730 Run_Cancel_TriggersThatRun
 67730 Run_OrderOfReportAndRequestPageTriggers
 67730 Run_SetTableViewOfTheCaller_BeforeTheHandler
@@ -4689,7 +4690,9 @@
 68024 Worksheet_RunModal_LookupMode
 68039 DeleteAllFalse_WithDatabaseDeleteEnabled
 68039 DeleteAllTrue_WithDatabaseDeleteEnabled
+68039 SetupSubscriberWritesTheAskedTable
 68042 IntegerSource_IntoBigIntegerFlowField
+68042 SystemRowVersion_MinMax
 68045 Ascending_WholeKey_Ties
 68045 SetAscending_SingleFieldKey
 68045 SetAscending_TwoFieldKey_OneFieldAtATime
@@ -4741,6 +4744,7 @@
 68072 ForeachJsonArray_SimpleValues
 68073 ReadAs_FreshContent
 68073 RequestContent_IsCopyOrReference
+68073 RequestWithoutContent_ReadAs
 68073 WriteFromInStream_NonAsciiBytes
 68073 WriteFromText_HeadersAndRoundTrip
 68075 GetOrOpen_Pattern_OfDataTypeManagement
@@ -5196,6 +5200,7 @@
 68552 ErrorInfoCallstack_OfAnErrorCreatedAndNotRaised
 68554 ReadText_AfterWriteOfAText_EmptyAndCode
 68554 ReadText_AfterWriteOfAText_ZeroTerminator
+68554 ReadText_AfterWriteText_NoTerminator
 68556 Ascending_AssignmentAndCall
 68556 ErrorInfo_CustomDimensionsAssignmentAndCall
 68556 ErrorInfo_MembersAsAssignmentAndCall
@@ -5585,6 +5590,8 @@
 69304 Editable_FalseAndTrueFromActions
 69304 Editable_FalseFromOnAfterGetCurrRecord
 69304 Editable_TrueOnAPageThatIsNotEditable
+69304 List_ActionDeletesTheOnlyRow_ThenUpdates
+69304 List_ActionDeletesTheOnlyRow_WithoutUpdate
 69304 List_BufferLeftByOnAfterGetRecord_WhileTheRowIsUnchanged
 69304 List_UpdateFalse_KeepsTheUnsavedEdit
 69304 TempSourcePage_ReadWriteLikeAStoredOne
@@ -6146,6 +6153,7 @@
 69776 Setup_AsInTheContainer_NoCurrency
 69780 MovedFromMovedTo_TableExtensionFields_AreUsable
 69780 MovedFromMovedTo_Tables_AreUsable
+69799 Pending_CodeunitInterfaceEnum_StillRun
 69799 Pending_PageAndControls_StillOpen
 69800 CodeAssign_UpperAndTrim
 69800 ErrorText_SetsCodeDialog
@@ -6370,6 +6378,10 @@
 69817 UseTemporary_DataItem
 69820 Dialog_OpenUpdateClose
 69852 ChangeCompany_RecordChangeCompanyDoesNotRaiseTheSystemActionEvent
+69852 ChangeVarArguments_XmlSaveAs_First
+69852 ChangeVarArguments_XmlSaveAs_Fourth
+69852 ChangeVarArguments_XmlSaveAs_Second
+69852 ChangeVarArguments_XmlSaveAs_Third
 69852 GlobalTriggers_InsertWithoutTrigger_DoesNotAskOrRaise
 69852 GlobalTriggers_MaskFifteenAndAllSetupFlagsFalse_RowB
 69852 GlobalTriggers_MaskFifteenAndAllSetupFlagsTrue_Arguments_RowD
@@ -6381,7 +6393,9 @@
 69852 GlobalTriggers_SubscriberChangesTheRecordItIsHanded_RowI
 69852 GlobalTriggers_SubscriberLeavesDefaults_RowA
 69852 InSession_NothingRaisesTheOtherEvents
+69852 SaveAs_Xml_RaisedEvents
 69852 StartSession_IsRefusedInATestSession
+69852 SubstituteReport_SubscriberChangesTheReport
 69886 Bad_Date
 69886 Bad_Decimal
 69886 Bad_Int
@@ -6586,6 +6600,7 @@
 70000 IndexOf_StartIndex_EmptyAndLiteral
 70000 LastIndexOf_Basic
 70000 LastIndexOf_StartIndex
+70000 LastIndexOf_StartIndex_Empty
 70000 StartsWith_EndsWith
 70001 P146_Abs_Duration_DateTimeDifference
 70001 P146_Abs_Duration_ResultFormats
@@ -6802,6 +6817,7 @@
 70106 Modify_RunTrigger_AndXRec
 70106 Rename_AlwaysRunsTriggers
 70106 TwoExtensions_SameTrigger
+70109 SystemRowVersion_Aggregates_FullText
 70109 TypeMismatch_BigIntegerAndInteger
 70115 Modify_StampsOnlyWhenStoredFieldDiffers
 70115 RenameOfAnotherTable_ReStampsPropagatedRows
@@ -6851,6 +6867,8 @@
 70176 ViewModeEmptyListInsertViaRec
 70177 BufferEditOfOnAfterGetRecordOnACard
 70177 CardOpenWithAndWithoutUpdateInOnOpenPage
+70177 ListLosesOnlyRowDeleteNoUpdate
+70177 ListLosesOnlyRowDeleteWithUpdate
 70177 ListModifyWithAndWithoutUpdate
 70177 ListOpenWithAndWithoutUpdateInOnOpenPage
 70177 UpdateKeepsUnsavedEditOfTheRow
@@ -7001,6 +7019,8 @@
 70266 P147_Urp_PreSetFalse_RunWithoutRequestPage
 70268 P147_Urp_ProcSetFalse_RunWithoutRequestPage
 70270 P147_Urp_InitGet_RunWithoutRequestPage
+70272 P147_Urp_PreGet_RunWithoutRequestPage
+70274 P147_Urp_ProcGet_RunWithoutRequestPage
 70279 P147_AutoIncrement_Rename_ErrorAfterObserve
 70279 P147_AutoIncrement_Rename_RelativeText
 70296 P115_ExtensionField_Editable
@@ -7095,6 +7115,7 @@
 70351 P98_StrLen_Guid
 70352 P98_UpperCase_Guid
 70356 P98_Stale_AfterAsserterror_SameBuffer
+70356 P98_Stale_BufferNotReassigned
 70356 P98_Stale_CommitThenErrorThenModify_Rec
 70356 P98_Stale_ModifyAfterRowDeleted
 70356 P98_Stale_RowChangedByOtherBuffer
@@ -7298,10 +7319,14 @@
 70526 SetLoadFields_ModifyKeepsOthers
 70526 SetLoadFields_ModifyOtherField
 70535 Names_SpacesAndParentheses
+70535 OtherFormats_NoLayout
 70535 Rows_BlockAfterHeader
 70535 Rows_ColumnBoundToVariable
+70535 Rows_SkipAndBreak
 70535 StaticSaveAs_WithParametersString
 70535 TemporaryDataItem
+70535 TriggerError_InPreReport
+70535 TriggerOrder
 70537 CreateDateTime_ClosingDate
 70537 Date2DWY_IsoWeekAcrossYears
 70538 BaseDates_ClosingAndOmitted
@@ -7345,6 +7370,7 @@
 70556 FieldTable_TypeColumn
 70556 TableMetadata_Columns
 70583 NoRP_Getter_PerVariable_AndAfterRun_AndClear
+70583 NoRP_Static_Run_RunModal_ShowNoPage
 70583 NoRP_UseTrue_Execute
 70583 NoRP_UseTrue_NoHandler_Run
 70583 NoRP_UseTrue_NoHandler_RunModal
@@ -7352,6 +7378,7 @@
 70583 NoRP_UseTrue_ThenFalse_Run
 70583 WithRP_NoHandler_Run_Default
 70583 WithRP_UseFalse_RunRequestPage
+70583 WithRP_UseFalse_Run_RunModal_Execute
 70598 CalcFields_Property_CalculatesTheFlowField
 70598 Link_ChildSetsOwnFilters_InPreDataItem
 70598 Link_TwoFields_FiltersPerParentRow
@@ -7361,7 +7388,9 @@
 70604 LinkReference_Grandparent
 70613 Culture_FormatRegion_ChangesFormat
 70613 Members_SaveAs
+70629 One_Extension_FullOrder_Execute_And_SaveAs
 70629 One_Extension_FullOrder_Run
+70629 One_Extension_Variable_RunTwice_ExtensionGlobals
 70629 One_Extension_ViewsBeforeBasePreReport
 70629 Two_Extensions_TriggerOrder
 70645 Controls_NoHandler_UseRequestPageFalse_Defaults
@@ -7373,6 +7402,7 @@
 70655 RecordFromVariant_IsCopy_Result
 70655 RecordFromVariant_OpenedNoCurrentRow_Result
 70655 RecordFromVariant_SameTable_Result
+70657 FieldRefSetValue_NumberOnCodeAndText_Result
 70657 FieldRefValue_ToText_Result
 70657 TextBuilderAppend_VariantNumber_Result
 70657 VariantToCode_Numbers_Result
@@ -7391,6 +7421,7 @@
 70679 Formats_NoLayout_ExcelHtmlXml
 70679 Formats_NoLayout_PdfWord
 70679 NotProcessingOnly_NoLayout_Run_RunModal_Execute
+70679 ReportFormat_Ordinals
 70679 Xml_ProcessingOnly_Dataset_Shape
 70690 Instance_Guarded_PendingWrite_Raises_LastError
 70690 Static_Guarded_FailingPayload_LastError_AndRows
@@ -7967,6 +7998,8 @@
 70906 P170_TimePlusMinusDecimal_Whole
 70907 P170_TimePlusMinusBigInteger
 70909 P170_CurrFieldNo_CopyIsNotTheProperty
+70909 P170_CurrFieldNo_PassedToVarParameter_CalleeAssigns
+70909 P170_CurrFieldNo_PassedToVarParameter_InValidate
 70910 P170_And_LocalNameAndAttribute
 70910 P170_And_PositionAndLastInsideConjunction
 70910 P170_And_QuotesInsideLiterals
@@ -8094,6 +8127,7 @@
 71032 Is_Empty_Variant
 71032 Is_Record_RecordRef_FieldRef
 71032 Is_Streams_Notification
+71033 BigIntegerVariant_To_Integer
 71033 DecimalVariant_To_Integer
 71033 Enum_Variant_To_Integer_Text
 71034 Arithmetic_After_Conversion
@@ -8145,6 +8179,7 @@
 71051 Enum_ImplementationSelection
 71051 PassInterface_ToProcedure
 71051 Uninitialized_AfterClear
+71051 Uninitialized_AssignedFromUninitialized
 71051 Uninitialized_Call
 71051 VarParameter_ThroughInterface
 71054 AsOperator
@@ -8595,6 +8630,7 @@
 71505 GetFilters_Format_With_Caption_And_Quoting
 71505 Reset_Clears_Filters_Key_Order_But_Not_Fields
 71505 Reset_Does_Not_Reinitialize_Fields
+71505 SetCurrentKey_Ad_Hoc_Keys
 71505 SetCurrentKey_CurrentKey_Ascending
 71505 SetCurrentKey_Does_Not_Filter_And_Persists_Through_Find
 71505 SetCurrentKey_Invalid_Field_Combinations
@@ -8754,6 +8790,7 @@
 71659 P119_ShowAsCardFields
 71661 P119_LabelCaptionAndValue
 71661 P119_LabelVisible
+71663 P119_HideValue
 71667 P119_NeighboursOfUploadAction
 71670 P119_NeighbourOfUserControl
 71672 P119_PageFieldValues
@@ -9343,6 +9380,7 @@
 72037 Assigned_FromEmptyTable_ForComparison
 72037 Unassigned_ReadMembersForReference
 72038 SetRequestUri_Relative
+72038 SetRequestUri_SchemeOnlyAndOddSchemes
 72038 SetRequestUri_SecondCallReplaces
 72043 ObjectId_FromCurrReport_Captioned
 72043 ObjectId_FromCurrReport_NoCaption
@@ -9758,6 +9796,8 @@
 72521 LargerAndEqualArray_VarParameter
 72521 SmallerArray_ByValue
 72521 SmallerArray_VarParameter
+72525 ReadText_Utf8_NoTerminator
+72525 ReadText_Utf8_WithTerminator
 72540 DataItemLink_ParentAndGrandparent
 72540 MethodSum_OverFlowFields_Read
 72540 QueryWithAboutProperties_ReadsRows
@@ -9780,6 +9820,7 @@
 72581 ReportLayoutType_Members
 72601 ReadAs_FreshContent
 72601 RequestContent_IsItACopy
+72601 RequestWithoutContent
 72601 WriteFromText_NonAscii
 72601 WriteFromText_ThenReadAndHeaders
 72611 Argument_And_Exit_TakeTheOrdinal
@@ -9820,6 +9861,7 @@
 72691 Duration_To_BigInteger_Decimal
 72691 Duration_To_Integer_BeyondRange
 72691 Duration_To_Integer_InRange
+72691 Duration_Via_Variant
 72691 TimeMinusTime_To_Integer
 72692 Duration_Arithmetic
 72692 Duration_Format
@@ -9837,6 +9879,7 @@
 72716 P161_SetAscending_Single_ReadBack
 72716 P161_SetAscending_Single_ResetAndFilters
 72717 P161_FreshInstance_DefaultReads
+72717 P161_FreshInstance_FormatText
 72717 P161_Init_ThenClear
 72718 P161_CodeCoverageLog_EnableOnly
 72718 P161_CodeCoverageLog_MultiSessionCombinations
@@ -11123,9 +11166,12 @@
 73813 Run_SetTableView_NoMatch_Order
 73813 Run_SetTableView_Order
 73813 Run_Siblings_Order
+73813 SaveAs_NestedItems_Order
+73813 SaveAs_Siblings_Order
 73813 VariableExecute_Order
 73813 VariableRunModal_UseRequestPageFalse_Order
 73813 VariableRun_Order
+73813 VariableRun_Twice_InitReportEachTime
 73825 Break_InAfterGetRecord
 73825 CurrReport_Members_SaveAs
 73825 Execute_And_SaveAs_Quit
@@ -11152,6 +11198,7 @@
 73838 SetTableView_WrongTable_Error
 73850 AssertEquals_PassAndFail
 73850 Cancel_TriggersOrder
+73850 Execute_WithoutParameters_UsesDefaults
 73850 NoHandler_VariableRunModal_Error
 73850 OK_TriggersOrder
 73850 OnValidate_RunsOnSetValue
@@ -11161,6 +11208,7 @@
 73850 SetValue_AllTypes_ReachTheReport
 73850 SetValue_OptionByNumberAndText
 73850 UseRequestPageFalse_RunDoesNotShowPage
+73850 UseRequestPageFalse_VariableRun_NoHandlerNeeded
 73850 UseRequestPageTrue_DeclaredFalse_ShowsPage
 73850 UseRequestPageTrue_OverridesDeclaredFalse
 73850 UseRequestPage_GetterSetter
@@ -11250,6 +11298,7 @@
 73932 FlowRelation_Code_AfterCalcFields
 73932 FlowRelation_Code_NoCalcFields
 73932 FlowRelation_Condition_AfterCalcFields
+73932 FlowRelation_Condition_NoCalcFields
 73932 FlowRelation_Integer_AfterCalcFields
 73932 FlowRelation_Integer_NoCalcFields
 73934 LoadFields_AfterGet_Assigned
@@ -11692,6 +11741,7 @@
 74313 Run_ExportXmlportAsImport
 74314 JsonObject_ReadFromStream_OtherShapes
 74315 JsonValue_ReadFromStream_ContainersAndEdges
+74316 ReadText_AtTheEndOfTheStream
 74319 SetCurrentKey_PrimaryKeyOrderForComparison
 74320 Format_CommaStrings_Dat
 74320 Format_CommaStrings_DecNeg
@@ -12070,6 +12120,7 @@
 74796 Duplicate_WithoutOnInsert_InsertNoArg_Used
 74796 Duplicate_WithoutOnInsert_InsertTrue_Unused
 74796 Duplicate_WithoutOnInsert_InsertTrue_Used
+74799 Columns_Schema
 74803 GetParent_GetDocument_States
 74803 Remove_FirstMiddleLast
 74806 GetDocument_ReturnsTheSameInstance
@@ -12295,6 +12346,11 @@
 75010 DateFormula_TextField_AcceptsFormulaText
 75010 MaskType_ConcealedAndNone_ValueUnchanged
 75010 SQLDataType_Code_GetRowWithNine
+75010 SQLDataType_Code_ModifyToLeadingZeroErrors
+75010 SQLDataType_Code_ModifyToText
+75010 SQLDataType_Code_ModifyToZeroErrors
+75010 SQLDataType_Code_ReadRowsAndKeys
+75010 SQLTimestamp_BigIntegerField_ReadsRowVersion
 75010 SignDisplacement_Format_NegativeAndPositive
 75010 TableExt_ModifyBlankZero_FormatAndPage
 75010 TableExt_ModifyOptionCaption_FormatAndPage
@@ -12369,6 +12425,7 @@
 76220 ZCustModifyAllowed
 76220 ZCustPromotedActionCategories_ActionUnchanged
 76360 ZCaptionClass_LiteralAndResolved
+76360 ZHideValue_TrueAndFalse
 76360 ZLookupPageId_OpensTargetPage
 76360 ZLookupPageId_PlainControlHasNoLookup
 76360 ZPresentationControls_Read
@@ -12429,7 +12486,11 @@
 77532 AC_Attr_TestPermissions_Disabled
 77532 AC_Attr_TestPermissions_NonRestrictive
 77532 AC_Attr_TestPermissions_Restrictive
+78006 UpperLimit_ErrorCode_ThenClear
+78006 UpperLimit_MoreThanOneRange_ErrorCode
+78008 Ties_AscendingFalseThenSetAscending
 78008 Ties_Basic
+78008 Ties_ExplicitPrimaryKeyInKey
 78008 Ties_NonKeyField
 78008 Ties_PrimaryKeyCurrent
 78104 Find_EmptyTable_CodeKey
@@ -12437,6 +12498,8 @@
 78107 Validate_BlankFirst
 78107 Validate_BlankNotFirst
 78107 Validate_Third
+78200 Execute_WithReportHandler
+78200 Run_UseRequestPageFalse
 78200 Run_UseRequestPageFalseReport_NoHandlerCall
 78200 TestRequestPage_SetFilterEmpty_ClearsFilter
 78200 TestRequestPage_SetFilterEmpty_OnUntouchedFilter
@@ -12523,6 +12586,7 @@
 79850 AddRecord_SameNameOtherTable
 79850 AddRecord_SameNameSameTable
 79850 Format_FlowFilterPositions
+79850 Media_ImportStream_OnFilledField
 79850 TableGlobals_ArrayElement
 79850 TableGlobals_ArrayElement_RecordRef
 79850 VariantRecordRef_AssignedToRecord

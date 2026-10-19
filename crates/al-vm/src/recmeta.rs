@@ -567,8 +567,28 @@ impl Session {
                     ));
                 };
                 // A primary key field that only follows the current key can be read but not set
-                // (SetAscendingEdges.al:SetAscending_PrimaryKeyFieldFollowingTheKey).
+                // (SetAscendingEdges.al:SetAscending_PrimaryKeyFieldFollowingTheKey; record/lt-setascending-ties/
+                // SetAscendingTies.al:153-154, :174). Asking it for the direction it already runs in after a per-field
+                // SetAscending(KeyField, false) is accepted and changes nothing (SetAscendingTies.al:155 `grp_desc_id_asc`).
+                // The other requests for the direction it already has are not pinned.
                 if method == RecordOp::SetAscending && bit >= t.keys[key].len() {
+                    let wanted = match args.get(1) {
+                        Some(v) => ops::truthy(v)?,
+                        None => return unsupported("SetAscending without a direction"),
+                    };
+                    let (ascending, descending) = {
+                        let r = rec.borrow();
+                        (r.ascending, r.field_descending)
+                    };
+                    if ascending && descending != 0 && wanted {
+                        return Ok(Value::Null);
+                    }
+                    if !((ascending && descending == 0 && !wanted) || (!ascending && wanted)) {
+                        return unsupported(format!(
+                            "SetAscending({}, {wanted}) on a primary key field that follows the key: the outcome is not pinned",
+                            t.fields[pos].name
+                        ));
+                    }
                     return Err(crate::transactions::al_error_code(
                         &format!(
                             "The specified sorting could not be set on field '{}' with the key consisting of '{}'.",
@@ -1356,6 +1376,7 @@ impl Session {
                     marks: Vec::new(),
                     marked_only: false,
                     position: None,
+                    last_modify: None,
                     globals: shared.share(),
                     ..r.clone()
                 }

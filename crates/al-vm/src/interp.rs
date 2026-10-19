@@ -847,6 +847,7 @@ impl Session {
                                             temp_row: b.temp_row,
                                             written: false,
                                             render_pending: b.render_pending.clone(),
+                                            inserted: b.inserted,
                                         },
                                     )))
                                 }

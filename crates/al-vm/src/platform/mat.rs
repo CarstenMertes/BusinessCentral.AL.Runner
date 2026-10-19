@@ -446,6 +446,7 @@ mod tests {
             name: name.into(),
             ty,
             stored: true,
+            code_storage: Default::default(),
         };
         TableDef {
             object: 0,
@@ -761,6 +762,7 @@ mod shared_tests {
                 name: "F".into(),
                 ty,
                 stored: true,
+                code_storage: Default::default(),
             }],
             keys: vec![vec![0]],
             per_company: false,

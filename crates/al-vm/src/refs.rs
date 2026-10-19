@@ -1009,6 +1009,10 @@ impl Session {
                 // `after_opt` = Erste, recordref/lt-refs/RfTValue*.al:Value_Get_Defaults).
                 None => {
                     let v = rec.borrow().fields[pos].clone();
+                    // A column the platform row leaves unknown (its value nothing pins) is refused, naming the table and the field.
+                    if let Value::Unknown(why) = &v {
+                        return unsupported(why.to_string());
+                    }
                     // A read loads a field the partial buffer left out (RecordRefIsDirtyEdges.al:IsDirty_SetLoadFields_ReadUnloadedThenCompare).
                     if rec.borrow().load.partial {
                         rec.borrow_mut().load.touch(pos);
@@ -1262,6 +1266,7 @@ impl Session {
     pub(crate) fn members_of_field(&self, t: &TableDef, pos: usize) -> Result<Option<FieldMembers>, Signal> {
         match &t.fields[pos].ty {
             RtType::Enum(id) => {
+                self.note_enum(*id);
                 let o = &self.engine.program.objects[*id as usize];
                 let members = o
                     .enum_values

@@ -378,7 +378,7 @@ impl Session {
                 let at = calc.field.expect("field");
                 let (mut sum, mut n) = (Decimal::ZERO, 0i64);
                 self.each_row(&cx, &src_t, &filters, |row| {
-                    sum += number(&row[at]).ok_or_else(|| Signal::Unsupported("sum over a non-number".into()))?;
+                    sum += number(&row[at]).ok_or_else(|| non_number(&row[at]))?;
                     n += 1;
                     Ok(())
                 })?;
@@ -646,7 +646,7 @@ impl Session {
         let cx = self.cx_for(rec, &t)?;
         let mut add = |row: &[Value]| -> Result<(), Signal> {
             for (s, &p) in sums.iter_mut().zip(positions) {
-                *s += number(&row[p]).ok_or_else(|| Signal::Unsupported("sum over a non-number".into()))?;
+                *s += number(&row[p]).ok_or_else(|| non_number(&row[p]))?;
             }
             Ok(())
         };
@@ -783,6 +783,14 @@ impl Session {
         // Temporary_SetAutoCalcFields_ThenFind).
         self.calc_fields(rec, &auto)
     }
+}
+
+/// Why a Sum cannot add a value: a column a platform row leaves unknown, or not a number.
+fn non_number(v: &Value) -> Signal {
+    Signal::Unsupported(
+        v.unknown()
+            .map_or_else(|| "sum over a non-number".to_string(), str::to_string),
+    )
 }
 
 #[cfg(test)]

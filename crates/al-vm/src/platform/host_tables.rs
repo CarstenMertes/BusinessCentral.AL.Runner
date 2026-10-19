@@ -145,6 +145,12 @@ pub(super) fn feature_key_rows(t: &TableDef, target: Option<&al_version::Target>
             r[pos(t, 7)] = Value::Boolean(*one_way);
             r[pos(t, 8)] = Value::Boolean(*data_update);
             r[pos(t, 9)] = Value::Text(format!("{version}.0").into());
+            // Description (3), "Learn More Link" (4) and "Description In English" (10): no corpus test reads them.
+            for col in [3, 4, 10] {
+                if t.fields.iter().any(|f| f.id == col) {
+                    r[pos(t, col)] = super::unknown(t, col, &format!("feature key '{id}'"));
+                }
+            }
             Entry::ok(r)
         })
         .collect()

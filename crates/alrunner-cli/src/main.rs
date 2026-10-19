@@ -156,6 +156,13 @@ fn real_main() -> ExitCode {
                 ExitCode::from(2)
             }
         },
+        Command::ImpactIndexCheckStatic(a) => match impact_index::check_static(&a) {
+            Ok(code) => ExitCode::from(code),
+            Err(e) => {
+                eprintln!("error: {e}");
+                ExitCode::from(2)
+            }
+        },
         Command::ImpactIndexBuild(a) => match impact_index::build(&a) {
             Ok(code) => ExitCode::from(code),
             Err(e) => {

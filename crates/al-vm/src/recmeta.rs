@@ -1189,6 +1189,13 @@ impl Session {
                     from.fields[sp].name, from.name, df.name, t.name
                 ));
             }
+            // A column a platform row leaves unknown moves as it is into a field of the very same type: the copy reads
+            // nothing (Tests-ERM `AddFieldToBuffer`: `TempField.TransferFields(Field, true)`), and a later read of the
+            // copy is refused. Into another type the conversion could fail or not, which is not known: `convert` refuses.
+            if src_fields[sp].unknown().is_some() && from.fields[sp].ty == df.ty {
+                updates.push((dp, src_fields[sp].clone()));
+                continue;
+            }
             updates.push((dp, ops::convert(src_fields[sp].clone(), &df.ty)?));
         }
         let mut r = rec.borrow_mut();

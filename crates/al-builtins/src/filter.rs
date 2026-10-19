@@ -114,6 +114,32 @@ pub const INVALID_DATE: &str = "invalid Date filter value: ";
 /// P81DateFilters.al:SetFilter_Date_RangeForms `..`, SetFilter_Date_InvalidTexts `|`, `&`, `||`).
 pub const FILTER_SYNTAX: &str = "invalid Date filter syntax: ";
 
+/// The prefix of the error for a filter value BC cannot evaluate into the field's type: the type's name, a tab, the value
+/// (`The value "abc" can't be evaluated into type Integer.`, record/lt-record-read/RcAFilters.al:SetFilter_Integer_Invalid,
+/// events/lt-platform-triggers/PtObserve.al:Bad_Int, Bad_Decimal, Bad_Time).
+pub const NOT_EVALUATED: &str = "filter value not evaluated: ";
+
+fn not_evaluated(ty: &str, text: &str) -> String {
+    format!("{NOT_EVALUATED}{ty}\t{text}")
+}
+
+/// Whether `text` is one word of ASCII letters, the only text a Decimal, Time or DateTime filter is pinned to refuse with the
+/// evaluate error (PtObserve.al: `abc`).
+pub fn letters_only(text: &str) -> bool {
+    !text.is_empty() && text.chars().all(|c| c.is_ascii_alphabetic())
+}
+
+/// `12:mm:ss`: the only Time text a filter is pinned to read (PtObserve.al:Bad_Time, `12:00:00`).
+fn is_noon_text(t: &str) -> bool {
+    let b = t.as_bytes();
+    b.len() == 8
+        && t.starts_with("12:")
+        && b[5] == b':'
+        && t[3..5].parse::<u32>().is_ok_and(|m| m < 60)
+        && t[6..8].parse::<u32>().is_ok_and(|s| s < 60)
+        && t[3..5].bytes().chain(t[6..8].bytes()).all(|c| c.is_ascii_digit())
+}
+
 /// What the text of a Date filter needs from the session: today, the work date and the language of the messages.
 #[derive(Debug, Clone, Copy)]
 pub struct DateFilterContext {
@@ -397,9 +423,32 @@ impl Parser<'_> {
         Ok(match self.ty {
             T::Text(_) => Value::Text(text.into()),
             T::Code(_) => Value::Code(text.trim().to_uppercase().into()),
-            T::Integer => Value::Integer(text.parse().map_err(|_| format!("`{text}` is not an Integer"))?),
+            // Any text that is no Integer: letters, a range end `x`, `1.5`, a number past the range (RcAFilters.al:392-414, PtObserve.al:277).
+            // A text with blank space in it is not pinned.
+            T::Integer => Value::Integer(text.parse().map_err(|_| {
+                if text.contains(char::is_whitespace) {
+                    format!("`{text}` is not an Integer")
+                } else {
+                    not_evaluated("Integer", &text)
+                }
+            })?),
             T::BigInteger => Value::BigInteger(text.parse().map_err(|_| format!("`{text}` is not a BigInteger"))?),
-            T::Decimal => Value::Decimal(text.parse().map_err(|_| format!("`{text}` is not a Decimal"))?),
+            T::Decimal => Value::Decimal(text.parse().map_err(|_| {
+                if letters_only(&text) {
+                    not_evaluated("Decimal", &text)
+                } else {
+                    format!("`{text}` is not a Decimal")
+                }
+            })?),
+            // A Time filter of letters raises the evaluate error (PtObserve.al:262); `12:00:00` is noon (PtObserve.al:268, the text the
+            // MakeTimeFilter subscriber writes). Other times are not pinned.
+            T::Time if letters_only(text.trim()) => return Err(not_evaluated("Time", text.trim())),
+            T::Time if is_noon_text(text.trim()) => {
+                let t = text.trim();
+                let (m, s) = (t[3..5].parse::<i64>().unwrap_or(0), t[6..8].parse::<i64>().unwrap_or(0));
+                Value::Time(12 * 3_600_000 + m * 60_000 + s * 1000 + 1)
+            }
+            T::DateTime if letters_only(text.trim()) => return Err(not_evaluated("DateTime", text.trim())),
             // Format(false) = 'No' is used as a filter value in the corpus. The words BC accepts,
             // in any case, are Yes, True, 1 and No, False, 0
             // (record/TestFilterTextBooleanFindContracts.al:103, SetFilter_BooleanField_AcceptedWords).
@@ -720,6 +769,26 @@ fn date_filter_value(t: &str) -> Result<Value, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// record/lt-record-read/RcAFilters.al:SetFilter_Integer_Invalid and events/lt-platform-triggers/PtObserve.al:Bad_Int, Bad_Decimal,
+    /// Bad_Time: the value that fails is named with its type; texts the corpus does not pin stay refused.
+    #[test]
+    fn a_value_that_does_not_evaluate_names_its_type() {
+        use crate::value::RtType as T;
+        let err = |t: &str, ty: &T| parse_filter(t, &[], ty).err().unwrap_or_default();
+        assert_eq!(err("abc", &T::Integer), format!("{NOT_EVALUATED}Integer\tabc"));
+        assert_eq!(err("1..x", &T::Integer), format!("{NOT_EVALUATED}Integer\tx"));
+        assert_eq!(
+            err("3000000000", &T::Integer),
+            format!("{NOT_EVALUATED}Integer\t3000000000")
+        );
+        assert_eq!(err("abc", &T::Decimal), format!("{NOT_EVALUATED}Decimal\tabc"));
+        assert_eq!(err("abc", &T::Time), format!("{NOT_EVALUATED}Time\tabc"));
+        assert!(!err("1,5", &T::Decimal).starts_with(NOT_EVALUATED));
+        assert!(!err("13:00:00", &T::Time).starts_with(NOT_EVALUATED));
+        let noon = parse_filter("12:00:00", &[], &T::Time).expect("noon");
+        assert!(noon.matches(&Value::Time(12 * 3_600_000 + 1)));
+    }
 
     /// Microsoft's Tests-SCM and Tests-ERM filter Date and Guid fields with text they built with `Format`
     /// (`SetFilter("Posting Date", '..' + Format(D))`, `SetFilter(SystemId, Format(G))`): the text reads as `Evaluate`

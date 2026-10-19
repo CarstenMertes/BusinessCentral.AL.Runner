@@ -4,6 +4,10 @@ use al_builtins::native::Signal;
 use al_builtins::value::Value;
 
 const FIXTURES: &str = r#"
+// UseLax (YXmlPortProps.al:67, :87).
+xmlport 60091 "ALT Lax" { Format = Xml; UseLax = true; schema { textelement(Root) { tableelement(U; "ALT Universal") { XmlName = 'Item'; fieldelement(Id; U."Entry No.") { } fieldelement(Name; U."Text Field") { } } } } }
+xmlport 60092 "ALT Strict" { Format = Xml; schema { textelement(Root) { tableelement(U; "ALT Universal") { XmlName = 'Item'; fieldelement(Id; U."Entry No.") { } fieldelement(Name; U."Text Field") { } } } } }
+
 table 60000 "ALT Universal"
 {
     fields
@@ -499,6 +503,69 @@ xmlport 60062 "FE Xml"
     Format = Xml; Direction = Both; FormatEvaluate = Xml; UseRequestPage = false;
     schema { textelement(Root) { tableelement(T; "FE Table") {
         fieldelement(Id; T.Id) { } fieldelement(Dt; T.Dt) { } fieldelement(Dec; T.Dec) { } fieldelement(Bl; T.Bl) { } } } }
+}
+
+// corpus xmlport/lt-af-xmlport/AfXmlPortAttrChildren.al:9-113 (without its Encoding property)
+table 60070 "ALT AF Row"
+{
+    fields { field(1; Id; Integer) { } field(2; Name; Text[30]) { } field(3; Lang; Text[10]) { } }
+    keys { key(PK; Id) { } }
+}
+
+xmlport 60071 "ALT AF XP Attr"
+{
+    Direction = Both; Format = Xml; UseRequestPage = false;
+    schema
+    {
+        textelement(Root)
+        {
+            tableelement(Row; "ALT AF Row")
+            {
+                fieldelement(Id; Row.Id) { }
+                fieldelement(Name; Row.Name)
+                {
+                    fieldattribute(Lang; Row.Lang) { }
+                    textattribute(Kind) { }
+                }
+            }
+        }
+    }
+    procedure GetKind(): Text begin exit(Kind); end;
+    procedure SetKind(NewKind: Text) begin Kind := NewKind; end;
+}
+
+xmlport 60072 "ALT AF XP Child Text"
+{
+    Direction = Both; Format = Xml; UseRequestPage = false;
+    schema
+    {
+        textelement(Root)
+        {
+            tableelement(Row; "ALT AF Row")
+            {
+                fieldelement(Id; Row.Id) { }
+                fieldelement(Name; Row.Name) { textelement(Child) { } }
+            }
+        }
+    }
+    procedure SetChild(NewChild: Text) begin Child := NewChild; end;
+    procedure GetChild(): Text begin exit(Child); end;
+}
+
+xmlport 60073 "ALT AF XP Child Field"
+{
+    Direction = Both; Format = Xml; UseRequestPage = false;
+    schema
+    {
+        textelement(Root)
+        {
+            tableelement(Row; "ALT AF Row")
+            {
+                fieldelement(Id; Row.Id) { }
+                fieldelement(Name; Row.Name) { fieldelement(Lang; Row.Lang) { } }
+            }
+        }
+    }
 }
 
 codeunit 50100 Helpers
@@ -1376,4 +1443,107 @@ fn an_import_of_a_key_that_is_stored_raises_the_table_error() {
         Err(Signal::Error(e)) => assert!(e.message.contains("already exists"), "{}", e.message),
         other => panic!("the second import must raise: {other:?}"),
     }
+}
+
+// xmlport/lt-y-xmlport-props/YXmlPortProps.al:UseLax_Import_AcceptsUnknownElements: a UseLax port skips an element of another
+// namespace after the last element of a sequence and lists `any element in namespace '##other'` for one of no namespace; a
+// strict port names the other namespace.
+#[test]
+fn use_lax_skips_an_element_of_another_namespace_at_the_end_of_a_sequence() {
+    let ports = r#"
+procedure Imp(Id: Integer; Xml: Text): Text var H: Codeunit Helpers; B: Record "ALT Blob" temporary; InStr: InStream; begin H.Stage(B, InStr, Xml); if not TryImp(Id, InStr) then exit('error:' + GetLastErrorText()); exit('ok'); end;
+[TryFunction] procedure TryImp(Id: Integer; InStr: InStream) begin XmlPort.Import(Id, InStr); end;
+"#;
+    let procs = ports;
+    let run_one = |body: &str| {
+        let src_extra = procs.to_string();
+        match run_in("U: Record \"ALT Universal\";", body, &src_extra, None) {
+            Ok(Value::Text(s)) => s.to_string(),
+            other => panic!("{other:?}"),
+        }
+    };
+    let lax_ns = run_one(
+        "exit(Imp(60091, '<Root><Item><Id>6</Id><Name>six</Name><Unknown xmlns=\"urn:other\">x</Unknown></Item></Root>') + '|' + Format(U.Count()));",
+    );
+    assert_eq!(lax_ns, "ok|1");
+    let lax =
+        run_one("exit(Imp(60091, '<Root><Item><Id>7</Id><Name>seven</Name><Unknown>x</Unknown></Item></Root>'));");
+    assert_eq!(
+        lax,
+        "error:Imported XML cannot validate with the schema: The element 'Item' has invalid child element 'Unknown'. List of possible elements expected: any element in namespace '##other'."
+    );
+    let strict = run_one(
+        "exit(Imp(60092, '<Root><Item><Id>5</Id><Name>five</Name><Unknown xmlns=\"urn:other\">x</Unknown></Item></Root>'));",
+    );
+    assert_eq!(
+        strict,
+        "error:Imported XML cannot validate with the schema: The element 'Item' has invalid child element 'Unknown' in namespace 'urn:other'."
+    );
+}
+
+const AF_VARS: &str = "H: Codeunit Helpers; B: Record \"ALT Blob\"; T: Record \"ALT Blob\" temporary; OutStr: OutStream; InStr: InStream; R: Record \"ALT AF Row\";";
+const AF_SEED: &str = "R.Id := 1; R.Name := 'Alpha'; R.Lang := 'en'; R.Insert(); B.Code := 'AF'; B.Insert(); B.Data.CreateOutStream(OutStr);";
+
+// xmlport/lt-af-xmlport/AfXmlPortAttrChildren.al:AF_Attributes_In_FieldElement (lines 241-258)
+#[test]
+fn a_field_element_carries_a_field_attribute_and_a_text_attribute() {
+    let out = text(
+        &format!("{AF_VARS} P: XmlPort \"ALT AF XP Attr\"; Q: XmlPort \"ALT AF XP Attr\";"),
+        &format!(
+            "{AF_SEED} P.SetKind('K1'); P.SetDestination(OutStr); P.Export(); B.Modify();
+             H.Stage(T, InStr, '<?xml version=\"1.0\" encoding=\"utf-8\"?><Root><Row><Id>2</Id><Name Lang=\"de\" Kind=\"K9\">Beta</Name></Row></Root>');
+             Q.SetSource(InStr); Q.Import(); R.Get(2);
+             exit(CopyStr(H.ReadAll(B), StrPos(H.ReadAll(B), '<Root>')) + '|' + R.Name + '|' + R.Lang + '|' + Q.GetKind());"
+        ),
+    );
+    assert_eq!(
+        out,
+        "<Root>  <Row>    <Id>1</Id>    <Name Lang=\"en\" Kind=\"K1\">Alpha</Name>  </Row></Root>|Beta|de|K9"
+    );
+}
+
+// xmlport/lt-af-xmlport/AfXmlPortAttrChildren.al:AF_FieldElement_With_TextElement_Child (lines 271-288)
+#[test]
+fn a_field_element_holds_a_text_element_after_its_value() {
+    let out = text(
+        &format!("{AF_VARS} P: XmlPort \"ALT AF XP Child Text\"; Q: XmlPort \"ALT AF XP Child Text\";"),
+        &format!(
+            "{AF_SEED} P.SetChild('c1'); P.SetDestination(OutStr); P.Export(); B.Modify();
+             H.Stage(T, InStr, '<?xml version=\"1.0\" encoding=\"utf-8\"?><Root><Row><Id>3</Id><Name>Gamma<Child>cc</Child></Name></Row></Root>');
+             Q.SetSource(InStr); Q.Import(); R.Get(3);
+             exit(CopyStr(H.ReadAll(B), StrPos(H.ReadAll(B), '<Root>')) + '|' + R.Name + '|' + R.Lang + '|' + Q.GetChild());"
+        ),
+    );
+    assert_eq!(
+        out,
+        "<Root>  <Row>    <Id>1</Id>    <Name>Alpha<Child>c1</Child></Name>  </Row></Root>|Gamma||cc"
+    );
+}
+
+// xmlport/lt-af-xmlport/AfXmlPortAttrChildren.al:AF_FieldElement_With_FieldElement_Child (lines 300-315)
+#[test]
+fn a_field_element_holds_a_field_element_after_its_value() {
+    let out = text(
+        &format!("{AF_VARS} P: XmlPort \"ALT AF XP Child Field\"; Q: XmlPort \"ALT AF XP Child Field\";"),
+        &format!(
+            "{AF_SEED} P.SetDestination(OutStr); P.Export(); B.Modify();
+             H.Stage(T, InStr, '<?xml version=\"1.0\" encoding=\"utf-8\"?><Root><Row><Id>4</Id><Name>Delta<Lang>fr</Lang></Name></Row></Root>');
+             Q.SetSource(InStr); Q.Import(); R.Get(4);
+             exit(CopyStr(H.ReadAll(B), StrPos(H.ReadAll(B), '<Root>')) + '|' + R.Name + '|' + R.Lang);"
+        ),
+    );
+    assert_eq!(
+        out,
+        "<Root>  <Row>    <Id>1</Id>    <Name>Alpha<Lang>en</Lang></Name>  </Row></Root>|Delta|fr"
+    );
+}
+
+// Not pinned: a field element whose field attribute is missing in the document is refused.
+#[test]
+fn a_field_element_without_its_field_attribute_is_refused_on_import() {
+    let why = refusal(
+        &format!("{AF_VARS} Q: XmlPort \"ALT AF XP Attr\";"),
+        "H.Stage(T, InStr, '<Root><Row><Id>2</Id><Name Kind=\"K9\">Beta</Name></Row></Root>'); Q.SetSource(InStr); Q.Import(); exit('');",
+    );
+    assert!(why.contains("without its field attribute Lang"), "{why}");
 }

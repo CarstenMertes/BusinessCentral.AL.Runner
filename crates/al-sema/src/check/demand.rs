@@ -769,9 +769,9 @@ impl Checker<'_> {
         });
         if first {
             for (o, k) in self.ws.filter_helper_triggers_subscribers() {
-                if self.ws.objects[o].subscribers[k]
-                    .event
-                    .eq_ignore_ascii_case("MakeDateFilter")
+                if al_ir::RAISED_FILTER_EVENTS
+                    .iter()
+                    .any(|e| self.ws.objects[o].subscribers[k].event.eq_ignore_ascii_case(e))
                 {
                     self.reach_subscriber(o, k);
                 }
@@ -1401,9 +1401,9 @@ pub fn uncompiled_subscriber_sites(ws: &Workspace, active: &dyn Fn(usize) -> boo
         }
     }
     for (so, si) in ws.filter_helper_triggers_subscribers() {
-        if ws.objects[so].subscribers[si]
-            .event
-            .eq_ignore_ascii_case("MakeDateFilter")
+        if al_ir::RAISED_FILTER_EVENTS
+            .iter()
+            .any(|e| ws.objects[so].subscribers[si].event.eq_ignore_ascii_case(e))
         {
             add(None, ir::PlatformPublisher::FilterHelperTriggers, so, si);
         }

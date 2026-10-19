@@ -208,6 +208,28 @@ fn field_row(
             Value::Unknown(why.clone())
         }
     };
+    // ExternalName (10) is blank and SQLDataType (23) Varchar for a Text field that declares neither (record/
+    // PZFieldObsoleteRows.al:48, :52: `Text30` fields). A declared ExternalName and the SQLDataType of the other
+    // types are pinned by no corpus test: unknown, so a read of one is refused.
+    if let Some(v) = fprop("ExternalName") {
+        r[pos(t, 10)] = super::unknown(t, 10, &format!("{}, which declares ExternalName = {v}", what()));
+    }
+    if t.fields.iter().any(|x| x.id == 23) {
+        r[pos(t, 23)] = match (&f.ty, fprop("SQLDataType")) {
+            (RtType::Text(Some(_)), None) => match &blank.row[pos(t, 23)] {
+                Value::Option(_, m) => match m.iter().position(|x| x.eq_ignore_ascii_case("Varchar")) {
+                    Some(n) => Value::Option(n as i32, m.clone()),
+                    None => super::unknown(t, 23, &format!("{}: SQLDataType has no member Varchar", what())),
+                },
+                _ => super::unknown(t, 23, &format!("{}: SQLDataType is not an option", what())),
+            },
+            _ => {
+                static WHY: std::sync::OnceLock<std::sync::Arc<str>> = std::sync::OnceLock::new();
+                let why = WHY.get_or_init(|| super::unknown_why(t, 23, "a field that is not a Text field"));
+                Value::Unknown(why.clone())
+            }
+        };
+    }
     // OptionString: the member names of an option or enum field, comma-joined (TestFieldEnumTypeVirtualTable.al:19-47).
     let option_string = match &f.ty {
         RtType::Option(m) => m.join(","),

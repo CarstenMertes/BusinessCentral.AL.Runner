@@ -434,8 +434,10 @@ struct Area {
     children: Vec<usize>,
 }
 
-/// Areas of the `actions` section a page extension may add to although the page declares none.
-const IMPLICIT_ACTION_AREAS: &[&str] = &["Processing", "Prompting"];
+/// Areas of the `actions` section a page extension may add to although the page declares none. Navigation, Creation and
+/// Reporting: pages/W1ActionAreas.al:44-115 and :137-157 (ExtensionActions_InImplicitAreas_Run adds to all five on a page
+/// with no actions, and each added action runs). The order of the areas among themselves is not pinned.
+const IMPLICIT_ACTION_AREAS: &[&str] = &["Processing", "Prompting", "Navigation", "Creation", "Reporting"];
 
 /// Promoted category groups of `actions` that a page extension may place actionrefs after although the page declares none.
 const IMPLICIT_PROMOTED_CATEGORIES: &[&str] = &["Category_Process"];
@@ -726,8 +728,8 @@ impl Tree {
                 }
             }
         }
-        // The areas of `actions` that every page has, declared or not. Only the two names corpus tests
-        // reach are listed (see the test `an_extension_adds_to_the_processing_area_of_a_page_that_declares_none`).
+        // The areas of `actions` that every page has, declared or not. Only the names corpus tests
+        // reach are listed (see `IMPLICIT_ACTION_AREAS` and the test `an_extension_adds_to_the_processing_area_of_a_page_that_declares_none`).
         for op in &pending {
             let kind = op.section.name().to_ascii_lowercase();
             let target = op.section.args().first().cloned().unwrap_or_default();

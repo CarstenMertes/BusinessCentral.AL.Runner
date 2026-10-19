@@ -192,6 +192,30 @@ impl Session {
                 ),
             };
         }
+        if id == ids::SESSIONINFORMATION_SQLSTATEMENTSEXECUTED_1 || id == ids::SESSIONINFORMATION_SQLROWSREAD_1 {
+            // The SQL counters of the session. The corpus pins only that one read is not negative
+            // (session/TestMiscTypes.al:96-104 SessionInformation_SqlStatementsExecuted_NonNegative, :106-114
+            // SessionInformation_SqlRowsRead_NonNegative). The runtime runs no SQL, so the first read answers 0. How the
+            // count grows between two reads is not pinned (and could not match BC's SQL), so a second read in the same test
+            // method is refused.
+            let bit = if id == ids::SESSIONINFORMATION_SQLSTATEMENTSEXECUTED_1 {
+                1
+            } else {
+                2
+            };
+            if self.tx.sql_counters_read & bit != 0 {
+                return unsupported(format!(
+                    "SessionInformation.{} read a second time in a test method (how the count grows is not pinned)",
+                    if bit == 1 {
+                        "SqlStatementsExecuted"
+                    } else {
+                        "SqlRowsRead"
+                    }
+                ));
+            }
+            self.tx.sql_counters_read |= bit;
+            return Ok(Value::BigInteger(0));
+        }
         if id == ids::DATABASE_ISINWRITETRANSACTION_1 {
             // An uncommitted write opens one, a Commit and the test boundary close it
             // (codeunit/TestWriteTxTestBoundary.al:93,103,142). Writes to temporary tables are

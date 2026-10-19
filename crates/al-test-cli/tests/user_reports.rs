@@ -87,3 +87,81 @@ codeunit 69511 T { Subtype = Test;
   end; }";
     all_pass(run_with_deps(&[], main));
 }
+
+/// Issue 292: a procedure of a Page variable that never ran calls `CurrPage.Update(false)`; the call does nothing and the
+/// procedure goes on. Pin: pages/lt-closed-page-variable-currpage/ClosedPageVariableCurrPageUpdate.al:98-114 (Update_NeverRun).
+#[test]
+fn issue_292_currpage_update_false_on_a_page_variable_that_never_ran_returns() {
+    let main = "
+table 69526 \"UR Row\" { fields { field(1; Number; Integer) { } } keys { key(PK; Number) { Clustered = true; } } }
+page 69520 \"UR Unopened Part\" { PageType = ListPart; SourceTable = \"UR Row\"; SourceTableTemporary = true;
+  layout { area(Content) { repeater(Rows) { field(Number; Rec.Number) { ApplicationArea = All; } } } }
+  procedure RefreshBeforeOpen(): Boolean begin CurrPage.Update(false); exit(true); end; }
+codeunit 69521 T { Subtype = Test;
+  [Test] procedure P() var Part: Page \"UR Unopened Part\"; begin
+    if not Part.RefreshBeforeOpen() then Error('The page procedure did not return.');
+  end; }";
+    all_pass(run_with_deps(&[], main));
+}
+
+/// Issue 293: `SessionInformation.SqlStatementsExecuted()` returns a count that is not negative.
+/// Pin: session/TestMiscTypes.al:96-104 (SessionInformation_SqlStatementsExecuted_NonNegative).
+#[test]
+fn issue_293_sql_statements_executed_is_not_negative() {
+    let main = "
+codeunit 69522 T { Subtype = Test;
+  [Test] procedure P() begin
+    if SessionInformation.SqlStatementsExecuted() < 0 then Error('The SQL statement count must not be negative.');
+  end; }";
+    all_pass(run_with_deps(&[], main));
+}
+
+/// Issue 297: a page extension adds to the `Creation` action area of a page that declares no actions, and a TestPage of
+/// the page opens and closes. Pin: pages/W1ActionAreas.al:44-115 and :137-157 (ExtensionActions_InImplicitAreas_Run: the
+/// extension adds to Navigation, Creation, Reporting, Processing and Prompting of a page with no actions).
+#[test]
+fn issue_297_extension_adds_to_the_implicit_creation_area() {
+    let main = "
+table 69527 \"UR Creation Row\" { fields { field(1; Number; Integer) { } } keys { key(PK; Number) { Clustered = true; } } }
+page 69523 \"UR Creation List\" { PageType = List; SourceTable = \"UR Creation Row\"; SourceTableTemporary = true;
+  layout { area(Content) { repeater(Rows) { field(Number; Rec.Number) { ApplicationArea = All; } } } } }
+pageextension 69524 \"UR Creation Ext\" extends \"UR Creation List\" {
+  actions { addlast(Creation) { action(ProbeAction) { ApplicationArea = All; Caption = 'Probe'; } } } }
+codeunit 69525 T { Subtype = Test;
+  [Test] procedure P() var List: TestPage \"UR Creation List\"; begin
+    List.OpenView(); List.Close();
+  end; }";
+    all_pass(run_with_deps(&[], main));
+}
+
+/// Issue 293, the other side: only one read of the counter is pinned, so a second read in the same test method is refused.
+#[test]
+fn issue_293_a_second_read_of_the_sql_counter_is_refused() {
+    let main = "
+codeunit 69528 T { Subtype = Test;
+  [Test] procedure P() var A: BigInteger; begin
+    A := SessionInformation.SqlStatementsExecuted();
+    if SessionInformation.SqlStatementsExecuted() < A then Error('The count went down.');
+  end; }";
+    let results = run_with_deps(&[], main);
+    assert!(
+        matches!(&results[..], [(_, Outcome::NotRun(why))] if why.contains("read a second time")),
+        "{results:?}"
+    );
+}
+
+/// Found next to issue 292: `CurrPage.Close()` in a procedure of a Page variable that never ran does nothing either.
+/// Pin: pages/lt-closed-page-variable-currpage/ClosedPageVariableCurrPageClose.al:98-114 (Close_NeverRun).
+#[test]
+fn issue_292_currpage_close_on_a_page_variable_that_never_ran_returns() {
+    let main = "
+table 69529 \"UR Close Row\" { fields { field(1; Number; Integer) { } } keys { key(PK; Number) { Clustered = true; } } }
+page 69530 \"UR Unopened Close\" { PageType = List; SourceTable = \"UR Close Row\";
+  layout { area(Content) { repeater(Rows) { field(Number; Rec.Number) { ApplicationArea = All; } } } }
+  procedure CloseBeforeOpen(): Boolean begin CurrPage.Close(); exit(true); end; }
+codeunit 69531 T { Subtype = Test;
+  [Test] procedure P() var Pg: Page \"UR Unopened Close\"; begin
+    if not Pg.CloseBeforeOpen() then Error('The page procedure did not return.');
+  end; }";
+    all_pass(run_with_deps(&[], main));
+}

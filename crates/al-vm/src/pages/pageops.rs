@@ -761,6 +761,17 @@ impl Session {
                 let record = st.borrow().set_record.clone();
                 self.run_page_ui(st, record, true)
             }
+            // `CurrPage.Close()` in a procedure of a Page variable that never ran does nothing and the procedure goes on
+            // (pages/lt-closed-page-variable-currpage/ClosedPageVariableCurrPageClose.al:98-114, Close_NeverRun). A page that
+            // ran and closed stays refused here (Close_AfterModalClosed pins it, but which runs count is not settled).
+            PageMethod::Close
+                if method.recv() == PageRecv::Page && {
+                    let s = st.borrow();
+                    !s.open && !s.ran && !s.typed_handler && s.host.is_none()
+                } =>
+            {
+                Ok(Value::Null)
+            }
             PageMethod::Close if method.recv() == PageRecv::Page => {
                 self.require_open(st)?;
                 let a = self.close_action(st, "Close");
@@ -806,6 +817,17 @@ impl Session {
             // HiddenPartCurrPageUpdateTrue.al:UpdateTrue_LiteralInvisible_OpenEdit). Base Application's Approval FactBox ends
             // `UpdateApprovalEntriesFromSourceRecord` with it.
             PageMethod::Update if st.borrow().host.is_some() && !st.borrow().open => Ok(Value::Null),
+            // A Page variable that never ran has no client either: `CurrPage.Update(false)` in a procedure of it does nothing
+            // and the procedure goes on (pages/lt-closed-page-variable-currpage/ClosedPageVariableCurrPageUpdate.al:98-114,
+            // Update_NeverRun). `Update()` and `Update(true)` there, and a page that ran and closed, stay refused (not pinned).
+            PageMethod::Update
+                if method.recv() == PageRecv::Page && matches!(args.first(), Some(Value::Boolean(false))) && {
+                    let s = st.borrow();
+                    !s.open && !s.ran && !s.typed_handler && s.host.is_none()
+                } =>
+            {
+                Ok(Value::Null)
+            }
             PageMethod::Update | PageMethod::SaveRecord => {
                 self.require_open(st)?;
                 if method == PageOp::PageSaveRecord {

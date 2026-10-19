@@ -665,6 +665,7 @@ impl Session {
                 deferred_insert: None,
                 immediate_errors: false,
                 try_depth: 0,
+                sql_counters_read: 0,
             },
             ui_state: UiState {
                 scope: None,
@@ -726,6 +727,7 @@ impl Session {
         self.application_areas.clear();
         self.tx.transaction_type = 0;
         self.tx.tx_phase = crate::transactions::TX_FRESH;
+        self.tx.sql_counters_read = 0;
     }
 
     /// Makes every change so far durable (and a Truncate of this transaction final).

@@ -25,14 +25,14 @@ Never push to `master` or `al-runtime-rs-staging`, and never open a pull request
 
 For the publisher and the orchestrator. Writers only hand over their branch.
 
-1. Merge the green writer branches into `al-runtime-rs-staging` and push it.
-2. If `git merge-base --is-ancestor origin/master origin/al-runtime-rs-staging` fails (an outside pull request was merged into `master`), merge `origin/master` into `al-runtime-rs-staging` first and push it. The pull request run tests staging merged with `master`; the pinned commit must hold every file that run tested, and `tools/corpus_bump.sh` refuses the pin otherwise.
-3. Push a bump branch at that staging commit: `git push origin <sha>:refs/heads/al-runtime-rs-bump-<n>`. Do not open the pull request from `al-runtime-rs-staging` itself: the repository deletes the head branch of a merged pull request.
-4. Open the pull request `al-runtime-rs-bump-<n>` into `master`. Its CI run (event `pull_request`) is the matrix of the bump: legs 27.5, 28.5 and 29.0 of the Cloud, OnPrem and OnPrem DotNet jobs, plus the object-id gate. These ten checks are the required ones. Do not dispatch a second matrix run on staging for the same commit.
-5. When the run is green, merge with a merge commit: `gh pr merge <N> --merge`. Never squash or rebase: both rewrite the commit, and the run's commit would then not be on `master`.
+1. Make the bump branch from `origin/al-runtime-rs-staging`: `al-runtime-rs-staging-pub<n>`. If `git merge-base --is-ancestor origin/master origin/al-runtime-rs-staging` fails (an outside pull request was merged into `master`), merge `origin/master` into the bump branch first. The pull request run tests the bump branch merged with `master`; the pinned commit must hold every file that run tested, and `tools/corpus_bump.sh` refuses the pin otherwise.
+2. Merge the green writer branches into the bump branch and push it.
+3. Open the pull request from the bump branch into `master`. Its CI run (event `pull_request`) is the matrix of the bump: legs 27.5, 28.5 and 29.0 of the Cloud, OnPrem and OnPrem DotNet jobs, plus the object-id gate. These ten checks are the required ones. Fix on the bump branch and push until the run is green; do not dispatch a second matrix run for the same commit. Never open the pull request from `al-runtime-rs-staging` itself: the repository deletes the head branch of a merged pull request.
+4. When the run is green, merge with a merge commit: `gh pr merge <N> --merge`. Never squash or rebase: both rewrite the commit, and the run's commit would then not be on `master`.
+5. Fast-forward staging to `master`, so writers and the CI batcher start from the new state: `git push origin origin/master:refs/heads/al-runtime-rs-staging` (check `git merge-base --is-ancestor origin/al-runtime-rs-staging origin/master` first).
 6. In al-runtime-rs, `tools/corpus_bump.sh <run id>` with the id of that pull request run. It checks that the run's commit is on `master` and that the merge commit has the same files as the run's commit.
 
-Outside contributors open pull requests to `master` as before. They merge with a merge commit too; step 2 then brings their commits into staging before the next bump.
+Outside contributors open pull requests to `master` as before. They merge with a merge commit too; step 1 then brings their commits into the next bump branch.
 
 The corpus app is `tests/al-language` (Cloud target, BC 27 symbols, runtime 16.0). Two more apps exist: `tests/al-language-onprem` (Target OnPrem: for `Scope = OnPrem` objects such as `Database.SID`, `Report.SaveAsPdf`, `Environment Info Test Library`) and `tests/al-language-onprem-dotnet` (needs AL compiler 18 or newer).
 

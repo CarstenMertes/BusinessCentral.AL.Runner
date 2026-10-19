@@ -68,7 +68,7 @@ git -C "$corpus" merge-base --is-ancestor "$sha" "$ref" || die "commit $sha of r
 if ! git -C "$corpus" rev-list --first-parent "$ref" | grep -x "$sha" >/dev/null; then
   merge="$(git -C "$corpus" rev-list --first-parent --ancestry-path "$sha..$ref" | tail -n 1)"
   [ "$(git -C "$corpus" rev-parse "$merge^{tree}")" = "$(git -C "$corpus" rev-parse "$sha^{tree}")" ] \
-    || die "commit $sha of run $run came into $branch with merge ${merge:0:7}, whose files differ from it ($branch had commits the run's commit lacks): merge origin/$branch into al-runtime-rs-staging, run CI on the pull request again and bump from that run"
+    || die "commit $sha of run $run came into $branch with merge ${merge:0:7}, whose files differ from it ($branch had commits the run's commit lacks): merge origin/$branch into the bump branch, run CI on the pull request again and bump from that run"
 fi
 echo "run $run: green, commit $sha on $branch"
 

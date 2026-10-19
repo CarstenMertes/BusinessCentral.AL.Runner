@@ -113,8 +113,21 @@ impl CorpusRuntime {
         suites: &[SuiteRun],
         opts: &RunOptions,
     ) -> Result<CorpusRuntime, String> {
-        let compiled = Self::compile_suites(apps, kinds, manifests, symbols, target, suites, opts)?;
-        let rt = Self::run_compiled(&compiled, target, dotnet, opts);
+        let compiled = Self::compile_suites_with(apps, kinds, manifests, symbols, target, suites, opts, true)?;
+        let rt = Self::run_compiled(&compiled, target, dotnet.clone(), opts);
+        // A lean compile left out the workspace objects no selected test names (`Roots::lean`). A run that met one of
+        // their routines was compiled for less than it needs: the apps are compiled completely and the tests run again,
+        // so the outcomes are the complete compile's.
+        if compiled.lean.is_some() && rt.met_left_out() {
+            let lean_time = rt.phases.compile + rt.phases.tests;
+            let (apps, kinds) = compiled.into_apps();
+            let compiled = Self::compile_suites_with(apps, kinds, manifests, symbols, target, suites, opts, false)?;
+            let mut rt = Self::run_compiled(&compiled, target, dotnet, opts);
+            rt.phases.lean_redone = true;
+            rt.phases.compile += lean_time;
+            retire(compiled);
+            return Ok(rt);
+        }
         // The workspace and the lowered program are big: dropping them takes as long as lowering
         // a tenth of the corpus, and nothing waits for it.
         retire(compiled);
@@ -132,6 +145,23 @@ impl CorpusRuntime {
         target: Option<&al_version::Target>,
         suites: &[SuiteRun],
         opts: &RunOptions,
+    ) -> Result<Compiled, String> {
+        Self::compile_suites_with(apps, kinds, manifests, symbols, target, suites, opts, false)
+    }
+
+    /// [`compile_suites`](Self::compile_suites); with `lean`, selected tests that are free of data are compiled without
+    /// the workspace objects they do not name (`al_sema::check::Roots::lean`). Only a caller that runs the tests again
+    /// on a complete compile when they meet what was left out (`CorpusRuntime::met_left_out`) may ask for it.
+    #[allow(clippy::too_many_arguments)]
+    fn compile_suites_with(
+        apps: Vec<al_sema::workspace::AppSource>,
+        kinds: Vec<al_sema::AppKind>,
+        manifests: &[Manifest],
+        symbols: &BTreeSet<String>,
+        target: Option<&al_version::Target>,
+        suites: &[SuiteRun],
+        opts: &RunOptions,
+        lean: bool,
     ) -> Result<Compiled, String> {
         // AL_NO_BASELINE=1 leaves the install baseline out (to measure what it costs).
         let baseline_wanted =
@@ -243,7 +273,8 @@ impl CorpusRuntime {
         // Selected tests that look free of data are compiled first the way the demand-driven path
         // does it, without the baseline's roots and without the compile cache: that touches only what
         // the tests reach (a few routines), where the cache decodes every dependency object and the
-        // demand-driven compile with the baseline reaches 421 routines of Base Application. If the rule
+        // demand-driven compile with the baseline reaches 98,000 routines of Base Application. With `lean`
+        // the workspace objects no selected test names are left out of it too (`Roots::lean`). If the rule
         // (`observe.rs`) then says the tests cannot observe the baseline, that is the compile. If it says
         // they may, the apps go on to the compile they would have had. `--require-compile-cache` (CI:
         // the measured run must be a hit) never takes this path.
@@ -286,10 +317,13 @@ impl CorpusRuntime {
             };
             let load = started.elapsed();
             // Without the baseline's roots, and without the workspace's procedures no selected test names:
-            // a helper beside the tests that touches tables must not pull the dependency apps in.
+            // a helper beside the tests that touches tables must not pull the dependency apps in. Lean, also
+            // without the workspace objects no selected test names: the corpus's tables, pages, listeners and
+            // install code reach most of Base Application through the demand (98 000 of its 155 000 routines).
             let first_roots = al_sema::check::Roots {
                 baseline: false,
                 reach_only: true,
+                lean,
                 ..roots.clone()
             };
             let (mut ws, lowered) = al_sema::lower::compile_loaded(ws, load, &catalog, first_roots);
@@ -421,6 +455,12 @@ impl CorpusRuntime {
         }
         let opts_only = only;
         let compile_time = compile_started.elapsed();
+        // (left out, all) of the workspace objects, when the compile that runs the tests is lean.
+        let lean = {
+            let all = lowered.dependency.iter().filter(|d| !**d).count();
+            let out = lowered.left_out.iter().filter(|l| **l).count();
+            (out > 0).then_some((out, all))
+        };
         Ok(Compiled {
             ws,
             lowered,
@@ -434,6 +474,7 @@ impl CorpusRuntime {
             compile_cache_skipped,
             source_index,
             compile_time,
+            lean,
             incr: layers.map(|layers| Incr {
                 layers,
                 roots,
@@ -465,6 +506,7 @@ impl CorpusRuntime {
             compile_cache_skipped,
             source_index,
             compile_time: compile_phase,
+            lean,
             incr: _,
         } = compiled;
         let (baseline_wanted, baseline, compile_cache_skipped, source_index) =
@@ -979,6 +1021,8 @@ impl CorpusRuntime {
                 compile_cache_skipped,
                 source_index,
                 slowest: codeunit_times,
+                lean: *lean,
+                lean_redone: false,
             },
             details,
             results: list,
@@ -992,6 +1036,15 @@ impl CorpusRuntime {
 }
 
 impl CorpusRuntime {
+    /// Whether a test met a routine a lean compile left out (`al_sema::check::LEFT_OUT`): refused for it, before it
+    /// started (its static calls) or while it ran, also inside the test runner's codeunits.
+    pub(crate) fn met_left_out(&self) -> bool {
+        self.results.iter().any(|r| match &r.outcome {
+            Outcome::NotRun(why) | Outcome::Fail(why) => why.contains(al_sema::check::LEFT_OUT),
+            Outcome::Pass => false,
+        })
+    }
+
     /// With `RunOptions::impact_trace`: the keys that `TestResult::impact` numbers.
     pub fn impact_keys(&self) -> &[String] {
         &self.impact_keys

@@ -53,6 +53,8 @@ pub struct Lowered {
     pub(crate) checker_diags: Vec<crate::workspace::Diagnostic>,
     /// `CheckResult::skipped` of the compile, for the same.
     pub(crate) skipped: Vec<bool>,
+    /// Per object: left out by a lean compile (`check::Roots::lean`), its routines refuse with `check::LEFT_OUT`.
+    pub left_out: Vec<bool>,
 }
 
 /// The routines a variable of a page, report or xmlport type can run besides the ones the code

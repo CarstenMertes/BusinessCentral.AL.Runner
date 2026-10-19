@@ -1252,6 +1252,42 @@ to 9 s and 2.1 GB, against 0.3 s and 684 MB for the whole suite, and the install
 Result on the demo app, one pure test, load average about 19: compile 4.2 s -> 0.17 s, total 4.6 s -> 0.22 to 0.36 s,
 peak memory 2.1 GB -> 135 MB; the baseline is skipped (0.30 s saved).
 
+### A selection beside the corpus's own objects: the lean compile (2026-10-19, branch `selection-run-cost`)
+
+`al-test-cli --root . --codeunit 74712` with the Microsoft apps cost more than the full corpus run (177 G against 168.5 G
+instructions). Two compiles each reached 98,000 of Base Application's 155,000 routines:
+
+1. **The pure-first compile still had the whole workspace as roots.** `reach_only` leaves only procedures of normal
+   codeunits out. The corpus's install codeunits, listeners, table and page extensions, pages and tables stay roots, and
+   each of these groups alone reaches about 98,000 Base Application routines through the demand.
+2. **The rule then said "may observe"**, because the Probe Observer calls `CompanyName()`, so the whole compile was done
+   again with the baseline's roots. Company-Initialize alone reaches about 98,000 routines, too. That is the fixed part
+   of every run that runs the baseline (an app with only the test and its fixtures costs 90.6 G with the baseline and
+   6.8 G without).
+
+Changes:
+
+1. **`Roots::lean`** (`check/mod.rs`, `lean_left_out`), used only for the pure-first compile of a selection that
+   `try_run_suites_with` runs: a workspace object is compiled only when a selected test codeunit names it, directly or
+   through the objects it names. A name is an identifier or quoted identifier equal to a workspace object's name, or an
+   integer literal equal to a workspace object's id, anywhere in a named object's text. The extensions of a named object,
+   and the object a named extension extends, count as named. The routines of the other workspace objects refuse with
+   `check::LEFT_OUT`; their fields, values and properties are lowered as before (`members` holds them).
+2. **A lean run is checked.** The lean compile only runs tests the rule calls pure: their static reach has no record,
+   page, event publisher or run by id, so only what they name runs. If a test still meets a routine the lean compile
+   left out (a refusal that carries `LEFT_OUT`, before or while it runs, also in the test runner's codeunits), the apps are
+   compiled completely and every selected test runs again; the second run's outcomes count (`CorpusRuntime::met_left_out`,
+   `Compiled::into_apps`). A workspace codeunit with one of the ids the test runner runs (130301, ...) is such a case: no
+   test names it.
+3. **An install codeunit the lean compile left out does not run** in the test's session (`run_install_codeunits`). The
+   tests are pure, so they cannot read what it writes; and BC runs install code in the session that publishes the app, so
+   nothing else of it reaches a test's session. The complete run gets the same from the baseline, which runs it once in
+   a session of its own. Before this change a pure selection ran the workspace's install code in each test's session, so a
+   test that reads a single-instance codeunit the install code changed saw another value than in the complete run
+   (`al-testrun/tests/lean_selection.rs`).
+4. **`Database.CompanyName` is pure for the rule** (`observe.rs`, `PURE_DATABASE`): it answers the company the host gave
+   the session, never a row (al-vm `sessionops.rs`). `tools/baseline_rule_check.sh run`: 0 differences.
+
 ## Amendment 2026-10-15 (owner decision, branch `source-lookup`): a package without source is not found
 
 **Decision (owner).** "A package that is found but can't serve the source is not a package that is found by definition.

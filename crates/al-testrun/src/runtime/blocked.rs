@@ -5,6 +5,10 @@ use super::*;
 /// OnInstallAppPerDatabase with no company chosen (the order measured on BC 27.5), and commits
 /// after each. An installer that cannot run is skipped; returned are the tables it touches and
 /// why, so tests that touch them can be reported not run.
+///
+/// An installer a lean compile left out (`Lowered::left_out`) does not run: the compile is lean only for tests that
+/// read no data (`observe.rs`), and BC runs install code in the session that publishes the app, so nothing else of it
+/// reaches a test's session (the install baseline, which runs it once in a session of its own, gives the same).
 pub(crate) fn run_install_codeunits(lowered: &Lowered, session: &mut Session) -> Vec<(BTreeSet<u32>, String)> {
     let mut skipped = Vec::new();
     let installers: Vec<usize> = lowered
@@ -15,6 +19,7 @@ pub(crate) fn run_install_codeunits(lowered: &Lowered, session: &mut Session) ->
         .filter(|(oi, o)| {
             o.is_kind(al_ir::ObjKind::Codeunit)
                 && !lowered.dependency[*oi]
+                && !lowered.left_out.get(*oi).copied().unwrap_or(false)
                 && o.properties
                     .iter()
                     .any(|(k, v)| k.eq_ignore_ascii_case("Subtype") && v.trim().eq_ignore_ascii_case("Install"))

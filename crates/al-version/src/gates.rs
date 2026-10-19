@@ -60,9 +60,6 @@ pub enum Gate {
     /// "Header Part Name" and "Theme Part Name" (Text[300]); before, it ends at "App ID"
     /// (platform/lt-platform-tables/PtCloudTables.al, corpus bump 22). Not consumed yet.
     ReportLayoutSelectionPartNamesFrom29,
-    /// The `decimalformatter` attribute of a decimal column in the `Report.SaveAs` dataset XML is `#,##0.00###` from BC 28
-    /// and `#,##0.00` before (report/lt-y-report-props/YReportPropsTests.al, corpus bump 25). Not consumed yet.
-    ReportXmlDecimalFormatterFrom28,
     /// The report metadata properties `DefaultHeaderFooterPartName` and `DefaultThemePartName` exist from BC 29 (runtime 18.0,
     /// empty by default); before they are absent (report/lt-y-report-props/YReportPropsTests.al, corpus bump 25). Not consumed yet.
     ReportPartNamePropertiesFrom29,
@@ -162,7 +159,6 @@ impl Gate {
         Gate::PartLineBeforeHostKeyFrom28,
         Gate::RecordRefIsDirtyFrom28,
         Gate::ReportLayoutSelectionPartNamesFrom29,
-        Gate::ReportXmlDecimalFormatterFrom28,
         Gate::ReportPartNamePropertiesFrom29,
         Gate::GetTextArgumentEvaluateErrorFrom28,
         Gate::RequestPageExtensionRecordTriggerOrderFrom28,
@@ -231,7 +227,6 @@ impl Gate {
             | Gate::FileDownloadWithoutClientFrom28
             | Gate::GetTextArgumentEvaluateErrorFrom28
             | Gate::RecordRefIsDirtyFrom28
-            | Gate::ReportXmlDecimalFormatterFrom28
             | Gate::PartLineBeforeHostKeyFrom28
             | Gate::RequestPageExtensionRecordTriggerOrderFrom28
             | Gate::OptionFieldRefSetEvaluateErrorFrom28
@@ -306,10 +301,6 @@ impl Gate {
             Gate::RecordRefIsDirtyFrom28 => &[Evidence {
                 file: "recordref/lt-recordref-isdirty-edges/RecordRefIsDirtyEdges.al",
                 lines: "12",
-            }],
-            Gate::ReportXmlDecimalFormatterFrom28 => &[Evidence {
-                file: "report/lt-y-report-props/YReportPropsTests.al",
-                lines: "39,58,77,96,115,134",
             }],
             Gate::ReportPartNamePropertiesFrom29 => &[
                 Evidence {

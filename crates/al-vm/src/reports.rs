@@ -2354,44 +2354,21 @@ impl Session {
     /// `decimalformatter` attribute from `DecimalPlaces` of the column, else of the field. Every other
     /// type is refused. A column that asks for its caption adds to the Labels block.
     /// The `decimalformatter` of a Decimal column: from `DecimalPlaces` of the column, else of the field (`dataset::decimal_formatter`).
-    /// Without either, BC 27 writes `#,##0.00`; from BC 28 (`Gate::ReportXmlDecimalFormatterFrom28`) a value with up to two decimals
-    /// still gets `#,##0.00` (report/W3ReportObjectIdPreviewLanguage.al:448, handlers/TestReportSaveAsDatasetContracts.al:336), as does
-    /// a field with `AutoFormatType = 1` (handlers/TestReportSaveAsColumnTypesContracts.al:297, 12.345678), but a Decimal variable
-    /// holding three decimals gets `#,##0.00###` (report/lt-y-report-props/YReportPropsTests.al:40, 1234567.891). Every other shape
-    /// from BC 28 is refused (docs/probes-needed.md).
+    /// Without either it is `#,##0.00` on every version (report/lt-y-report-props/YReportPropsTests.al:40, 1234567.891;
+    /// report/W3ReportObjectIdPreviewLanguage.al:448). BC follows General Ledger Setup "Amount Decimal Places" as the
+    /// session first read it; the corpus tests read it at the default 2:2 after SelectLatestVersion (corpus bump 28: the
+    /// earlier BC 28 `#,##0.00###` was a value left by an earlier test).
     fn decimal_column_formatter(
         &self,
         t: &Option<Arc<al_data::TableDef>>,
         c: &ir::ReportColumn,
-        value: &Value,
     ) -> Result<String, Signal> {
         let from_field = match (t, c.field) {
             (Some(t), Some(pos)) => self.field_property(t, pos, "DecimalPlaces"),
             _ => None,
         };
         let places = c.decimal_places.clone().or(from_field);
-        if places.is_some() || !self.has(al_version::Gate::ReportXmlDecimalFormatterFrom28) {
-            return dataset::decimal_formatter(places.as_deref());
-        }
-        let Value::Decimal(d) = value else {
-            unreachable!("a Decimal column")
-        };
-        let scale = d.normalize().scale();
-        let auto_format_1 = match (t, c.field) {
-            (Some(t), Some(pos)) => self
-                .field_property(t, pos, "AutoFormatType")
-                .is_some_and(|v| v.trim() == "1"),
-            _ => false,
-        };
-        match scale {
-            0..=2 => Ok(dataset::DECIMAL_FORMATTER.to_string()),
-            _ if auto_format_1 => Ok(dataset::DECIMAL_FORMATTER.to_string()),
-            3 if c.field.is_none() => Ok("#,##0.00###".to_string()),
-            _ => unsupported(format!(
-                "the decimalformatter of Decimal column {} holding {d} without DecimalPlaces (not pinned in this version)",
-                c.name
-            )),
-        }
+        dataset::decimal_formatter(places.as_deref())
     }
 
     fn dataset_column(
@@ -2430,7 +2407,7 @@ impl Session {
             Value::Date(..) | Value::DateTime(_) | Value::Decimal(_) | Value::Time(_) if region.is_some() => {
                 let (name_of_region, r) = region.expect("checked");
                 if let Value::Decimal(_) = &value {
-                    attribute = Some(("decimalformatter", self.decimal_column_formatter(&t, c, &value)?));
+                    attribute = Some(("decimalformatter", self.decimal_column_formatter(&t, c)?));
                 }
                 match al_builtins::format::region_column(r, &value) {
                     Some(text) => text,
@@ -2468,7 +2445,7 @@ impl Session {
                 )
             }
             Value::Decimal(_) => {
-                attribute = Some(("decimalformatter", self.decimal_column_formatter(&t, c, &value)?));
+                attribute = Some(("decimalformatter", self.decimal_column_formatter(&t, c)?));
                 // The decimal as it is, scale and all: `12.345678 * 1.5` is `18.5185170`
                 // (handlers/TestReportSaveAsColumnTypesContracts.al:174-180); Format would trim the zero.
                 let Value::Decimal(d) = &value else {

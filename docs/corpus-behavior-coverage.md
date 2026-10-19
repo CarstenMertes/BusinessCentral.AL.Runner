@@ -12,7 +12,7 @@ The catalog of each area is what the AL language server offers in probe files (`
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
 | attributes | 42 | 32 | 76.2% | 26 | 61.9% | 0 | 16 | 2 |
 | events | 23 | 16 | 69.6% | 22 | 95.7% | 0 | 1 | 0 |
-| properties | 720 | 580 | 80.6% | 532 | 73.9% | 31 | 157 | 4 |
+| properties | 720 | 580 | 80.6% | 544 | 75.6% | 20 | 156 | 4 |
 | syntax | 16 | 16 | 100.0% | 16 | 100.0% | 0 | 0 | 0 |
 | triggers | 128 | 128 | 100.0% | 116 | 90.6% | 3 | 9 | 0 |
 
@@ -86,21 +86,21 @@ Left out: 293 presentation-only properties (Caption, ToolTip, ApplicationArea, .
 | QueryColumn | 6 | 3 | 50.0% | 6 | 100.0% | 0 | 0 | 0 |
 | QueryDataItem | 3 | 3 | 100.0% | 3 | 100.0% | 0 | 0 | 0 |
 | QueryFilter | 4 | 1 | 25.0% | 4 | 100.0% | 0 | 0 | 0 |
-| Report | 36 | 32 | 88.9% | 26 | 72.2% | 10 | 0 | 0 |
+| Report | 36 | 32 | 88.9% | 30 | 83.3% | 6 | 0 | 0 |
 | ReportColumn | 11 | 10 | 90.9% | 11 | 100.0% | 0 | 0 | 0 |
 | ReportDataItem | 13 | 10 | 76.9% | 13 | 100.0% | 0 | 0 | 0 |
 | ReportExtension | 3 | 3 | 100.0% | 3 | 100.0% | 0 | 0 | 0 |
 | ReportExtensionModify | 2 | 2 | 100.0% | 2 | 100.0% | 0 | 0 | 0 |
-| ReportLayout | 12 | 9 | 75.0% | 11 | 91.7% | 0 | 1 | 0 |
+| ReportLayout | 12 | 9 | 75.0% | 12 | 100.0% | 0 | 0 | 0 |
 | RequestPage | 22 | 17 | 77.3% | 21 | 95.5% | 1 | 0 | 1 |
 | Table | 24 | 19 | 79.2% | 17 | 70.8% | 0 | 7 | 1 |
 | TableExtension | 4 | 0 | 0.0% | 3 | 75.0% | 0 | 1 | 0 |
-| XmlPort | 26 | 26 | 100.0% | 22 | 84.6% | 4 | 0 | 0 |
-| XmlPortFieldAttribute | 7 | 6 | 85.7% | 4 | 57.1% | 3 | 0 | 0 |
-| XmlPortFieldElement | 8 | 8 | 100.0% | 5 | 62.5% | 3 | 0 | 0 |
-| XmlPortTableElement | 18 | 18 | 100.0% | 15 | 83.3% | 3 | 0 | 0 |
-| XmlPortTextAttribute | 6 | 6 | 100.0% | 4 | 66.7% | 2 | 0 | 0 |
-| XmlPortTextElement | 7 | 7 | 100.0% | 5 | 71.4% | 2 | 0 | 0 |
+| XmlPort | 26 | 26 | 100.0% | 24 | 92.3% | 2 | 0 | 0 |
+| XmlPortFieldAttribute | 7 | 6 | 85.7% | 5 | 71.4% | 2 | 0 | 0 |
+| XmlPortFieldElement | 8 | 8 | 100.0% | 6 | 75.0% | 2 | 0 | 0 |
+| XmlPortTableElement | 18 | 18 | 100.0% | 16 | 88.9% | 2 | 0 | 0 |
+| XmlPortTextAttribute | 6 | 6 | 100.0% | 5 | 83.3% | 1 | 0 | 0 |
+| XmlPortTextElement | 7 | 7 | 100.0% | 6 | 85.7% | 1 | 0 | 0 |
 
 #### properties: unpinned items by owner
 
@@ -487,6 +487,9 @@ Presentation-only properties (Caption, ToolTip, ApplicationArea, ... ) are left 
 | codeunit | `GetGlobalTableTriggerMask` | 0 | yes | 0 |
 | codeunit | `GetRoleCenterBannerPartID` | 0 | yes | 0 |
 | codeunit | `MakeDateFilter` | 0 | yes | 0 |
+| codeunit | `MakeDateTimeFilter` | 0 | yes | 0 |
+| codeunit | `MakeIntFilter` | 0 | yes | 0 |
+| codeunit | `MakeTimeFilter` | 0 | yes | 0 |
 | codeunit | `OnDatabaseDelete` | 0 | yes | 0 |
 | codeunit | `OnDatabaseInsert` | 0 | yes | 0 |
 | codeunit | `OnDatabaseModify` | 0 | yes | 0 |
@@ -529,10 +532,7 @@ Presentation-only properties (Caption, ToolTip, ApplicationArea, ... ) are left 
 | codeunit | `HasCustomLayout` | 0 | no | 0 |
 | codeunit | `InvokeExtensionInstallation` | 0 | no | 0 |
 | codeunit | `MakeCodeFilter` | 0 | no | 0 |
-| codeunit | `MakeDateTimeFilter` | 0 | no | 0 |
-| codeunit | `MakeIntFilter` | 0 | no | 0 |
 | codeunit | `MakeTextFilter` | 0 | no | 0 |
-| codeunit | `MakeTimeFilter` | 0 | no | 0 |
 | codeunit | `OnAfterCopyEnvironmentPerCompany` | 0 | no | 0 |
 | codeunit | `OnAfterCopyEnvironmentPerDatabase` | 0 | no | 0 |
 | codeunit | `OnCompanyClose` | 0 | no | 0 |

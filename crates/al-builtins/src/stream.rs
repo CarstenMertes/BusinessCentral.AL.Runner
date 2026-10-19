@@ -205,7 +205,7 @@ const CP437_HIGH: [char; 128] = [
 /// What the Windows tier reads for the code page 437 bytes whose character code page 1252 does not have (corpus
 /// streams/StTEncodings.al:CrossEncodingUtf8ToOthers and CrossEncodingWindowsToOthers, streams/W7StreamRead.al:
 /// ReadTextWithLength_Utf8Sequences, types/PEOptionEnumBigText.al): and al-language-onprem/handlers/TestRequestPageSaveAsXmlContracts.al:FileText (EF BB BF): and streams/StTEncodings.al:RoundTripSameEncoding (B1 is the euro sign): XmlPort byte order mark FF FE (xmlport/lt-xmlport-query-datatransfer, misc/lt-probes-needed-3/PnC19XmlPort.al): only these fifteen bytes are pinned.
-const CP437_AS_READ: [(u8, char); 15] = [
+const CP437_AS_READ: [(u8, char); 18] = [
     (0xFE, '\u{FE}'),
     (0xB1, '\u{20AC}'),
     (0xBB, '\u{2039}'),
@@ -222,6 +222,10 @@ const CP437_AS_READ: [(u8, char); 15] = [
     (0xFC, '\u{FD}'),
     // streams/lt-bigtext-write/BigTextWriteEdges.al:Write_NonAscii_Utf8Stream (D0 reads as 168).
     (0xD0, '\u{A8}'),
+    // report/lt-y-report-props/YReportPropsTests.al:96, the UTF-8 bytes of `年` (E5 B9 B4) read as `\u00CE\u2030\u201E`.
+    (0xE5, '\u{CE}'),
+    (0xB9, '\u{2030}'),
+    (0xB4, '\u{201E}'),
 ];
 
 /// Unicode of cp1252 bytes 0x80..=0x9F (the undefined ones map to themselves, as .NET does).
@@ -291,7 +295,7 @@ impl Encoding {
     }
 
     /// Whether `decode` of `b` gives what the Windows tier gives: every code page 437 byte whose character is also in
-    /// code page 1252 reads as that character, and the fourteen bytes of `CP437_AS_READ` as pinned; the rest is not pinned.
+    /// code page 1252 reads as that character, and the bytes of `CP437_AS_READ` as pinned; the rest is not pinned.
     pub fn decode_pinned(self, b: &[u8]) -> bool {
         self != Encoding::MsDos
             || b.iter().all(|&x| {
@@ -821,8 +825,10 @@ fn in_read(c: &mut dyn Ctx, mut r: Option<&mut Value>, a: &mut [Value]) -> NResu
         let (taken, count) = with_in(r, |s| {
             let unit = s.enc.unit();
             let rest = s.rest();
+            // At the end of the stream the Text is emptied and the result is 0, no error
+            // (misc/lt-probes-needed-3/PnC20JsonStreams.al:312-318, `pastEnd`).
             if rest.is_empty() {
-                return unsupported("InStream.Read into a Text at the end of the stream (not pinned)");
+                return Ok((String::new(), 0));
             }
             let end = rest.chunks_exact(unit).position(|u| u.iter().all(|b| *b == 0));
             if used && (end.is_none() || unit != 1) {
@@ -1388,5 +1394,13 @@ mod blob_cell_tests {
         assert!(Encoding::MsDos.decode_pinned(&[0x82, 0xA4, 0xC3]));
         // A box-drawing byte nothing pins is not decoded.
         assert!(!Encoding::MsDos.decode_pinned(&[0xC4]));
+        // The UTF-8 bytes of U+202F and of `年月日` in a SaveAs Xml dataset read through the default encoding
+        // (report/lt-y-report-props/YReportPropsTests.al:84, :96).
+        let ja = "2025\u{5E74}1\u{6708}31\u{65E5} 1\u{202F}2".as_bytes();
+        assert!(Encoding::MsDos.decode_pinned(ja));
+        assert_eq!(
+            Encoding::MsDos.decode(ja),
+            "2025\u{CE}\u{2030}\u{201E}1\u{B5}\u{A3}\u{EA}31\u{B5}\u{F9}\u{D1} 1\u{CB}\u{C7}\u{BB}2"
+        );
     }
 }

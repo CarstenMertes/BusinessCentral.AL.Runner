@@ -259,6 +259,135 @@ report 68313 "Probe Types Report"
     }
 }
 
+// report/lt-y-report-props/YReports.al:111 (a report with the FormatRegion property).
+report 68391 "Probe Region Fr"
+{
+    ProcessingOnly = false;
+    FormatRegion = 'fr-FR';
+
+    dataset
+    {
+        dataitem(Row; "Probe Rep Parent")
+        {
+            DataItemTableView = where(Id = const(1));
+            column(AmtCol; Money) { }
+            column(DayCol; DayVal) { }
+            column(StampCol; Stamp) { }
+            column(AmtText; AmtText) { }
+            column(StampText; StampText) { }
+            column(LongDayText; LongDayText) { }
+
+            trigger OnAfterGetRecord()
+            begin
+                AmtText := Format(Money);
+                StampText := Format(Stamp);
+                LongDayText := Format(DayVal, 0, 4);
+            end;
+        }
+    }
+
+    trigger OnInitReport()
+    begin
+        Money := 1234567.891;
+        DayVal := DMY2Date(31, 1, 2025);
+        Stamp := CreateDateTime(DayVal, 143015T);
+    end;
+
+    var
+        Money: Decimal;
+        DayVal: Date;
+        Stamp: DateTime;
+        AmtText: Text;
+        StampText: Text;
+        LongDayText: Text;
+}
+
+// report/lt-y-report-props/YReports.al:111 (a report with the FormatRegion property).
+report 68392 "Probe Region Jp"
+{
+    ProcessingOnly = false;
+    FormatRegion = 'ja-JP';
+
+    dataset
+    {
+        dataitem(Row; "Probe Rep Parent")
+        {
+            DataItemTableView = where(Id = const(1));
+            column(AmtCol; Money) { }
+            column(DayCol; DayVal) { }
+            column(StampCol; Stamp) { }
+            column(AmtText; AmtText) { }
+            column(StampText; StampText) { }
+            column(LongDayText; LongDayText) { }
+
+            trigger OnAfterGetRecord()
+            begin
+                AmtText := Format(Money);
+                StampText := Format(Stamp);
+                LongDayText := Format(DayVal, 0, 4);
+            end;
+        }
+    }
+
+    trigger OnInitReport()
+    begin
+        Money := 1234567.891;
+        DayVal := DMY2Date(31, 1, 2025);
+        Stamp := CreateDateTime(DayVal, 143015T);
+    end;
+
+    var
+        Money: Decimal;
+        DayVal: Date;
+        Stamp: DateTime;
+        AmtText: Text;
+        StampText: Text;
+        LongDayText: Text;
+}
+
+// report/lt-y-report-props/YReports.al:111 (a report with the FormatRegion property).
+report 68393 "Probe Region Nl"
+{
+    ProcessingOnly = false;
+    FormatRegion = 'nl-NL';
+
+    dataset
+    {
+        dataitem(Row; "Probe Rep Parent")
+        {
+            DataItemTableView = where(Id = const(1));
+            column(AmtCol; Money) { }
+            column(DayCol; DayVal) { }
+            column(StampCol; Stamp) { }
+            column(AmtText; AmtText) { }
+            column(StampText; StampText) { }
+            column(LongDayText; LongDayText) { }
+
+            trigger OnAfterGetRecord()
+            begin
+                AmtText := Format(Money);
+                StampText := Format(Stamp);
+                LongDayText := Format(DayVal, 0, 4);
+            end;
+        }
+    }
+
+    trigger OnInitReport()
+    begin
+        Money := 1234567.891;
+        DayVal := DMY2Date(31, 1, 2025);
+        Stamp := CreateDateTime(DayVal, 143015T);
+    end;
+
+    var
+        Money: Decimal;
+        DayVal: Date;
+        Stamp: DateTime;
+        AmtText: Text;
+        StampText: Text;
+        LongDayText: Text;
+}
+
 report 68314 "Probe Time Report"
 {
     ProcessingOnly = false;
@@ -1080,4 +1209,78 @@ fn added_data_items_run_and_are_written_in_position_order() {
         .filter_map(|l| l.split('"').next())
         .collect();
     assert_eq!(cols, ["PId", "EFId", "EBAId", "AId", "EAId", "EBId", "BId", "ELId"]);
+}
+
+// report/lt-y-report-props/YReportPropsTests.al:FormatRegion_FrFR_XmlAndFormat and FormatRegion_JaJP_XmlAndFormat (BC 27.5: no
+// identity pair, `#,##0.00`): the DataItem names the region, the columns and Format in the triggers follow it.
+#[test]
+fn the_format_region_property_sets_the_culture_of_the_dataset() {
+    let body = |id: u32| {
+        format!(
+            "var H: Codeunit Helpers; All: Text; begin H.Seed(); All := H.Dataset({id}, ''); exit(CopyStr(All, StrPos(All, '<DataItems>'))); end;"
+        )
+    };
+    let text = |id: u32| match run_on(Some("27.5"), &body(id)) {
+        Ok(Value::Text(s)) => s.to_string(),
+        other => panic!("{other:?}"),
+    };
+    let item = |region: &str, cols: &[&str]| {
+        let mut ls = vec![(0, "<DataItems>".to_string())];
+        ls.push((
+            4,
+            format!("<DataItem language=\"en-US\" formatRegion=\"{region}\" name=\"Row\">"),
+        ));
+        ls.push((6, "<Columns>".into()));
+        for c in cols {
+            ls.push((8, c.to_string()));
+        }
+        ls.push((6, "</Columns>".into()));
+        ls.push((4, "</DataItem>".into()));
+        ls.push((2, "</DataItems>".into()));
+        ls.push((0, "</ReportDataSet>".into()));
+        ls.iter()
+            .map(|(n, t)| format!("{}{t}|", " ".repeat(*n)))
+            .collect::<String>()
+    };
+    assert_eq!(
+        text(68391),
+        item(
+            "fr-FR",
+            &[
+                "<Column name=\"AmtCol\" decimalformatter=\"#,##0.00\">1234567,891</Column>",
+                "<Column name=\"DayCol\">31/01/2025</Column>",
+                "<Column name=\"StampCol\">31/01/2025 14:30:15</Column>",
+                "<Column name=\"AmtText\">1\u{202F}234\u{202F}567,891</Column>",
+                "<Column name=\"StampText\">31/01/25 14:30</Column>",
+                "<Column name=\"LongDayText\">31 January 2025</Column>",
+            ]
+        )
+    );
+    assert_eq!(
+        text(68392),
+        item(
+            "ja-JP",
+            &[
+                "<Column name=\"AmtCol\" decimalformatter=\"#,##0.00\">1234567.891</Column>",
+                "<Column name=\"DayCol\">2025/01/31</Column>",
+                "<Column name=\"StampCol\">2025/01/31 14:30:15</Column>",
+                "<Column name=\"AmtText\">1,234,567.891</Column>",
+                "<Column name=\"StampText\">25/01/31 14:30</Column>",
+                "<Column name=\"LongDayText\">2025\u{5E74}1\u{6708}31\u{65E5}</Column>",
+            ]
+        )
+    );
+    // From BC 28 a Decimal variable with three decimals and no DecimalPlaces gets `#,##0.00###` (YReportPropsTests.al:40).
+    match run_on(Some("29.0"), &body(68391)) {
+        Ok(Value::Text(s)) => assert!(
+            s.contains("<Column name=\"AmtCol\" decimalformatter=\"#,##0.00###\">1234567,891</Column>"),
+            "{s}"
+        ),
+        other => panic!("{other:?}"),
+    }
+    // A region no test measured is refused, not written in en-US.
+    match run_on(Some("27.5"), &body(68393)) {
+        Err(Signal::Unsupported(r)) => assert!(r.contains("nl-NL"), "{r}"),
+        other => panic!("{other:?}"),
+    }
 }

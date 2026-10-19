@@ -650,6 +650,12 @@ impl Session {
                 "XmlPort import into a port with InlineSchema = true of a document that parses (not pinned)",
             );
         }
+        // A V11 port is measured only with a `1.1` declaration, which the reader refuses (YXmlPortProps.al:621).
+        if xp.xml_v11 {
+            return unsupported(
+                "XmlPort import into a port with XmlVersionNo = V11 of a document that parses (not pinned)",
+            );
+        }
         // Only the prefixes the port declares are pinned (YXmlPortProps.al:NodeProperties_Import_NamesPrefixes).
         fn foreign_prefix(e: &Elem, declared: &[(String, String)]) -> bool {
             e.name
@@ -857,7 +863,9 @@ impl Session {
         let mut seq = Sequence::new(schema, node);
         let mut linked: Vec<usize> = Vec::new();
         for ce in elem.elements() {
-            let child = seq.accept(schema, &ce.name)?;
+            let Some(child) = seq.accept(schema, ce)? else {
+                continue;
+            };
             match schema.node(child).kind {
                 ir::XmlNodeKind::Table => {
                     let first = !linked.contains(&child);
@@ -1115,6 +1123,7 @@ impl Session {
                 }
             }
             RtType::Enum(id) => {
+                self.note_enum(*id);
                 let members = self.engine.program.objects[*id as usize].enum_values.clone();
                 let t = text.trim();
                 match members.iter().find(|(_, n)| n.eq_ignore_ascii_case(t)) {
@@ -1170,6 +1179,7 @@ impl Session {
                 }
             }
             RtType::Enum(id) => {
+                self.note_enum(*id);
                 let t = text.trim();
                 let list = match members {
                     Some(m) => m,
@@ -1295,11 +1305,16 @@ impl Session {
         let mut seq = Sequence::new(schema, node);
         let mut linked: Vec<usize> = Vec::new();
         for ce in elem.elements() {
-            let child = seq.accept(schema, &ce.name)?;
+            let Some(child) = seq.accept(schema, ce)? else {
+                continue;
+            };
             match schema.node(child).kind {
                 ir::XmlNodeKind::Field => {
                     let pos = self.xp_assign_field(inst, schema, child, &ce.text())?;
                     assigned.push(pos);
+                    if !schema.children(child).is_empty() {
+                        self.xp_import_field_children(inst, schema, child, ce, &mut assigned)?;
+                    }
                 }
                 ir::XmlNodeKind::Text if schema.children(child).is_empty() => {
                     self.xp_assign_variable(inst, schema, child, ce.text())?
@@ -1328,6 +1343,48 @@ impl Session {
             self.xp_save_record(inst, schema, node, &assigned)?;
         }
         Ok(())
+    }
+
+    /// The attributes and elements below field element `node`: its own text is the field's value, the attributes and the leaf
+    /// text and field elements after it fill their variables and fields (xmlport/lt-af-xmlport/AfXmlPortAttrChildren.al:247-257,
+    /// 277-288, 306-315: `<Name Lang="de" Kind="K9">Beta</Name>`, `<Name>Gamma<Child>cc</Child></Name>`, `<Name>Delta<Lang>fr</Lang></Name>`).
+    fn xp_import_field_children(
+        &mut self,
+        inst: &Inst,
+        schema: &Schema,
+        node: usize,
+        elem: &Elem,
+        assigned: &mut Vec<usize>,
+    ) -> Result<(), Signal> {
+        // A field attribute of a field element that the document lacks: the table element's "required attribute" error is not
+        // pinned for this place (probe wanted: import a field element without its fieldattribute).
+        for a in schema.children(node) {
+            let n = schema.node(a);
+            if n.kind == ir::XmlNodeKind::FieldAttr && !elem.attrs.iter().any(|(name, _)| *name == n.xml_name) {
+                return unsupported(format!(
+                    "XmlPort import of the field element {} without its field attribute {}: the error is not pinned (probe wanted)",
+                    schema.node(node).xml_name,
+                    n.xml_name
+                ));
+            }
+        }
+        self.xp_import_attrs(inst, schema, node, elem, Some(assigned))?;
+        let mut seq = Sequence::new(schema, node);
+        for ce in elem.elements() {
+            let Some(child) = seq.accept(schema, ce)? else {
+                continue;
+            };
+            match schema.node(child).kind {
+                ir::XmlNodeKind::Field => assigned.push(self.xp_assign_field(inst, schema, child, &ce.text())?),
+                ir::XmlNodeKind::Text => self.xp_assign_variable(inst, schema, child, ce.text())?,
+                _ => {
+                    return unsupported(
+                        "XmlPort import of a node below a field element other than an attribute or a leaf element",
+                    );
+                }
+            }
+        }
+        seq.finish(schema)
     }
 
     /// Stores the buffer of table element `node`: it is inserted with its triggers and events, as
@@ -1599,6 +1656,13 @@ impl Session {
             },
             _ => return unsupported("XmlPort export without SetDestination (a download is not supported)"),
         };
+        // BC's export of a port with an unbound field element does not end (YXmlPortProps.al:715-716).
+        if let Some(n) = xp.nodes.iter().find(|n| n.unbound) {
+            return unsupported(format!(
+                "XmlPort export of the unbound field element {} (BC's export of it does not end; not pinned)",
+                n.xml_name
+            ));
+        }
         let tops: Vec<usize> = (0..xp.nodes.len()).filter(|&i| xp.nodes[i].parent.is_none()).collect();
         let [top] = tops[..] else {
             return unsupported("XmlPort export with more than one top-level element (not pinned)");
@@ -1736,8 +1800,32 @@ impl Session {
                 }
                 ir::XmlNodeKind::Field => {
                     let v = got!(self.xp_field_text(inst, schema, child));
+                    let empty = v.is_empty();
                     let mut e = Elem::new(&doc_name(schema, child));
                     e.children.push(Node::Text(v));
+                    // The attributes and elements below a field element follow its value (AfXmlPortAttrChildren.al:255, 285, 313:
+                    // `<Name Lang="en" Kind="K1">Alpha</Name>`, `<Name>Alpha<Child>c1</Child></Name>`).
+                    if !schema.children(child).is_empty() {
+                        // How an empty value is written before an element below it is not pinned.
+                        if empty
+                            && schema
+                                .children(child)
+                                .iter()
+                                .any(|&g| matches!(schema.node(g).kind, ir::XmlNodeKind::Text | ir::XmlNodeKind::Field))
+                        {
+                            return unsupported(format!(
+                                "XmlPort export of the field element {} with an empty value and an element below it (not pinned)",
+                                c.xml_name
+                            ));
+                        }
+                        let r = self.xp_export_content(inst, schema, child, &mut e);
+                        out.children.push(Node::Elem(e));
+                        r?;
+                        if Self::xp_quit(inst) {
+                            return Ok(());
+                        }
+                        continue;
+                    }
                     out.children.push(Node::Elem(e));
                 }
                 ir::XmlNodeKind::Text if schema.children(child).is_empty() => {
@@ -1818,6 +1906,10 @@ impl Session {
             self.record_op(RecordOp::CalcFields, &rec, &mut [Value::Integer(pos as i32)])?;
         }
         let v = rec.borrow().fields[pos].clone();
+        // A column the platform row leaves unknown is not exported.
+        if let Some(why) = v.unknown() {
+            return Err(Signal::Unsupported(why.to_string()));
+        }
         if schema.xp().format_evaluate_xml {
             return self.xp_field_text_xml(&v);
         }
@@ -2280,6 +2372,8 @@ fn parse_duration_text(t: &str) -> Option<i64> {
 /// (`MinOccurs = Zero`). The messages are .NET's schema validation messages
 /// (xmlport/TestXmlPortExportImportContracts.al:XmlPortImport_SchemaMismatch_ThrowsXmlPortInvalidXml).
 struct Sequence {
+    /// `UseLax = true` on the port.
+    lax: bool,
     decl: Vec<usize>,
     parent: String,
     pos: usize,
@@ -2305,6 +2399,7 @@ impl Sequence {
             })
             .collect();
         Sequence {
+            lax: schema.xp().use_lax,
             parent: schema.node(node).xml_name.clone(),
             pos: 0,
             seen: 0,
@@ -2362,20 +2457,61 @@ impl Sequence {
         }
     }
 
-    /// The schema node that reads child element `name`.
-    fn accept(&mut self, _schema: &Schema, name: &str) -> Result<usize, Signal> {
+    /// The schema node that reads child element `ce`, `None` for an element a UseLax port skips.
+    /// An element that declares a default namespace (`xmlns="uri"`) is in that namespace, which no node of the port is: a strict
+    /// port names it in the error, a UseLax port skips it (YXmlPortProps.al:UseLax_Import_AcceptsUnknownElements). A UseLax port's
+    /// schema ends every sequence with "any element in namespace '##other'", which its error lists. Both are pinned only for an
+    /// element after the last element of the sequence; elsewhere the list is not pinned and is refused.
+    fn accept(&mut self, schema: &Schema, ce: &Elem) -> Result<Option<usize>, Signal> {
+        let name = ce.name.as_str();
+        if let Some(ns) = ce.attr("xmlns").filter(|ns| !ns.is_empty()) {
+            if !self.expected().is_empty() {
+                return unsupported(
+                    "XmlPort import of an element of another namespace where the sequence still expects elements (not pinned)",
+                );
+            }
+            if self.lax {
+                return Ok(None);
+            }
+            return Err(schema_error(format!(
+                "The element '{}' has invalid child element '{name}' in namespace '{ns}'.",
+                self.parent
+            )));
+        }
+        if let Some(found) = self.accept_name(schema, name)? {
+            return Ok(Some(found));
+        }
+        if self.lax {
+            if !self.expected().is_empty() {
+                return unsupported(
+                    "XmlPort import into a UseLax port of an unknown element where the sequence still expects elements (not pinned)",
+                );
+            }
+            return Err(schema_error(format!(
+                "The element '{}' has invalid child element '{name}'. List of possible elements expected: any element in namespace '##other'.",
+                self.parent
+            )));
+        }
+        Err(schema_error(self.list(format!(
+            "The element '{}' has invalid child element '{name}'.",
+            self.parent
+        ))?))
+    }
+
+    /// The schema node of the sequence named `name`, `None` when none may come here.
+    fn accept_name(&mut self, _schema: &Schema, name: &str) -> Result<Option<usize>, Signal> {
         if self.pos < self.decl.len() {
             let cur = self.pos;
             if self.names[cur] == name && (self.seen == 0 || self.repeat[cur]) {
                 self.seen += 1;
-                return Ok(self.decl[cur]);
+                return Ok(Some(self.decl[cur]));
             }
             if self.seen >= 1 || self.optional[cur] {
                 for j in cur + 1..self.decl.len() {
                     if self.names[j] == name {
                         self.pos = j;
                         self.seen = 1;
-                        return Ok(self.decl[j]);
+                        return Ok(Some(self.decl[j]));
                     }
                     if !self.optional[j] {
                         break;
@@ -2383,10 +2519,7 @@ impl Sequence {
                 }
             }
         }
-        Err(schema_error(self.list(format!(
-            "The element '{}' has invalid child element '{name}'.",
-            self.parent
-        ))?))
+        Ok(None)
     }
 
     fn finish(&self, _schema: &Schema) -> Result<(), Signal> {

@@ -198,10 +198,16 @@ fn field_row(
             .collect(),
     );
     // Type Name of a Text field is `Text` and its length (record/PZFieldObsoleteRows.al:FieldRows_AllColumns_OfLivePendingAndRemovedField,
-    // `Text30`). The other types' names are not pinned and stay blank.
-    if let RtType::Text(Some(n)) = &f.ty {
-        r[pos(t, 9)] = Value::Text(format!("Text{n}").into());
-    }
+    // `Text30`). The other types' names are not pinned: unknown, so a read of one is refused.
+    r[pos(t, 9)] = match &f.ty {
+        RtType::Text(Some(n)) => Value::Text(format!("Text{n}").into()),
+        // One reason for all of them: the Field table has tens of thousands of rows.
+        _ => {
+            static WHY: std::sync::OnceLock<std::sync::Arc<str>> = std::sync::OnceLock::new();
+            let why = WHY.get_or_init(|| super::unknown_why(t, 9, "a field that is not a Text field"));
+            Value::Unknown(why.clone())
+        }
+    };
     // OptionString: the member names of an option or enum field, comma-joined (TestFieldEnumTypeVirtualTable.al:19-47).
     let option_string = match &f.ty {
         RtType::Option(m) => m.join(","),

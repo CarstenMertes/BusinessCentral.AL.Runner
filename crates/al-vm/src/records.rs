@@ -2117,8 +2117,58 @@ impl Session {
                         }
                     }
                 }
+                // An Integer or Time text of letters asks `MakeIntFilter` / `MakeTimeFilter` subscribers first (PtObserve.al:Bad_Int,
+                // Bad_Time); what BC asks `MakeDateTimeFilter` is pinned only in part (the second call of Bad_DateTime m2 carries a
+                // text made from the work date), so a DateTime text that raises it is refused.
+                if matches!(&parsed, Err(e) if e.starts_with(al_builtins::filter::NOT_EVALUATED)) {
+                    let event = match ty {
+                        RtType::Integer => Some(("makeintfilter", "IntFilterText")),
+                        RtType::Time => Some(("maketimefilter", "TimeFilterText")),
+                        RtType::DateTime => Some(("makedatetimefilter", "DateTimeFilterText")),
+                        _ => None,
+                    };
+                    if let Some((event, param)) = event {
+                        if self
+                            .engine
+                            .events
+                            .is_subscribed(crate::events::FILTER_HELPER_TRIGGERS, event)
+                        {
+                            if matches!(ty, RtType::DateTime) {
+                                return unsupported(format!(
+                                    "SetFilter of `{}` on a DateTime field with MakeDateTimeFilter subscribers (not pinned)",
+                                    text.trim()
+                                ));
+                            }
+                            if self.global_language == 1033 && args.len() <= 2 {
+                                if let Some(fixed) =
+                                    self.repair_word_filter_text(event, param, &text, &|t| parse(t).is_ok())?
+                                {
+                                    parsed = parse(&fixed);
+                                }
+                            }
+                        }
+                    }
+                }
                 let expr = match parsed {
                     Ok(e) => e,
+                    // record/lt-record-read/RcAFilters.al:SetFilter_Integer_Invalid, events/lt-platform-triggers/PtObserve.al:Bad_Int,
+                    // Bad_Decimal, Bad_Time, Bad_DateTime m0.
+                    Err(e) if e.starts_with(al_builtins::filter::NOT_EVALUATED) && self.global_language == 1033 => {
+                        let (type_name, value) = e[al_builtins::filter::NOT_EVALUATED.len()..]
+                            .split_once('\t')
+                            .expect("type and value");
+                        return Err(Signal::Error(Box::new(AlError {
+                            message: format!(
+                                "The filter \"{}\" is not valid for the {} field on the {} table. The value \"{value}\" can't be evaluated into type {type_name}.",
+                                text.trim(),
+                                self.field_caption(&t, pos),
+                                self.caption(&t)
+                            ),
+                            code: "Filter:CSide".into(),
+                            call_stack: String::new(),
+                            ..Default::default()
+                        })));
+                    }
                     // The German error of a date no Date filter reads (P143Date_DePlain.al, _DeRanges.al, _DeFormulas.al).
                     Err(e) if e.starts_with(al_builtins::filter::INVALID_DATE) && self.global_language == 1033 => {
                         // P81DateFilters.al:SetFilter_Date_InvalidTexts.

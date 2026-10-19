@@ -1,6 +1,7 @@
 //! A query read to its last row can take new filters and be opened again (Base Application's Workflow Step Instance.
 //! SetTableRelationValues sets filters on its query, opens it and reads it to the end, once per table relation; assumption
-//! query-closed-after-last-row; 125 Tests-Workflow tests). A query that still has rows to read keeps refusing the filter.
+//! query-closed-after-last-row; 125 Tests-Workflow tests). A query that still has rows to read takes the filter and its next
+//! Read raises until it is opened again (query/lt-query-setrange-after-read/QuerySetRangeAfterRead.al:52-77).
 
 use al_sema::workspace::AppSource;
 use al_testrun::runtime::{CorpusRuntime, RunOptions, SuiteRun};
@@ -26,13 +27,15 @@ codeunit 50470 "T"
         if N <> 11 then Error('N = %1', N);
     end;
     [Test]
-    procedure FilterWithRowsLeftIsRefused()
+    procedure FilterWithRowsLeftThenReadRaises()
     var Row: Record "QLR Row"; Q: Query "QLR Query";
     begin
         Row.Id := 3; Row.Insert(); Row.Id := 4; Row.Insert();
         Q.Open();
         if Q.Read() then;
         Q.SetRange(Id, 2);
+        asserterror if Q.Read() then;
+        if GetLastErrorCode() <> 'Query' then Error('code %1', GetLastErrorCode());
     end;
 }
 "#;
@@ -61,7 +64,7 @@ fn a_query_read_to_the_end_takes_a_new_filter() {
     assert_eq!(o, Outcome::Pass, "{o:?}");
     let o = rt.first_outcome(&CaseId {
         codeunit: 50470,
-        name: "FilterWithRowsLeftIsRefused".into(),
+        name: "FilterWithRowsLeftThenReadRaises".into(),
     });
-    assert!(matches!(o, Outcome::NotRun(_)), "{o:?}");
+    assert_eq!(o, Outcome::Pass, "{o:?}");
 }

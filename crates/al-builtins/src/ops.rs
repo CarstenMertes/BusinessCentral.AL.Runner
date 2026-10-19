@@ -18,6 +18,11 @@ fn unsupported<T>(what: String) -> Result<T, Signal> {
 /// Converts `v` for storing in a slot of type `t`.
 pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
     use RtType as T;
+    // A column a platform row leaves unknown cannot be read, so it cannot be converted either (TransferFields, a field assigned
+    // from it).
+    if let Value::Unknown(why) = &v {
+        return Err(Signal::Unsupported(why.to_string()));
+    }
     // The conversions between the plain numbers that cannot fail, without the Decimal detour.
     match (&v, t) {
         // A Decimal keeps 18 significant digits when it is stored: `Dec := 123456789012345.12345` holds `123456789012345.123`, so
@@ -1186,6 +1191,10 @@ pub fn compare(l: &Value, r: &Value) -> Result<Ordering, Signal> {
         }
         (V::Guid(a), V::Guid(b)) => return Ok(a.cmp(b)),
         (V::Option(a, _), V::Option(b, _)) => return Ok(a.cmp(b)),
+        // A column a platform row leaves unknown equals itself (a Modify that writes the row back unchanged, `IsDirty` of an
+        // untouched field); any other comparison would read it.
+        (V::Unknown(a), V::Unknown(b)) if a == b => return Ok(Ordering::Equal),
+        (V::Unknown(why), _) | (_, V::Unknown(why)) => return Err(Signal::Unsupported(why.to_string())),
         (V::Text(a) | V::Code(a), V::Text(b) | V::Code(b)) if !a.has_marker() && !b.has_marker() => {
             return Ok(a.cmp(b));
         }

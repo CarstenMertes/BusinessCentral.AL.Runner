@@ -1,6 +1,6 @@
 //! Variable attributes the runtime does not implement are refused where the variable is used, never ignored
 //! (hard rule 4): `[RunOnClient]` and `[WithEvents]` on DotNet variables (al-language-onprem-dotnet/lt-ac/AcDnAttributes.al:50,
-//! :86, :145-146) and the read of `SecurityFiltering()` on a record declared with `[SecurityFiltering(...)]`
+//! :86, :145-146) and the read of `SecurityFiltering()` on a global record declared with `[SecurityFiltering(...)]`
 //! (al-language/lt-ac/ACAttributes.al:176-191).
 
 use al_builtins::native::Signal;
@@ -46,14 +46,37 @@ fn a_with_events_variable_is_refused_where_it_is_used() {
     refused(al_testkit::run_in(&src, "C", "F"), "WithEvents");
 }
 
+// A local record declared with `[SecurityFiltering(x)]` starts with x (al-language/lt-ac/ACAttributes.al:176-179,
+// :187-190; its counts are unchanged, :184-186). What `Clear` or an assignment leaves on such a variable is not
+// pinned, nor is the attribute on a global: those are refused.
 #[test]
-fn security_filtering_read_of_an_attributed_record_is_refused() {
+fn a_local_record_declared_with_security_filtering_starts_with_the_declared_value() {
     let src = "table 50100 T { fields { field(1; Id; Integer) { } } } \
-        codeunit 50100 C { procedure F(): Text var [SecurityFiltering(SecurityFilter::Filtered)] R: Record T; begin exit(Format(R.SecurityFiltering())); end; \
+        codeunit 50100 C { var [SecurityFiltering(SecurityFilter::Filtered)] GR: Record T; \
+        procedure F(): Text var [SecurityFiltering(SecurityFilter::Filtered)] R: Record T; [SecurityFiltering(SecurityFilter::Ignored)] I: Record T; [SecurityFiltering(SecurityFilter::Validated)] V: Record T; begin exit(Format(R.SecurityFiltering()) + Format(I.SecurityFiltering()) + Format(V.SecurityFiltering())); end; \
         procedure G(): Text var P: Record T; begin exit(Format(P.SecurityFiltering())); end; \
-        procedure H(): Integer var [SecurityFiltering(SecurityFilter::Ignored)] R: Record T; begin exit(R.Count()); end; }";
-    refused(al_testkit::run_in(src, "C", "F"), "SecurityFiltering");
-    // A record without the attribute, and other uses of an attributed one, still run.
+        procedure H(): Integer var [SecurityFiltering(SecurityFilter::Ignored)] R: Record T; begin exit(R.Count()); end; \
+        procedure K(): Text var [SecurityFiltering(SecurityFilter::Filtered)] R: Record T; begin Clear(R); exit(Format(R.SecurityFiltering())); end; \
+        procedure L(): Text begin exit(Format(GR.SecurityFiltering())); end; \
+        procedure M1(): Text var [SecurityFiltering(SecurityFilter::Filtered)] R: Record T; begin Pass(R); exit(Format(R.SecurityFiltering())); end; \
+        procedure M2(): Text var [SecurityFiltering(SecurityFilter::Filtered)] R: Record T; begin Two(1, R); exit(Format(R.SecurityFiltering())); end; \
+        procedure M3(): Text var [SecurityFiltering(SecurityFilter::Filtered)] R: Record T; begin R.Reset(); exit(Format(R.SecurityFiltering())); end; \
+        procedure M4(): Text var [SecurityFiltering(SecurityFilter::Filtered)] R: Record T; P: Record T; begin R.Copy(P); exit(Format(R.SecurityFiltering())); end; \
+        procedure M5(): Text var [SecurityFiltering(SecurityFilter::Filtered)] R: Record T; begin R.TransferFields(R); exit(Format(R.SecurityFiltering())); end; \
+        procedure Pass(var X: Record T) begin end; \
+        procedure Two(N: Integer; var X: Record T) begin end; }";
+    assert_eq!(
+        al_testkit::text(al_testkit::run_in(src, "C", "F")),
+        "FilteredIgnoredValidated"
+    );
     assert_eq!(al_testkit::text(al_testkit::run_in(src, "C", "G")), "Validated");
     assert!(matches!(al_testkit::run_in(src, "C", "H"), Ok(Value::Integer(0))));
+    // Cleared: the read stays refused, as on main.
+    refused(al_testkit::run_in(src, "C", "K"), "SecurityFiltering");
+    refused(al_testkit::run_in(src, "C", "L"), "SecurityFiltering");
+    // Passed to a call, or the receiver or source of Reset, Copy or TransferFields: what the record keeps is not
+    // pinned, so the read stays refused.
+    for p in ["M1", "M2", "M3", "M4", "M5"] {
+        refused(al_testkit::run_in(src, "C", p), "SecurityFiltering");
+    }
 }

@@ -221,6 +221,9 @@ pub struct QueryState {
     /// `SetRange` / `SetFilter` per column (position in `ir::Query::columns`); a later call on the
     /// same column replaces the earlier one.
     pub filters: Vec<(usize, crate::filter::FilterExpr)>,
+    /// A `SetRange` or `SetFilter` replaced or removed a filter set before, so `filters` no longer
+    /// holds the order in which each filter was first set.
+    pub filter_replaced: bool,
     /// `TopNumberOfRows(n)`; `None` leaves the property in force.
     pub top: Option<i32>,
     /// `SecurityFiltering(x)` as a member index of the platform option; `None` before any call.
@@ -1308,6 +1311,7 @@ impl Value {
             RtType::Query(id) => Value::Query(Rc::new(RefCell::new(QueryState {
                 object: *id,
                 filters: Vec::new(),
+                filter_replaced: false,
                 top: None,
                 security_filtering: None,
                 run: None,

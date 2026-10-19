@@ -398,6 +398,29 @@ impl Session {
             // The page opens on the record the caller handed it, when that row exists
             // (corpus handlers/TestPageRunHandler_Tests.al:PageHandlerReceivesTheRecordPassedToPageRun).
             let rec = self.page_rec(st);
+            // A list that serves its rows from OnFindRecord is asked `=>` for the record it was handed, as the page holds it,
+            // and reads on from there as when it opens (pages/lt-ai-list-order/AiListOrderTests.al:871 PageRun_RecordOnFifthRow
+            // `F:=>=Yes;R:R1005;...;R:R1012;N:1=0;R:R1005;N:-1=-1;R:R1004;...;R:R1001;N:-1=0`, :890 PageRun_RecordWithFilterOnFifthRow).
+            // A card in that shape is assumed to be asked the same (Microsoft's ERM Accounts AnalysisViewWithUpdate, codeunit
+            // 134020: "Analysis by Dimensions", page 554, sets its Account Filter on Rec in OnOpenPage and never stores it).
+            if self.declares(st, "onfindrecord") && self.stored_row(&rec)?.is_some() {
+                if !self.is_list(st) {
+                    al_builtins::assumptions::assume(
+                        al_builtins::assumptions::Assumption::PageRunRecordOnFindRecordCard,
+                    );
+                }
+                if !self.nav_find(st, "=>")? {
+                    return unsupported("OnFindRecord finds no row for the record handed to the page (not pinned)");
+                }
+                st.borrow_mut().cursor = Cursor::Row;
+                st.borrow_mut().landing_first = true;
+                let r = self.arrive(st);
+                st.borrow_mut().landing_first = false;
+                r?;
+                let from_start = self.is_list(st);
+                st.borrow_mut().window_from_start = from_start;
+                return Ok(());
+            }
             if self.stored_row(&rec)?.is_some() {
                 self.ret_used = true;
                 let mut pk = self.table(&rec)?.primary_key(&rec.borrow().fields);

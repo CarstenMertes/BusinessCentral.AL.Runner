@@ -122,6 +122,17 @@ page 62407 "LRO Pos Host"
     SourceTable = "LRO Head";
     layout { area(Content) { field(CodeCtl; Rec.Code) { } part(Days; "LRO Pos Part") { } } }
 }
+page 62408 "LRO Param Card"
+{
+    PageType = Card;
+    SourceTable = "LRO Day";
+    SourceTableTemporary = true;
+    layout { area(Content) { field(DayCtl; Rec."Day No.") { } field(DescrCtl; Rec.Descr) { } } }
+    actions { area(Processing) { action(Show) { trigger OnAction() begin Error('action sees <%1>', Rec.Descr); end; } } }
+    var Log: Codeunit "LRO Log";
+    trigger OnOpenPage() begin Rec.Descr := 'in memory'; end;
+    trigger OnFindRecord(Which: Text): Boolean begin Log.Add('F' + Which); exit(true); end;
+}
 page 62404 "LRO Head Card"
 {
     PageType = Card;
@@ -211,4 +222,24 @@ fn a_part_with_rows_before_the_first_one_read_is_refused() {
         matches!(&o[0].1, Outcome::NotRun(r) if r.contains("rows before the first one read")),
         "{o:?}"
     );
+}
+
+// Microsoft's Tests-ERM "ERM Accounts" (codeunit 134020) AnalysisViewWithUpdate: "Analysis by Dimensions" (page 554), a card over a
+// temporary table run with Page.Run(id, TempRec), sets Rec."Account Filter" in OnOpenPage without Modify; its ShowMatrix action
+// must see it. The card is asked OnFindRecord('=>') for the record as it holds it, as a list is (pages/lt-ai-list-order/
+// AiListOrderTests.al:871 PageRun_RecordOnFifthRow); for a card that is assumption page-run-record-onfindrecord-card.
+#[test]
+fn a_card_run_with_a_record_keeps_what_on_open_page_set_on_rec() {
+    let o = outcomes(&format!(
+        "{HELPERS}
+        [Test] [HandlerFunctions('H')]
+        procedure Run() var D: Record \"LRO Day\" temporary; Log: Codeunit \"LRO Log\"; begin
+            D.\"Day No.\" := 7; D.Insert(); Log.Reset();
+            Page.Run(Page::\"LRO Param Card\", D); end;
+        [PageHandler] procedure H(var C: TestPage \"LRO Param Card\") var Log: Codeunit \"LRO Log\"; begin
+            Check('F=>;', Log.Trace());
+            Check('in memory', C.DescrCtl.Value());
+            C.Show.Invoke(); end;"
+    ));
+    assert_eq!(o[0].1, Outcome::Fail("action sees <in memory>".into()), "{o:?}");
 }

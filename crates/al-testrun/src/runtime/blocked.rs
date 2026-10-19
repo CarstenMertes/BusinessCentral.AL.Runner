@@ -237,23 +237,32 @@ fn subscribers_reached_in(
             continue;
         }
         lowered.calls_into(o, r, &mut stack);
-        let mut keys = Vec::new();
+        let mut reach = |sub: (usize, usize)| {
+            if reached.insert(sub) {
+                stack.push(sub);
+            }
+        };
         if let Some(p) = events.publishers.get(&(o, r)) {
-            keys.push((p.object, p.event.clone()));
+            for sub in events
+                .subscribers
+                .get(&(p.object, p.event.clone()))
+                .into_iter()
+                .flatten()
+            {
+                reach((sub.object, sub.routine));
+            }
         }
-        // Table events fire for any table whose record the routine uses.
+        // Table events fire for any table whose record the routine uses: every event of the table object. The result is
+        // a set, so the order the subscribers are found in does not matter.
         let mut tables = BTreeSet::new();
         for s in objs[o].routines[r].locals.iter().chain(&objs[o].globals) {
             if let al_builtins::value::RtType::Record(t, _) = &s.ty {
                 tables.insert(*t as usize);
             }
         }
-        keys.extend(events.subscribers.keys().filter(|(po, _)| tables.contains(po)).cloned());
-        for k in keys {
-            for sub in events.subscribers.get(&k).into_iter().flatten() {
-                if reached.insert((sub.object, sub.routine)) {
-                    stack.push((sub.object, sub.routine));
-                }
+        for t in tables {
+            for &sub in events.subscribers_of(t) {
+                reach(sub);
             }
         }
     }

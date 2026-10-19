@@ -109,6 +109,19 @@ pub struct Engine {
     pub(crate) exec: exec::ExecProgram,
     /// Per object, the ids of its source positions in ascending order, found when the Code Coverage table is first built.
     pub(crate) positions_by_object: std::sync::OnceLock<Vec<Vec<u32>>>,
+    /// Codeunit objects by id (see [`Engine::compiled_codeunit`] and [`Engine::codeunit_object`]).
+    codeunits: std::collections::HashMap<Option<u32>, CodeunitsWithId>,
+    /// Per object, the provider of a virtual platform table, found when the first session is made (`platform/mod.rs`).
+    pub(crate) served_tables: std::sync::OnceLock<Arc<[Option<al_builtins::platform::Virtual>]>>,
+}
+
+/// The codeunit objects with one id, first in program order.
+#[derive(Clone, Copy, Default)]
+struct CodeunitsWithId {
+    /// The first compiled one (`Object::is_kind`).
+    compiled: Option<usize>,
+    /// The first one, compiled or a shell of a dependency app that was not compiled.
+    any: Option<usize>,
 }
 
 /// What a call of a routine asks of the routine's declaration, answered once when the engine is built instead of by
@@ -262,6 +275,16 @@ impl Engine {
             .map(|(i, _)| i)
             .collect();
         let exec = exec::ExecProgram::new(&program);
+        let mut codeunits: std::collections::HashMap<Option<u32>, CodeunitsWithId> = Default::default();
+        for (i, o) in program.objects.iter().enumerate() {
+            if o.kind == ir::ObjKind::Codeunit {
+                let e = codeunits.entry(o.id).or_default();
+                e.any.get_or_insert(i);
+                if o.is_kind(ir::ObjKind::Codeunit) {
+                    e.compiled.get_or_insert(i);
+                }
+            }
+        }
         Arc::new(Engine {
             program,
             blocked,
@@ -282,7 +305,20 @@ impl Engine {
             facts,
             exec,
             positions_by_object: Default::default(),
+            codeunits,
+            served_tables: Default::default(),
         })
+    }
+
+    /// The first compiled codeunit with this id, in program order: the object `Codeunit.Run(Id)` runs. Found in an index
+    /// built with the engine; the test runner runs codeunits by id around every test method (al-testrun runner_reset.rs).
+    pub fn compiled_codeunit(&self, id: Option<u32>) -> Option<usize> {
+        self.codeunits.get(&id).and_then(|c| c.compiled)
+    }
+
+    /// The first codeunit with this id in program order, compiled or a shell of a dependency app that was not compiled.
+    pub fn codeunit_object(&self, id: Option<u32>) -> Option<usize> {
+        self.codeunits.get(&id).and_then(|c| c.any)
     }
 }
 

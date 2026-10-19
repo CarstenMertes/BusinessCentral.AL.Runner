@@ -241,7 +241,7 @@ pub(crate) fn run_codeunit_core(
     let runner = if execute {
         runner_reset::RunnerReset::default()
     } else {
-        runner_reset::RunnerReset::of(&lowered.program)
+        runner_reset::RunnerReset::of(engine)
     };
     if let Some(on_run) = (0..obj.routines.len())
         .find(|&r| obj.routines[r].is_trigger && obj.routines[r].name.eq_ignore_ascii_case("OnRun"))

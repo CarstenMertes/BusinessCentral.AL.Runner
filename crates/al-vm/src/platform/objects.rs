@@ -151,6 +151,8 @@ pub(super) struct Catalog<'a> {
     names: HashMap<(al_ir::ObjKind, String), Vec<u32>>,
     /// Table id to the first table object of that id.
     tables: HashMap<u32, &'a Object>,
+    /// Page id to the page extensions that extend it, in program order.
+    page_extensions: HashMap<u32, Vec<&'a Object>>,
 }
 
 impl<'a> Catalog<'a> {
@@ -158,7 +160,11 @@ impl<'a> Catalog<'a> {
         let program = &engine.program;
         let mut names: HashMap<(al_ir::ObjKind, String), Vec<u32>> = HashMap::new();
         let mut tables: HashMap<u32, &Object> = HashMap::new();
+        let mut page_extensions: HashMap<u32, Vec<&Object>> = HashMap::new();
         for o in &program.objects {
+            if let (al_ir::ObjKind::PageExtension, Some(base)) = (o.kind, o.extends_id) {
+                page_extensions.entry(base).or_default().push(o);
+            }
             if let Some(id) = o.id {
                 names.entry((o.kind, o.name.to_lowercase())).or_default().push(id);
                 if o.kind == al_ir::ObjKind::Table {
@@ -171,7 +177,14 @@ impl<'a> Catalog<'a> {
             apps: &program.apps,
             names,
             tables,
+            page_extensions,
         }
+    }
+
+    /// The page extensions of page `id`, in program order (none for `None`).
+    pub(super) fn page_extensions_of(&self, id: Option<u32>) -> &[&'a Object] {
+        id.and_then(|id| self.page_extensions.get(&id))
+            .map_or(&[], Vec::as_slice)
     }
 
     /// The first table object with this id.

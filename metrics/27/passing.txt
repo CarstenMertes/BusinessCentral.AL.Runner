@@ -5347,6 +5347,7 @@
 68718 RunModalWithRecord_FilteredAndPositioned
 68718 SetRecordOnly_NoFilter
 68718 SetTableViewAndSetRecord
+68718 SetTableView_DescendingOrder
 68718 SetTableView_FilteredAndPositionedRecord
 68718 SetTableView_ThenFilterChangedInRecord
 68721 NoComma_CaptionRead
@@ -5608,6 +5609,7 @@
 69304 Editable_TrueOnAPageThatIsNotEditable
 69304 List_ActionDeletesTheOnlyRow_ThenUpdates
 69304 List_ActionDeletesTheOnlyRow_WithoutUpdate
+69304 List_BufferLeftByOnAfterGetRecord_AfterTheStoredRowChanged
 69304 List_BufferLeftByOnAfterGetRecord_WhileTheRowIsUnchanged
 69304 List_UpdateFalse_KeepsTheUnsavedEdit
 69304 TempSourcePage_ReadWriteLikeAStoredOne
@@ -6849,6 +6851,9 @@
 70121 NullAppId
 70122 P147_Filter_ProcedureFilterVsStored
 70122 P147_Filter_SetTableViewVsStored
+70127 ColumnNo_Aggregated
+70127 ColumnNo_Plain
+70127 FilterElement_And_OtherColumns
 70127 ThreeFilters_EntryTxtQty_AllOrders
 70128 CloseSetRangeReopen
 70128 SetRangeAndOpenAfterRead
@@ -6880,6 +6885,7 @@
 70175 GoToRecordFromTheFirstRow
 70176 ViewModeEmptyListInsertViaRec
 70177 BufferEditOfOnAfterGetRecordOnACard
+70177 BufferEditOfOnAfterGetRecordOnAList
 70177 CardOpenWithAndWithoutUpdateInOnOpenPage
 70177 ListLosesOnlyRowDeleteNoUpdate
 70177 ListLosesOnlyRowDeleteWithUpdate
@@ -6912,6 +6918,7 @@
 70180 PartControlEnabledAndVisible
 70180 PartModeFollowsHost
 70181 PendingPartRowSavedOnHostClose
+70181 PendingPartRowSavedWhenHostMoves
 70181 ReadOnlyPartSetValue
 70181 SubPageViewOnTheLinkedField
 70182 CardPendingNewRowSavedBeforeAction
@@ -7060,6 +7067,7 @@
 70306 TempToTemp_BufferAndFilters
 70310 PageRun_TempRecord_NonModal
 70310 PageVar_SetRecord_NonTempRecord
+70310 PageVar_SetRecord_TempRecord
 70310 PageVar_SetRecord_ThenSetTableView_Temp
 70310 PageVar_SetTableView_NonTempFilter
 70310 PageVar_SetTableView_TempRecord
@@ -8475,6 +8483,8 @@
 71246 P174_NonTempArray_SharesDatabaseTable
 71246 P174_TwoSeparateTempVars_DoNotShare
 71254 P174_OpenNew_KeyThenClose_WithoutOtherField
+71279 OpenEdit_GreaterThanTenView_ReadsAtOpen
+71279 OpenView_GreaterThanTenView_ReadsAtOpen
 71279 OpenView_GreaterThanTenView_RowsShownPerHostRow
 71290 OpenEdit_SixParts_ReadsPerPartLogged
 71290 OpenNew_SixParts_ReadsPerPartLogged
@@ -9157,9 +9167,11 @@
 71955 P184_TextKey_Get_And_Filter_OtherCase_Blanks
 71959 P184_RunModal_NameSortedView_NoRecord_And_Positioned
 71959 P184_RunModal_NameSortedView_RecordOnRow
+71959 P184_RunModal_NoRecord_DescendingView
 71959 P184_RunModal_RecordOnRowInsideView
 71959 P184_RunModal_RecordOnRowOutsideWhere
 71959 P184_RunModal_RecordWithConflictingGroupFilter
+71959 P184_RunModal_RecordWithOwnFilterAndKey
 71965 P193_Contains_Starts_Ends
 71965 P193_IndexOf_LastIndexOf
 71966 P193_Case_Trim
@@ -10074,6 +10086,8 @@
 72871 TextIndex_PositionsAroundTheLength
 72871 TextIndex_ReadingACharacter
 72879 DateFormulaControl_StoredAfterClose
+72895 PageVar_MethodCallBeforeRun
+72895 PageVar_RunTwiceOnOneVariable
 72899 Lookup_ControlTriggerFalse
 72899 Lookup_ControlTriggerTrue
 72899 Lookup_NoControlTrigger
@@ -10303,6 +10317,7 @@
 73056 Run_Temp_ThreeRows
 73056 TestPage_Real_OpenEdit
 73056 TestPage_Real_OpenEdit_Empty
+73056 TestPage_Real_OpenNew
 73056 TestPage_Real_OpenView
 73073 Export_Declared
 73073 Export_EmptyTable
@@ -10360,12 +10375,15 @@
 73079 Run_ListWithFilteredRecord
 73079 Run_ListWithRecordAndFieldNo
 73079 Run_NumberOnly
+73079 Run_UnknownPage
 73079 Run_UnknownPageWithoutTry
 73079 Run_WithRecord
 73079 Run_WithRecordAndFieldNo
 73079 Run_WithRecordAndFieldValue
+73079 Run_WithRecordNotInTable
 73080 RunModal_FieldNoZeroAndUnknown
 73080 RunModal_RecordOnly_EachResponse
+73080 RunModal_UnknownPage
 73081 IsSessionActive_AfterStop
 73081 Start_NotACodeunitObject
 73081 Start_TimeoutZeroAndNegative
@@ -10436,6 +10454,7 @@
 73146 P128_Evaluate_DateFormula_DateText
 73151 P128_TestPageModalHandler_PageWithOnInit
 73151 P128_TypedModalHandler_PageWithOnInit_Cancel
+73151 P128_TypedModalHandler_PageWithOnInit_PageVariable
 73151 P128_TypedModalHandler_PageWithOnInit_RunModalWithRecord
 73162 P128_ClearAll_InOnPreReport
 73162 P128_ClearAll_NotCalled_Control
@@ -11227,6 +11246,8 @@
 73868 Action_List_ManyRows
 73874 FindList_Ascending_25Rows
 73874 FindList_Ascending_3Rows
+73874 FindList_Descending_25Rows
+73874 FindList_Descending_3Rows
 73874 FindList_PlainDescending
 73880 Transfer_EnumToEnum_SameType
 73880 Transfer_EnumToOption
@@ -11397,6 +11418,8 @@
 74046 P133_Evaluate_DecimalText_IntoInteger
 74046 P133_FormatRecord_FilledFields
 74046 P133_FormatRecord_Temporary_AndCopies
+74062 P133_Query_CountColumnFilterZero_OverTheOuterItem
+74062 P133_Query_CountZero_NoChildrenAtAll
 74062 P133_Query_StaticFiltersOnTheOuterItem_TableAndColumn
 74064 Option_FromBigInteger_InRangeAndLacking
 74068 Validate_ByConst_QuotedFilter
@@ -11822,6 +11845,7 @@
 74463 Card_OpenNew_EmptyTable
 74463 Card_OpenNew_TableWithRows
 74463 List_OpenNew_EmptyTable
+74463 List_OpenNew_TableWithRows
 74466 Variant_CodeAndOtherTypes_ToDecimal
 74466 Variant_Text_ToDecimal
 74472 AddLoadFields_FlowFieldAndNormal
@@ -12330,7 +12354,9 @@
 74999 P146_GetView_MarkedOnly_Real
 74999 P146_GetView_MarkedOnly_WithFilterAndKey
 74999 P146_GetView_Temporary
+74999 P146_PageRunModal_MarkedOnly_Real
 74999 P146_PageRunModal_SortedFiltered_Real
+74999 P146_PageRunModal_Temporary
 74999 P146_SetView_OnTemporary_AfterMarks
 75010 AllowInCustomizations_Table_FieldsStillUsable
 75010 CharAllowed_Validate_AllowedAndDisallowed
@@ -12471,6 +12497,7 @@
 77532 AC_Attr_InDataSet_ReportXml
 77532 AC_Attr_Procedures
 77532 AC_Attr_ReportHandler_RunReport
+77532 AC_Attr_SecurityFiltering_Variable
 77532 AC_Attr_TestPermissions_Disabled
 77532 AC_Attr_TestPermissions_NonRestrictive
 77532 AC_Attr_TestPermissions_Restrictive
@@ -12529,6 +12556,11 @@
 78620 GVE_Zero_page_count
 78620 GVE_Zero_page_no_index
 78620 GVE_Zero_qty_count
+78621 Tree_ThroughPageRun
+78621 Tree_ThroughPageRunModal
+78621 Tree_ThroughPageVariableRun
+78621 Tree_ThroughPageVariableRunModal
+78621 Tree_ThroughTestPageVariable
 78622 DocumentHost_PartEditExistingLine
 78622 DocumentHost_PartNewLine
 78631 LittleEndian_NoBom_DeclaredUtf16
@@ -12538,12 +12570,21 @@
 78860 Same_NavCurr
 78860 Same_PlainCurr
 78861 GoToRecord_BeforeAnyNavigation_Nav
+78861 GoToRecord_BeforeAnyNavigation_NavCurr
 78861 Next_EmptyList_Nav
+78861 Next_OneRow_Nav
+78861 Next_OneRow_NavCurr
+78861 Next_OneRow_Plain
+78861 Next_TwoRows_Nav
+78861 Next_TwoRows_NavCurr
 78861 Next_TwoRows_PlainCurr
 78861 OpenOnRow_SetPositionInOnOpenPage
+78861 OpenOnRow_SetPositionInOnOpenPage_LastRow
 78861 OpenOnRow_SetPositionInOnOpenPage_Next
 78862 PageRun_RecordOnFifthRow
 78862 PageRun_RecordWithFilterOnFifthRow
+78862 Paging_GoToKeyThenWalk_Nav
+78862 Paging_GoToKey_Nav
 78862 Paging_LastThenFirst_Nav
 78862 Paging_OpenThenNext_Nav
 78862 Paging_Open_Nav
@@ -12556,7 +12597,9 @@
 79201 PrefixAndSuffixFilters
 79201 TableWithOptimizedFieldInstallsAndStores
 79450 An01_DecimalBounds_MoreThanTwoDecimals
+79450 An02_Part_ConstLink_FiveRows
 79450 An02_Part_ConstLink_OneRow
+79450 An02_Part_FieldLink_FiveRows
 79450 An02_Part_FieldLink_OneRow
 79450 An08_DateShorthands
 79450 An14_RelationLookup_BlankField

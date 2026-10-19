@@ -112,16 +112,17 @@ codeunit 69998 C
     refused(al_testkit::run_in(src, "C", "F"), "OptionCaptionML");
 }
 
-/// pages/lt-ah-pages/AhPageTests.al:986-989: Expand on a tree shows the rows below the current one. The client keeps the
-/// rows collapsed, so Expand on a page whose repeater has ShowAsTree is refused.
+/// pages/lt-ah-pages/AhPageTests.al:986-989: Expand on a tree shows the rows below the current one. That is pinned for a
+/// page without row triggers; which rows a page with OnAfterGetRecord reads again is not, so Expand there is refused.
 #[test]
-fn expand_on_a_tree_page_is_refused() {
+fn expand_on_a_tree_page_with_row_triggers_is_refused() {
     let src = r#"
 table 69960 "TR Row" { fields { field(1; Id; Integer) { } field(2; Ind; Integer) { } } keys { key(PK; Id) { } } }
 page 69961 "TR List"
 {
     PageType = List; SourceTable = "TR Row"; ApplicationArea = All; UsageCategory = None;
     layout { area(Content) { repeater(R) { ShowAsTree = true; IndentationColumn = Rec.Ind; field(Id; Rec.Id) { } } } }
+    trigger OnAfterGetRecord() begin end;
 }
 codeunit 69962 C
 {
@@ -135,7 +136,7 @@ codeunit 69962 C
     end;
 }
 "#;
-    refused(al_testkit::run_in(src, "C", "F"), "ShowAsTree");
+    refused(al_testkit::run_in(src, "C", "F"), "row triggers");
 }
 
 /// pages/lt-page-editability-width-lookups/P115Lookups.al:120-122: Lookup on a control with its own TableRelation opens the
@@ -220,15 +221,15 @@ codeunit 69952 C
 }
 "#;
 
-/// misc/lt-probes-needed-6/PnF06FindListMoves.al:304, :318: a descending OnFindRecord list with OnAfterGetCurrRecord steps
-/// back over every row it served when it opens. That walk is not implemented, so the open is refused.
+/// misc/lt-probes-needed-6/PnF06FindListMoves.al:304, :318: a descending OnFindRecord list with OnAfterGetCurrRecord opens on
+/// the last row of its view (the row Find('=><') finds) and steps back over the rows above it (the reads: pages_ui/row_window.rs).
 #[test]
-fn opening_a_descending_find_list_with_on_after_get_curr_record_is_refused() {
+fn opening_a_descending_find_list_with_on_after_get_curr_record_stands_on_the_last_row() {
     let src = FIND_LIST.replace(
         "trigger OnOpenPage() begin end;",
         "trigger OnOpenPage() begin Rec.Ascending(false); end;",
     );
-    refused(al_testkit::run_in(&src, "C", "Descending"), "descending");
+    assert_eq!(al_testkit::text(al_testkit::run_in(&src, "C", "Descending")), "1");
 }
 
 /// pages/lt-ai-list-order/AiListOrderTests.al:999, :1020: GoToKey on an OnFindRecord list with a full window of 20 rows makes

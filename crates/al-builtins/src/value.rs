@@ -221,6 +221,9 @@ pub struct QueryState {
     /// `SetRange` / `SetFilter` per column (position in `ir::Query::columns`); a later call on the
     /// same column replaces the earlier one.
     pub filters: Vec<(usize, crate::filter::FilterExpr)>,
+    /// A `SetRange` or `SetFilter` replaced or removed a filter set before, so `filters` no longer
+    /// holds the order in which each filter was first set.
+    pub filter_replaced: bool,
     /// `TopNumberOfRows(n)`; `None` leaves the property in force.
     pub top: Option<i32>,
     /// `SecurityFiltering(x)` as a member index of the platform option; `None` before any call.
@@ -324,6 +327,13 @@ pub struct PageState {
     pub window_eof: bool,
     /// The window holds every row of the view, read by `Last` past a full window (see `last_past_the_window`).
     pub window_whole: bool,
+    /// A read of a list that serves its rows from OnFindRecord and OnNextRecord ran to the end of the view (an open whose view
+    /// ends inside the window, a GoToKey that read on to the end): Next on the last row then answers false without asking the
+    /// page (see `move_in_client_rows`).
+    pub view_read_to_end: bool,
+    /// The open read of a descending find list went up from the row it opened on, the last row of the view: the window holds
+    /// the rows above it in client order and the cursor stands on its last row (see `read_rows_up_from_the_last`).
+    pub window_read_up: bool,
     /// The page is landing on its first row as it opens (the reads of a view that ends inside the window differ there).
     pub landing_first: bool,
     /// The page opened for edit over an empty view and ran its new-record triggers on a blank record; it shows no row and its
@@ -352,6 +362,10 @@ pub struct PageState {
     pub pending: Option<Vec<Value>>,
     /// Opened by AL code (`Page.RunModal`, `Page.Run`) and answered by a handler, not by the test.
     pub modal: bool,
+    /// Whether the last run of this variable was modal (`None` before the first run): a second non-modal Run runs OnInit again.
+    pub last_run_modal: Option<bool>,
+    /// The rows of a tree (a repeater with ShowAsTree) expanded with `Expand(true)`, by primary key.
+    pub expanded: Vec<Vec<Value>>,
     pub lookup: bool,
     /// The `Action` the page closed with, once it has.
     pub result: Option<String>,
@@ -454,6 +468,8 @@ impl PageState {
             window_from_start: false,
             window_eof: false,
             window_whole: false,
+            view_read_to_end: false,
+            window_read_up: false,
             landing_first: false,
             blank_on_open: false,
             read_backwards: false,
@@ -466,6 +482,8 @@ impl PageState {
             selection: None,
             pending: None,
             modal: false,
+            last_run_modal: None,
+            expanded: Vec::new(),
             lookup: false,
             result: None,
             trapping: false,
@@ -1289,6 +1307,7 @@ impl Value {
             RtType::Query(id) => Value::Query(Rc::new(RefCell::new(QueryState {
                 object: *id,
                 filters: Vec::new(),
+                filter_replaced: false,
                 top: None,
                 security_filtering: None,
                 run: None,

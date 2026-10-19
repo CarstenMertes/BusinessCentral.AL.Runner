@@ -433,6 +433,51 @@ fn a_blocked_installer_also_blocks_tests_on_tables_written_by_table_event_subscr
     assert!(matches!(&o[0].1, Outcome::NotRun(r) if r.contains("install")), "{o:?}");
 }
 
+/// What `subscribers_reached` finds: the subscribers of the table events of every table a reached routine has a record
+/// of, and of every event a reached routine publishes, followed through what those subscribers call in turn.
+#[test]
+fn the_subscribers_a_routine_reaches_follow_table_events_published_events_and_calls() {
+    let (ws, l) = al_sema::lower::compile(
+        vec![AppSource {
+            id: "a".into(),
+            name: "a".into(),
+            dependencies: vec![],
+            files: vec![(
+                "f.al".into(),
+                "table 60900 Src { fields { field(1; K; Code[10]) { } } }
+                table 60901 Seed { fields { field(1; K; Code[10]) { } } }
+                table 60902 Other { fields { field(1; K; Code[10]) { } } }
+                codeunit 60904 Pub { [IntegrationEvent(false, false)] procedure OnSeed() begin end; }
+                codeunit 60905 Sub {
+                    [EventSubscriber(ObjectType::Table, Database::Src, 'OnAfterInsertEvent', '', false, false)]
+                    local procedure OnSrc(var Rec: Record Src) begin Raise(); end;
+                    local procedure Raise() var P: Codeunit Pub; begin P.OnSeed(); end;
+                    [EventSubscriber(ObjectType::Codeunit, Codeunit::Pub, 'OnSeed', '', false, false)]
+                    local procedure Seed() var R: Record Seed; begin R.Insert(); end;
+                    [EventSubscriber(ObjectType::Table, Database::Seed, 'OnAfterDeleteEvent', '', false, false)]
+                    local procedure OnSeedDeleted(var Rec: Record Seed) begin end;
+                    [EventSubscriber(ObjectType::Table, Database::Other, 'OnAfterInsertEvent', '', false, false)]
+                    local procedure OnOther(var Rec: Record Other) begin end; }
+                codeunit 60906 Root { procedure Go() var S: Record Src; begin S.K := 'A'; S.Insert(); end; }"
+                    .into(),
+            )],
+        }],
+        &Default::default(),
+    );
+    assert!(ws.diagnostics.is_empty(), "{:?}", ws.diagnostics);
+    let engine = Engine::new(l.program.clone(), Vec::new());
+    let objects = &l.program.objects;
+    let at = |object: &str, routine: &str| {
+        let o = objects.iter().position(|o| o.name == object).unwrap();
+        (o, objects[o].routines.iter().position(|r| r.name == routine).unwrap())
+    };
+    let (o, r) = at("Root", "Go");
+    let reached = blocked::subscribers_reached(&engine, &l, o, r);
+    let mut want = vec![at("Sub", "OnSrc"), at("Sub", "Seed"), at("Sub", "OnSeedDeleted")];
+    want.sort();
+    assert_eq!(reached, want);
+}
+
 #[test]
 fn a_blocked_installer_only_blocks_tests_that_touch_its_tables() {
     let o = outcomes(

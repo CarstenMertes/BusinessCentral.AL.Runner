@@ -255,7 +255,9 @@ impl Registry {
                             }
                             if kind == ObjKind::Codeunit
                                 && target.eq_ignore_ascii_case("Filter Helper Triggers")
-                                && event == "makedatefilter"
+                                && al_ir::RAISED_FILTER_EVENTS
+                                    .iter()
+                                    .any(|e| e.eq_ignore_ascii_case(event.as_str()))
                             {
                                 reg.subscribers
                                     .entry((FILTER_HELPER_TRIGGERS, event.clone()))

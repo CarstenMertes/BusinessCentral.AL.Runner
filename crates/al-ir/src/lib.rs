@@ -68,6 +68,15 @@ pub enum PlatformPublisher {
     FilterHelperTriggers,
 }
 
+/// The events of `Filter Helper Triggers` the runtime raises (MakeDateFilter, MakeIntFilter and MakeTimeFilter:
+/// events/lt-platform-triggers/PtObserve.al) or refuses to raise (MakeDateTimeFilter).
+pub const RAISED_FILTER_EVENTS: [&str; 4] = [
+    "MakeDateFilter",
+    "MakeIntFilter",
+    "MakeTimeFilter",
+    "MakeDateTimeFilter",
+];
+
 /// The events of a page the test client raises (`al-vm/src/pages.rs`). A subscriber to any other
 /// event of a page is refused when the page opens.
 pub const RAISED_PAGE_EVENTS: [&str; 9] = [
@@ -292,6 +301,9 @@ pub struct Report {
     /// The `Caption` property when it is a plain text literal.
     #[serde(default)]
     pub caption: Option<String>,
+    /// The `FormatRegion` property: the culture of a SaveAs Xml dataset and of `Format` while it is written.
+    #[serde(default)]
+    pub format_region: Option<String>,
     /// The request page's `AboutTitle` and `AboutText` when they are plain text literals.
     #[serde(default)]
     pub about_title: Option<String>,
@@ -544,6 +556,12 @@ pub struct XmlPort {
     /// `InlineSchema = true`: the export writes an XSD inside the root element.
     #[serde(default)]
     pub inline_schema: bool,
+    /// `UseLax = true`: an import skips an element of another namespace at the end of a sequence.
+    #[serde(default)]
+    pub use_lax: bool,
+    /// `XmlVersionNo = V11`: the export is the same as V10's; an import of a document that parses is not pinned.
+    #[serde(default)]
+    pub xml_v11: bool,
     /// `Namespaces`: (prefix, uri) pairs.
     #[serde(default)]
     pub namespaces: Vec<(String, String)>,
@@ -609,6 +627,10 @@ pub struct XmlNode {
     /// `AutoCalcField` of a field node as declared (`None`: not declared; a FlowField is calculated then, by an assumption).
     #[serde(default)]
     pub auto_calc: Option<bool>,
+    /// `Unbound = true` on a field element: its import is as without it, its export is not pinned
+    /// (YXmlPortProps.al:712, BC's export of such a port does not end).
+    #[serde(default)]
+    pub unbound: bool,
     /// Triggers by lower-case name (`onbeforepassvariable`, ...) to routine index.
     pub triggers: Vec<(String, usize)>,
 }

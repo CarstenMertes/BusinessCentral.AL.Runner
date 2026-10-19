@@ -219,7 +219,7 @@ fn the_impact_points_of_an_extension_are_listed_from_the_compiled_program() {
     assert!(ws.diagnostics.is_empty(), "{:?}", ws.diagnostics);
     let program = &lowered.program;
     let ext_app = program.apps.iter().position(|a| a.id == "ext").unwrap() as u32;
-    let points = impact_points(program, |oi| program.objects[oi].app == ext_app);
+    let points = impact_points(&lowered, |oi| program.objects[oi].app == ext_app);
     let matchers: Vec<&Matcher> = points.iter().map(|p| &p.matcher).collect();
     assert!(
         matchers.contains(&&Matcher::Key("event codeunit 50972 onbeforepost".into())),
@@ -230,13 +230,8 @@ fn the_impact_points_of_an_extension_are_listed_from_the_compiled_program() {
         "{points:?}"
     );
     assert!(matchers.contains(&&Matcher::Key("table 50970".into())), "{points:?}");
-    // An enum extension is not covered by the index: the run cannot select for it.
-    assert!(
-        points
-            .iter()
-            .any(|p| matches!(&p.matcher, Matcher::Unsupported(w) if w.contains("IX Ext Enum"))),
-        "{points:?}"
-    );
+    // An enum extension selects the tests that read its enum's values (ADR-043 step 5).
+    assert!(matchers.contains(&&Matcher::Key("enum 50979".into())), "{points:?}");
     // A table extension with fields only runs no code.
     let t = points
         .iter()

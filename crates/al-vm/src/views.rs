@@ -83,6 +83,14 @@ impl Session {
                 return unsupported("a filter value that needs quoting");
             }
         }
+        // A Time reads as Format gives it (events/lt-platform-triggers/PtObserve.al:Filter_DateTime_Time `>=12:00:00 PM`, Bad_Time m3);
+        // a time with milliseconds is not pinned.
+        if let Value::Time(t) = v {
+            if *t != 0 && (t - 1) % 1000 == 0 {
+                return al_builtins::format::try_format(v, 0, 0, self).map_err(Signal::Unsupported);
+            }
+            return unsupported("the filter text of an undefined Time or one with milliseconds (not pinned)");
+        }
         let text = self.message_value(v)?;
         // A value that is only blank space is shown in single quotes (corpus
         // record/TestRecordRuntimeTextsAndViews.al:Record_GetView_And_GetFilters_Texts, the blank
@@ -444,9 +452,16 @@ impl Session {
                             // member with parentheses keeps its quotes (record/TestCalcFormulaQuotedFilterTests.Codeunit.al:60308).
                             .filter(|v| !v.contains('\'') && !v.contains('"') && v.starts_with(['<', '>']))
                             .unwrap_or(value);
-                        let expr = self
-                            .parse_filter_text(value, &ty)
-                            .map_err(|e| Signal::Unsupported(format!("SetView: {e}")))?;
+                        // A Date text reads as SetFilter reads it in the session's language: `010120..` is 01/01/20..
+                        // (events/lt-platform-triggers/PtObserve.al:Filter_View).
+                        let date_ctx = al_builtins::filter::DateFilterContext {
+                            today: self.today_day_number(),
+                            work_date: self.work_date_day().unwrap_or_else(|| self.today_day_number()),
+                            language: self.global_language,
+                        };
+                        let expr =
+                            al_builtins::filter::with_date_context(date_ctx, || self.parse_filter_text(value, &ty))
+                                .map_err(|e| Signal::Unsupported(format!("SetView: {e}")))?;
                         filters.retain(|f| f.field != pos);
                         filters.push(FieldFilter {
                             field: pos,

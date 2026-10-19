@@ -5827,6 +5827,15 @@
           "site": null
         },
         {
+          "corpus_uses": 1,
+          "group": "xmlport/textelement",
+          "ms_uses": 3,
+          "name": "Unbound",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "pages/lt-report-page-properties/06-xmlport-unbound.al:22"
+        },
+        {
           "corpus_uses": 0,
           "group": "page/action",
           "ms_uses": 3,
@@ -6014,15 +6023,6 @@
           "pinned": false,
           "runtime_reads": false,
           "site": null
-        },
-        {
-          "corpus_uses": 1,
-          "group": "xmlport/textelement",
-          "ms_uses": 3,
-          "name": "Unbound",
-          "pinned": true,
-          "runtime_reads": false,
-          "site": "pages/lt-report-page-properties/06-xmlport-unbound.al:22"
         },
         {
           "corpus_uses": 0,
@@ -11623,6 +11623,15 @@
           "site": "report/lt-y-report-props/YReports.al:478"
         },
         {
+          "corpus_uses": 1,
+          "group": "report",
+          "ms_uses": 0,
+          "name": "EnableExternalImages",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "report/lt-y-report-props/YReports.al:471"
+        },
+        {
           "corpus_uses": 3,
           "group": "report",
           "ms_uses": 0,
@@ -11639,6 +11648,33 @@
           "pinned": true,
           "runtime_reads": true,
           "site": "report/lt-y-report-props/YReports.al:16"
+        },
+        {
+          "corpus_uses": 1,
+          "group": "report",
+          "ms_uses": 0,
+          "name": "PaperSourceDefaultPage",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "report/lt-y-report-props/YReports.al:469"
+        },
+        {
+          "corpus_uses": 1,
+          "group": "report",
+          "ms_uses": 0,
+          "name": "PaperSourceFirstPage",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "report/lt-y-report-props/YReports.al:468"
+        },
+        {
+          "corpus_uses": 1,
+          "group": "report",
+          "ms_uses": 0,
+          "name": "PaperSourceLastPage",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "report/lt-y-report-props/YReports.al:470"
         },
         {
           "corpus_uses": 1,
@@ -11684,6 +11720,15 @@
           "pinned": true,
           "runtime_reads": true,
           "site": "handlers/TestReportLayoutByNameReport.al:47"
+        },
+        {
+          "corpus_uses": 1,
+          "group": "report/layout",
+          "ms_uses": 0,
+          "name": "SummaryML",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "report/lt-y-report-props/YReports.al:576"
         },
         {
           "corpus_uses": 1,
@@ -12001,6 +12046,24 @@
           "site": "_fixtures/xmlports/ALTXpmProbeXmlPort.al:14"
         },
         {
+          "corpus_uses": 1,
+          "group": "xmlport",
+          "ms_uses": 0,
+          "name": "UseLax",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "xmlport/lt-y-xmlport-props/YXmlPortProps.al:72"
+        },
+        {
+          "corpus_uses": 2,
+          "group": "xmlport",
+          "ms_uses": 0,
+          "name": "XmlVersionNo",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "xmlport/lt-y-xmlport-props/YXmlPortProps.al:112"
+        },
+        {
           "corpus_uses": 2,
           "group": "xmlport/fieldattribute",
           "ms_uses": 0,
@@ -12017,6 +12080,15 @@
           "pinned": true,
           "runtime_reads": true,
           "site": "xmlport/lt-y-xmlport-props/YXmlPortProps.al:225"
+        },
+        {
+          "corpus_uses": 1,
+          "group": "xmlport/fieldattribute",
+          "ms_uses": 0,
+          "name": "Unbound",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "xmlport/lt-y-xmlport-props/YXmlPortProps.al:294"
         },
         {
           "corpus_uses": 1,
@@ -12044,6 +12116,15 @@
           "pinned": true,
           "runtime_reads": true,
           "site": "xmlport/lt-y-xmlport-props/YXmlPortProps.al:239"
+        },
+        {
+          "corpus_uses": 1,
+          "group": "xmlport/fieldelement",
+          "ms_uses": 0,
+          "name": "Unbound",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "xmlport/lt-y-xmlport-props/YXmlPortProps.al:342"
         },
         {
           "corpus_uses": 4,
@@ -12085,6 +12166,15 @@
           "corpus_uses": 1,
           "group": "xmlport/tableelement",
           "ms_uses": 0,
+          "name": "Unbound",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "xmlport/lt-y-xmlport-props/YXmlPortProps.al:362"
+        },
+        {
+          "corpus_uses": 1,
+          "group": "xmlport/tableelement",
+          "ms_uses": 0,
           "name": "Width",
           "pinned": true,
           "runtime_reads": true,
@@ -12098,6 +12188,15 @@
           "pinned": true,
           "runtime_reads": true,
           "site": "xmlport/lt-y-xmlport-props/YXmlPortProps.al:233"
+        },
+        {
+          "corpus_uses": 1,
+          "group": "xmlport/textattribute",
+          "ms_uses": 0,
+          "name": "Unbound",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "xmlport/lt-y-xmlport-props/YXmlPortProps.al:318"
         },
         {
           "corpus_uses": 1,
@@ -12442,42 +12541,6 @@
           "site": "pageext/lt-z-modify-controls/ZModifyControls.al:93"
         },
         {
-          "corpus_uses": 1,
-          "group": "report",
-          "ms_uses": 0,
-          "name": "EnableExternalImages",
-          "pinned": true,
-          "runtime_reads": false,
-          "site": "report/lt-y-report-props/YReports.al:471"
-        },
-        {
-          "corpus_uses": 1,
-          "group": "report",
-          "ms_uses": 0,
-          "name": "PaperSourceDefaultPage",
-          "pinned": true,
-          "runtime_reads": false,
-          "site": "report/lt-y-report-props/YReports.al:469"
-        },
-        {
-          "corpus_uses": 1,
-          "group": "report",
-          "ms_uses": 0,
-          "name": "PaperSourceFirstPage",
-          "pinned": true,
-          "runtime_reads": false,
-          "site": "report/lt-y-report-props/YReports.al:468"
-        },
-        {
-          "corpus_uses": 1,
-          "group": "report",
-          "ms_uses": 0,
-          "name": "PaperSourceLastPage",
-          "pinned": true,
-          "runtime_reads": false,
-          "site": "report/lt-y-report-props/YReports.al:470"
-        },
-        {
           "corpus_uses": 4,
           "group": "report",
           "ms_uses": 0,
@@ -12605,15 +12668,6 @@
         },
         {
           "corpus_uses": 1,
-          "group": "report/layout",
-          "ms_uses": 0,
-          "name": "SummaryML",
-          "pinned": true,
-          "runtime_reads": false,
-          "site": "report/lt-y-report-props/YReports.al:576"
-        },
-        {
-          "corpus_uses": 1,
           "group": "report/requestpage",
           "ms_uses": 0,
           "name": "HelpLink",
@@ -12647,60 +12701,6 @@
           "pinned": true,
           "runtime_reads": false,
           "site": "handlers/ProbeObjectMetadataTables.al:162"
-        },
-        {
-          "corpus_uses": 1,
-          "group": "xmlport",
-          "ms_uses": 0,
-          "name": "UseLax",
-          "pinned": true,
-          "runtime_reads": false,
-          "site": "xmlport/lt-y-xmlport-props/YXmlPortProps.al:72"
-        },
-        {
-          "corpus_uses": 2,
-          "group": "xmlport",
-          "ms_uses": 0,
-          "name": "XmlVersionNo",
-          "pinned": true,
-          "runtime_reads": false,
-          "site": "xmlport/lt-y-xmlport-props/YXmlPortProps.al:112"
-        },
-        {
-          "corpus_uses": 1,
-          "group": "xmlport/fieldattribute",
-          "ms_uses": 0,
-          "name": "Unbound",
-          "pinned": true,
-          "runtime_reads": false,
-          "site": "xmlport/lt-y-xmlport-props/YXmlPortProps.al:294"
-        },
-        {
-          "corpus_uses": 1,
-          "group": "xmlport/fieldelement",
-          "ms_uses": 0,
-          "name": "Unbound",
-          "pinned": true,
-          "runtime_reads": false,
-          "site": "xmlport/lt-y-xmlport-props/YXmlPortProps.al:342"
-        },
-        {
-          "corpus_uses": 1,
-          "group": "xmlport/tableelement",
-          "ms_uses": 0,
-          "name": "Unbound",
-          "pinned": true,
-          "runtime_reads": false,
-          "site": "xmlport/lt-y-xmlport-props/YXmlPortProps.al:362"
-        },
-        {
-          "corpus_uses": 1,
-          "group": "xmlport/textattribute",
-          "ms_uses": 0,
-          "name": "Unbound",
-          "pinned": true,
-          "runtime_reads": false,
-          "site": "xmlport/lt-y-xmlport-props/YXmlPortProps.al:318"
         }
       ],
       "pinned": 587
@@ -12912,6 +12912,33 @@
           "group": "codeunit",
           "ms_uses": 0,
           "name": "MakeDateFilter",
+          "pinned": false,
+          "runtime_reads": true,
+          "site": null
+        },
+        {
+          "corpus_uses": 0,
+          "group": "codeunit",
+          "ms_uses": 0,
+          "name": "MakeDateTimeFilter",
+          "pinned": false,
+          "runtime_reads": true,
+          "site": null
+        },
+        {
+          "corpus_uses": 0,
+          "group": "codeunit",
+          "ms_uses": 0,
+          "name": "MakeIntFilter",
+          "pinned": false,
+          "runtime_reads": true,
+          "site": null
+        },
+        {
+          "corpus_uses": 0,
+          "group": "codeunit",
+          "ms_uses": 0,
+          "name": "MakeTimeFilter",
           "pinned": false,
           "runtime_reads": true,
           "site": null
@@ -13307,34 +13334,7 @@
           "corpus_uses": 0,
           "group": "codeunit",
           "ms_uses": 0,
-          "name": "MakeDateTimeFilter",
-          "pinned": false,
-          "runtime_reads": false,
-          "site": null
-        },
-        {
-          "corpus_uses": 0,
-          "group": "codeunit",
-          "ms_uses": 0,
-          "name": "MakeIntFilter",
-          "pinned": false,
-          "runtime_reads": false,
-          "site": null
-        },
-        {
-          "corpus_uses": 0,
-          "group": "codeunit",
-          "ms_uses": 0,
           "name": "MakeTextFilter",
-          "pinned": false,
-          "runtime_reads": false,
-          "site": null
-        },
-        {
-          "corpus_uses": 0,
-          "group": "codeunit",
-          "ms_uses": 0,
-          "name": "MakeTimeFilter",
           "pinned": false,
           "runtime_reads": false,
           "site": null
@@ -14740,7 +14740,7 @@
         "code": "Evaluate",
         "file": "crates/al-builtins/src/evaluate.rs",
         "generic": false,
-        "line": 1299,
+        "line": 1313,
         "pinned": true,
         "site": "codeunit/TestCrossAppDispatch.al:61",
         "template": "Evaluate"
@@ -14749,7 +14749,7 @@
         "code": "",
         "file": "crates/al-builtins/src/evaluate.rs",
         "generic": false,
-        "line": 1302,
+        "line": 1316,
         "pinned": true,
         "site": "codeunit/TestCrossAppDispatch.al:61",
         "template": "Evaluate"
@@ -14830,7 +14830,7 @@
         "code": "AL:DivideByZero",
         "file": "crates/al-builtins/src/ops.rs",
         "generic": false,
-        "line": 434,
+        "line": 439,
         "pinned": true,
         "site": "errors/lt-error-handling/ErTRuntimeErrors.al:91",
         "template": "Attempted to divide by zero."
@@ -14839,7 +14839,7 @@
         "code": "AL:DivideByZero",
         "file": "crates/al-builtins/src/ops.rs",
         "generic": false,
-        "line": 637,
+        "line": 642,
         "pinned": true,
         "site": "errors/lt-error-handling/ErTRuntimeErrors.al:91",
         "template": "Attempted to divide by zero."
@@ -14848,7 +14848,7 @@
         "code": "InvalidTime",
         "file": "crates/al-builtins/src/ops.rs",
         "generic": false,
-        "line": 807,
+        "line": 812,
         "pinned": true,
         "site": "misc/lt-probes-needed-6/PnF31TimeArithmetic.al:81",
         "template": "Adding to an undefined (0T) time."
@@ -14857,7 +14857,7 @@
         "code": "InvalidTime",
         "file": "crates/al-builtins/src/ops.rs",
         "generic": false,
-        "line": 861,
+        "line": 866,
         "pinned": true,
         "site": "misc/lt-probes-needed-6/PnF31TimeArithmetic.al:116",
         "template": "Subtracting from an undefined (0T) time."
@@ -14866,7 +14866,7 @@
         "code": "AL:Overflow",
         "file": "crates/al-builtins/src/ops.rs",
         "generic": false,
-        "line": 889,
+        "line": 894,
         "pinned": true,
         "site": "errors/lt-error-handling/ErTRuntimeErrors.al:97",
         "template": "Arithmetic operation resulted in an overflow."
@@ -14875,7 +14875,7 @@
         "code": "AL:Overflow",
         "file": "crates/al-builtins/src/ops.rs",
         "generic": false,
-        "line": 897,
+        "line": 902,
         "pinned": true,
         "site": "errors/lt-error-handling/ErTRuntimeErrors.al:97",
         "template": "Arithmetic operation resulted in an overflow."
@@ -14884,7 +14884,7 @@
         "code": "AL:DivideByZero",
         "file": "crates/al-builtins/src/ops.rs",
         "generic": false,
-        "line": 922,
+        "line": 927,
         "pinned": true,
         "site": "errors/lt-error-handling/ErTRuntimeErrors.al:91",
         "template": "Attempted to divide by zero."
@@ -14893,19 +14893,10 @@
         "code": "AL:DivideByZero",
         "file": "crates/al-builtins/src/ops.rs",
         "generic": false,
-        "line": 947,
+        "line": 952,
         "pinned": true,
         "site": "errors/lt-error-handling/ErTRuntimeErrors.al:91",
         "template": "Attempted to divide by zero."
-      },
-      {
-        "code": "AL:Overflow",
-        "file": "crates/al-builtins/src/ops.rs",
-        "generic": false,
-        "line": 976,
-        "pinned": true,
-        "site": "errors/lt-error-handling/ErTRuntimeErrors.al:97",
-        "template": "Arithmetic operation resulted in an overflow."
       },
       {
         "code": "AL:Overflow",
@@ -14917,10 +14908,19 @@
         "template": "Arithmetic operation resulted in an overflow."
       },
       {
+        "code": "AL:Overflow",
+        "file": "crates/al-builtins/src/ops.rs",
+        "generic": false,
+        "line": 986,
+        "pinned": true,
+        "site": "errors/lt-error-handling/ErTRuntimeErrors.al:97",
+        "template": "Arithmetic operation resulted in an overflow."
+      },
+      {
         "code": "DateInvalid",
         "file": "crates/al-builtins/src/ops.rs",
         "generic": false,
-        "line": 1009,
+        "line": 1014,
         "pinned": true,
         "site": "errors/lt-ms-refusals-131/P131EvalScalars.al:376",
         "template": "The date is not valid."
@@ -14938,7 +14938,7 @@
         "code": "InvalidStreamData",
         "file": "crates/al-builtins/src/stream.rs",
         "generic": false,
-        "line": 582,
+        "line": 586,
         "pinned": true,
         "site": "lt-file-type/FileReadSeek.al:114",
         "template": "Invalid data encountered in stream, unable to read text."
@@ -14947,7 +14947,7 @@
         "code": "InvalidStreamData",
         "file": "crates/al-builtins/src/stream.rs",
         "generic": false,
-        "line": 744,
+        "line": 748,
         "pinned": true,
         "site": "lt-file-type/FileReadSeek.al:114",
         "template": "Invalid data encountered in stream, unable to read text."
@@ -14956,7 +14956,7 @@
         "code": "InvalidStreamData",
         "file": "crates/al-builtins/src/stream.rs",
         "generic": false,
-        "line": 902,
+        "line": 906,
         "pinned": true,
         "site": "lt-file-type/FileReadSeek.al:114",
         "template": "Invalid data encountered in stream, unable to read text."
@@ -14965,7 +14965,7 @@
         "code": "DateInvalid",
         "file": "crates/al-builtins/src/stream.rs",
         "generic": false,
-        "line": 934,
+        "line": 938,
         "pinned": true,
         "site": "errors/lt-ms-refusals-131/P131EvalScalars.al:376",
         "template": "The date is not valid."
@@ -15082,7 +15082,7 @@
         "code": "ArgumentOutOfRange",
         "file": "crates/al-vm/src/interfaces.rs",
         "generic": false,
-        "line": 102,
+        "line": 103,
         "pinned": true,
         "site": "codeunit/TestInterfaceRuntimeContracts.al:103",
         "template": "Enum does not contain value %."
@@ -15091,7 +15091,7 @@
         "code": "NotSupportedOperation",
         "file": "crates/al-vm/src/interp.rs",
         "generic": false,
-        "line": 805,
+        "line": 813,
         "pinned": true,
         "site": "recordref/lt-recordref-variant-record/RecordRefVariantToRecord.al:147",
         "template": "The requested operation is not supported."
@@ -15100,7 +15100,7 @@
         "code": "IndexOutOfBounds",
         "file": "crates/al-vm/src/interp.rs",
         "generic": false,
-        "line": 1042,
+        "line": 1050,
         "pinned": true,
         "site": "collections/lt-array-rows/ArrayRows.al:185",
         "template": "Index out of bounds."
@@ -15109,7 +15109,7 @@
         "code": "IndexOutOfBounds",
         "file": "crates/al-vm/src/interp.rs",
         "generic": false,
-        "line": 1119,
+        "line": 1127,
         "pinned": true,
         "site": "collections/lt-array-rows/ArrayRows.al:185",
         "template": "Index out of bounds."
@@ -15118,7 +15118,7 @@
         "code": "IndexOutOfBounds",
         "file": "crates/al-vm/src/interp.rs",
         "generic": false,
-        "line": 1129,
+        "line": 1137,
         "pinned": true,
         "site": "collections/lt-array-rows/ArrayRows.al:185",
         "template": "Index out of bounds."
@@ -15127,7 +15127,7 @@
         "code": "StackOverflow",
         "file": "crates/al-vm/src/lib.rs",
         "generic": false,
-        "line": 947,
+        "line": 948,
         "pinned": true,
         "site": "record/TestCalcFieldsTruncateUniqueContracts.al:179",
         "template": "There is insufficient memory to execute this function. This can be caused by recursive function calls. Contact your system administrator."
@@ -15181,7 +15181,7 @@
         "code": "RenameArgument",
         "file": "crates/al-vm/src/records.rs",
         "generic": false,
-        "line": 2381,
+        "line": 2431,
         "pinned": true,
         "site": "recordref/lt-refs/RfTWrite.al:223",
         "template": "The number of field arguments does not match the primary key size."
@@ -15298,7 +15298,7 @@
         "code": "DB:Ok",
         "file": "crates/al-vm/src/views.rs",
         "generic": false,
-        "line": 527,
+        "line": 542,
         "pinned": true,
         "site": "record/TestRecordViewCopyMarkContracts.al:145",
         "template": "Invalid expression of type: table view.%%"
@@ -25187,7 +25187,7 @@
         "pinned": true,
         "scope": "",
         "site": "report/lt-y-report-props/YReports.al:471",
-        "state": "refused"
+        "state": "implemented"
       },
       {
         "area": "properties",
@@ -25382,7 +25382,7 @@
         "pinned": true,
         "scope": "",
         "site": "report/lt-y-report-props/YReports.al:469",
-        "state": "refused"
+        "state": "implemented"
       },
       {
         "area": "properties",
@@ -25397,7 +25397,7 @@
         "pinned": true,
         "scope": "",
         "site": "report/lt-y-report-props/YReports.al:468",
-        "state": "refused"
+        "state": "implemented"
       },
       {
         "area": "properties",
@@ -25412,7 +25412,7 @@
         "pinned": true,
         "scope": "",
         "site": "report/lt-y-report-props/YReports.al:470",
-        "state": "refused"
+        "state": "implemented"
       },
       {
         "area": "properties",
@@ -26158,7 +26158,7 @@
         "pinned": true,
         "scope": "",
         "site": "report/lt-y-report-props/YReports.al:576",
-        "state": "unknown"
+        "state": "implemented"
       },
       {
         "area": "properties",
@@ -27296,7 +27296,7 @@
         "pinned": true,
         "scope": "",
         "site": "xmlport/lt-y-xmlport-props/YXmlPortProps.al:72",
-        "state": "refused"
+        "state": "implemented"
       },
       {
         "area": "properties",
@@ -27326,7 +27326,7 @@
         "pinned": true,
         "scope": "",
         "site": "xmlport/lt-y-xmlport-props/YXmlPortProps.al:112",
-        "state": "refused"
+        "state": "implemented"
       },
       {
         "area": "properties",
@@ -27401,7 +27401,7 @@
         "pinned": true,
         "scope": "",
         "site": "xmlport/lt-y-xmlport-props/YXmlPortProps.al:294",
-        "state": "refused"
+        "state": "implemented"
       },
       {
         "area": "properties",
@@ -27521,7 +27521,7 @@
         "pinned": true,
         "scope": "",
         "site": "xmlport/lt-y-xmlport-props/YXmlPortProps.al:342",
-        "state": "refused"
+        "state": "implemented"
       },
       {
         "area": "properties",
@@ -27776,7 +27776,7 @@
         "pinned": true,
         "scope": "",
         "site": "xmlport/lt-y-xmlport-props/YXmlPortProps.al:362",
-        "state": "refused"
+        "state": "implemented"
       },
       {
         "area": "properties",
@@ -27881,7 +27881,7 @@
         "pinned": true,
         "scope": "",
         "site": "xmlport/lt-y-xmlport-props/YXmlPortProps.al:318",
-        "state": "refused"
+        "state": "implemented"
       },
       {
         "area": "properties",
@@ -27986,7 +27986,7 @@
         "pinned": true,
         "scope": "",
         "site": "pages/lt-report-page-properties/06-xmlport-unbound.al:22",
-        "state": "refused"
+        "state": "implemented"
       },
       {
         "area": "properties",

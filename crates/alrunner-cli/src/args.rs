@@ -27,6 +27,10 @@ pub enum Command {
     /// `alrunner impact-index build APP... [OPTIONS]` (ADR-043 step 2): run the tests of the APPs once and keep, per
     /// test, what it raised and touched, for the impact runs that follow.
     ImpactIndexBuild(Box<TestArgs>),
+    /// `alrunner impact-index check-static APP... [OPTIONS]` (ADR-043 step 5): check that static reach covers every key
+    /// each test recorded in the cached index (a key it misses is a bug in static reach), and say how much more static
+    /// reach selects.
+    ImpactIndexCheckStatic(Box<TestArgs>),
 }
 
 /// `alrunner test`.
@@ -132,7 +136,8 @@ pub struct TestArgs {
     pub bcapps_dir: Option<PathBuf>,
     /// `--impact-of APP` (ADR-043): the partner extensions whose effect on the tests of the APPs is measured. Repeatable.
     pub impact_of: Vec<PathBuf>,
-    /// `--impact MODE`: how an impact run selects tests: `dynamic` (default with an index) or `all`.
+    /// `--impact MODE`: how an impact run selects tests: `dynamic` (default with an index), `static` (default
+    /// without one) or `all`.
     pub impact: Option<String>,
     /// `--impact-accept FILE` (ADR-043 step 3): the changes the partner accepts, in the shape `--impact-json` writes.
     pub impact_accept: Option<PathBuf>,
@@ -175,7 +180,7 @@ alrunner: run AL tests without a service tier (AL Runner v3, preview)
 USAGE
     alrunner test [OPTIONS] APP...
     alrunner serve [--protocol 2] [OPTIONS]
-    alrunner impact-index build [OPTIONS] APP...
+    alrunner impact-index build|check-static [OPTIONS] APP...
     alrunner cache clear|prune|info [--cache-dir DIR]
     alrunner --version | --help
 
@@ -304,11 +309,12 @@ IMPACT (ADR-043)
                          same APPs and options is cached): only the test codeunits that reached one of
                          the extension's impact points in the index's run, once, with the extension;
                          the outcomes without it come from the index. `all`: every selected test runs
-                         without and with the extension. With no index cached, the run warns and does
-                         what `all` does. `static` is not built yet.
+                         without and with the extension. `static`: the test codeunits whose tests can
+                         reach an impact point over the call graph, both sides; with no index cached,
+                         the run warns and does what `static` does.
     --impact-json FILE   Write the per-test diff as JSON: `format` (1), `mode`, `extensions`, `testApps`,
                          `counts` (per class), `accepted`, `notSelected` ({tests, codeunits}, dynamic
-                         selection only), `exitCode`, and `tests[]` with `codeunit`, `codeunitName`,
+                         and static selection), `exitCode`, and `tests[]` with `codeunit`, `codeunitName`,
                          `test`, `class`, `accepted`, `without` and `with` ({outcome: pass, fail, not
                          run or missing; flagged; message}, or null), `reached` (impact points) and
                          `ran` ([{routine, calls}]).
@@ -328,6 +334,10 @@ IMPACT (ADR-043)
                          --impact-of) and keep in the cache, per test, the events it raised and the
                          tables, pages and reports it used. An impact run with the same APPs and
                          options reads it. Never built implicitly.
+    alrunner impact-index check-static [OPTIONS] APP...
+                         Check that static reach covers everything each test recorded in the cached
+                         index of the same APPs and options (exit 1 on a miss), and how much more
+                         static reach selects.
 
 ISOLATION
     --isolation MODE     `codeunit` (default): the database is rolled back when a test codeunit ends.
@@ -556,6 +566,7 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Command, String> 
         return Ok(Command::Help);
     };
     let mut index_build = false;
+    let mut check_static = false;
     match first.as_str() {
         "--help" | "-h" | "help" => return Ok(Command::Help),
         "--version" | "-V" | "version" => return Ok(Command::Version),
@@ -573,9 +584,13 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Command, String> 
         "test" => {}
         "impact-index" => match it.next().as_deref() {
             Some("build") => index_build = true,
+            Some("check-static") => {
+                index_build = true;
+                check_static = true;
+            }
             other => {
                 return Err(format!(
-                    "`alrunner impact-index` needs `build`, got `{}`",
+                    "`alrunner impact-index` needs `build` or `check-static`, got `{}`",
                     other.unwrap_or_default()
                 ));
             }
@@ -859,7 +874,11 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Command, String> 
                 return Err(format!("alrunner impact-index build cannot be combined with {flag}"));
             }
         }
-        return Ok(Command::ImpactIndexBuild(Box::new(a)));
+        return Ok(if check_static {
+            Command::ImpactIndexCheckStatic(Box::new(a))
+        } else {
+            Command::ImpactIndexBuild(Box::new(a))
+        });
     }
     impact_args(&a)?;
     Ok(Command::Test(Box::new(a)))
@@ -882,10 +901,7 @@ fn impact_args(a: &TestArgs) -> Result<(), String> {
         return Ok(());
     }
     match a.impact.as_deref() {
-        None | Some("all" | "dynamic") => {}
-        Some("static") => {
-            return Err("--impact static is not built yet (ADR-043 step 5: static reach); --impact dynamic (the default) uses the impact index, --impact all runs every selected test without and with the extension".into());
-        }
+        None | Some("all" | "dynamic" | "static") => {}
         Some(other) => return Err(format!("--impact needs all, dynamic or static, got `{other}`")),
     }
     if a.no_compile_cache {

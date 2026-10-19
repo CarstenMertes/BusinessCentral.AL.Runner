@@ -420,6 +420,23 @@ impl Lowerer<'_> {
                     return Ok(ir::Expr::In(Box::new(l), elems));
                 }
                 let r = self.operand(&kids[1], operand_use)?;
+                // A one-character literal next to a Char under `+` or `-` is a Char, so the two add or subtract as numbers
+                // (corpus types/lt-af-char-literal/AfCharLiteralArithmetic.al:22-43; check::one_char_literal).
+                let (l, r) = if crate::check::char_and_one_char_literal(
+                    &op,
+                    &kids,
+                    self.ty_ref(&kids[0]),
+                    self.ty_ref(&kids[1]),
+                ) {
+                    let text = Ty::Text(None);
+                    if crate::check::one_char_literal(&kids[0]) {
+                        (self.convert_to(&Ty::Char, &text, l)?, r)
+                    } else {
+                        (l, self.convert_to(&Ty::Char, &text, r)?)
+                    }
+                } else {
+                    (l, r)
+                };
                 let dotnet =
                     matches!(self.ty_ref(&kids[0]), Ty::DotNet(_)) || matches!(self.ty_ref(&kids[1]), Ty::DotNet(_));
                 let op = match op.as_str() {

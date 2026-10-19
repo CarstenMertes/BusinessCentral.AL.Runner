@@ -73,6 +73,17 @@ pub(super) fn xmlport_metadata_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
             r[pos(t, 8)] = option(t, 8, ordinal(o, "TextEncoding", TEXT_ENCODINGS, 1)?);
             r[pos(t, 9)] = option(t, 9, ordinal(o, "Format", FORMATS, 0)?);
             r[pos(t, 10)] = Value::Guid(c.owner(o));
+            // InherentPermissions and InherentEntitlements as declared, blank when not
+            // (xmlport/lt-y-xmlport-props/YXmlPortProps.al:736-740: `X` for `X`).
+            for name in ["InherentPermissions", "InherentEntitlements"] {
+                if let Some(col) = t.fields.iter().position(|f| f.name == name) {
+                    let v = prop(o, name).map(ident).unwrap_or_default();
+                    if !matches!(v.as_str(), "" | "X") {
+                        return Err(format!("xmlport '{}': {name} = {v} is not pinned (only X is)", o.name));
+                    }
+                    r[col] = Value::Text(v.into());
+                }
+            }
             Ok(())
         },
     )

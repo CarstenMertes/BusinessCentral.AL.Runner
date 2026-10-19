@@ -11,6 +11,7 @@ use crate::language_catalog::{LanguageCatalog, State, majors, runtime_receiver};
 use al_builtins::catalog::Catalog;
 use al_sema::Workspace;
 use al_sema::check::{CheckResult, Res};
+use al_sema::types::Ty;
 use std::collections::BTreeMap;
 
 /// One resolved builtin call in a file of the corpus.
@@ -22,11 +23,13 @@ pub struct Call {
 }
 
 /// The builtin calls the checker resolved in the files of the workspace apps (not the dependency
-/// apps). One entry per (overload, file, line).
-pub fn collect_calls(ws: &Workspace, checked: &CheckResult) -> Vec<Call> {
+/// apps). One entry per (overload, file, line). A call counts for the overload its argument types
+/// select ([`selected_overload`]).
+pub fn collect_calls(ws: &Workspace, checked: &CheckResult, catalog: &Catalog) -> Vec<Call> {
     let mut lines: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
+    let mut args: BTreeMap<usize, CallArgs> = BTreeMap::new();
     let mut out = std::collections::BTreeSet::new();
-    for ((file, start, _end), res) in checked.resolutions.iter() {
+    for ((file, start, end), res) in checked.resolutions.iter() {
         let Res::Builtin(id) = res else { continue };
         let f = &ws.files[*file];
         if ws.kinds[f.app] != al_sema::AppKind::Workspace {
@@ -39,8 +42,9 @@ pub fn collect_calls(ws: &Workspace, checked: &CheckResult) -> Vec<Call> {
             v
         });
         let line = starts.partition_point(|&s| s <= *start);
+        let id = select_at(ws, checked, catalog, &mut args, (*file, *start, *end), id);
         out.insert(Call {
-            id: id.clone(),
+            id,
             file: f.path.clone(),
             line,
         });
@@ -48,15 +52,156 @@ pub fn collect_calls(ws: &Workspace, checked: &CheckResult) -> Vec<Call> {
     out.into_iter().collect()
 }
 
+/// The overload the call at `at` (file, start, end) is to, by its argument types: `id` (the checker's
+/// choice) unless [`selected_overload`] picks another. The argument ranges of a file are found once,
+/// and only for a method with several overloads.
+fn select_at(
+    ws: &Workspace,
+    checked: &CheckResult,
+    catalog: &Catalog,
+    args: &mut BTreeMap<usize, CallArgs>,
+    (file, start, end): (usize, usize, usize),
+    id: &str,
+) -> String {
+    let several = catalog
+        .by_id(id)
+        .is_some_and(|s| catalog.overloads(&s.receiver, &s.name).len() > 1);
+    if !several {
+        return id.to_string();
+    }
+    args.entry(file)
+        .or_insert_with(|| call_args(ws, file))
+        .get(&(start, end))
+        .and_then(|a| {
+            let tys: Vec<Ty> = a
+                .iter()
+                .map(|&(s, e)| checked.types.get(&(file, s, e)).cloned().unwrap_or(Ty::Unknown))
+                .collect();
+            selected_overload(catalog, id, &tys)
+        })
+        .unwrap_or_else(|| id.to_string())
+}
+
+/// The argument ranges of every call expression of a file, by the call's range.
+type CallArgs = std::collections::HashMap<(usize, usize), Vec<(usize, usize)>>;
+
+fn call_args(ws: &Workspace, file: usize) -> CallArgs {
+    let range = |n: &al_syntax::SyntaxNode| (usize::from(n.text_range().start()), usize::from(n.text_range().end()));
+    al_syntax::SyntaxNode::new_root(ws.green(file))
+        .descendants()
+        .filter(|n| n.kind() == al_syntax::SyntaxKind::CallExpr)
+        .map(|n| {
+            let args = n
+                .children()
+                .nth(1)
+                .map(|a| a.children().map(|x| range(&x)).collect())
+                .unwrap_or_default();
+            (range(&n), args)
+        })
+        .collect()
+}
+
+/// The overload of the method of `id` that the argument types `args` select, when it is not `id`.
+///
+/// The checker keeps the first overload that fits when several fit equally (`pick` in
+/// `al-sema/src/check/calls.rs`), so a call `FRef.TestField(5)` resolves to `TestField(Value: Any)`
+/// although `TestField(Value: Integer)` is the overload BC's compiler binds (it picks the most
+/// specific one). Here a parameter whose type is the argument's own type scores 2, an `Any`,
+/// `Joker` or `Variant` parameter 1, and any other parameter rules the overload out; the overload
+/// with the highest score wins when it is the only one with that score and scores higher than `id`.
+/// An argument of unknown type fits only the generic parameters, so a call the checker could not
+/// type keeps its overload.
+pub fn selected_overload(catalog: &Catalog, id: &str, args: &[Ty]) -> Option<String> {
+    let resolved = catalog.by_id(id)?;
+    let score = |sig: &al_builtins::signature::Signature| -> Option<usize> {
+        let required = sig.params.iter().filter(|p| !p.optional).count();
+        let variadic = sig.params.last().is_some_and(|p| p.variadic);
+        if args.len() < required || (!variadic && args.len() > sig.params.len()) {
+            return None;
+        }
+        let mut total = 0;
+        for (i, a) in args.iter().enumerate() {
+            let p = sig.params.get(i).or(sig.params.last())?;
+            let pty = p.ty.to_ascii_lowercase();
+            // `String` is the catalog's other spelling of Text (`HttpHeaders.GetValues(Key: String, ...)`).
+            let pty = match pty.split(['[', ' ']).next().unwrap_or("") {
+                "string" => "text",
+                w => w,
+            };
+            let generic = matches!(pty, "any" | "joker" | "variant");
+            total += match type_word(a) {
+                Some(w) if w == pty => 2,
+                _ if generic => 1,
+                _ => return None,
+            };
+        }
+        Some(total)
+    };
+    let own = score(resolved).unwrap_or(0);
+    let mut best: Option<(&al_builtins::signature::Signature, usize)> = None;
+    let mut tie = false;
+    for sig in catalog.overloads(&resolved.receiver, &resolved.name) {
+        if sig.instance != resolved.instance {
+            continue;
+        }
+        let Some(sc) = score(sig) else { continue };
+        match best {
+            Some((_, b)) if sc < b => {}
+            Some((_, b)) if sc == b => tie = true,
+            _ => {
+                best = Some((sig, sc));
+                tie = false;
+            }
+        }
+    }
+    let (sig, sc) = best?;
+    (!tie && sc > own && sig != resolved).then(|| catalog.id(sig))
+}
+
+/// The catalog's word for the type of an argument (`integer`, `text`, `record`, `array`), as the
+/// first word of a parameter type is spelled in lower case.
+fn type_word(t: &Ty) -> Option<String> {
+    Some(
+        match t {
+            Ty::Integer => "integer",
+            Ty::BigInteger => "biginteger",
+            Ty::Decimal => "decimal",
+            Ty::Boolean => "boolean",
+            Ty::Char => "char",
+            Ty::Byte => "byte",
+            Ty::Text(_) => "text",
+            Ty::Code(_) => "code",
+            Ty::Date => "date",
+            Ty::Time => "time",
+            Ty::DateTime => "datetime",
+            Ty::Duration => "duration",
+            Ty::DateFormula => "dateformula",
+            Ty::Guid => "guid",
+            Ty::Option(_) => "option",
+            Ty::Enum(_) => "enum",
+            Ty::Record { .. } => "record",
+            Ty::Label => "label",
+            Ty::Variant => "variant",
+            Ty::Array(..) => "array",
+            Ty::Builtin(name) => return Some(name.to_ascii_lowercase()),
+            _ => return None,
+        }
+        .to_string(),
+    )
+}
+
 /// How often Microsoft's apps (the dependency apps the corpus loads, not the AL Language test
-/// libraries) call each builtin overload, by the checker's resolutions.
-pub fn microsoft_calls(ws: &Workspace, checked: &CheckResult) -> BTreeMap<String, usize> {
+/// libraries) call each builtin overload, by the checker's resolutions and the argument types (as
+/// [`collect_calls`] counts them).
+pub fn microsoft_calls(ws: &Workspace, checked: &CheckResult, catalog: &Catalog) -> BTreeMap<String, usize> {
     let mut out = BTreeMap::new();
-    for ((file, _, _), res) in checked.resolutions.iter() {
+    let mut args: BTreeMap<usize, CallArgs> = BTreeMap::new();
+    for ((file, start, end), res) in checked.resolutions.iter() {
         let Res::Builtin(id) = res else { continue };
         let app = ws.files[*file].app;
         if ws.kinds[app] == al_sema::AppKind::Dependency && !ws.apps[app].name.contains("AL Language") {
-            *out.entry(id.clone()).or_insert(0) += 1;
+            let id = select_at(ws, checked, catalog, &mut args, (*file, *start, *end), id);
+            *out.entry(id).or_insert(0) += 1;
         }
     }
     out
@@ -94,14 +239,23 @@ pub fn corpus_coverage(root: &std::path::Path, corpus_commit: &str) -> Result<Co
     let members = al_sema::members::build(&ws);
     let catalog = Catalog::load();
     let checked = al_sema::check::check(&ws, &members, &catalog);
-    let calls = collect_calls(&ws, &checked);
+    let mut calls = collect_calls(&ws, &checked, &catalog);
+    // A must-not-compile case pins the calls its expected diagnostics name (`mnc::pinned_calls`).
+    let mnc = root.join("corpus/tests/must-not-compile");
+    if mnc.is_dir() {
+        for case in crate::mnc::read_cases(&mnc)? {
+            calls.extend(crate::mnc::pinned_calls(&case, &catalog));
+        }
+        calls.sort();
+        calls.dedup();
+    }
     let mut map = build(&catalog, &calls, corpus_commit);
     let lang = LanguageCatalog::load(root)?;
     map.language = Some(language_view(
         &lang,
         &catalog,
         &calls,
-        &microsoft_calls(&ws, &checked),
+        &microsoft_calls(&ws, &checked, &catalog),
         |id| al_builtins::native::lookup(id).is_some(),
     ));
     Ok(map)
@@ -240,7 +394,7 @@ fn language_markdown(v: &LanguageView, s: &mut String) {
         "## Language catalog (AL language server, BC {})\n\n",
         v.majors
     ));
-    s.push_str("The catalog is every method overload the AL language server offers (`docs/language-catalog.json`, generated by `tools/language-catalog/generate.sh` from the completion and signature help of the language server of each BC major). **Pinned**: a corpus call resolves to the runtime overload the catalog overload matches. **Implemented**: the runtime registers an implementation for that overload. **Refused**: the runtime catalog has the overload but no implementation, so lowering refuses a call to it. **Unknown**: the runtime catalog has no such overload, so the checker cannot resolve a call to it. **MS uses**: calls in Microsoft's apps that the corpus loads.\n\n");
+    s.push_str("The catalog is every method overload the AL language server offers (`docs/language-catalog.json`, generated by `tools/language-catalog/generate.sh` from the completion and signature help of the language server of each BC major). **Pinned**: a corpus call is to the runtime overload the catalog overload matches (the overload its argument types select, or one a must-not-compile case names; see the runtime catalog section). **Implemented**: the runtime registers an implementation for that overload. **Refused**: the runtime catalog has the overload but no implementation, so lowering refuses a call to it. **Unknown**: the runtime catalog has no such overload, so the checker cannot resolve a call to it. **MS uses**: calls in Microsoft's apps that the corpus loads.\n\n");
     s.push_str(&format!(
         "**Total: {} overloads; pinned {} ({}); implemented {} ({}); refused {}; unknown {}; used by Microsoft and unpinned {}.**\n\n",
         total.all,
@@ -381,7 +535,7 @@ pub fn to_markdown(c: &Coverage) -> String {
     s.push_str("# Corpus coverage of the builtin catalog\n\n");
     s.push_str("Generated by `al-test-cli --coverage-map` (the test `corpus_coverage_map_is_current` checks it). Do not edit.\n\n");
     s.push_str(&format!(
-        "Corpus commit `{}`. An overload is pinned when the checker resolves at least one call of the corpus's own files to exactly that overload.\n\n",
+        "Corpus commit `{}`. An overload is pinned when at least one call of the corpus's own files is to exactly that overload: the overload the argument types select (the most specific one, as BC's compiler binds it; `coverage::selected_overload`), or a call a must-not-compile case names in an expected diagnostic (`mnc::pinned_calls`).\n\n",
         c.corpus_commit
     ));
     if let Some(v) = &c.language {
@@ -513,7 +667,7 @@ mod tests {
         let members = al_sema::members::build(&ws);
         let catalog = Catalog::load();
         let checked = al_sema::check::check(&ws, &members, &catalog);
-        let calls = collect_calls(&ws, &checked);
+        let calls = collect_calls(&ws, &checked, &catalog);
         build(&catalog, &calls, "abc123")
     }
 
@@ -619,6 +773,75 @@ mod tests {
         assert_eq!(json["language"]["unknown"], 1);
     }
 
+    /// A call counts for the overload its argument types select, as BC's compiler picks the most
+    /// specific one: `FRef.TestField(5)` is `TestField(Integer)`, not `TestField(Any)`, although
+    /// the checker's tie-break keeps the first overload that fits.
+    #[test]
+    fn a_call_counts_for_the_overload_its_argument_types_select() {
+        let src = "codeunit 60001 T
+{
+    procedure P()
+    var
+        RecRef: RecordRef;
+        FRef: FieldRef;
+        OStr: OutStream;
+        I: Integer;
+        V: Variant;
+        S: SecretText;
+        A: array[3] of Integer;
+        H: HttpHeaders;
+        Vals: array[2] of Text;
+    begin
+        FRef.TestField(I);
+        OStr.Write(true);
+        OStr.Write(V);
+        Clear(S);
+        Clear(A);
+        Clear(I);
+        H.GetValues('k', Vals);
+    end;
+}
+";
+        let ws = Workspace::load(
+            vec![AppSource {
+                id: "a".into(),
+                name: "a".into(),
+                dependencies: vec![],
+                files: vec![("typed.al".into(), src.into())],
+            }],
+            &Default::default(),
+        );
+        let members = al_sema::members::build(&ws);
+        let catalog = Catalog::load();
+        let checked = al_sema::check::check(&ws, &members, &catalog);
+        let calls = collect_calls(&ws, &checked, &catalog);
+        let sig_at = |line: usize| -> Vec<String> {
+            calls
+                .iter()
+                .filter(|c| c.line == line)
+                .map(|c| catalog.by_id(&c.id).unwrap().to_line())
+                .collect()
+        };
+        assert_eq!(sig_at(15), ["FieldRef.TestField inst (Value: Integer)"]);
+        assert_eq!(
+            sig_at(16)[0].split(" -> ").next().unwrap(),
+            "OutStream.Write inst (Value: Boolean, ?Length: Integer)"
+        );
+        assert_eq!(
+            sig_at(17)[0].split(" -> ").next().unwrap(),
+            "OutStream.Write inst (Value: Variant, ?Length: Integer)"
+        );
+        assert_eq!(sig_at(18), ["System.Clear static (var Variable: SecretText)"]);
+        assert_eq!(sig_at(19), ["System.Clear static (var Variable: Array of [Any])"]);
+        // No overload takes an Integer: the Any one stays.
+        assert_eq!(sig_at(20), ["System.Clear static (var Variable: Any)"]);
+        // `String` and `Text` are one type: the two overloads tie, the checker's choice stays.
+        assert_eq!(
+            sig_at(21)[0].split(" -> ").next().unwrap(),
+            "HttpHeaders.GetValues inst (Key: String, Values: Array of [Text])"
+        );
+    }
+
     #[test]
     fn calls_in_a_dependency_app_do_not_count() {
         let ws = Workspace::load_apps(
@@ -641,6 +864,10 @@ mod tests {
         );
         let members = al_sema::members::build(&ws);
         let checked = al_sema::check::check(&ws, &members, &Catalog::load());
-        assert!(collect_calls(&ws, &checked).iter().all(|c| c.file != "dep.al"));
+        assert!(
+            collect_calls(&ws, &checked, &Catalog::load())
+                .iter()
+                .all(|c| c.file != "dep.al")
+        );
     }
 }

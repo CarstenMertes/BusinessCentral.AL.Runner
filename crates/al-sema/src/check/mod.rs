@@ -269,6 +269,7 @@ pub fn check_with(ws: &Workspace, members: &MemberTable<'_>, catalog: &Catalog, 
             if roots.baseline {
                 c.reach_baseline();
             }
+            c.reach_test_runner();
             timings.baseline = started.elapsed();
             let started = std::time::Instant::now();
             let demand = c.run_demand(roots.workers.map_or_else(check_workers, |w| w.clamp(1, 32)), objects);

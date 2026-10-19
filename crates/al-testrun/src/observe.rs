@@ -27,7 +27,7 @@
 //! pure reach never reads what the baseline holds.
 
 use al_builtins::value::RtType;
-use al_ir::{Arg, Const, Expr, Object, Place, Routine, SetElem, Stmt};
+use al_ir::{Arg, Const, DotNetOp, Expr, Object, Place, Routine, SetElem, Stmt};
 use al_sema::lower::Lowered;
 use std::collections::HashSet;
 
@@ -163,8 +163,16 @@ const PUBLISHER_ATTRIBUTES: &[&str] = &[
 /// that could.
 pub fn may_observe_baseline(lowered: &Lowered, tests: &[usize]) -> Option<String> {
     let objects = &lowered.program.objects;
+    let mock = (lowered.program.dotnet_types.iter().enumerate())
+        .filter(|(_, d)| {
+            d.type_name
+                .eq_ignore_ascii_case(al_builtins::dotnet_sigs::PERMISSION_TEST_HELPER)
+        })
+        .map(|(i, _)| i)
+        .collect();
     let mut walk = Walk {
         whole: HashSet::new(),
+        mock,
         objects,
         seen_objects: HashSet::new(),
         seen_routines: HashSet::new(),
@@ -178,6 +186,35 @@ pub fn may_observe_baseline(lowered: &Lowered, tests: &[usize]) -> Option<String
         }
         for r in 0..objects[t].routines.len() {
             walk.reach(t, r);
+        }
+    }
+    // BC's test runner runs these codeunits around every test method when they exist (runtime/runner_reset.rs).
+    if !tests.is_empty() {
+        for id in al_sema::check::demand::TEST_RUNNER_CODEUNITS {
+            let Some(o) = objects.iter().position(|o| {
+                (o.is_kind(al_ir::ObjKind::Codeunit) || o.is_shell_of(al_ir::ObjKind::Codeunit)) && o.id == Some(id)
+            }) else {
+                continue;
+            };
+            let obj = &objects[o];
+            if obj.uncompiled {
+                return Some(format!(
+                    "the test runner runs codeunit {id} {}, which was not compiled",
+                    obj.name
+                ));
+            }
+            if walk.seen_objects.insert(o) {
+                if let Err(why) = walk.check_object(o) {
+                    return Some(why);
+                }
+            }
+            if let Some(r) = obj
+                .routines
+                .iter()
+                .position(|r| r.is_trigger && r.name.eq_ignore_ascii_case("OnRun"))
+            {
+                walk.reach(o, r);
+            }
         }
     }
     while let Some((o, r)) = walk.queue.pop() {
@@ -257,6 +294,10 @@ struct Walk<'a> {
     /// The local slots of the routine being walked that are used as a whole (read, written, passed or
     /// given a method), as opposed to only through their fields.
     whole: HashSet<usize>,
+    /// The `DotNet` declarations of `PermissionTestHelper`: its constructor, `Clear` and `Dispose` start and stop the
+    /// permissions mock with no set assigned, which touches no data (corpus permissions/
+    /// TestPermissionsMockEnforcement.al:74-97; al-vm dotnet/server_classes.rs).
+    mock: HashSet<usize>,
     objects: &'a [Object],
     seen_objects: HashSet<usize>,
     seen_routines: HashSet<(usize, usize)>,
@@ -272,9 +313,18 @@ impl Walk<'_> {
             return Err(format!("{} {} is not a codeunit", obj.kind_text(), obj.name));
         }
         for g in &obj.globals {
-            ty(&g.ty).map_err(|w| format!("{} {} has a global `{}`: {w}", obj.kind_text(), obj.name, g.name))?;
+            self.slot(&g.ty)
+                .map_err(|w| format!("{} {} has a global `{}`: {w}", obj.kind_text(), obj.name, g.name))?;
         }
         Ok(())
+    }
+
+    /// [`ty`], where a `PermissionTestHelper` variable holds no data.
+    fn slot(&self, t: &RtType) -> Check {
+        match t {
+            RtType::DotNet(i) if self.mock.contains(&(*i as usize)) => Ok(()),
+            t => ty(t),
+        }
     }
 
     fn reach(&mut self, o: usize, r: usize) {
@@ -317,7 +367,7 @@ impl Walk<'_> {
                     return Err(format!("local `{}`: a record variable used as a whole", s.name));
                 }
             } else {
-                ty(&s.ty).map_err(|w| format!("local `{}`: {w}", s.name))?;
+                self.slot(&s.ty).map_err(|w| format!("local `{}`: {w}", s.name))?;
             }
         }
         match &r.ret {
@@ -443,7 +493,7 @@ impl Walk<'_> {
                 self.expr(c)
             }
             Expr::Convert(t, a) => {
-                ty(t)?;
+                self.slot(t)?;
                 self.expr(a)
             }
             Expr::Call {
@@ -486,6 +536,22 @@ impl Walk<'_> {
             Expr::Control { .. } => Err("reads a control of a test page".into()),
             Expr::QueryColumn { .. } => Err("reads a query column".into()),
             Expr::FieldOf(base, _) => self.expr(base),
+            Expr::DotNet {
+                ty: Some(t),
+                receiver,
+                op: op @ (DotNetOp::Construct | DotNetOp::Call(_)),
+                args,
+            } if self.mock.contains(t)
+                && match op {
+                    DotNetOp::Call(m) => m.eq_ignore_ascii_case("Clear") || m.eq_ignore_ascii_case("Dispose"),
+                    _ => true,
+                } =>
+            {
+                if let Some(r) = receiver {
+                    self.expr(r)?;
+                }
+                args.iter().try_for_each(|a| self.arg(a))
+            }
             Expr::DotNet { .. } | Expr::DotNetCoerce(..) | Expr::DotNetOperand(..) => Err("calls into .NET".into()),
         }
     }
@@ -578,6 +644,36 @@ mod tests {
     }
 
     const TABLE: &str = "table 60900 S { fields { field(1; K; Code[10]) { } } keys { key(PK; K) { } } }\n";
+
+    /// BC's test runner runs codeunits 131006, 130301, 130302 and 132553 around every test method when they exist
+    /// (runtime/runner_reset.rs): what they reach counts as the test's.
+    #[test]
+    fn the_test_runners_reset_codeunits_count_as_the_tests_reach() {
+        let src = format!(
+            "{TABLE}codeunit 130301 \"Reset State Before Test Run\" {{ trigger OnRun() var R: Record S; begin if R.Get('X') then; end; }}
+            codeunit 60002 T {{ Subtype = Test; [Test] procedure P() begin end; }}"
+        );
+        assert!(verdict(&src, &["T"]).is_some_and(|w| w.contains("Reset State Before Test Run")));
+    }
+
+    /// Starting, clearing and stopping the permissions mock touch no data (corpus permissions/
+    /// TestPermissionsMockEnforcement.al:74-97); assigning a set is refused when it runs.
+    #[test]
+    fn the_permissions_mock_without_a_set_cannot_observe_the_baseline() {
+        let dotnet = "dotnet { assembly(\"Microsoft.Dynamics.Nav.PermissionTestHelper\") { type(\"Microsoft.Dynamics.Nav.Runtime.PermissionTestHelper\"; \"PermissionTestHelper\") { } } }\n";
+        let mock = |extra: &str| {
+            format!(
+                "{dotnet}codeunit 131006 \"Permissions Mock\" {{ SingleInstance = true;
+                    trigger OnRun() begin if Started then Stop() else Start(); end;
+                    var H: DotNet PermissionTestHelper; Started: Boolean;
+                    procedure Start() begin H := H.PermissionTestHelper(); Started := true; end;
+                    procedure Stop() begin H.Clear(); H.Dispose(); Started := false; {extra} end; }}
+                codeunit 60002 T {{ Subtype = Test; [Test] procedure P() begin end; }}"
+            )
+        };
+        assert_eq!(verdict(&mock(""), &["T"]), None);
+        assert!(verdict(&mock("H.AddEffectivePermissionSet('X');"), &["T"]).is_some_and(|w| w.contains(".NET")));
+    }
 
     #[test]
     fn plain_computation_cannot_observe_the_baseline() {

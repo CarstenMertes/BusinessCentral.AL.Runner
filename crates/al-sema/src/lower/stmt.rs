@@ -1028,8 +1028,10 @@ impl Lowerer<'_> {
                 // An extension variable named like a base variable is its own (corpus
                 // handlers/TestPageExtensionBaseAccessContracts.al:20, Shadow).
                 Some(Res::Global(name)) => self
-                    .globals
-                    .get(name)
+                    .in_request_page
+                    .then(|| self.request_page_globals.get(name))
+                    .flatten()
+                    .or_else(|| self.globals.get(name))
                     .map(|i| ir::Place::Global(*i))
                     .ok_or_else(|| format!("implicit variable `{name}` is not lowered yet")),
                 Some(Res::BaseGlobal(name)) => {

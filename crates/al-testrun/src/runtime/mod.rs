@@ -602,6 +602,7 @@ mod compiled;
 mod corpus;
 mod handlers;
 mod run;
+mod runner_reset;
 #[cfg(test)]
 mod tests;
 

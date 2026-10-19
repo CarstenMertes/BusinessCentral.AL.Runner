@@ -14009,6 +14009,15 @@
           "corpus_uses": 0,
           "group": "codeunit",
           "ms_uses": 0,
+          "name": "OnDocumentReady",
+          "pinned": false,
+          "runtime_reads": true,
+          "site": null
+        },
+        {
+          "corpus_uses": 0,
+          "group": "codeunit",
+          "ms_uses": 0,
           "name": "OnGlobalRename",
           "pinned": false,
           "runtime_reads": true,
@@ -14031,6 +14040,15 @@
           "pinned": true,
           "runtime_reads": true,
           "site": "events/lt-platform-events-v/PeVFixtures.al:402"
+        },
+        {
+          "corpus_uses": 0,
+          "group": "codeunit",
+          "ms_uses": 0,
+          "name": "SubstituteReport",
+          "pinned": false,
+          "runtime_reads": true,
+          "site": null
         },
         {
           "corpus_uses": 0,
@@ -14537,15 +14555,6 @@
           "site": null
         },
         {
-          "corpus_uses": 0,
-          "group": "codeunit",
-          "ms_uses": 0,
-          "name": "OnDocumentReady",
-          "pinned": false,
-          "runtime_reads": false,
-          "site": null
-        },
-        {
           "corpus_uses": 1,
           "group": "codeunit",
           "ms_uses": 0,
@@ -14811,15 +14820,6 @@
           "group": "codeunit",
           "ms_uses": 0,
           "name": "SetupPrinters",
-          "pinned": false,
-          "runtime_reads": false,
-          "site": null
-        },
-        {
-          "corpus_uses": 0,
-          "group": "codeunit",
-          "ms_uses": 0,
-          "name": "SubstituteReport",
           "pinned": false,
           "runtime_reads": false,
           "site": null
@@ -16198,7 +16198,7 @@
         "code": "StackOverflow",
         "file": "crates/al-vm/src/lib.rs",
         "generic": false,
-        "line": 1070,
+        "line": 1071,
         "pinned": true,
         "site": "record/TestCalcFieldsTruncateUniqueContracts.al:179",
         "template": "There is insufficient memory to execute this function. This can be caused by recursive function calls. Contact your system administrator."
@@ -16330,6 +16330,15 @@
         "template": "Microsoft.Dynamics.Nav.Runtime.NavFieldRef variable not initialized."
       },
       {
+        "code": "",
+        "file": "crates/al-vm/src/reports.rs",
+        "generic": false,
+        "line": 1908,
+        "pinned": true,
+        "site": "handlers/TestReportRuntimeContracts.al:413",
+        "template": "The object has been run. Use the function CLEAR(Report)."
+      },
+      {
         "code": "MissingUIHandler",
         "file": "crates/al-vm/src/ui.rs",
         "generic": false,
@@ -16375,8 +16384,8 @@
         "template": "Invalid expression of type: table view.%%"
       }
     ],
-    "pinned": 70,
-    "sites": 70
+    "pinned": 71,
+    "sites": 71
   },
   "language": {
     "bc": "27-29",

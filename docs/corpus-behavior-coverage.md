@@ -179,7 +179,7 @@ An item is **pinned** when it occurs in a corpus file in a routine that static r
 | Platform and system events | 123 | 37 | 17 | 0 | 0 |
 | Statements and expressions | 64 | 60 | 58 | 0 | 0 |
 | Method attributes | 34 | 32 | 13 | 2 | 1 |
-| Runtime error sites (text pinned) | 70 | 70 | - | 0 | - |
+| Runtime error sites (text pinned) | 71 | 71 | - | 0 | - |
 
 Presentation-only properties (Caption, ToolTip, ApplicationArea, ... ) are left out of the property catalog.
 
@@ -466,8 +466,10 @@ Presentation-only properties (Caption, ToolTip, ApplicationArea, ... ) are left 
 | codeunit | `OnDatabaseInsert` | 0 | yes | 0 |
 | codeunit | `OnDatabaseModify` | 0 | yes | 0 |
 | codeunit | `OnDatabaseRename` | 0 | yes | 0 |
+| codeunit | `OnDocumentReady` | 0 | yes | 0 |
 | codeunit | `OnGlobalRename` | 0 | yes | 0 |
 | codeunit | `OnInstallAppPerCompany` | 0 | yes | 0 |
+| codeunit | `SubstituteReport` | 0 | yes | 0 |
 | codeunit | `ApplicationReportMergeStrategy` | 0 | no | 0 |
 | codeunit | `AutoFormatTranslate` | 0 | no | 0 |
 | codeunit | `CaptionClassTranslate` | 0 | no | 0 |
@@ -514,7 +516,6 @@ Presentation-only properties (Caption, ToolTip, ApplicationArea, ... ) are left 
 | codeunit | `OnCopilotSystemActionInvokedProperties` | 0 | no | 0 |
 | codeunit | `OnDocumentDownload` | 0 | no | 0 |
 | codeunit | `OnDocumentPrintReady` | 0 | no | 0 |
-| codeunit | `OnDocumentReady` | 0 | no | 0 |
 | codeunit | `OnEditInExcelWithStructuredFilter` | 0 | no | 0 |
 | codeunit | `OnGlobalDelete` | 0 | no | 0 |
 | codeunit | `OnGlobalInsert` | 0 | no | 0 |
@@ -537,7 +538,6 @@ Presentation-only properties (Caption, ToolTip, ApplicationArea, ... ) are left 
 | codeunit | `SelectReportLayoutUI` | 0 | no | 0 |
 | codeunit | `SetNotificationStatus` | 0 | no | 0 |
 | codeunit | `SetupPrinters` | 0 | no | 0 |
-| codeunit | `SubstituteReport` | 0 | no | 0 |
 | codeunit | `WordDocumentMergerAppMode` | 0 | no | 0 |
 
 ## Statements and expressions: unpinned items (4)
@@ -556,7 +556,7 @@ Presentation-only properties (Caption, ToolTip, ApplicationArea, ... ) are left 
 | procedure | `InherentPermissions` | 100 | yes | 0 |
 | procedure | `Native` | 25 | no | 0 |
 
-## Runtime error sites without a corpus test (0 of 70; 0 have too little fixed text to match)
+## Runtime error sites without a corpus test (0 of 71; 0 have too little fixed text to match)
 
 A site is pinned when a corpus string literal holds the message text. Codes are not matched. Sites with a computed message are not listed.
 

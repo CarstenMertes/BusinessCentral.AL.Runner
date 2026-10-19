@@ -315,6 +315,49 @@ pub(super) fn report_metadata_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
             out.push(Entry::poisoned(key, why));
             continue;
         }
+        // TransactionType (11): UpdateNoLocks for a report that declares none (metadata/lt-report-metadata-columns/
+        // ReportMetadata.al:210, :236, :262; ReportMetadataWord.al:70). No corpus test pins the column for a declared
+        // TransactionType: it stays unknown there, and a read of it is refused.
+        if let Some(col) = t.fields.iter().position(|f| f.id == 11) {
+            r[col] = match prop(o, "TransactionType") {
+                None => match &r[col] {
+                    Value::Option(_, m) => match m.iter().position(|x| x.eq_ignore_ascii_case("UpdateNoLocks")) {
+                        Some(n) => Value::Option(n as i32, m.clone()),
+                        None => unknown(
+                            t,
+                            11,
+                            &format!("report '{}': TransactionType has no member UpdateNoLocks", o.name),
+                        ),
+                    },
+                    other => unknown(
+                        t,
+                        11,
+                        &format!("report '{}': TransactionType is a {}", o.name, other.describe()),
+                    ),
+                },
+                Some(v) => unknown(
+                    t,
+                    11,
+                    &format!("report '{}', which declares TransactionType = {}", o.name, ident(v)),
+                ),
+            };
+        }
+        // EnableExternalAssemblies (8): No for a report that declares none (report/lt-y-report-props/YReportPropsTests.al:45,
+        // YHelper.al:226). A declared one (OnPrem only) is pinned by no corpus test: unknown, so a read of it is refused.
+        if let (Some(col), Some(v)) = (
+            t.fields.iter().position(|f| f.id == 8),
+            prop(o, "EnableExternalAssemblies"),
+        ) {
+            r[col] = unknown(
+                t,
+                8,
+                &format!(
+                    "report '{}', which declares EnableExternalAssemblies = {}",
+                    o.name,
+                    ident(v)
+                ),
+            );
+        }
         // BC 29: DefaultHeaderFooterPartName (30) and DefaultThemePartName (31) are the layout names the properties give
         // (report/lt-y-report-props/YReportParts.al:65); blank when the report declares none.
         for (col, name) in [(30, "DefaultHeaderFooterPart"), (31, "DefaultThemePart")] {

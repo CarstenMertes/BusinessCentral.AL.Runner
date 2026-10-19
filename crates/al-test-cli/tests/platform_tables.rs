@@ -472,6 +472,59 @@ codeunit 50000 "T" { Subtype = Test;
     }
 }
 
+/// Report Metadata TransactionType (11) is UpdateNoLocks for a report that declares none
+/// (metadata/lt-report-metadata-columns/ReportMetadata.al:210, :236, :262). A declared one is pinned by no
+/// corpus test: reading it is refused.
+#[test]
+fn report_metadata_transaction_type_is_update_no_locks_when_not_declared() {
+    let o = outcomes(
+        r#"report 50002 "Plain" { ProcessingOnly = true; }
+report 50003 "Snap" { ProcessingOnly = true; TransactionType = Snapshot; }
+codeunit 50000 "T" { Subtype = Test;
+  [Test] procedure Undeclared() var M: Record "Report Metadata"; begin M.Get(50002); if Format(M.TransactionType) <> 'UpdateNoLocks' then Error('got %1', M.TransactionType); end;
+  [Test] procedure Declared() var M: Record "Report Metadata"; begin M.Get(50003); if Format(M.TransactionType) = '' then; end; }"#,
+    );
+    passes(&o, "Undeclared");
+    let why = not_run(&o, "Declared");
+    assert!(why.contains("TransactionType"), "{why}");
+}
+
+/// Report Metadata EnableExternalAssemblies (8) is No for a report that declares none (report/lt-y-report-props/
+/// YReportPropsTests.al:45); a declared one is pinned by no corpus test, so reading it is refused.
+#[test]
+fn report_metadata_enable_external_assemblies_is_refused_when_declared() {
+    let o = outcomes(
+        r#"report 50002 "Plain" { ProcessingOnly = true; }
+report 50003 "Ext" { ProcessingOnly = true; EnableExternalAssemblies = true; }
+codeunit 50000 "T" { Subtype = Test;
+  [Test] procedure Undeclared() var M: Record "Report Metadata"; begin M.Get(50002); if M.EnableExternalAssemblies then Error('yes'); end;
+  [Test] procedure Declared() var M: Record "Report Metadata"; begin M.Get(50003); if M.EnableExternalAssemblies then; end; }"#,
+    );
+    passes(&o, "Undeclared");
+    let why = not_run(&o, "Declared");
+    assert!(why.contains("EnableExternalAssemblies"), "{why}");
+}
+
+/// Field ExternalName (10) is blank and SQLDataType (23) Varchar for a Text field that declares neither
+/// (record/PZFieldObsoleteRows.al:48, :52). A declared ExternalName and the SQLDataType of any other type are
+/// pinned by no corpus test: reading them is refused.
+#[test]
+fn field_external_name_and_sql_data_type_are_answered_only_where_pinned() {
+    let o = outcomes(
+        r#"table 50001 "Thing" { fields { field(1; "No."; Integer) { } field(2; Name; Text[30]) { } field(3; Ext; Text[30]) { ExternalName = 'ext_col'; } }
+  keys { key(PK; "No.") { Clustered = true; } } }
+codeunit 50000 "T" { Subtype = Test;
+  [Test] procedure TextField() var F: Record Field; begin F.Get(50001, 2); if F.ExternalName <> '' then Error('ext'); if Format(F.SQLDataType) <> 'Varchar' then Error('sql %1', F.SQLDataType); end;
+  [Test] procedure DeclaredExternalName() var F: Record Field; begin F.Get(50001, 3); if F.ExternalName = '' then; end;
+  [Test] procedure IntegerSqlDataType() var F: Record Field; begin F.Get(50001, 1); if Format(F.SQLDataType) = '' then; end; }"#,
+    );
+    passes(&o, "TextField");
+    let why = not_run(&o, "DeclaredExternalName");
+    assert!(why.contains("ExternalName"), "{why}");
+    let why = not_run(&o, "IntegerSqlDataType");
+    assert!(why.contains("SQLDataType"), "{why}");
+}
+
 /// XmlPort Metadata and Query Metadata (xmlport/TestXmlPortMetadataVirtualTable.al,
 /// query/TestQueryMetadataVirtualTable.al).
 #[test]

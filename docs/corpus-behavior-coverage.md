@@ -12,7 +12,7 @@ The catalog of each area is what the AL language server offers in probe files (`
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
 | attributes | 42 | 32 | 76.2% | 26 | 61.9% | 0 | 16 | 2 |
 | events | 23 | 16 | 69.6% | 22 | 95.7% | 0 | 1 | 0 |
-| properties | 720 | 580 | 80.6% | 544 | 75.6% | 20 | 156 | 4 |
+| properties | 720 | 580 | 80.6% | 545 | 75.7% | 20 | 155 | 4 |
 | syntax | 16 | 16 | 100.0% | 16 | 100.0% | 0 | 0 | 0 |
 | triggers | 128 | 128 | 100.0% | 116 | 90.6% | 3 | 9 | 0 |
 
@@ -49,7 +49,7 @@ Left out: 293 presentation-only properties (Caption, ToolTip, ApplicationArea, .
 | Entitlement | 5 | 5 | 100.0% | 2 | 40.0% | 0 | 3 | 0 |
 | EnumType | 9 | 8 | 88.9% | 8 | 88.9% | 0 | 1 | 0 |
 | EnumValue | 4 | 4 | 100.0% | 4 | 100.0% | 0 | 0 | 0 |
-| Field | 46 | 39 | 84.8% | 33 | 71.7% | 0 | 13 | 0 |
+| Field | 46 | 39 | 84.8% | 34 | 73.9% | 0 | 12 | 0 |
 | FieldGroup | 3 | 0 | 0.0% | 3 | 100.0% | 0 | 0 | 0 |
 | FieldModify | 8 | 1 | 12.5% | 6 | 75.0% | 0 | 2 | 0 |
 | Interface | 5 | 5 | 100.0% | 5 | 100.0% | 0 | 0 | 0 |
@@ -107,7 +107,7 @@ Left out: 293 presentation-only properties (Caption, ToolTip, ApplicationArea, .
 - **Codeunit** (3 of 17): `RequiredTestIsolation` unknown; `TestHandlers` unknown, BC 29; `TestType` unknown
 - **ControlAddInObject** (2 of 19): `MaximumHeight` unknown; `MaximumWidth` unknown
 - **EnumType** (1 of 9): `AssignmentCompatibilityReason` unknown
-- **Field** (7 of 46): `DateFormula` implemented; `MaskType` unknown; `OptionCaptionML` implemented; `SignDisplacement` unknown; `SqlDataType` unknown; `SqlTimestamp` unknown; `Width` implemented
+- **Field** (7 of 46): `DateFormula` implemented; `MaskType` unknown; `OptionCaptionML` implemented; `SignDisplacement` unknown; `SqlDataType` implemented; `SqlTimestamp` unknown; `Width` implemented
 - **FieldGroup** (3 of 3): `ObsoleteReason` implemented; `ObsoleteState` implemented; `ObsoleteTag` implemented
 - **FieldModify** (7 of 8): `BlankZero` implemented; `CaptionClass` implemented; `ClosingDates` unknown; `MaskType` unknown; `OptionCaption` implemented; `OptionCaptionML` implemented; `Width` implemented
 - **Page** (2 of 46): `ContextSensitiveHelpPage` implemented, MS 36; `HelpLink` unknown, MS 7

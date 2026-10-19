@@ -491,31 +491,10 @@ impl Providers {
     }
 }
 
-/// Columns a provider fills although `PINNED_COLUMNS` does not list them, kept because a corpus
-/// case that passes on real BC reads them without asserting the value: each with that case.
-/// Marking one of them unknown would refuse the case.
-pub(crate) const KEEP_FILLED: &[(u32, u32, &str)] = &[
-    // Event Subscription "Originating Package ID": a loop over every column reads it, and the observer masks
-    // the value to `x` (_fixtures/ProbeObserver.Codeunit.al:88; EventSubscriptionTriggerRows.al:163-222,
-    // EventSubscription_TableTriggerEvents_AllRows in codeunit 69519).
-    (
-        2_000_000_140,
-        10,
-        "events/lt-event-subscription-trigger-rows/EventSubscriptionTriggerRows.al:163",
-    ),
-    // Report Metadata TransactionType: `HasColumn` formats the value only to compare it with 'nofield'
-    // (report/lt-reportext-layout-relations/ReportMetadataRelations.al:43-46, :147;
-    // ReportMeta_TwoLayouts_RowAndColumnsPresent in codeunit 71698).
-    (
-        2_000_000_139,
-        11,
-        "report/lt-reportext-layout-relations/ReportMetadataRelations.al:147",
-    ),
-];
-
 /// Leaves every column of a table of `PINNED_COLUMNS` that the list does not name, outside the
 /// primary key, the FlowFields and the system fields, `Value::Unknown` in every row: a read of it is refused
-/// (ADR-013 decision 7; hard rule 3), a copy keeps the marker. `KEEP_FILLED` lists the exceptions.
+/// (ADR-013 decision 7; hard rule 3), a copy keeps the marker. There are no exceptions: a
+/// column a corpus test reads but does not assert is not pinned either.
 pub(crate) fn mark_unpinned(t: &TableDef, rows: &mut [mat::Entry]) {
     let Some(id) = al_builtins::platform::REGISTRY
         .iter()
@@ -533,7 +512,6 @@ pub(crate) fn mark_unpinned(t: &TableDef, rows: &mut [mat::Entry]) {
             || !f.stored
             || pinned.contains(&f.id)
             || t.keys[0].contains(&pos)
-            || KEEP_FILLED.iter().any(|(ti, fi, _)| *ti == id && *fi == f.id)
         {
             continue;
         }

@@ -319,142 +319,206 @@ pub const PINNED_TABLES: &[u32] = &[
     2_000_000_110,
 ];
 
-/// Columns the corpus pins without naming them in a corpus file: read by number through a
-/// `RecordRef` (often a loop over `FieldIndex`), through Microsoft's code, by `Get` on the primary
-/// key, or as the target of a FlowField. Each as (table id, field id or name, the corpus test).
+/// Columns the corpus pins without naming them in a corpus file: read by number or by field name through a
+/// `RecordRef` (often a loop over `FieldIndex`), through Microsoft's code, by `Get` on the primary key, or as the
+/// target of a FlowField. Each as (table id, field id or name, the corpus test that pins the value the runtime
+/// gives, as file:line under `corpus/tests/`). Where the provider answers only some rows (a declared property
+/// that no test pins), the other rows hold `Value::Unknown`, and the comment says so.
 pub const PINNED_ELSEWHERE: &[(u32, &str, &str)] = &[
+    // Field. IsPartOfPrimaryKey of own and Base Application fields.
     (
         2_000_000_041,
         "28",
-        "metadata/lt-platform-metadata-columns/PlatformMetadataColumnValues.al:237-268",
+        "al-language/metadata/lt-platform-metadata-columns/PlatformMetadataColumnValues.al:237-268",
     ),
-    (
-        2_000_000_041,
-        "ExternalName",
-        "FieldRows_AllColumns_OfLivePendingAndRemovedField (codeunit 69351)",
-    ),
+    // ExternalName blank and SQLDataType Varchar for Text fields; unknown for a declared ExternalName and for
+    // SQLDataType of the other types (al-vm fields.rs).
+    (2_000_000_041, "10", "al-language/record/PZFieldObsoleteRows.al:48"),
+    (2_000_000_041, "23", "al-language/record/PZFieldObsoleteRows.al:52"),
+    // Feature Key: Enabled and Mandatory By Version per feature and BC version, read by field name.
     (
         2_000_000_211,
         "2",
-        "record/PFFeatureKeyColumns.al:24, record/TestFeatureKeyEnabledContracts.al",
+        "al-language/record/PFFeatureKeyColumns.al:33-35, :95-110",
     ),
-    (2_000_000_211, "9", "record/PFFeatureKeyColumns.al:24"),
-    // Read through the filter `'' | TenantId` of System Application code (al-vm/src/platform/apps.rs).
-    (2_000_000_206, "12", "install/TestRetenPolAllowedTables_Tests.al"),
+    (
+        2_000_000_211,
+        "9",
+        "al-language/record/PFFeatureKeyColumns.al:33-35, :95-110",
+    ),
+    // Published Application "Tenant ID": blank. Only read through the filter `'' | TenantId` of System
+    // Application code, which blank and the tenant id both pass (al-vm apps.rs; docs/probes-needed.md row).
+    (
+        2_000_000_206,
+        "12",
+        "al-language/install/TestRetenPolAllowedTables_Tests.al:51-61",
+    ),
     // The targets of the Lookup and Exist FlowFields of Published Application.
-    (2_000_000_157, "1", "record/TestPublishedApplicationSysTable.al:294-365"),
-    (2_000_000_157, "2", "record/TestPublishedApplicationSysTable.al:294-365"),
-    (2_000_000_157, "3", "record/TestPublishedApplicationSysTable.al:294-365"),
+    (
+        2_000_000_157,
+        "1",
+        "al-language-onprem/record/TestPublishedApplicationSysTable.al:294-365",
+    ),
+    (
+        2_000_000_157,
+        "2",
+        "al-language-onprem/record/TestPublishedApplicationSysTable.al:294-365",
+    ),
+    (
+        2_000_000_157,
+        "3",
+        "al-language-onprem/record/TestPublishedApplicationSysTable.al:294-365",
+    ),
     (
         2_000_000_212,
         "1",
-        "record/TestPublishedApplicationSysTable.al:275-290, :342-365",
+        "al-language-onprem/record/TestPublishedApplicationSysTable.al:275-291, :342-365",
     ),
-    (2_000_000_254, "5", "permissions/TestMetadataExpandedPermission.al"),
+    // Primary-key columns read by `Get`.
+    (
+        2_000_000_254,
+        "5",
+        "al-language/permissions/TestMetadataExpandedPermission.al:111, :124",
+    ),
     (
         2_000_000_005,
         "4",
-        "permissions/W6PermissionColumns.al:166, permissions/TestPermissionSetGrants.al",
+        "al-language/permissions/TestPermissionSetGrants.al:68",
     ),
-    (2_000_000_178, "6", "profile/TestAllProfileTable.al"),
-    (2_000_000_139, "1", "handlers/TestReportMetadataColumns.al:49"),
-    // Read by field name through a RecordRef (FieldIndex loops in the helpers).
-    (2_000_000_041, "23", "record/PZFieldObsoleteRows.al:52"),
+    (
+        2_000_000_139,
+        "1",
+        "al-language/handlers/TestReportMetadataColumns.al:49",
+    ),
+    (
+        2_000_000_280,
+        "1",
+        "al-language/xmlport/TestXmlPortMetadataVirtualTable.al:42",
+    ),
+    (
+        2_000_000_142,
+        "1",
+        "al-language/query/TestQueryMetadataVirtualTable.al:44",
+    ),
+    // Report Metadata, read by field name through a RecordRef (the helpers' FieldIndex loops).
+    (
+        2_000_000_139,
+        "2",
+        "al-language/report/lt-reportext-layout-relations/ReportMetadataRelations.al:151; al-language/misc/lt-probes-needed-3/PnC21Metadata.al:280",
+    ),
     (
         2_000_000_139,
         "3",
-        "report/lt-reportext-layout-relations/ReportMetadataRelations.al:152, misc/lt-probes-needed-3/PnC21Metadata.al:269",
+        "al-language/report/lt-reportext-layout-relations/ReportMetadataRelations.al:152; al-language/metadata/lt-report-metadata-columns/ReportMetadata.al:202",
+    ),
+    // EnableExternalImages, the paper sources (Upper, Lower, Middle; another one poisons the row), FormatRegion
+    // and ExcelLayoutMultipleDataSheets as declared; EnableExternalAssemblies No (unknown when declared).
+    (
+        2_000_000_139,
+        "6",
+        "al-language/report/lt-y-report-props/YHelper.al:226, YReportPropsTests.al:34-160",
     ),
     (
         2_000_000_139,
         "8",
-        "report/lt-y-report-props/YHelper.al:226, YReportPropsTests.al:45",
+        "al-language/report/lt-y-report-props/YHelper.al:226, YReportPropsTests.al:45",
     ),
     (
         2_000_000_139,
         "12",
-        "report/lt-y-report-props/YHelper.al:226, YReportPropsTests.al:45",
+        "al-language/report/lt-y-report-props/YHelper.al:226, YReportPropsTests.al:34-160",
     ),
     (
         2_000_000_139,
         "13",
-        "report/lt-y-report-props/YHelper.al:226, YReportPropsTests.al:45",
+        "al-language/report/lt-y-report-props/YHelper.al:226, YReportPropsTests.al:34-160",
     ),
     (
         2_000_000_139,
         "14",
-        "report/lt-y-report-props/YHelper.al:226, YReportPropsTests.al:45",
+        "al-language/report/lt-y-report-props/YHelper.al:226, YReportPropsTests.al:34-160",
     ),
     (
         2_000_000_139,
         "24",
-        "report/lt-y-report-props/YHelper.al:226, YReportPropsTests.al:45",
+        "al-language/report/lt-y-report-props/YHelper.al:226, YReportPropsTests.al:45, :64",
     ),
     (
         2_000_000_139,
         "25",
-        "report/lt-y-report-props/YHelper.al:226, YReportPropsTests.al:45",
+        "al-language/report/lt-y-report-props/YHelper.al:226, YReportPropsTests.al:34-160",
     ),
+    // TransactionType UpdateNoLocks for a report that declares none; unknown for a declared one (al-vm reports.rs).
+    (
+        2_000_000_139,
+        "11",
+        "al-language/metadata/lt-report-metadata-columns/ReportMetadata.al:210, :236, :262",
+    ),
+    (
+        2_000_000_139,
+        "16",
+        "al-language/report/lt-reportext-layout-relations/ReportExtensionLayoutRelations.al:82; al-language/report/lt-y-report-props/YReportParts.al:65-70",
+    ),
+    (
+        2_000_000_139,
+        "23",
+        "al-language/metadata/lt-platform-metadata-columns/PlatformMetadataColumnValues.al:145",
+    ),
+    // BC 29 only: DefaultHeaderFooterPartName (30), DefaultThemePartName (31). By id, because the symbols of
+    // older majors lack them.
+    (
+        2_000_000_139,
+        "30",
+        "al-language/report/lt-y-report-props/YReportParts.al:65-70, YReportPropsTests.al:45",
+    ),
+    (
+        2_000_000_139,
+        "31",
+        "al-language/report/lt-y-report-props/YReportParts.al:65-70, YReportPropsTests.al:45",
+    ),
+    (
+        2_000_000_136,
+        "10",
+        "al-language/metadata/lt-platform-metadata-columns/PlatformMetadataColumnValues.al:114",
+    ),
+    (
+        2_000_000_063,
+        "5",
+        "al-language/metadata/lt-platform-metadata-columns/PlatformMetadataColumnValues.al:187, :210",
+    ),
+    // BC 29 only: "Layout Subtype" (19), HeaderFooterPart (20), ThemePart (21), read by field name, for layouts
+    // that declare a Subtype; unknown for one that declares none (al-vm reports.rs). By id, as above.
+    (
+        2_000_000_234,
+        "19",
+        "al-language/report/lt-y-report-props/YReportParts.al:75-80",
+    ),
+    (
+        2_000_000_234,
+        "20",
+        "al-language/report/lt-y-report-props/YReportParts.al:75-80",
+    ),
+    (
+        2_000_000_234,
+        "21",
+        "al-language/report/lt-y-report-props/YReportParts.al:75-80",
+    ),
+    // XmlPort Metadata InherentPermissions and InherentEntitlements: blank or X as declared; another value is refused.
     (
         2_000_000_280,
         "InherentPermissions",
-        "xmlport/lt-y-xmlport-props/YXmlPortProps.al:731-740",
+        "al-language/xmlport/lt-y-xmlport-props/YXmlPortProps.al:731-740",
     ),
     (
         2_000_000_280,
         "InherentEntitlements",
-        "xmlport/lt-y-xmlport-props/YXmlPortProps.al:731-740",
+        "al-language/xmlport/lt-y-xmlport-props/YXmlPortProps.al:731-740",
     ),
-    (2_000_000_139, "30", "handlers/TestReportMetadataColumns.al"),
-    (2_000_000_139, "31", "handlers/TestReportMetadataColumns.al"),
-    (
-        2_000_000_139,
-        "Name",
-        "ReportMetadata_Defaults (codeunit 71138), ReportMeta_ProcessingOnly_RowAndColumnsPresent (71698)",
-    ),
-    (
-        2_000_000_139,
-        "EnableExternalImages",
-        "report/lt-y-report-props/YReportPropsTests.al:34-160; FormatRegion_* (codeunit 75510)",
-    ),
-    (
-        2_000_000_139,
-        "DefaultLayout",
-        "DefaultLayout_BaseWithExtension_IsRdlc (codeunit 71699), ReportParts_MetadataRow (75571)",
-    ),
-    (
-        2_000_000_139,
-        "DefaultLayoutName",
-        "ReportMetadata_DefaultLayoutName_OwnAndBase (codeunit 71394)",
-    ),
-    (
-        2_000_000_136,
-        "DataIsExternal",
-        "TableMetadata_DataIsExternal_OwnAndBase (codeunit 71394)",
-    ),
-    (
-        2_000_000_063,
-        "SumIndexFields",
-        "KeyTable_SumIndexFields_BaseApp, KeyTable_SumIndexFields_OwnTable (codeunit 71394)",
-    ),
-    // BC 29 only: "Layout Subtype" (19), HeaderFooterPart (20), ThemePart (21), read through a RecordRef by
-    // field name, for layouts that declare a Subtype. By id, because the symbols of older majors lack them.
-    (2_000_000_234, "19", "report/lt-y-report-props/YReportParts.al:75-80"),
-    (2_000_000_234, "20", "report/lt-y-report-props/YReportParts.al:75-80"),
-    (2_000_000_234, "21", "report/lt-y-report-props/YReportParts.al:75-80"),
-    (2_000_000_280, "1", "xmlport/TestXmlPortMetadataVirtualTable.al:42"),
-    (
-        2_000_000_280,
-        "InherentPermissions",
-        "RequestFilterHeading_XmlPort_Metadata (codeunit 75514)",
-    ),
-    (2_000_000_142, "1", "query/TestQueryMetadataVirtualTable.al:44"),
     (
         2_000_000_140,
         "11",
-        "events/lt-event-subscription-trigger-rows/EventSubscriptionTriggerRows.al:131",
+        "al-language/events/lt-event-subscription-trigger-rows/EventSubscriptionTriggerRows.al:163",
     ),
-    (2_000_000_110, "8", "session/TestActiveSessionTable.al"),
 ];
 
 /// Why column `field` of platform table `table` cannot be read, if it cannot.

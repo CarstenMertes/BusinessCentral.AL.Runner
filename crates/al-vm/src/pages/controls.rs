@@ -8,6 +8,18 @@ impl Session {
     /// and records a refusal in the control's ledger (corpus handlers/TestPageValidationError_Tests.al,
     /// TestPageReadOnlySetValue.al:1-30, TestPageBooleanSpelling_Tests.al).
     pub(super) fn control_set_value(&mut self, st: &St, idx: usize, args: &mut [Value]) -> Result<Value, Signal> {
+        // A control's ValuesAllowed rejects a value outside the list (pageext/lt-page-ext-properties/PageFieldValuesAllowed.al:
+        // 64-73; on a request page, pages/lt-report-page-properties/05-requestpage-valuesallowed.al:57-59); the client does not
+        // check it, so a write to such a control is refused rather than taken.
+        if page_of(&self.engine(), st).controls[idx]
+            .prop("valuesallowed")
+            .is_some()
+        {
+            let name = page_of(&self.engine(), st).controls[idx].name.clone();
+            return unsupported(format!(
+                "SetValue on control {name}, which has ValuesAllowed: the test client does not check it"
+            ));
+        }
         // A subscriber to OnBeforeValidateEvent / OnAfterValidateEvent of this control would run in BC; the client does
         // not raise them yet, so a write to such a control is refused (a page that is merely opened is not).
         {
@@ -822,15 +834,32 @@ impl Session {
                     None if m == PageMethod::ShowMandatory => {
                         let page = page_of(&engine, st);
                         match &page.controls[idx].binding {
-                            ir::Binding::Field(pos) => Ok(Value::Boolean(page.controls.iter().any(|c| {
-                                matches!(&c.binding, ir::Binding::Field(p) if p == pos)
-                                    && matches!(c.prop("showmandatory"), Some(ir::PropVal::Lit(l)) if unquote(l).eq_ignore_ascii_case("true"))
-                            }))),
-                            _ => unsupported("ShowMandatory of a control that is no table field, without the property (not pinned)"),
+                            ir::Binding::Field(pos) => {
+                                let mut any = false;
+                                for c in page
+                                    .controls
+                                    .iter()
+                                    .filter(|c| matches!(&c.binding, ir::Binding::Field(p) if p == pos))
+                                {
+                                    match c.prop("showmandatory") {
+                                        None => {}
+                                        Some(ir::PropVal::Lit(l)) => any |= lit_bool("showmandatory", l)?,
+                                        Some(_) => {
+                                            return unsupported(
+                                                "ShowMandatory of a control next to a computed ShowMandatory on the same field",
+                                            );
+                                        }
+                                    }
+                                }
+                                Ok(Value::Boolean(any))
+                            }
+                            _ => unsupported(
+                                "ShowMandatory of a control that is no table field, without the property (not pinned)",
+                            ),
                         }
                     }
                     None => Ok(Value::Boolean(false)),
-                    Some(ir::PropVal::Lit(l)) => Ok(Value::Boolean(unquote(l).eq_ignore_ascii_case("true"))),
+                    Some(ir::PropVal::Lit(l)) => Ok(Value::Boolean(lit_bool(name, l)?)),
                     Some(_) => unsupported(format!("TestField.{m} of a computed property")),
                 }
             }

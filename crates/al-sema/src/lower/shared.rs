@@ -189,6 +189,9 @@ pub(crate) fn make_lowerer<'a>(sh: &'a Shared<'a>, tl: &'a Local<'a>, seq: &'a S
         locals: Default::default(),
         global_labels: HashMap::default(),
         local_labels: HashMap::default(),
+        global_var_attrs: HashMap::default(),
+        local_var_attrs: HashMap::default(),
+        run_refusals: Default::default(),
         with_places: HashMap::default(),
         reasons: Vec::new(),
         calls: Vec::new(),
@@ -424,7 +427,11 @@ pub(crate) fn lower_object<'a>(
         let ty = v.type_ref().map(|t| Ty::from_type_ref(&t)).unwrap_or(Ty::Unknown);
         let label = v.type_ref().as_ref().and_then(label_text);
         let refusal = v.type_ref().as_ref().and_then(textconst_refusal);
+        let attrs = var_attribute_names(&v);
         for n in v.names() {
+            if !attrs.is_empty() {
+                lw.global_var_attrs.insert(n.to_lowercase(), attrs.clone());
+            }
             if let Some(l) = &label {
                 lw.global_labels.insert(n.to_lowercase(), l.clone());
             }
@@ -1033,4 +1040,14 @@ pub(crate) fn rewrite_quotes(raw: &str) -> String {
 /// Whether the routines of dependency apps carry source positions (ADR-041). On unless `AL_NO_DEP_POSITIONS` is set.
 pub fn dependency_positions() -> bool {
     std::env::var_os("AL_NO_DEP_POSITIONS").is_none()
+}
+
+/// The lower-case names of the attributes of a variable declaration that change how the variable behaves and that
+/// the lowering reads (`Lowerer::var_attr_refusal`, `Lowerer::security_filtering_read_refusal`).
+pub(crate) fn var_attribute_names(v: &ast::VarDecl) -> Vec<String> {
+    v.attributes()
+        .iter()
+        .map(|a| a.name().to_ascii_lowercase())
+        .filter(|n| matches!(n.as_str(), "runonclient" | "withevents" | "securityfiltering"))
+        .collect()
 }

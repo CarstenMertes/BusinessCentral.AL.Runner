@@ -312,6 +312,17 @@ impl Session {
             .is_some_and(|s| s.handlers.iter().any(|h| h.kind == UiKind::HttpClient))
     }
 
+    /// Counts the bound `[HttpClientHandler]`s as run, so the end of the test does not report them unexecuted: before BC 29 a
+    /// request under BlockOutboundRequests raises without calling the handler and the test still passes
+    /// (al-language-onprem/session/PZHttpBlock.al:46-59, Handler_UnderBlockOutboundRequests_StillAnswers on BC 27 and 28).
+    pub(crate) fn http_handlers_count_as_run(&mut self) {
+        if let Some(scope) = self.ui_state.scope.as_mut() {
+            for h in scope.handlers.iter_mut().filter(|h| h.kind == UiKind::HttpClient) {
+                h.fired = true;
+            }
+        }
+    }
+
     /// Runs the bound `[HttpClientHandler]` with the request and a fresh response; `None` when the test has none.
     /// Returns the handler's answer and the response as it left it.
     pub(crate) fn dispatch_http_handler(

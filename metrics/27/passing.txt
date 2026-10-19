@@ -5588,6 +5588,8 @@
 69304 Editable_FalseAndTrueFromActions
 69304 Editable_FalseFromOnAfterGetCurrRecord
 69304 Editable_TrueOnAPageThatIsNotEditable
+69304 List_ActionDeletesTheOnlyRow_ThenUpdates
+69304 List_ActionDeletesTheOnlyRow_WithoutUpdate
 69304 List_BufferLeftByOnAfterGetRecord_WhileTheRowIsUnchanged
 69304 List_UpdateFalse_KeepsTheUnsavedEdit
 69304 TempSourcePage_ReadWriteLikeAStoredOne
@@ -6147,6 +6149,7 @@
 69776 Setup_AsInTheContainer_NoCurrency
 69780 MovedFromMovedTo_TableExtensionFields_AreUsable
 69780 MovedFromMovedTo_Tables_AreUsable
+69799 Pending_CodeunitInterfaceEnum_StillRun
 69799 Pending_PageAndControls_StillOpen
 69800 CodeAssign_UpperAndTrim
 69800 ErrorText_SetsCodeDialog
@@ -6856,6 +6859,8 @@
 70176 ViewModeEmptyListInsertViaRec
 70177 BufferEditOfOnAfterGetRecordOnACard
 70177 CardOpenWithAndWithoutUpdateInOnOpenPage
+70177 ListLosesOnlyRowDeleteNoUpdate
+70177 ListLosesOnlyRowDeleteWithUpdate
 70177 ListModifyWithAndWithoutUpdate
 70177 ListOpenWithAndWithoutUpdateInOnOpenPage
 70177 UpdateKeepsUnsavedEditOfTheRow
@@ -8753,6 +8758,7 @@
 71659 P119_ShowAsCardFields
 71661 P119_LabelCaptionAndValue
 71661 P119_LabelVisible
+71663 P119_HideValue
 71667 P119_NeighboursOfUploadAction
 71670 P119_NeighbourOfUserControl
 71672 P119_PageFieldValues
@@ -12358,6 +12364,7 @@
 76220 ZCustModifyAllowed
 76220 ZCustPromotedActionCategories_ActionUnchanged
 76360 ZCaptionClass_LiteralAndResolved
+76360 ZHideValue_TrueAndFalse
 76360 ZLookupPageId_OpensTargetPage
 76360 ZLookupPageId_PlainControlHasNoLookup
 76360 ZPresentationControls_Read

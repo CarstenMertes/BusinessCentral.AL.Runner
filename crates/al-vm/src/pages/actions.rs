@@ -158,6 +158,18 @@ impl Session {
         let Some(field) = self.control_field(st, idx) else {
             return unsupported("TestField.Lookup on a control that is not bound to a table field");
         };
+        // A TableRelation on the page control opens the lookup page of that relation (pages/lt-page-editability-width-lookups/
+        // P115Lookups.al:120-122, P113Lookups.al:268); the client reads only the table field's relation, so it refuses.
+        {
+            let engine = self.engine();
+            let c = &page_of(&engine, st).controls[idx];
+            if c.prop("tablerelation").is_some() {
+                return unsupported(format!(
+                    "Lookup on control {} with its own TableRelation: the test client does not read a control-level relation",
+                    c.name
+                ));
+            }
+        }
         if let Some((object, routine)) = field.on_lookup {
             let rec = self.page_rec(st);
             st.borrow_mut().refresh = false;
@@ -981,22 +993,30 @@ impl Session {
             let r = self.arrive(st);
             self.torn_down_on_error(st, r)?;
         } else {
-            // No stored row is left: the list shows its blank line, which raises
-            // OnAfterGetCurrRecord three times after an action that called CurrPage.Update (corpus
-            // pageupdate/TestPageUpdateGoneRow.al:List_DeletedByAction_OnlyRow_ShowsNoStoredRow);
-            // what an action that did not call it raises is not pinned: the same three, on an assumption
-            // (list-gone-only-row-without-update).
-            if !st.borrow().refresh {
-                al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::ListGoneOnlyRowWithoutUpdate);
+            // No stored row is left, whether or not the action called CurrPage.Update. A list opened for editing shows
+            // its blank line: OnNewRecord and OnAfterGetCurrRecord on a blank Rec and xRec, three times (misc/
+            // lt-probes-needed-7/PnGRefresh.al:120, :142; pageupdate/TestPageUpdateGoneRow.al:List_DeletedByAction_OnlyRow_ShowsNoStoredRow,
+            // a list without OnNewRecord). A list opened for viewing raises nothing (pages/W1Update.al:534, :556). A list in
+            // another state (an edit list without the new-row line) is not pinned.
+            let new_line = self.offers_new_line(st)?;
+            if !new_line && st.borrow().mode != PageMode::View {
+                return unsupported("a list without the new-row line that lost its only row to an action (not pinned)");
             }
             st.borrow_mut().refresh = false;
             let table = rec.borrow().table as usize;
             let fresh = self.initial_fields(table);
             rec.borrow_mut().fields = fresh;
             st.borrow_mut().cursor = Cursor::None;
-            for _ in 0..3 {
-                self.page_trigger(st, "onaftergetcurrrecord", vec![])?;
-                self.page_event(st, "onaftergetcurrrecordevent", None, None)?;
+            if new_line {
+                for _ in 0..3 {
+                    let fresh = self.initial_fields(table);
+                    rec.borrow_mut().fields = fresh;
+                    self.set_xrec(st);
+                    self.page_trigger(st, "onnewrecord", vec![Value::Boolean(true)])?;
+                    self.page_event(st, "onnewrecordevent", None, Some(true))?;
+                    self.page_trigger(st, "onaftergetcurrrecord", vec![])?;
+                    self.page_event(st, "onaftergetcurrrecordevent", None, None)?;
+                }
             }
         }
         Ok(())

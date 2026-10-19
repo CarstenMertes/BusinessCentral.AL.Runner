@@ -153,6 +153,11 @@ impl Session {
                 f.option_captions = Some(enu.split(',').map(str::to_string).collect());
             }
         }
+        // The table field's OptionCaptionML gives the captions of the session language (record/lt-x-table-props/
+        // XTablePropsTests.al:229-230, `deu_page_op` is `Zwei`); it is not read, so the page refuses rather than show another list.
+        if f.option_captions.is_none() && from_field("optioncaptionml").is_some() {
+            return unsupported("OptionCaptionML of the table field of a page control is not supported");
+        }
         if f.option_captions.is_none() {
             f.option_captions =
                 from_field("optioncaption").map(|c| unquote(&c).split(',').map(str::to_string).collect());
@@ -462,7 +467,7 @@ impl Session {
         let engine = self.engine();
         match page_of(&engine, st).controls[idx].prop(name) {
             None => Ok(default),
-            Some(ir::PropVal::Lit(v)) => Ok(is_true(v)),
+            Some(ir::PropVal::Lit(v)) => lit_bool(name, v),
             Some(routine) => match self.prop_routine_value(st, idx, routine)? {
                 Some(v) => ops::truthy(&v),
                 None => Ok(default),

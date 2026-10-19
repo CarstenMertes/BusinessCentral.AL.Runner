@@ -140,6 +140,24 @@ fn is_true(s: &str) -> bool {
     s.trim().eq_ignore_ascii_case("true")
 }
 
+/// A boolean control property as written: `true` or `false`. Anything else is an expression the compile keeps as text
+/// (only Visible, Editable, Enabled and HideValue are evaluated, `al_sema::pages::dynamic_type`); reading it as false would
+/// be silently wrong (pages/lt-page-presentation-properties/P119LabelHideValue.al:74: `HideValue = <variable>` hides the
+/// value), so it is refused.
+fn lit_bool(name: &str, s: &str) -> Result<bool, Signal> {
+    let t = unquote(s);
+    if t.eq_ignore_ascii_case("true") {
+        Ok(true)
+    } else if t.eq_ignore_ascii_case("false") {
+        Ok(false)
+    } else {
+        unsupported(format!(
+            "control property {name} = {}: an expression the test client does not evaluate",
+            s.trim()
+        ))
+    }
+}
+
 type Handler = (usize, usize, Rc<RefCell<al_builtins::value::Instance>>);
 
 mod areas;

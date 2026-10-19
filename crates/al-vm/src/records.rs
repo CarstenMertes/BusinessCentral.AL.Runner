@@ -1089,6 +1089,23 @@ impl Session {
         self.connection_check(rec)?;
         let t = self.table(rec)?;
         self.note_table(t.object, method.writes());
+        if al_builtins::frr::enabled() && !rec.borrow().temporary {
+            let read = matches!(
+                method,
+                RecordOp::Find
+                    | RecordOp::FindFirst
+                    | RecordOp::FindLast
+                    | RecordOp::FindSet
+                    | RecordOp::Next
+                    | RecordOp::Count
+                    | RecordOp::IsEmpty
+                    | RecordOp::CalcSums
+                    | RecordOp::Get
+                    | RecordOp::GetBySystemId
+                    | RecordOp::CalcFields
+            );
+            al_builtins::frr::note(t.object, read, method == RecordOp::DeleteAll);
+        }
         if matches!(
             method,
             RecordOp::Find

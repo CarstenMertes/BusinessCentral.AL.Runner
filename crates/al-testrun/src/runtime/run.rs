@@ -275,6 +275,8 @@ pub(crate) fn run_codeunit_core(
     // and what its static reach holds.
     let mut refused_before_start: Vec<(String, ReachFacts)> = Vec::new();
     let mut panicked = false;
+    // MEASUREMENT ONLY (false-result-risk): earlier tests that did not run to their end.
+    let mut frr_earlier: Vec<(String, &'static str, String, ReachFacts, ReachFacts)> = Vec::new();
     for r in tests.iter().copied() {
         // A cancelled run starts no further test (the one running finishes).
         if crate::events::cancelled() {
@@ -283,6 +285,7 @@ pub(crate) fn run_codeunit_core(
         crate::events::starting(obj.id.unwrap_or(0), &obj.routines[r].name);
         let test_started = std::time::Instant::now();
         let draws_before = session.random_draws();
+        al_builtins::frr::reset();
         let routine = &obj.routines[r];
         let handlers = resolve_handlers(lowered, object, r);
         let mut committed = false;
@@ -291,7 +294,11 @@ pub(crate) fn run_codeunit_core(
         session.clear_fault_site();
         al_builtins::assumptions::clear_hits();
         let mut began = false;
-        let outcome = if let Err(reason) = &handlers {
+        let frr_idx = tests.iter().position(|&x| x == r).unwrap_or(0);
+        let frr_dropped = std::env::var("AL_FRR_DROP").ok().and_then(|v| v.parse::<usize>().ok()) == Some(frr_idx);
+        let outcome = if frr_dropped {
+            Outcome::NotRun("frr: dropped on purpose (measurement)".into())
+        } else if let Err(reason) = &handlers {
             Outcome::NotRun(reason.clone())
         } else if let Some(b) = blocked_site(lowered, object, r) {
             refused_in = Some((b.object, b.routine));
@@ -426,6 +433,12 @@ pub(crate) fn run_codeunit_core(
         // can write (its static reach, subscribers included) meets what this test can read (Tests-ERM "Discount Setup
         // Notifications": the refused test would have reset the posting setups the test before it left blank). A refused
         // test that writes nothing this test reads does not make its failure doubtful.
+        let frr_kind: &'static str = match &outcome {
+            Outcome::Pass => "pass",
+            Outcome::NotRun(_) if !began => "refused-before-start",
+            Outcome::NotRun(_) => "refused-mid-run",
+            Outcome::Fail(_) => "failed",
+        };
         let facts_of_this = (matches!(outcome, Outcome::Fail(_)) || !began)
             .then(|| reach_facts(&session.engine.clone(), lowered, object, r));
         let outcome = match (outcome, &facts_of_this) {
@@ -563,6 +576,63 @@ pub(crate) fn run_codeunit_core(
         }
         if covering {
             crate::coverage::push(&routine.name, cov);
+        }
+        let frr_inherited = al_builtins::frr::take_inherited();
+        if let Some(tlog) = crate::runtime::blocked::frr_tests_log() {
+            let fin = match &outcome {
+                Outcome::Pass => "Pass".to_string(),
+                Outcome::Fail(_) => "Fail".to_string(),
+                Outcome::NotRun(m) => format!("NotRun:{}", m.chars().take(100).collect::<String>().replace(['\t', '\n'], " ")),
+            };
+            let n = al_builtins::frr::PERM_CHECKS.with(|c| c.get());
+            use std::io::Write;
+            let _ = tlog.lock().unwrap().write_all(
+                format!("{}\t{}\t{}\t{}\t{}\t{}\n", obj.id.unwrap_or(0), obj.name, routine.name, frr_kind, n, fin).as_bytes(),
+            );
+        }
+        if checkpoint.is_none() {
+            if let Some(log) = crate::runtime::blocked::frr_log() {
+                let fin = match &outcome {
+                    Outcome::Pass => "Pass",
+                    Outcome::Fail(_) => "Fail",
+                    Outcome::NotRun(_) => "NotRun",
+                };
+                if !frr_earlier.is_empty() && fin != "NotRun" {
+                    let mine = if std::env::var_os("AL_FRR_NOSTATIC").is_some() {
+                        ReachFacts::default()
+                    } else {
+                        reach_facts(&session.engine.clone(), lowered, object, r)
+                    };
+                    let mine_local = crate::runtime::blocked::reach_facts_local(lowered, object, r);
+                    let mut lines = String::new();
+                    for (name, kind, efin, w, wl) in &frr_earlier {
+                        let dynamic: Vec<u32> = w.writes.intersection(&frr_inherited).copied().collect();
+                        let explicit: Vec<u32> = w.writes.intersection(&mine.touched).copied().collect();
+                        let local: Vec<u32> = wl.writes.intersection(&mine_local.touched).copied().collect();
+                        lines.push_str(&format!(
+                            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{:?}\t{:?}\t{}\t{}\t{:?}\n",
+                            obj.id.unwrap_or(0), obj.name, routine.name, fin, name, kind, efin,
+                            w.writes_meet(&mine.touched) as u8, w.writes_any as u8, explicit.len(),
+                            (wl.writes_any && !mine_local.touched.is_empty()) as u8, local.len(),
+                            mine.touched.len(), w.writes.len(),
+                            explicit.iter().take(12).collect::<Vec<_>>(), local.iter().take(12).collect::<Vec<_>>(),
+                            dynamic.len(), (w.writes_any && !frr_inherited.is_empty()) as u8, dynamic.iter().take(12).collect::<Vec<_>>()
+                        ));
+                    }
+                    use std::io::Write;
+                    let _ = log.lock().unwrap().write_all(lines.as_bytes());
+                }
+                if frr_kind != "pass" {
+                    let fin_e = match &outcome { Outcome::NotRun(m) if m.contains("not trusted") => "NotRun(untrusted)", _ => fin };
+                    frr_earlier.push((
+                        routine.name.clone(),
+                        frr_kind,
+                        fin_e.to_string(),
+                        reach_facts(&session.engine.clone(), lowered, object, r),
+                        crate::runtime::blocked::reach_facts_local(lowered, object, r),
+                    ));
+                }
+            }
         }
         out.push((routine.name.clone(), outcome));
         // A panic in a test ends the codeunit: the session may be inconsistent.

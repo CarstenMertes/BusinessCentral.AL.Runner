@@ -310,3 +310,84 @@ pub fn blocked_site(lowered: &Lowered, object: usize, routine: usize) -> Option<
     }
     None
 }
+
+/// MEASUREMENT ONLY (false-result-risk): the log file named by `AL_FRR_LOG`.
+pub(crate) fn frr_log() -> Option<&'static std::sync::Mutex<std::fs::File>> {
+    static LOG: std::sync::OnceLock<Option<std::sync::Mutex<std::fs::File>>> = std::sync::OnceLock::new();
+    LOG.get_or_init(|| {
+        let p = std::env::var_os("AL_FRR_LOG")?;
+        std::fs::OpenOptions::new().create(true).append(true).open(p).ok().map(std::sync::Mutex::new)
+    })
+    .as_ref()
+}
+
+/// MEASUREMENT ONLY: [`reach_facts`] restricted to the routines of `object` itself (the test codeunit), no subscribers.
+pub(crate) fn reach_facts_local(lowered: &Lowered, object: usize, routine: usize) -> ReachFacts {
+    use al_builtins::value::RtType;
+    let obj = &lowered.program.objects[object];
+    let mut out = ReachFacts::default();
+    let mut seen = BTreeSet::new();
+    let mut stack = vec![(object, routine)];
+    while let Some((o, r)) = stack.pop() {
+        if o != object || !seen.insert((o, r)) {
+            continue;
+        }
+        let rt = &obj.routines[r];
+        for s in rt.locals.iter().chain(&obj.globals) {
+            let mut ty = &s.ty;
+            while let RtType::Array(_, inner) = ty {
+                ty = inner;
+            }
+            if let RtType::Record(t, _) = ty {
+                out.touched.insert(*t);
+            }
+        }
+        let slot_ty = |p: &al_ir::Place| -> Option<RtType> {
+            let mut p = p;
+            while let al_ir::Place::Index(b, _) = p {
+                p = b;
+            }
+            let mut ty = match p {
+                al_ir::Place::Local(i) => &rt.locals.get(*i)?.ty,
+                al_ir::Place::Global(i) => &obj.globals.get(*i)?.ty,
+                _ => return None,
+            };
+            while let RtType::Array(_, inner) = ty {
+                ty = inner;
+            }
+            Some(ty.clone())
+        };
+        al_ir::types::for_each_expr_post(&rt.body, &mut |e| {
+            let al_ir::Expr::Builtin { id, receiver, .. } = e else {
+                return;
+            };
+            if id.name().starts_with("Record.")
+                && matches!(id.method(), "Insert" | "Modify" | "Delete" | "DeleteAll" | "ModifyAll" | "Rename")
+            {
+                let table = receiver.as_deref().and_then(|a| match a {
+                    al_ir::Arg::Ref(p) => slot_ty(p),
+                    al_ir::Arg::Value(al_ir::Expr::Load(p)) => slot_ty(p),
+                    _ => None,
+                });
+                match table {
+                    Some(RtType::Record(t, _)) => {
+                        out.writes.insert(t);
+                    }
+                    _ => out.writes_any = true,
+                }
+            }
+        });
+        lowered.calls_into(o, r, &mut stack);
+    }
+    out
+}
+
+/// MEASUREMENT ONLY: per-test log named by `AL_FRR_TESTS`.
+pub(crate) fn frr_tests_log() -> Option<&'static std::sync::Mutex<std::fs::File>> {
+    static LOG: std::sync::OnceLock<Option<std::sync::Mutex<std::fs::File>>> = std::sync::OnceLock::new();
+    LOG.get_or_init(|| {
+        let p = std::env::var_os("AL_FRR_TESTS")?;
+        std::fs::OpenOptions::new().create(true).append(true).open(p).ok().map(std::sync::Mutex::new)
+    })
+    .as_ref()
+}

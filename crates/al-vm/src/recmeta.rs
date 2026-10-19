@@ -474,7 +474,10 @@ impl Session {
             RecordOp::Consistent => Ok(Value::Null),
             RecordOp::ReadConsistency => Ok(Value::Boolean(false)),
             RecordOp::RecordLevelLocking => Ok(Value::Boolean(true)),
-            RecordOp::ReadPermission | RecordOp::WritePermission => Ok(Value::Boolean(true)),
+            RecordOp::ReadPermission | RecordOp::WritePermission => {
+                al_builtins::frr::PERM_CHECKS.with(|c| c.set(c.get() + 1));
+                Ok(Value::Boolean(true))
+            }
             RecordOp::CountApprox => self.record_op(RecordOp::Count, rec, &mut []),
             RecordOp::CurrentCompany => Ok(Value::Text(self.current_company_of(rec).into())),
             RecordOp::ReadIsolation | RecordOp::SecurityFiltering => {

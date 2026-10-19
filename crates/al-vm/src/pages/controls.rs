@@ -174,6 +174,25 @@ impl Session {
                 self.control_text(st, idx, &converted)?.into()
             }
         };
+        // An Enum control that holds a refused entry shows the ordinal (see PageMethod::Value); an empty entry then is that
+        // ordinal's text, which is refused as any ordinal is (pages/lt-page-enum-control/PageEnumControlCaptionless.al:107,
+        // :109: `Your entry of '0'` after two refusals, on a table field of a card). Not pinned for a control bound to a
+        // variable or for an Option control.
+        let holds_error = st.borrow().errors.iter().any(|(i, _)| *i == idx);
+        let text = if text.is_empty() && holds_error && matches!(ty, RtType::Enum(_) | RtType::Option(_)) {
+            match (&ty, &current) {
+                (RtType::Enum(_), Value::Enum(_, ordinal)) if rec_bound && !self.is_list(st) => {
+                    ordinal.to_string().into()
+                }
+                _ => {
+                    return unsupported(
+                        "SetValue of an empty text on an Option or Enum control that holds a refused entry (not pinned here)",
+                    );
+                }
+            }
+        } else {
+            text
+        };
         if let RtType::Enum(id) = &ty {
             self.note_enum(*id);
         }
@@ -202,7 +221,9 @@ impl Session {
         };
         let refuse_code = |msg: String, code: &str| -> Signal {
             let stored = format!("{msg}{suffix}");
-            st.borrow_mut().errors.push((idx, stored.clone()));
+            if let Err(why) = note_refusal(st, idx, stored.clone()) {
+                return why;
+            }
             error_code(
                 format!(
                     "Validation error for Field: {},  Message = '{stored}'",
@@ -219,15 +240,31 @@ impl Session {
         // (pages/lt-page-presentation-properties/P119PageFields.al:P119_NotBlankPageField; Tests-SCM-Planning
         // ManufacturerCodeCannotBeBlank asserts the code). The text is pinned on a card with a row; on a list or a page
         // without a row it is not.
-        if rec_bound
-            && text.is_empty()
-            && self.control_field(st, idx).is_some_and(|f| {
-                f.properties
-                    .iter()
-                    .any(|(k, v)| k.eq_ignore_ascii_case("NotBlank") && v.trim().eq_ignore_ascii_case("true"))
-            })
-        {
-            if no_row || self.is_list(st) {
+        // NotBlank on the page control does the same for a table field (P119PageFields.al:205-206, `Note must be filled in`), also
+        // on a list, where the text has no Refresh hint (pages/lt-ap-testpage-642/ApTestPageTests.al:944, Ap17_NotBlank_List). On a
+        // card without a row the entry is not checked: the row is missing (:962, Ap17_NotBlank_CardOnEmptyTable).
+        let control_not_blank = matches!(
+            page_of(&engine, st).controls[idx].prop("notblank"),
+            Some(ir::PropVal::Lit(v)) if v.trim().eq_ignore_ascii_case("true")
+        );
+        // A control bound to a variable names no caption and has no Refresh hint, on a request page (pages/
+        // lt-page-presentation-properties/P119ReportFields.al:158-159) and on a page without a source table (ApTestPageTests.al:977,
+        // Ap17_NotBlank_PageWithoutSourceTable). On a page with a source table it is not pinned.
+        if !rec_bound && control_not_blank && text.is_empty() {
+            if !self.is_request_page(st) && self.has_source(st) {
+                return unsupported(
+                    "SetValue of a blank value on a NotBlank control bound to a variable of a page with a source table (not pinned)",
+                );
+            }
+            return Err(refuse_bound(" must be filled in. Enter a value.".to_string()));
+        }
+        let field_not_blank = self.control_field(st, idx).is_some_and(|f| {
+            f.properties
+                .iter()
+                .any(|(k, v)| k.eq_ignore_ascii_case("NotBlank") && v.trim().eq_ignore_ascii_case("true"))
+        });
+        if rec_bound && text.is_empty() && (control_not_blank || field_not_blank) && !(control_not_blank && no_row) {
+            if no_row || (self.is_list(st) && !control_not_blank) {
                 return unsupported(
                     "SetValue of a blank value on a NotBlank control of a list or of a page without a row (the client's text is not pinned)",
                 );
@@ -266,15 +303,42 @@ impl Session {
                     .map(|(_, v)| unquote(v))
             });
             if let Some(allowed) = page_prop.or(field_prop) {
-                let range: Vec<char> = allowed.chars().collect();
-                if range.len() != 2 || no_row || self.is_list(st) {
+                // Several pairs are several ranges: a character in any of them is taken, and the error lists the pairs
+                // separated by commas (pages/lt-ah-pages/AhPageTests.al:176 `az,AZ,09`, :808-811 ThreeRanges, :837-838
+                // SinglesAndRange `09--__`, :862 UnorderedSingles `zz55aa`, :908 TwoRangesOfLetters). An odd number of
+                // characters, or a pair from a higher to a lower character, is not pinned.
+                let chars: Vec<char> = allowed.chars().collect();
+                let ranges: Vec<(char, char)> =
+                    chars.chunks(2).filter(|p| p.len() == 2).map(|p| (p[0], p[1])).collect();
+                if chars.is_empty()
+                    || chars.len() % 2 != 0
+                    || ranges.iter().any(|(a, b)| a > b)
+                    || no_row
+                    || self.is_list(st)
+                {
                     return unsupported(
-                        "SetValue on a field with CharAllowed that is not two characters, on a list or on a page without a row (not pinned)",
+                        "SetValue on a field with CharAllowed of an odd length or a backward range, on a list or on a page without a row (not pinned)",
                     );
                 }
-                if let Some(bad) = text.chars().find(|c| !(range[0]..=range[1]).contains(c)) {
+                let takes = |c: char| ranges.iter().any(|(a, b)| (*a..=*b).contains(&c));
+                // A Code control upper-cases the entry first: the refused character is named upper-cased
+                // (record/lt-x-table-props/XTablePropsTests.al:104, `4x6` against `09` names `X`). Where upper-casing changes
+                // whether a character is taken (a range of lower-case letters), what BC does is not pinned.
+                let checked: String = if matches!(ty, RtType::Code(_)) {
+                    if text.chars().any(|c| takes(c) != c.to_uppercase().all(takes)) {
+                        return unsupported(
+                            "SetValue on a Code field with CharAllowed where upper-casing changes what is allowed (not pinned)",
+                        );
+                    }
+                    text.to_uppercase()
+                } else {
+                    text.to_string()
+                };
+                if let Some(bad) = checked.chars().find(|c| !takes(*c)) {
+                    let listed: Vec<String> = ranges.iter().map(|(a, b)| format!("{a}{b}")).collect();
                     return Err(refuse_bound(format!(
-                        "The character {bad} is not valid in this field. You can specify the following characters: {allowed}."
+                        "The character {bad} is not valid in this field. You can specify the following characters: {}.",
+                        listed.join(",")
                     )));
                 }
             }
@@ -294,12 +358,25 @@ impl Session {
                 // session/W5WorkDateShorthand.al, BC 27.5 and 29.0); the text holds a CR, a backslash, a CR and
                 // a backslash where one would expect line breaks.
                 // An Integer variable adds why (controls/W2FindFieldAssign.al:ValueAssign_IntegerControl_TextAndNonNumber).
-                if !rec_bound && matches!(ty, RtType::Integer) {
+                // A table field on a card does too (pages/lt-ah-pages/AhPageTests.al:112, pages/lt-page-runtime/P82TestField.al:296).
+                // A table field on a list is not pinned.
+                let card_field = rec_bound && !no_row && !self.is_list(st);
+                if matches!(ty, RtType::Integer) {
+                    if rec_bound && !card_field {
+                        return unsupported(
+                            "SetValue of a text that is not a number on an Integer field of a list or of a page without a row (the text is not pinned)",
+                        );
+                    }
                     msg.push_str(&format!(" The value \"{text}\" can't be evaluated into type Integer."));
                 }
-                // A Decimal says what was wrong (misc/lt-probes-needed-3/PnC07TestPage.al:ValueAssign_Number_FromText_And_Decimal, a list).
-                if rec_bound && self.is_list(st) && matches!(ty, RtType::Decimal) {
+                // A Decimal says what was wrong (misc/lt-probes-needed-3/PnC07TestPage.al:ValueAssign_Number_FromText_And_Decimal, a list;
+                // pages/lt-ah-pages/AhPageTests.al:133 and P82TestField.al:302, a card).
+                if rec_bound && !no_row && matches!(ty, RtType::Decimal) {
                     msg.push_str(&format!(" '{text}' is not a part of a valid decimal expression."));
+                }
+                // The number conversion of a table field on a card is a TestValidation error (AhPageTests.al:113, :134).
+                if card_field && matches!(ty, RtType::Integer | RtType::Decimal) {
+                    return Err(refuse_bound(msg));
                 }
                 if matches!(ty, RtType::Date) {
                     msg.push_str(&format!(
@@ -516,6 +593,7 @@ impl Session {
                 // A SetValue that goes through clears the control's refused entries (pages/lt-f3-pages/F3ValidationAddinFilter.al:
                 // GetValidationError_ErrorThenCorrected, line 272: the page answers an empty text afterwards).
                 st.borrow_mut().errors.retain(|(i, _)| *i != idx);
+                st.borrow_mut().trigger_errors.retain(|(i, _)| *i != idx);
                 self.run_refresh(st)?;
                 self.refresh_caption_classes(st)?;
                 Ok(Value::Null)
@@ -543,7 +621,8 @@ impl Session {
                 // (handlers/TestPageErrTeardown_Tests.al, codeunit 60836). Whether the list or something else in that page decides is
                 // not probed (docs/probes-needed.md).
                 if from_page_trigger.get() && self.is_list(st) {
-                    st.borrow_mut().errors.push((idx, e.message.clone()));
+                    note_refusal(st, idx, e.message.clone())?;
+                    st.borrow_mut().trigger_errors.push((idx, e.message.clone()));
                     return Err(error_code(
                         format!(
                             "Validation error for Field: {},  Message = '{}'",
@@ -556,13 +635,31 @@ impl Session {
                 // An error of the table's validation (its trigger, the length of the text) carries TestValidation
                 // (record/lt-loadfields-pagesource-validate/P81PageValidateEvents.al:TestPage_SetValue_NegativeQty_TableTriggerRaises,
                 // TestPage_SetValue_NameTooLong).
-                Err(refuse_bound(e.message))
+                let refusal = refuse_bound(e.message.clone());
+                if matches!(refusal, Signal::Error(_)) {
+                    st.borrow_mut().trigger_errors.push((idx, e.message));
+                }
+                Err(refusal)
             }
             Err(other) => Err(other),
         }
     }
 
     // ---- controls -----------------------------------------------------------------------
+
+    /// Whether control `idx` sits inside a `cuegroup` with `CuegroupLayout = Wide`.
+    fn in_wide_cue_group(&self, st: &St, idx: usize) -> bool {
+        let engine = self.engine();
+        let page = page_of(&engine, st);
+        let mut at = page.controls[idx].parent;
+        while let Some(p) = at {
+            if page.controls[p].kind == ir::ControlKind::CueGroup {
+                return matches!(page.controls[p].prop("cuegrouplayout"), Some(ir::PropVal::Lit(v)) if v.trim().eq_ignore_ascii_case("wide"));
+            }
+            at = page.controls[p].parent;
+        }
+        false
+    }
 
     pub(super) fn test_control_op(
         &mut self,
@@ -755,6 +852,21 @@ impl Session {
                     return Ok(Value::Text(String::new().into()));
                 }
                 let v = self.control_value(st, idx)?;
+                // A Text control in a cuegroup with CuegroupLayout = Wide reads '0' (pages/lt-ab-group-properties/ABLayouts.al:68,
+                // :70, also written `wide`); a Decimal one reads its value (pages/lt-page-controls-aa/AaControls.al:422). Other
+                // types there are not pinned.
+                if self.in_wide_cue_group(st, idx) {
+                    match &v {
+                        Value::Text(_) => return Ok(Value::Text("0".into())),
+                        Value::Decimal(_) => {}
+                        _ => {
+                            return unsupported(format!(
+                                "Value of a {} control in a cuegroup with CuegroupLayout = Wide (not pinned)",
+                                v.describe()
+                            ));
+                        }
+                    }
+                }
                 // An Enum control that refused an entry shows the ordinal, not the caption (controls/W2ValueControls.al:
                 // Enum_VariableControl_*, `value` 0 after a refused `Alpha`, BC 27.5 and 29.0).
                 // An Option control does the same after the empty text was refused (pages/lt-testpage-assertequals-option/
@@ -923,4 +1035,26 @@ impl Session {
             other => unsupported(format!("TestField.{other}")),
         }
     }
+}
+
+/// Records a refused entry of control `idx` in the page's ledger. A second refusal on the control replaces its first
+/// (pages/lt-ah-pages/AhPageTests.al:444-535, GVE_TwoOnOne_*: two refusals on QtyCtl count once and the later text stays,
+/// and report/lt-report-requestpage-query-members/P105RpValid.al:135). Where another control's refusal came in between,
+/// the order the client then keeps is not pinned: refused.
+fn note_refusal(st: &St, idx: usize, text: String) -> Result<(), Signal> {
+    let mut s = st.borrow_mut();
+    match s.errors.iter().position(|(i, _)| *i == idx) {
+        None => s.errors.push((idx, text)),
+        Some(at) if at + 1 == s.errors.len() && s.errors.iter().filter(|(i, _)| *i == idx).count() == 1 => {
+            s.errors[at].1 = text;
+            s.trigger_errors.retain(|(i, _)| *i != idx);
+        }
+        Some(_) => {
+            return Err(Signal::Unsupported(
+                "a second refusal on a control after another control's refusal (the order of the errors is not pinned)"
+                    .into(),
+            ));
+        }
+    }
+    Ok(())
 }

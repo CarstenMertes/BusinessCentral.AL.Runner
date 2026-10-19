@@ -1879,6 +1879,7 @@ fn clear(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result
             Value::Query(Rc::new(std::cell::RefCell::new(crate::value::QueryState {
                 object,
                 filters: Vec::new(),
+                filter_replaced: false,
                 top: None,
                 security_filtering: None,
                 run: None,

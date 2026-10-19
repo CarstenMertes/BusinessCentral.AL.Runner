@@ -221,6 +221,9 @@ pub struct QueryState {
     /// `SetRange` / `SetFilter` per column (position in `ir::Query::columns`); a later call on the
     /// same column replaces the earlier one.
     pub filters: Vec<(usize, crate::filter::FilterExpr)>,
+    /// A `SetRange` or `SetFilter` replaced or removed a filter set before, so `filters` no longer
+    /// holds the order in which each filter was first set.
+    pub filter_replaced: bool,
     /// `TopNumberOfRows(n)`; `None` leaves the property in force.
     pub top: Option<i32>,
     /// `SecurityFiltering(x)` as a member index of the platform option; `None` before any call.
@@ -351,6 +354,10 @@ pub struct PageState {
     pub focus_in_row: bool,
     /// Validation errors the client holds: (control index, stored text).
     pub errors: Vec<(usize, String)>,
+    /// The controls among `errors` whose refusal was an error of an AL trigger (the table's or the control's OnValidate),
+    /// not one of the client's own checks, with the trigger's message: Close validates those again
+    /// (pages/lt-ah-pages/AhPageTests.al:155-159).
+    pub trigger_errors: Vec<(usize, String)>,
     /// The started line's insert was refused and the client moved on without raising
     /// (corpus handlers/TestPageFailedInsert_Tests.al:1-30): `refused` keeps the line, `pending`
     /// is the line left behind by Previous()/First(), whose insert fails again at Close().
@@ -478,6 +485,7 @@ impl PageState {
             focus: None,
             focus_in_row: false,
             errors: Vec::new(),
+            trigger_errors: Vec::new(),
             refused: false,
             close_error: false,
             selection: None,
@@ -1308,6 +1316,7 @@ impl Value {
             RtType::Query(id) => Value::Query(Rc::new(RefCell::new(QueryState {
                 object: *id,
                 filters: Vec::new(),
+                filter_replaced: false,
                 top: None,
                 security_filtering: None,
                 run: None,

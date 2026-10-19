@@ -176,6 +176,7 @@ impl Session {
             s.focus = None;
             s.focus_in_row = false;
             s.errors = Vec::new();
+            s.trigger_errors = Vec::new();
             s.blank_on_open = false;
             s.refused = false;
             s.pending = None;
@@ -636,15 +637,30 @@ impl Session {
         // A page that still holds a refused entry drops its unsaved row when it closes (pages/lt-page-controls-aa/AaFieldProps.al:
         // AA_CharAllowed_PageField `stored` and AA_CharAllowed_TableField `stored-after-page`: entries accepted before the refused one
         // are not stored either).
-        // Pinned for a card whose refused entries are all CharAllowed refusals; other pages keep the earlier behavior (the edits are saved), which P119_PageMinMax, P119_PageNumericSetValue and ValueAssign_Number_FromText_And_Decimal rely on.
-        if !st.borrow().errors.is_empty() {
-            let char_allowed_only =
-                !self.is_list(st) && st.borrow().errors.iter().all(|(_, m)| m.starts_with("The character "));
-            if char_allowed_only {
-                let mut s = st.borrow_mut();
-                s.draft = false;
-                s.dirty = false;
+        // The same for a refused MinValue, MaxValue or number conversion (pages/lt-ah-pages/AhPageTests.al:73, :94, :116, :137:
+        // `stored` as seeded, Close answers Yes). A refusal raised by the table's or the control's OnValidate is validated again
+        // at Close (:155-159): Close answers Yes, stores nothing, and leaves that error as the last error with the code
+        // ClientValidateField:NSValidateField. The trigger is not run again here: whether its other effects happen again at
+        // Close is not pinned (docs/probes-needed.md). With two such refusals which error is left last is not pinned: the last
+        // error then refuses to be read (pages/lt-f3-pages/F3ValidationAddinFilter.al:253 closes such a page and reads nothing).
+        // On a list the edits are kept (the earlier behavior; what BC does is not pinned: docs/probes-needed.md, Close after a refused entry).
+        if !st.borrow().errors.is_empty() && !self.is_list(st) {
+            let trigger_errors = st.borrow().trigger_errors.clone();
+            match trigger_errors.as_slice() {
+                [] => {}
+                [(_, message)] => {
+                    self.last_error = al_builtins::native::AlError {
+                        message: message.clone(),
+                        code: "ClientValidateField:NSValidateField".into(),
+                        call_stack: String::new(),
+                        ..Default::default()
+                    };
+                }
+                _ => self.last_error = al_builtins::native::unpinned_error(),
             }
+            let mut s = st.borrow_mut();
+            s.draft = false;
+            s.dirty = false;
         }
         // BC's client saves the child forms before the form's own record on a saving close
         // (corpus testpart/TestOkPartRow.al:OkInvoke_HeaderOnModifySeesThePartRowSavedFirst).

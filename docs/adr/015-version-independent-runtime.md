@@ -1,6 +1,10 @@
 # ADR-015: Version-independent runtime
 
 - Status: Accepted (2026-10-13). The owner's answers to the open questions are in section 8.
+- Amended (owner, 2026-10-19): the corpus side is now the corpus default branch `master`. The side
+  branch `al-runtime-rs` was fast-forwarded into it, and work on the old AL runner on this corpus has stopped.
+  Where this ADR says `al-runtime-rs` branch or "never touches the corpus `master`", read `master`. The flow
+  (staging, bump pull request, merge commit) is in `docs/agents/corpus-writer.md`, "How a bump lands on master".
 - Date: 2026-10-13
 - Amends: ADR-007 (one oracle, one baseline, BC 27.5 only), ADR-008
   (catalog has no version data), ADR-013 (Layer A, floor below BC 27)
@@ -17,7 +21,8 @@ Decisions already made by the owner:
 - **Oracles.** The corpus CI runs the suite against each BC version in a
   matrix and publishes one JUnit report per version. It does this on the
   corpus side branch `al-runtime-rs` (repo `StefanMaron/BusinessCentral.AL.Language.Tests`).
-  This repository never touches the corpus `master`.
+  This repository never touches the corpus `master`. (Superseded 2026-10-19: the corpus side is now
+  `master`; see the amendment at the top.)
 - **Per version.** al-runtime-rs keeps one oracle and one passing-tests
   baseline (the ratchet) per version.
 - **Probes.** Local BC Linux containers are used for quick probes.

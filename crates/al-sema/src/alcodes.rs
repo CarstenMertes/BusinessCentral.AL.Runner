@@ -1,5 +1,5 @@
 //! Compile errors with the AL compiler's own codes (`AL0xxx`), for the must-not-compile corpus
-//! (`tests/must-not-compile` of the corpus repo, branch `al-runtime-rs`; ADR-009 and the owner
+//! (`tests/must-not-compile` of the corpus repo, branch `master`; ADR-009 and the owner
 //! decision of 2026-10-14: our diagnostics for code BC rejects use BC's codes, and tests pin them).
 //!
 //! Rule 6 of `CLAUDE.md` applies in the other direction too: a check here rejects only a shape the

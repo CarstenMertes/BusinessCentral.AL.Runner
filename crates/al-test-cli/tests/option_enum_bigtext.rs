@@ -1,5 +1,5 @@
 //! Option to Enum and `BigText.Read` as the probes of corpus tests/al-language/types/PEOptionEnumBigText.al
-//! pin them (written against a real BC 27.5 service tier; corpus branch `al-runtime-rs`). The procedures
+//! pin them (written against a real BC 27.5 service tier; corpus branch `master`). The procedures
 //! below are those probes with the observer replaced by `Error` on a difference; each cites its probe.
 
 use al_test_cli::report::Outcome;

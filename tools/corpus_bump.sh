@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Bump the corpus to the commit of a green corpus CI run, in one command (issue 44). The steps are the
 # ones oracle/README.md describes ("To bump"):
-#   1. check the run: completed and green, and its head commit on the corpus branch al-runtime-rs;
+#   1. check the run: completed and green, and its head commit on the corpus branch master (the default
+#      branch; it moves only through a pull request from al-runtime-rs-staging, merged with a merge commit);
+#      when a merge commit brought the commit into master, that merge must hold exactly the commit's files;
 #   2. find the artifacts: per leg (27.5, 28.5, 29.0) exactly two named junit-test-results-<leg>, the
 #      larger is the oracle (junit-al-language.xml), the smaller the OnPrem file;
 #   3. move the corpus submodule to the run's commit;
@@ -25,7 +27,7 @@ root="$(dirname "$here")"
 gh="${CORPUS_BUMP_GH:-gh}"
 corpus="${CORPUS_BUMP_CORPUS:-$root/corpus}"
 repo="StefanMaron/BusinessCentral.AL.Language.Tests"
-branch="al-runtime-rs"
+branch="master"
 legs="27.5 28.5 29.0"
 
 usage() { echo "usage: tools/corpus_bump.sh [--dry-run] RUN_ID" >&2; exit 2; }
@@ -60,6 +62,14 @@ else
 fi
 git -C "$corpus" cat-file -e "$sha^{commit}" 2>/dev/null || die "commit $sha of run $run is not in the corpus repository"
 git -C "$corpus" merge-base --is-ancestor "$sha" "$ref" || die "commit $sha of run $run is not on the corpus branch $branch"
+# A bump lands through a pull request: the run tested the commit merged with master. When master had commits
+# the commit did not have, the run's JUnit covers files the pinned commit lacks. The merge commit that brought
+# the commit into master (the oldest first-parent commit of master that contains it) must have its files.
+if ! git -C "$corpus" rev-list --first-parent "$ref" | grep -x "$sha" >/dev/null; then
+  merge="$(git -C "$corpus" rev-list --first-parent --ancestry-path "$sha..$ref" | tail -n 1)"
+  [ "$(git -C "$corpus" rev-parse "$merge^{tree}")" = "$(git -C "$corpus" rev-parse "$sha^{tree}")" ] \
+    || die "commit $sha of run $run came into $branch with merge ${merge:0:7}, whose files differ from it ($branch had commits the run's commit lacks): merge origin/$branch into the bump branch, run CI on the pull request again and bump from that run"
+fi
 echo "run $run: green, commit $sha on $branch"
 
 # 2. The artifacts: per leg the larger is the oracle, the smaller the OnPrem file.

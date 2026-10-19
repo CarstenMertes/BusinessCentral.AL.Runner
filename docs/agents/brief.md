@@ -81,6 +81,11 @@ on the main machine or as a remote worker (`docs/agents/remote-worker.md`).
   on real BC (the local BC 29 container or the corpus CI), implement against it and
   cite the staging file. The branch may merge into `main` before the corpus bump;
   the bump then turns the cited behavior into a ratcheted corpus case. Do not wait.
+- **Corpus branches.** The `corpus` submodule pins a commit of the corpus default
+  branch `master` (since 2026-10-19; before that the side branch `al-runtime-rs`).
+  Probes land on `master` only through a bump pull request from `al-runtime-rs-staging`
+  (`docs/agents/corpus-writer.md`, "How a bump lands on master"). Never push to either
+  branch yourself.
 - **A corpus bump shrinks `docs/probes-needed.md`.** Whoever bumps the corpus
   deletes every row the new cases pin, and reports the table row count before
   and after.

@@ -13,13 +13,26 @@ You never change al-runtime-rs code. You write AL in the corpus repo, measure it
 | What | Where |
 |---|---|
 | Corpus repo | `https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests` (local clone, call it `$CORPUS`) |
-| Corpus branch the runtime pins | `al-runtime-rs` (only moves when staging is green on 27, 28, 29) |
-| Integration branch | `al-runtime-rs-staging` (the publisher merges green writer branches here and runs the full matrix) |
-| Your branch | `al-runtime-rs-writer-<name>`, created from the current `al-runtime-rs-staging`; merge staging into it before you hand it over |
+| Corpus branch the runtime pins | `master`, the default branch (since 2026-10-19; before that the side branch `al-runtime-rs`). A ruleset protects it: changes only through a pull request with the 10 required checks green, no direct push, no force push, no delete |
+| Integration branch | `al-runtime-rs-staging` (the publisher merges green writer branches here; the CI batcher merges writer commits onto it for test runs) |
+| Your branch | `al-runtime-rs-staging-<letter>` (local writers) or `al-runtime-rs-writer-<name>` (the laptop), created from the current `al-runtime-rs-staging`; merge staging into it before you hand it over |
 | Local BC container | `https://github.com/StefanMaron/MsDyn365Bc.On.Linux` (call it `$BCLINUX`) |
 | Tools for this guide | `tools/corpus-writer/` in al-runtime-rs |
 
-Never push to `al-runtime-rs` or `al-runtime-rs-staging`, never open a pull request to `master`. Never edit or delete an existing test (add new ones). Never put secrets in files.
+Never push to `master` or `al-runtime-rs-staging`, and never open a pull request to `master` (the publisher does that, see "How a bump lands on master"). Never edit or delete an existing test (add new ones). Never put secrets in files.
+
+### How a bump lands on master
+
+For the publisher and the orchestrator. Writers only hand over their branch.
+
+1. Make the bump branch from `origin/al-runtime-rs-staging`: `al-runtime-rs-staging-pub<n>`. If `git merge-base --is-ancestor origin/master origin/al-runtime-rs-staging` fails (an outside pull request was merged into `master`), merge `origin/master` into the bump branch first. The pull request run tests the bump branch merged with `master`; the pinned commit must hold every file that run tested, and `tools/corpus_bump.sh` refuses the pin otherwise.
+2. Merge the green writer branches into the bump branch and push it.
+3. Open the pull request from the bump branch into `master`. Its CI run (event `pull_request`) is the matrix of the bump: legs 27.5, 28.5 and 29.0 of the Cloud, OnPrem and OnPrem DotNet jobs, plus the object-id gate. These ten checks are the required ones. Fix on the bump branch and push until the run is green; do not dispatch a second matrix run for the same commit. Never open the pull request from `al-runtime-rs-staging` itself: the repository deletes the head branch of a merged pull request.
+4. When the run is green, merge with a merge commit: `gh pr merge <N> --merge`. Never squash or rebase: both rewrite the commit, and the run's commit would then not be on `master`.
+5. Fast-forward staging to `master`, so writers and the CI batcher start from the new state: `git push origin origin/master:refs/heads/al-runtime-rs-staging` (check `git merge-base --is-ancestor origin/al-runtime-rs-staging origin/master` first).
+6. In al-runtime-rs, `tools/corpus_bump.sh <run id>` with the id of that pull request run. It checks that the run's commit is on `master` and that the merge commit has the same files as the run's commit.
+
+Outside contributors open pull requests to `master` as before. They merge with a merge commit too; step 1 then brings their commits into the next bump branch.
 
 The corpus app is `tests/al-language` (Cloud target, BC 27 symbols, runtime 16.0). Two more apps exist: `tests/al-language-onprem` (Target OnPrem: for `Scope = OnPrem` objects such as `Database.SID`, `Report.SaveAsPdf`, `Environment Info Test Library`) and `tests/al-language-onprem-dotnet` (needs AL compiler 18 or newer).
 
@@ -141,22 +154,24 @@ Each of these broke a published batch.
 When everything is green locally on BC 29 and the gates pass:
 
 1. `git fetch && git merge origin/al-runtime-rs-staging` into your branch; re-run the gates and your new tests once.
-2. Push `al-runtime-rs-writer-<name>`.
+2. Push your branch.
 3. Tell the publisher (SendMessage or the coordinator): branch, last commit, number of tests, rows or topic pinned, and anything you dropped and why.
 
-The publisher merges your branch into staging, dispatches the full matrix and answers with failures. A 27 or 28 difference found there is fixed with a version guard, not by dropping the probe, unless it is a runner artefact (rule 2).
+The publisher merges your branch into staging, runs the matrix (the bump pull request to `master`, see above) and answers with failures. A 27 or 28 difference found there is fixed with a version guard, not by dropping the probe, unless it is a runner artefact (rule 2).
 
 ## Running the GitHub CI yourself
 
 CI is only the final check for 27 and 28; you are green on 29 locally first.
 
+Local writers do not dispatch `ci.yml` themselves: they queue their pushed commit with the CI batcher (`~/.cache/al-runtime/orchestration/tools/ci-batch/`, README there), which merges many writer commits onto `al-runtime-rs-staging` and runs one CI run per leg for all of them. The laptop writer, which has no batcher, dispatches one leg at a time:
+
 ```bash
-gh workflow run 282763884 -R StefanMaron/BusinessCentral.AL.Language.Tests --ref <your branch>
+gh workflow run ci.yml -R StefanMaron/BusinessCentral.AL.Language.Tests --ref <your branch> -f bc_version=29.0
 gh run list -R StefanMaron/BusinessCentral.AL.Language.Tests --branch <your branch> --limit 3
 python3 tools/corpus-writer/ci-failures.py <run id>    # failing tests per BC version from the junit artifacts
 ```
 
-The matrix has ten Cloud legs (27.0, 27.3, 27.5, 28.0 to 28.5, 29.0) and ten OnPrem legs, about 20-30 minutes in total. **Concurrency is per ref**: starting a new run on a branch cancels the run still going on the same branch (observed); runs on different branches run in parallel. So push, dispatch once, wait for the result, then fix.
+Without `bc_version` the run has three legs (27.5, 28.5, 29.0) for each of the three test jobs (Cloud, OnPrem, OnPrem DotNet). **Concurrency is per ref**: starting a new run on a branch cancels the run still going on the same branch (observed); runs on different branches run in parallel. So push, dispatch once, wait for the result, then fix.
 
 ## Where the facts go
 

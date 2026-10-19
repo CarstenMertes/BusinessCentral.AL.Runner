@@ -369,10 +369,7 @@ mod tests {
     // al-language/text/lt-bu-multiline-crlf/BuMultilineCrlf.al:23-27).
     #[test]
     fn multiline_text_literal_is_one_string_token() {
-        assert_eq!(
-            significant("@'a\nb' x"),
-            vec![(StringLit, "@'a\nb'"), (Ident, "x")]
-        );
+        assert_eq!(significant("@'a\nb' x"), vec![(StringLit, "@'a\nb'"), (Ident, "x")]);
         assert_eq!(significant("@'a\r\nb'"), vec![(StringLit, "@'a\r\nb'")]);
         assert_eq!(significant("@'it''s\nq'"), vec![(StringLit, "@'it''s\nq'")]);
         assert_eq!(significant("@'single'"), vec![(StringLit, "@'single'")]);

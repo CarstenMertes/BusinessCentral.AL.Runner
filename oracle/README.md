@@ -7,7 +7,7 @@ pass rate is measured against: every `<testcase>` in it passed on real BC.
 
 | Field | Value |
 |---|---|
-| Corpus repo | StefanMaron/BusinessCentral.AL.Language.Tests, branch `al-runtime-rs` |
+| Corpus repo | StefanMaron/BusinessCentral.AL.Language.Tests, branch `master` (the default branch; until 2026-10-19 the side branch `al-runtime-rs`, whose commits are all on `master`) |
 | Corpus pin | `db082fc475847efdfa0a7d4cd10acc832a05555a` (the `corpus` submodule; must equal `corpus_commit` in `oracle.toml`) |
 
 | Major | Oracle leg | Corpus commit of the run | Workflow run | Artifact | Artifact id | Cases |

@@ -1,6 +1,6 @@
 //! `tools/corpus_bump.sh` (issue 44): the refusal paths, against a fixture (a fake `gh` and a throwaway corpus
 //! repository), with no network. The script must refuse before it changes anything when the run is not green,
-//! when its head commit is not on the corpus branch `al-runtime-rs`, or when a leg does not have exactly the two
+//! when its head commit is not on the corpus branch `master`, or when a leg does not have exactly the two
 //! artifacts (the oracle and the OnPrem file).
 
 use std::path::{Path, PathBuf};
@@ -36,7 +36,7 @@ fn git(dir: &Path, args: &[&str]) -> String {
     String::from_utf8_lossy(&o.stdout).trim().to_string()
 }
 
-/// A corpus repository with a commit on `al-runtime-rs` and one on a side branch only.
+/// A corpus repository with a commit on `master` and one on a side branch only.
 struct Fixture {
     dir: tempfile::TempDir,
     on_branch: String,
@@ -47,7 +47,7 @@ fn fixture() -> Fixture {
     let dir = tempfile::tempdir().unwrap();
     let corpus = dir.path().join("corpus");
     std::fs::create_dir_all(corpus.join("tests")).unwrap();
-    git(&corpus, &["init", "-q", "-b", "al-runtime-rs"]);
+    git(&corpus, &["init", "-q", "-b", "master"]);
     std::fs::write(corpus.join("tests/a.al"), "x").unwrap();
     git(&corpus, &["add", "."]);
     git(&corpus, &["commit", "-qm", "a"]);
@@ -57,7 +57,7 @@ fn fixture() -> Fixture {
     git(&corpus, &["add", "."]);
     git(&corpus, &["commit", "-qm", "b"]);
     let off_branch = git(&corpus, &["rev-parse", "HEAD"]);
-    git(&corpus, &["checkout", "-q", "al-runtime-rs"]);
+    git(&corpus, &["checkout", "-q", "master"]);
     Fixture {
         dir,
         on_branch,
@@ -141,7 +141,7 @@ fn a_run_whose_commit_is_not_on_the_corpus_branch_is_refused() {
     );
     let (code, out) = bump(&f, &gh, &["--dry-run", "123"]);
     assert_ne!(code, 0, "{out}");
-    assert!(out.contains("not on the corpus branch al-runtime-rs"), "{out}");
+    assert!(out.contains("not on the corpus branch master"), "{out}");
 }
 
 #[test]
@@ -173,6 +173,57 @@ fn a_green_run_on_the_branch_passes_the_checks_in_a_dry_run() {
     // The oracle is the larger artifact of a leg, the OnPrem file the smaller.
     assert!(out.contains("27.5: oracle artifact 102, onprem artifact 101"), "{out}");
     assert!(out.contains("dry run: nothing changed"), "{out}");
+}
+
+/// A staging commit merged into `master` with a merge commit, the way a bump pull request lands
+/// (ruleset of the corpus repo: master takes pull requests only). With `outside`, master first gets a
+/// commit staging does not have (an outside contributor's merge), so the merge commit's files differ
+/// from the staging commit. Returns the staging commit.
+fn merged_by_pull_request(f: &Fixture, outside: bool) -> String {
+    let corpus = f.dir.path().join("corpus");
+    git(&corpus, &["checkout", "-qb", "staging", "master"]);
+    std::fs::write(corpus.join("tests/c.al"), "z").unwrap();
+    git(&corpus, &["add", "."]);
+    git(&corpus, &["commit", "-qm", "c"]);
+    let staging = git(&corpus, &["rev-parse", "HEAD"]);
+    git(&corpus, &["checkout", "-q", "master"]);
+    if outside {
+        std::fs::write(corpus.join("tests/d.al"), "w").unwrap();
+        git(&corpus, &["add", "."]);
+        git(&corpus, &["commit", "-qm", "d"]);
+    }
+    git(&corpus, &["merge", "-q", "--no-ff", "-m", "bump", "staging"]);
+    staging
+}
+
+#[test]
+fn a_staging_commit_merged_into_master_by_pull_request_passes_the_checks_in_a_dry_run() {
+    let f = fixture();
+    let staging = merged_by_pull_request(&f, false);
+    let gh = fake_gh(
+        f.dir.path(),
+        &run_json("success", &staging),
+        &artifacts(&["27.5", "28.5", "29.0"], 2),
+    );
+    let (code, out) = bump(&f, &gh, &["--dry-run", "123"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains("dry run: nothing changed"), "{out}");
+}
+
+#[test]
+fn a_staging_commit_whose_merge_brought_other_master_changes_is_refused() {
+    // The pull request run tests staging merged with master. When master had commits staging did not
+    // have, the run's JUnit covers files the pinned staging commit does not hold.
+    let f = fixture();
+    let staging = merged_by_pull_request(&f, true);
+    let gh = fake_gh(
+        f.dir.path(),
+        &run_json("success", &staging),
+        &artifacts(&["27.5", "28.5", "29.0"], 2),
+    );
+    let (code, out) = bump(&f, &gh, &["--dry-run", "123"]);
+    assert_ne!(code, 0, "{out}");
+    assert!(out.contains("merge origin/master into"), "{out}");
 }
 
 #[test]

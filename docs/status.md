@@ -71,7 +71,7 @@ Every test passes in 19 more areas (836 tests): access-control, autoformat, date
 
 ## Must-not-compile (2026-10-14)
 
-The corpus repo holds AL files the real compiler rejects (`tests/must-not-compile`, branch `al-runtime-rs`; the
+The corpus repo holds AL files the real compiler rejects (`tests/must-not-compile`, branch `master`; the
 submodule does not carry them yet). Each records the AL codes (`// @expect AL0161 | text`). The front end must
 report the same codes. Run: `al-test-cli --must-not-compile DIR [--bc-version N]`, or
 `AL_MNC_DIR=DIR cargo test -p al-test-cli --test must_not_compile`; the test skips with a message when the folder is absent.

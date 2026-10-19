@@ -1,4 +1,4 @@
 [submodule "corpus"]
 	path = corpus
 	url = https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests
-	branch = al-runtime-rs
+	branch = master

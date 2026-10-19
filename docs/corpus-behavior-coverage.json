@@ -12712,6 +12712,15 @@
           "site": "record/lt-x-table-props/XTableObjects.al:127"
         },
         {
+          "corpus_uses": 1,
+          "group": "table/field",
+          "ms_uses": 0,
+          "name": "SQLTimestamp",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "record/lt-x-table-props/XTableObjects.al:28"
+        },
+        {
           "corpus_uses": 2,
           "group": "table/field",
           "ms_uses": 0,
@@ -13691,15 +13700,6 @@
           "pinned": true,
           "runtime_reads": false,
           "site": "record/lt-x-table-props/XTableObjects.al:27"
-        },
-        {
-          "corpus_uses": 1,
-          "group": "table/field",
-          "ms_uses": 0,
-          "name": "SQLTimestamp",
-          "pinned": true,
-          "runtime_reads": false,
-          "site": "record/lt-x-table-props/XTableObjects.al:28"
         },
         {
           "corpus_uses": 4,
@@ -16207,7 +16207,7 @@
         "code": "StackOverflow",
         "file": "crates/al-vm/src/lib.rs",
         "generic": false,
-        "line": 1048,
+        "line": 1070,
         "pinned": true,
         "site": "record/TestCalcFieldsTruncateUniqueContracts.al:179",
         "template": "There is insufficient memory to execute this function. This can be caused by recursive function calls. Contact your system administrator."
@@ -16261,7 +16261,7 @@
         "code": "RenameArgument",
         "file": "crates/al-vm/src/records.rs",
         "generic": false,
-        "line": 2451,
+        "line": 2680,
         "pinned": true,
         "site": "recordref/lt-refs/RfTWrite.al:223",
         "template": "The number of field arguments does not match the primary key size."
@@ -19806,7 +19806,7 @@
         "pinned": true,
         "scope": "",
         "site": "record/lt-x-table-props/XTableObjects.al:28",
-        "state": "unknown"
+        "state": "implemented"
       },
       {
         "area": "properties",

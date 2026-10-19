@@ -161,3 +161,37 @@ fn corpus_behavior_coverage_is_current() {
         );
     }
 }
+
+/// `crates/al-builtins/src/pinned_columns.rs`: the columns of platform tables the corpus pins
+/// (`al_builtins::platform::PINNED_COLUMNS`), derived from the corpus so that the list cannot drift.
+/// Regenerate with `UPDATE_GOLDEN=1` on this test.
+#[test]
+#[ignore = "slow unoptimised: cargo test --release -p al-test-cli --test corpus_resolve_deps -- --ignored"]
+fn pinned_columns_are_current() {
+    let commit = String::from_utf8(
+        std::process::Command::new("git")
+            .arg("-C")
+            .arg(root().join("corpus"))
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap()
+    .trim()
+    .to_string();
+    let ws = al_test_cli::coverage::corpus_workspace(&root()).unwrap();
+    let members = al_sema::members::build(&ws);
+    let checked = al_sema::check::check(&ws, &members, &al_builtins::catalog::Catalog::load());
+    let text =
+        al_test_cli::platform_columns::to_rust(&al_test_cli::platform_columns::pinned_columns(&ws, &checked), &commit);
+    let path = root().join("crates/al-builtins/src/pinned_columns.rs");
+    if std::env::var_os("UPDATE_GOLDEN").is_some() {
+        std::fs::write(&path, &text).unwrap();
+    }
+    let committed = std::fs::read_to_string(&path).unwrap_or_default();
+    assert!(
+        committed == text,
+        "crates/al-builtins/src/pinned_columns.rs is stale: run UPDATE_GOLDEN=1 cargo test --release -p al-test-cli --test corpus_resolve_deps -- --ignored pinned_columns"
+    );
+}

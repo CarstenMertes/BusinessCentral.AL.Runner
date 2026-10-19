@@ -4691,6 +4691,7 @@
 68024 Worksheet_RunModal_LookupMode
 68039 DeleteAllFalse_WithDatabaseDeleteEnabled
 68039 DeleteAllTrue_WithDatabaseDeleteEnabled
+68039 SetupSubscriberWritesTheAskedTable
 68045 Ascending_WholeKey_Ties
 68045 SetAscending_SingleFieldKey
 68045 SetAscending_TwoFieldKey_OneFieldAtATime
@@ -7092,6 +7093,7 @@
 70351 P98_StrLen_Guid
 70352 P98_UpperCase_Guid
 70356 P98_Stale_AfterAsserterror_SameBuffer
+70356 P98_Stale_BufferNotReassigned
 70356 P98_Stale_CommitThenErrorThenModify_Rec
 70356 P98_Stale_ModifyAfterRowDeleted
 70356 P98_Stale_RowChangedByOtherBuffer
@@ -8573,6 +8575,7 @@
 71505 GetFilters_Format_With_Caption_And_Quoting
 71505 Reset_Clears_Filters_Key_Order_But_Not_Fields
 71505 Reset_Does_Not_Reinitialize_Fields
+71505 SetCurrentKey_Ad_Hoc_Keys
 71505 SetCurrentKey_CurrentKey_Ascending
 71505 SetCurrentKey_Does_Not_Filter_And_Persists_Through_Find
 71505 SetCurrentKey_Invalid_Field_Combinations
@@ -12255,6 +12258,11 @@
 75010 DateFormula_TextField_AcceptsFormulaText
 75010 MaskType_ConcealedAndNone_ValueUnchanged
 75010 SQLDataType_Code_GetRowWithNine
+75010 SQLDataType_Code_ModifyToLeadingZeroErrors
+75010 SQLDataType_Code_ModifyToText
+75010 SQLDataType_Code_ModifyToZeroErrors
+75010 SQLDataType_Code_ReadRowsAndKeys
+75010 SQLTimestamp_BigIntegerField_ReadsRowVersion
 75010 SignDisplacement_Format_NegativeAndPositive
 75010 TableExt_ModifyBlankZero_FormatAndPage
 75010 TableExt_ModifyOptionCaption_FormatAndPage
@@ -12385,7 +12393,9 @@
 77532 AC_Attr_TestPermissions_Disabled
 77532 AC_Attr_TestPermissions_NonRestrictive
 77532 AC_Attr_TestPermissions_Restrictive
+78008 Ties_AscendingFalseThenSetAscending
 78008 Ties_Basic
+78008 Ties_ExplicitPrimaryKeyInKey
 78008 Ties_NonKeyField
 78008 Ties_PrimaryKeyCurrent
 78104 Find_EmptyTable_CodeKey
@@ -12479,6 +12489,7 @@
 79850 AddRecord_SameNameOtherTable
 79850 AddRecord_SameNameSameTable
 79850 Format_FlowFilterPositions
+79850 Media_ImportStream_OnFilledField
 79850 TableGlobals_ArrayElement
 79850 TableGlobals_ArrayElement_RecordRef
 79850 VariantRecordRef_AssignedToRecord

@@ -5330,6 +5330,7 @@
 68718 RunModalWithRecord_FilteredAndPositioned
 68718 SetRecordOnly_NoFilter
 68718 SetTableViewAndSetRecord
+68718 SetTableView_DescendingOrder
 68718 SetTableView_FilteredAndPositionedRecord
 68718 SetTableView_ThenFilterChangedInRecord
 68721 NoComma_CaptionRead
@@ -7046,6 +7047,7 @@
 70306 TempToTemp_BufferAndFilters
 70310 PageRun_TempRecord_NonModal
 70310 PageVar_SetRecord_NonTempRecord
+70310 PageVar_SetRecord_TempRecord
 70310 PageVar_SetRecord_ThenSetTableView_Temp
 70310 PageVar_SetTableView_NonTempFilter
 70310 PageVar_SetTableView_TempRecord
@@ -9140,9 +9142,11 @@
 71955 P184_TextKey_Get_And_Filter_OtherCase_Blanks
 71959 P184_RunModal_NameSortedView_NoRecord_And_Positioned
 71959 P184_RunModal_NameSortedView_RecordOnRow
+71959 P184_RunModal_NoRecord_DescendingView
 71959 P184_RunModal_RecordOnRowInsideView
 71959 P184_RunModal_RecordOnRowOutsideWhere
 71959 P184_RunModal_RecordWithConflictingGroupFilter
+71959 P184_RunModal_RecordWithOwnFilterAndKey
 71965 P193_Contains_Starts_Ends
 71965 P193_IndexOf_LastIndexOf
 71966 P193_Case_Trim
@@ -10047,6 +10051,8 @@
 72871 TextIndex_PositionsAroundTheLength
 72871 TextIndex_ReadingACharacter
 72879 DateFormulaControl_StoredAfterClose
+72895 PageVar_MethodCallBeforeRun
+72895 PageVar_RunTwiceOnOneVariable
 72899 Lookup_ControlTriggerFalse
 72899 Lookup_ControlTriggerTrue
 72899 Lookup_NoControlTrigger
@@ -10334,12 +10340,15 @@
 73079 Run_ListWithFilteredRecord
 73079 Run_ListWithRecordAndFieldNo
 73079 Run_NumberOnly
+73079 Run_UnknownPage
 73079 Run_UnknownPageWithoutTry
 73079 Run_WithRecord
 73079 Run_WithRecordAndFieldNo
 73079 Run_WithRecordAndFieldValue
+73079 Run_WithRecordNotInTable
 73080 RunModal_FieldNoZeroAndUnknown
 73080 RunModal_RecordOnly_EachResponse
+73080 RunModal_UnknownPage
 73081 IsSessionActive_AfterStop
 73081 Start_NotACodeunitObject
 73081 Start_TimeoutZeroAndNegative
@@ -10410,6 +10419,7 @@
 73146 P128_Evaluate_DateFormula_DateText
 73151 P128_TestPageModalHandler_PageWithOnInit
 73151 P128_TypedModalHandler_PageWithOnInit_Cancel
+73151 P128_TypedModalHandler_PageWithOnInit_PageVariable
 73151 P128_TypedModalHandler_PageWithOnInit_RunModalWithRecord
 73162 P128_ClearAll_InOnPreReport
 73162 P128_ClearAll_NotCalled_Control
@@ -12309,7 +12319,9 @@
 74999 P146_GetView_MarkedOnly_Real
 74999 P146_GetView_MarkedOnly_WithFilterAndKey
 74999 P146_GetView_Temporary
+74999 P146_PageRunModal_MarkedOnly_Real
 74999 P146_PageRunModal_SortedFiltered_Real
+74999 P146_PageRunModal_Temporary
 74999 P146_SetView_OnTemporary_AfterMarks
 75010 AllowInCustomizations_Table_FieldsStillUsable
 75010 CharAllowed_Validate_AllowedAndDisallowed
@@ -12509,6 +12521,11 @@
 78620 GVE_Zero_page_count
 78620 GVE_Zero_page_no_index
 78620 GVE_Zero_qty_count
+78621 Tree_ThroughPageRun
+78621 Tree_ThroughPageRunModal
+78621 Tree_ThroughPageVariableRun
+78621 Tree_ThroughPageVariableRunModal
+78621 Tree_ThroughTestPageVariable
 78622 DocumentHost_PartEditExistingLine
 78622 DocumentHost_PartNewLine
 78631 LittleEndian_NoBom_DeclaredUtf16

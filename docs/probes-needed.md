@@ -922,3 +922,11 @@ Refused in `al-vm/src/pages/rows.rs` until a probe pins them:
 - GoToKey past a full window of a find list: with OnAfterGetCurrRecord, a second block of 20 rows, or a key the view does not have (AiListOrderTests.al:999 pins 25 rows without that trigger).
 - A descending find list with OnAfterGetCurrRecord that opens on a row other than the last of its view, and First with a second full block above the window (PnF06FindListMoves.al:304, :318 pin 3 and 25 rows).
 - Not observed by its test: the read of the opening row before OnNextRecord(-1) when a find list opens on its last row and has rows above it (AiListOrderTests.al:825 OpenOnRow_SetPositionInOnOpenPage_LastRow; implemented as no read, the one-row rule).
+
+## Page control text and captions (refused shapes, 2026-10-19)
+
+Refused in `al-vm/src/pages/format.rs` until a probe pins them:
+- `ClosingDates = false` on a control whose source field sets `ClosingDates = true`, showing a closing date (control on: pages/lt-page-presentation-properties/P119ReportFields.al:174; field on: record/lt-x-table-props/XTablePropsTests.al:524).
+- A control `Caption` over a source field that has a `CaptionClass`: which one `Caption()` shows (field CaptionClass over field Caption: pageext/lt-page-ext-properties/TableExtCaptionClass.al:69).
+- A CaptionClass that gives the same text at a later fill, a `Caption()` read of an expression that changed since the fill, and a second `Caption()` of a field CaptionClass that raises OnResolveCaptionClass: whether BC raises the event again (misc/W2CaptionClass.al:174-178 pins a changed text after SetValue; XTablePropsTests.al:483-487 pins one read).
+- `SetValue('c12/31/2025')` with a lower-case closing mark on a ClosingDates control (`C` is pinned: P119ReportFields.al:174).

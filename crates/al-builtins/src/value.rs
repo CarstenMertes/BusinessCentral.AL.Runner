@@ -318,6 +318,9 @@ pub struct PageState {
     /// `Visible` of each control as it was when the page opened (the property is frozen then,
     /// corpus handlers/TestPageControlPropertyLiveness_Tests.al:56).
     pub frozen_visible: Vec<bool>,
+    /// The caption each control's CaptionClass resolved to when the page filled: (control index, class text, caption).
+    /// `Caption()` reads it without raising OnResolveCaptionClass again (corpus misc/W2CaptionClass.al:113-116).
+    pub control_captions: Vec<(usize, String, String)>,
     /// Primary keys of the rows a repeater page has populated (its window).
     pub window: Vec<WindowRow>,
     /// The window holds the rows from the first row of the view on, with none missing: the page
@@ -468,6 +471,7 @@ impl PageState {
             draft: false,
             dirty: false,
             frozen_visible: Vec::new(),
+            control_captions: Vec::new(),
             window: Vec::new(),
             window_from_start: false,
             window_eof: false,

@@ -2,6 +2,7 @@
 
 mod base_access;
 mod control_entry;
+mod control_text;
 mod curr_field_no_assign;
 mod filterpage;
 mod gone_row;

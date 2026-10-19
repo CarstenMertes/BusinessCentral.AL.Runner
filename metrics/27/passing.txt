@@ -5333,9 +5333,12 @@
 68718 SetTableView_DescendingOrder
 68718 SetTableView_FilteredAndPositionedRecord
 68718 SetTableView_ThenFilterChangedInRecord
+68721 ClaimedArea_CaptionReadTwice
+68721 ExpressionFromPageVariable_FollowsTheVariable
 68721 NoComma_CaptionRead
 68721 OpenPage_WhatTheEventSees
 68721 PlainCaption_RaisesNoEvent
+68721 UnclaimedArea_CaptionReadTwice
 68725 NewAtTheEnd_ForComparison
 68725 NewInTheMiddle_CursorOnFirstRow_KeyBetween
 68725 NewInTheMiddle_CursorOnMiddleRow_KeyBefore
@@ -8785,6 +8788,7 @@
 71672 P119_PageNumericSetValue
 71674 P119_PromotedActions
 71678 P119_CustomizedField
+71680 P119_ReportClosingDate
 71680 P119_ReportDecimalAndBlank
 71680 P119_ReportFieldState
 71680 P119_ReportMinMax
@@ -9589,6 +9593,7 @@
 72293 P123_ValuesAllowedOnTableField
 72295 P123_CompressedBlobRoundTrip
 72299 P123_ExtOptionMembers
+72307 P123_ExtFieldCaptionClass
 72317 P123_AnalysisModeDisabled
 72321 P123_PageMaxLength
 72323 P123_ViewsDeclaredOnly
@@ -11335,6 +11340,7 @@
 73967 Temporary_RecordId
 73968 RecordId_Comparison
 73968 RecordId_InLongerTexts
+73973 Page_DimensionClasses
 73973 Page_VariableExpression
 73973 TableField_DimCaptionClass
 73974 GetUrl_Web
@@ -12171,6 +12177,7 @@
 74884 RunModalWithRecord_NoSetRecord_LookupOK
 74884 SettableView_ThenAssignRecInsideView
 74884 SettableView_ThenAssignRecOutsideView
+74885 AssertEquals_CodeControl_NumbersAndText
 74885 AssertEquals_TextControl_NumbersAndText
 74885 SetValue_BlankOption_AsEmptyText
 74885 SetValue_BlankOption_AsMember
@@ -12342,6 +12349,8 @@
 75010 SQLTimestamp_BigIntegerField_ReadsRowVersion
 75010 SignDisplacement_Format_NegativeAndPositive
 75010 TableExt_ModifyBlankZero_FormatAndPage
+75010 TableExt_ModifyCaptionClass_ResolvedCaption
+75010 TableExt_ModifyClosingDates_FormatAndValidate
 75010 TableExt_ModifyOptionCaption_FormatAndPage
 75010 Width_TextField_ValueNotTruncated
 75039 ControlAddIn_MaximumHeightAndWidth_PageOpens
@@ -12412,6 +12421,7 @@
 76220 ZCustModifyAllowed
 76220 ZCustPromotedActionCategories_ActionUnchanged
 76360 ZCaptionClass_LiteralAndResolved
+76360 ZClosingDates_ValueAndStored
 76360 ZHideValue_TrueAndFalse
 76360 ZLookupPageId_OpensTargetPage
 76360 ZLookupPageId_PlainControlHasNoLookup

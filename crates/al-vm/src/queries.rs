@@ -148,10 +148,14 @@ impl Session {
                 // Opening an open query is not an error (query/TestQueryRuntimeContracts.al:
                 // Query_StateMisuse_DoesNotThrow); once rows were read what it does is not pinned.
                 if qs.borrow().run.as_ref().is_some_and(|r| r.started) {
-                    // After a filter changed it runs again with the new filters
+                    // After a filter changed mid-read it runs again with the new filters
                     // (misc/lt-probes-needed-1/PnAQueryOpenRead.al:125-170, SetRangeAndOpenAfterRead: `next-entry` 4).
+                    // After the last row (with or without a filter set since) it runs again too: not pinned
+                    // (assumption query-closed-after-last-row).
                     let filters_changed = qs.borrow().run.as_ref().is_some_and(|r| r.filters_changed);
-                    if !filters_changed && !Self::query_read_to_the_end(&qs) {
+                    if Self::query_read_to_the_end(&qs) {
+                        al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::QueryClosedAfterLastRow);
+                    } else if !filters_changed {
                         return unsupported("Open on a query that is already open and was read from (not pinned)");
                     }
                     qs.borrow_mut().run = None;
@@ -190,13 +194,10 @@ impl Session {
                 // After a Read that did not reach the end the filter is set, and the next Read raises until the query is
                 // opened again (query/lt-query-setrange-after-read/QuerySetRangeAfterRead.al:52-77, SetRange_AfterFirstRead;
                 // errors/lt-ms-refusals-131/P131QuerySetRangeAfterRead.al:118-145, SetFilter).
-                let mid_read = qs.borrow().run.as_ref().is_some_and(|r| r.started);
-                if mid_read {
-                    if Self::query_read_to_the_end(&qs) {
-                        qs.borrow_mut().run = None;
-                    } else {
-                        qs.borrow_mut().run.as_mut().expect("open").filters_changed = true;
-                    }
+                // The same after the last Read returned false: the filter is set and the next Read raises
+                // (errors/lt-ms-refusals-131/P131QuerySetRangeAfterRead.al:154-170, P131_Query_SetRangeAfterLastRead_AndAfterClose).
+                if let Some(run) = qs.borrow_mut().run.as_mut().filter(|r| r.started) {
+                    run.filters_changed = true;
                 }
                 let ty = def.columns[col].ty.clone();
                 let expr = if method == "SetRange" {
@@ -580,19 +581,12 @@ impl Session {
         Ok(out)
     }
 
-    /// Whether the query was read to its last row. Such a query is closed: a filter can be set and `Open` runs it again.
-    /// Not pinned: Base Application's Workflow Step Instance.SetTableRelationValues does so once per table relation
-    /// (assumption query-closed-after-last-row).
+    /// Whether the query was read to its last row (its last Read returned false).
     fn query_read_to_the_end(qs: &Qs) -> bool {
-        let done = qs
-            .borrow()
+        qs.borrow()
             .run
             .as_ref()
-            .is_some_and(|r| r.started && r.current.is_none() && r.next >= r.rows.len());
-        if done {
-            al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::QueryClosedAfterLastRow);
-        }
-        done
+            .is_some_and(|r| r.started && r.current.is_none() && r.next >= r.rows.len())
     }
 
     fn query_read(&mut self, def: &ir::Query, qs: &Qs) -> Result<Value, Signal> {

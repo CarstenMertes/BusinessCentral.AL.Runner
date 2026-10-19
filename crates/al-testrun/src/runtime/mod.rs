@@ -602,8 +602,10 @@ mod compiled;
 mod corpus;
 mod handlers;
 mod run;
+mod runner_reset;
 #[cfg(test)]
 mod tests;
+pub(crate) mod written;
 
 pub use self::blocked::*;
 pub use self::cache::*;

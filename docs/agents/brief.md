@@ -9,9 +9,14 @@ on the main machine or as a remote worker (`docs/agents/remote-worker.md`).
 1. Read `CLAUDE.md`, `docs/architecture.md`, `docs/status.md`, `docs/codemap.md`,
    `docs/adr/README.md` and every ADR for your area. The hard rules in
    `CLAUDE.md` are binding.
-2. Work in your own worktree and branch, never in the main checkout:
-   `git worktree add ../wt-<area> -b <branch> origin/main`.
-   If the worktree already exists, continue in it.
+2. Work in your own worktree and branch, never in the main checkout. Create it
+   inside the main checkout, from the main checkout's root:
+   `git worktree add .worktrees/<area> -b <branch> origin/main`
+   (`/.worktrees/` is git-ignored). Never create a worktree next to the
+   repository (`../wt-<area>`). If the worktree already exists, continue in it.
+   Logs and scratch files go to your session's scratch folder or under
+   `~/.cache/al-runtime/`, never into the worktree root or the folder that
+   holds the repository.
 3. In a new worktree, run `git submodule update --init`. The corpus pin check
    needs the corpus history, so also run `git -C corpus fetch --unshallow` if
    `git -C corpus rev-parse --is-shallow-repository` prints `true`.

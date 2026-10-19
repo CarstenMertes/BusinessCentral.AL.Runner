@@ -28,6 +28,8 @@ pub const AL_CONFIG_SETTINGS: &str = "Microsoft.Dynamics.Nav.Types.ALConfigSetti
 pub const TENANT_SETTINGS_HELPER: &str = "Microsoft.Dynamics.Nav.NavUserAccount.NavTenantSettingsHelper";
 /// `Microsoft.Dynamics.Nav.Runtime.NavTestExecution`.
 pub const TEST_EXECUTION: &str = "Microsoft.Dynamics.Nav.Runtime.NavTestExecution";
+/// `Microsoft.Dynamics.Nav.Runtime.PermissionTestHelper`, which codeunit 131006 "Permissions Mock" constructs.
+pub const PERMISSION_TEST_HELPER: &str = "Microsoft.Dynamics.Nav.Runtime.PermissionTestHelper";
 /// `Microsoft.Dynamics.Nav.NavUserAccount.NavUserAccountHelper`.
 /// Azure AD Graph's query object (System Application "Azure AD Graph Impl.").
 pub const GRAPH_QUERY: &str = "Microsoft.Dynamics.Nav.AzureADGraphClient.GraphQuery";
@@ -121,6 +123,10 @@ pub const SIGS: &[(&str, &str, Ret)] = &[
     (USER_ACCOUNT_HELPER, "IsDelegatedUser", Ret::Boolean),
     (USER_ACCOUNT_HELPER, "GetEffectivePermissionForObject", Ret::Text),
     (TEST_EXECUTION, "IsInTestMode", Ret::Boolean),
+    (PERMISSION_TEST_HELPER, "PermissionTestHelper", Ret::Object),
+    (PERMISSION_TEST_HELPER, "Clear", Ret::Void),
+    (PERMISSION_TEST_HELPER, "Dispose", Ret::Void),
+    (PERMISSION_TEST_HELPER, "AddEffectivePermissionSet", Ret::Void),
     (NCL_DIALOG_EXCEPTION, "Message", Ret::Text),
     (NCL_DIALOG_EXCEPTION, "GetType", Ret::Object),
     (NCL_DIALOG_EXCEPTION, "InnerException", Ret::Object),

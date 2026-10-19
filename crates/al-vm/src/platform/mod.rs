@@ -52,6 +52,8 @@ pub(crate) struct EventStats {
     pub calls: RefCell<HashMap<(usize, usize), i64>>,
     /// Subscriber object to the number of bound instances.
     pub active: RefCell<HashMap<usize, i64>>,
+    /// The session's `GlobalLanguage` when it is not 1033 (0: 1033). The Report Layout List's Description follows it.
+    pub language: std::cell::Cell<i32>,
 }
 
 /// What the host says about the session, read once when the session starts.
@@ -143,7 +145,7 @@ impl SharedListings {
             engines.swap(at, last);
             engines[last].tables.entry(kind).or_default().clone()
         };
-        slot.get_or_init(|| mat::SharedMat::try_new(build()).ok().map(Arc::new))
+        slot.get_or_init(|| mat::SharedMat::try_new(build()).map(Arc::new))
             .clone()
     }
 }
@@ -235,6 +237,14 @@ impl Providers {
 
     /// An Event Subscription row with "Number of Calls" (8) and "Active Manual Instances" (13) as
     /// the session has them now.
+    /// The session's `GlobalLanguage`.
+    pub(super) fn language(&self) -> i32 {
+        match self.events.language.get() {
+            0 => 1033,
+            n => n,
+        }
+    }
+
     fn with_event_stats(&self, t: &TableDef, row: Option<Row>) -> Option<Row> {
         let mut row = row?;
         if self.events.calls.borrow().is_empty() && self.events.active.borrow().is_empty() {
@@ -380,6 +390,13 @@ impl Providers {
 
     /// The rows of a table that is listed in full.
     fn listed(&self, t: &TableDef, kind: Virtual) -> Result<Listed, StoreError> {
+        // In another language than 1033 the layouts' descriptions are that language's: listed per read, not kept.
+        if kind == Virtual::ReportLayoutList && self.language() != 1033 {
+            return Ok(Listed::Own(Rc::new(mat::Mat::new(
+                t,
+                reports::layout_list_rows(self, t),
+            ))));
+        }
         if let Some(m) = self.listed.borrow().get(&kind) {
             return Ok(m.clone());
         }
@@ -405,7 +422,7 @@ impl Providers {
         let shared = if Self::shares(kind) {
             SHARED.listing(self.engine_uid, kind, build)
         } else {
-            mat::SharedMat::try_new(build()).ok().map(Arc::new)
+            mat::SharedMat::try_new(build()).map(Arc::new)
         };
         let m = match shared {
             Some(m) => Listed::Shared(m),
@@ -472,6 +489,23 @@ pub(crate) fn blank(t: &TableDef) -> Row {
     t.fields.iter().map(|f| Value::default_for(&f.ty)).collect()
 }
 
+/// The value of column `id` of a row whose value there no corpus test pins: a read of it is refused, naming the table,
+/// the field and `whose` (the row, or the kind of rows), while the other columns of the row read as usual
+/// (`Value::Unknown`). Writing the field replaces it.
+pub(crate) fn unknown(t: &TableDef, id: u32, whose: &str) -> Value {
+    Value::Unknown(unknown_why(t, id, whose))
+}
+
+/// The reason [`unknown`] holds, for a provider that shares one among many rows.
+pub(crate) fn unknown_why(t: &TableDef, id: u32, whose: &str) -> Arc<str> {
+    format!(
+        "the value of field '{}' of platform table '{}' is not known for {whose}: no corpus test pins it (docs/probes-needed.md)",
+        t.fields[pos(t, id)].name,
+        t.name
+    )
+    .into()
+}
+
 /// A row of default values made once, for a listing that starts every row from one: copying it
 /// shares the member lists of the option columns instead of building each again.
 pub(crate) struct Blank {
@@ -491,6 +525,8 @@ impl Blank {
     pub(crate) fn option(&self, t: &TableDef, id: u32, n: i32) -> Value {
         match &self.row[pos(t, id)] {
             Value::Option(_, m) => Value::Option(n, m.clone()),
+            // A column the row starts unknown in: its members come from the type.
+            Value::Unknown(_) => option(t, id, n),
             other => panic!("field {id} of '{}' is not an option: {}", t.name, other.describe()),
         }
     }

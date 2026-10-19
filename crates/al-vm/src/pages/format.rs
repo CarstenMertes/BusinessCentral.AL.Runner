@@ -11,7 +11,12 @@ impl Session {
                         "reading a row after CurrPage.Update on a page with OnFindRecord (the row it settles on is not pinned)",
                     );
                 }
-                Ok(self.page_rec(st).borrow().fields[pos].clone())
+                let v = self.page_rec(st).borrow().fields[pos].clone();
+                // A column the platform row leaves unknown is not shown.
+                if let Some(why) = v.unknown() {
+                    return unsupported(why.to_string());
+                }
+                Ok(v)
             }
             b @ (ir::Binding::Var(_) | ir::Binding::BaseVar(_)) => {
                 let (slot, owner) = b
@@ -551,6 +556,9 @@ impl Session {
                     return unsupported(format!("DataCaptionFields names `{name}`, not a field of the table"));
                 };
                 let v = rec.borrow().fields[i].clone();
+                if let Some(why) = v.unknown() {
+                    return unsupported(why.to_string());
+                }
                 let text = pagefmt::control_text(&v, &pagefmt::ControlFormat::default(), &|_, o| o.to_string());
                 if !text.is_empty() {
                     parts.push(text);

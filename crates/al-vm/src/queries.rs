@@ -692,6 +692,9 @@ impl Session {
                 let mut ok = true;
                 for (item, field, expr) in &plan.outer {
                     let row = self.filled(def.items[*item].table, &j[*item]);
+                    if let Some(why) = row[*field].unknown() {
+                        return unsupported(why.to_string());
+                    }
                     ok &= expr.matches(&row[*field]);
                 }
                 if ok {
@@ -977,6 +980,10 @@ impl Session {
             let row = &self.filled(item.table, &joined[c.item]);
             let schema = &engine.program.objects[item.table].table.as_ref().expect("table").fields[field];
             let mut v = if schema.stored {
+                // A column a platform row leaves unknown cannot be a column of the result.
+                if let Some(why) = row[field].unknown() {
+                    return unsupported(why.to_string());
+                }
                 row[field].clone()
             } else {
                 // A FlowField is calculated per joined row, with the flow filters of its dataitem

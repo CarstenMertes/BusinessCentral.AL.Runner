@@ -460,10 +460,10 @@ codeunit 50000 "T" { Subtype = Test;
     // A layout with no Caption or Summary reads its name for both (session/PWPlatformTables.al:126-139).
     if L.Caption <> 'L2' then Error('caption [%1]', L.Caption); if L.Description <> 'L2' then Error('description'); end;
   [Test] procedure Metadata() var M: Record "Report Metadata"; begin M.Get(50002); if M.ProcessingOnly then Error('processing'); if M.UseRequestPage then Error('request page'); if M.FirstDataItemTableID <> Database::Thing then Error('table'); end;
-  [Test] procedure DataItems() var D: Record "Report Data Items"; begin D.SetRange("Report ID", 50002); if D.Count() <> 2 then Error('count'); D.FindFirst();
+  [Test] procedure DataItems() var D: Record "Report Data Items"; begin D.SetRange("Report ID", 50002); if D.Count() <> 2 then Error('count'); D.SetRange(Name, 'Thing'); D.FindFirst();
     if D.Name <> 'Thing' then Error('name'); if D."Indentation Level" <> 0 then Error('indent'); if D."Request Filter Fields" <> '3,1' then Error('rff %1', D."Request Filter Fields");
     if D."Sorting Fields" <> '3,2' then Error('sorting %1', D."Sorting Fields"); if D."Data Item Table View" <> 'SORTING(Field3,Field2) ORDER(1)' then Error('view %1', D."Data Item Table View");
-    D.Next(); if D.Name <> 'Child' then Error('child'); if D."Indentation Level" <> 1 then Error('child indent'); end; }"#,
+    D.SetRange(Name, 'Child'); D.FindFirst(); if D.Name <> 'Child' then Error('child'); if D."Indentation Level" <> 1 then Error('child indent'); end; }"#,
     );
     for t in ["Layouts", "Metadata", "DataItems"] {
         passes(&o, t);
@@ -954,4 +954,67 @@ codeunit 50000 "T" { Subtype = Test;
         why.contains("DeleteAllowed") && why.contains("50015") || why.contains("B4"),
         "{why}"
     );
+}
+
+/// A column of a platform row whose value nothing pins is unknown: a dynamic read of it (FieldRef.Value, Format, a filter on
+/// it, TransferFields into another type, a read or a filter on a copy) is refused and names the table and the field, while
+/// the other columns, FindSet and Count of the same rows run, a copy can be stored, and a value written into the buffer
+/// reads back. "Type Name" (9) of the Field table is pinned
+/// for a Text field only (record/PZFieldObsoleteRows.al:47, `Text30`); for the Integer field it is unknown.
+#[test]
+fn an_unknown_column_of_a_platform_row_is_refused_where_it_is_read_dynamically() {
+    let o = outcomes(
+        r#"table 50003 "Buf" { fields { field(1; TableNo; Integer) { } field(2; "No."; Integer) { } field(9; "Type Name"; Text[30]) { } }
+  keys { key(PK; TableNo, "No.") { Clustered = true; } } }
+table 50004 "Buf2" { fields { field(1; TableNo; Integer) { } field(2; "No."; Integer) { } field(9; "Type Name"; Text[20]) { } }
+  keys { key(PK; TableNo, "No.") { Clustered = true; } } }
+codeunit 50000 "T" { Subtype = Test;
+  [Test] procedure OtherColumnsAndCountRun() var F: Record Field; R: RecordRef; N: Integer; begin
+    F.SetRange(TableNo, 50003); F.SetRange("No.", 1, 9); if F.Count() <> 3 then Error('count %1', F.Count()); F.FindSet();
+    repeat N += 1; until F.Next() = 0; if N <> 3 then Error('n');
+    F.Get(50003, 9); R.GetTable(F); if Format(R.Field(9).Value) <> 'Text30' then Error('text %1', R.Field(9).Value);
+    F.Get(50003, 1); R.GetTable(F); if Format(R.Field(4).Value) <> 'TableNo' then Error('name %1', R.Field(4).Value); end;
+  [Test] procedure FieldRefValue() var F: Record Field; R: RecordRef; T: Text; begin
+    F.Get(50003, 1); R.GetTable(F); T := R.Field(9).Value; end;
+  [Test] procedure FormatFieldRef() var F: Record Field; R: RecordRef; FR: FieldRef; begin
+    F.Get(50003, 1); R.GetTable(F); FR := R.Field(9); if Format(FR) = 'x' then; end;
+  [Test] procedure FilterOnIt() var R: RecordRef; begin
+    R.Open(Database::Field); R.Field(1).SetRange(50003); R.Field(9).SetRange('Integer'); if R.IsEmpty() then; end;
+  [Test] procedure TransferFieldsCarriesIt() var F: Record Field; B: Record Buf temporary; begin
+    F.Get(50003, 1); B.TransferFields(F); B.Insert(); end;
+  [Test] procedure TransferFieldsThenRead() var F: Record Field; B: Record Buf temporary; X: Text; begin
+    F.Get(50003, 1); B.TransferFields(F); X := B."Type Name"; end;
+  [Test] procedure TransferFieldsIntoAnotherType() var F: Record Field; B: Record Buf2 temporary; begin
+    F.Get(50003, 1); B.TransferFields(F); end;
+  [Test] procedure CopiedIntoATemporaryRecord() var F: Record Field; T: Record Field temporary; begin
+    F.Get(50003, 1); T := F; T.Insert(); F.Get(50003, 9); T := F; T.Insert();
+    T.SetRange(TableNo, 50003); if T.Count() <> 2 then Error('copies %1', T.Count()); T.Get(50003, 9); end;
+  [Test] procedure CopyFilteredOnIt() var F: Record Field; T: Record Field temporary; R: RecordRef; begin
+    F.Get(50003, 1); T := F; T.Insert(); R.GetTable(T); R.Field(9).SetRange('Integer'); if R.IsEmpty() then; end;
+  [Test] procedure CopyReadBack() var F: Record Field; T: Record Field temporary; R: RecordRef; X: Text; begin
+    F.Get(50003, 1); T := F; T.Insert(); T.Get(50003, 1); R.GetTable(T); X := R.Field(9).Value; end;
+  [Test] procedure WrittenReadsBack() var F: Record Field; R: RecordRef; begin
+    F.Get(50003, 1); R.GetTable(F); R.Field(9).Value := 'mine';
+    if Format(R.Field(9).Value) <> 'mine' then Error('read back'); end; }"#,
+    );
+    passes(&o, "OtherColumnsAndCountRun");
+    passes(&o, "WrittenReadsBack");
+    // A copy of the row can be stored and counted; a filter on the column, or a read of it, is refused there too.
+    passes(&o, "CopiedIntoATemporaryRecord");
+    passes(&o, "TransferFieldsCarriesIt");
+    for t in [
+        "FieldRefValue",
+        "FormatFieldRef",
+        "FilterOnIt",
+        "TransferFieldsThenRead",
+        "TransferFieldsIntoAnotherType",
+        "CopyFilteredOnIt",
+        "CopyReadBack",
+    ] {
+        let why = not_run(&o, t);
+        assert!(
+            why.contains("field 'Type Name' of platform table 'Field' is not known"),
+            "{t}: {why}"
+        );
+    }
 }

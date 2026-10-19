@@ -148,6 +148,10 @@ pub struct MemStore {
     /// here and allowed (ADR-020 amendment: install code may change restored rows). Shared by the
     /// clones of the store, so a snapshot or a rollback does not lose it.
     restored_log: Option<std::rc::Rc<std::cell::RefCell<Vec<RestoredChange>>>>,
+    /// Per table (object index), the columns in which a stored row held a value a platform row left unknown
+    /// (`Value::Unknown`, a record copied from one). Never cleared: a filter or an order on such a column checks the
+    /// rows (`unknown_read`).
+    unknown_cols: std::collections::HashMap<u32, Vec<usize>>,
 }
 
 /// One table of an exported store ([`MemStore::export_committed`]): its company (empty for a table that is not per
@@ -383,6 +387,53 @@ fn passes(row: &Row, filters: &[FieldFilter]) -> bool {
 }
 
 impl MemStore {
+    /// A read that filters on, or orders by, a column a stored row holds unknown (a copy of a platform row) is refused:
+    /// whether that row passes, or where it sorts, is not known. Costs nothing until such a row was stored.
+    fn unknown_read(
+        &self,
+        cx: &AccessContext,
+        t: &TableDef,
+        filters: &[FieldFilter],
+        order: &[usize],
+    ) -> Result<(), StoreError> {
+        if self.unknown_cols.is_empty() {
+            return Ok(());
+        }
+        let Some(held) = self.unknown_cols.get(&t.object) else {
+            return Ok(());
+        };
+        let cols: Vec<usize> = filters
+            .iter()
+            .map(|f| f.field)
+            .chain(order.iter().copied())
+            .filter(|c| held.contains(c))
+            .collect();
+        if cols.is_empty() {
+            return Ok(());
+        }
+        let Some(table) = self.table(cx, t) else {
+            return Ok(());
+        };
+        for row in table.values() {
+            if let Some(why) = cols.iter().find_map(|&c| row.get(c).and_then(Value::unknown)) {
+                return Err(StoreError::Refused(why.to_string()));
+            }
+        }
+        Ok(())
+    }
+
+    /// Writes down the columns of `row` that hold an unknown value (see `unknown_cols`).
+    fn note_unknown(&mut self, t: &TableDef, row: &Row) {
+        for (i, v) in row.iter().enumerate() {
+            if v.unknown().is_some() {
+                let held = self.unknown_cols.entry(t.object).or_default();
+                if !held.contains(&i) {
+                    held.push(i);
+                }
+            }
+        }
+    }
+
     /// A store whose virtual tables are answered by `v`.
     pub fn with_virtual_tables(v: std::rc::Rc<dyn VirtualTables>) -> MemStore {
         MemStore {
@@ -887,6 +938,7 @@ impl Store for MemStore {
         if self.virtual_of(t).is_some() {
             return Err(self.read_only(t, "Insert"));
         }
+        self.note_unknown(t, &row);
         let k = Key(t.primary_key(&row));
         let table = self.table_mut(cx, t);
         if table.contains_key(&k) {
@@ -933,6 +985,7 @@ impl Store for MemStore {
             }
             return Err(self.read_only(t, "Modify"));
         }
+        self.note_unknown(t, &row);
         let k = Key(t.primary_key(&row));
         self.note_restored(cx, t, &k, "Modify", Some(&row));
         let table = self.table_mut(cx, t);
@@ -993,6 +1046,7 @@ impl Store for MemStore {
         if let Some(v) = self.virtual_of(t) {
             return v.next(self, cx, t, scan);
         }
+        self.unknown_read(cx, t, scan.filters, t.keys.get(scan.key).map_or(&[], |k| k.as_slice()))?;
         let Some(table) = self.table(cx, t) else {
             return Ok(None);
         };
@@ -1115,6 +1169,7 @@ impl Store for MemStore {
         if let Some(v) = self.virtual_of(t) {
             return v.count(self, cx, t, f);
         }
+        self.unknown_read(cx, t, f, &[])?;
         Ok(self
             .table(cx, t)
             .map_or(0, |m| pk_band(&m, t, f).filter(|(_, r)| passes(r, f)).count()))
@@ -1124,6 +1179,7 @@ impl Store for MemStore {
         if self.virtual_of(t).is_some() {
             return Err(self.read_only(t, "DeleteAll"));
         }
+        self.unknown_read(cx, t, f, &[])?;
         let doomed: Vec<Key> = self
             .table(cx, t)
             .map(|table| {

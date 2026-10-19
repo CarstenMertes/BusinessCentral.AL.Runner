@@ -61,6 +61,9 @@ pub(crate) struct Mat {
     /// No row is poisoned. Only then are the values of the key columns all real, so the rows are in the order of
     /// the key and the filters on its leading columns bound a scan (`band`).
     clean: bool,
+    /// Per column: some row leaves it unknown (`Value::Unknown`). A filter on such a column, or an order by it, is
+    /// refused for a row that leaves it unknown, since whether that row passes or where it sorts is not known.
+    unknown_cols: Box<[bool]>,
     /// The rows that passed a set of filters, for a set seen before (`passing`): a lookup that scans a big listing
     /// on a column the key does not cover (the fields that relate to a table) repeats with the same filters.
     memo: Box<std::sync::Mutex<Memo>>,
@@ -88,14 +91,13 @@ const MEMO_MAX_SETS: usize = 256;
 pub(crate) struct SharedMat(Mat);
 
 impl SharedMat {
-    /// The listing for sharing, or the listing back when a row holds a handle (a provider listed
+    /// The listing for sharing, or `None` when a row holds a handle (a provider listed
     /// something that cannot be shared between threads).
-    pub(crate) fn try_new(m: Mat) -> Result<SharedMat, Mat> {
-        if m.rows.iter().all(|row| row.iter().all(Value::is_plain)) {
-            Ok(SharedMat(m))
-        } else {
-            Err(m)
-        }
+    pub(crate) fn try_new(m: Mat) -> Option<SharedMat> {
+        m.rows
+            .iter()
+            .all(|row| row.iter().all(Value::is_plain))
+            .then_some(SharedMat(m))
     }
 }
 
@@ -110,6 +112,21 @@ impl std::ops::Deref for SharedMat {
 // remaining reference-counted parts are `Arc`s. The contents are read-only from then on.
 unsafe impl Send for SharedMat {}
 unsafe impl Sync for SharedMat {}
+
+/// Per column of the table: whether a row that is not poisoned leaves it unknown.
+fn unknown_cols(t: &TableDef, rows: &[Row], poison: &[Option<String>]) -> Box<[bool]> {
+    let mut out = vec![false; t.fields.len()];
+    for (r, p) in rows.iter().zip(poison) {
+        if p.is_none() {
+            for (c, v) in r.iter().enumerate() {
+                if matches!(v, Value::Unknown(_)) {
+                    out[c] = true;
+                }
+            }
+        }
+    }
+    out.into_boxed_slice()
+}
 
 #[cfg(test)]
 thread_local! {
@@ -135,6 +152,11 @@ fn may_pass(t: &TableDef, row: &Row, known: usize, known_cols: &[usize], filters
         .all(|f| f.expr.matches(&row[f.field]))
 }
 
+/// Why a filter on the row cannot be decided: it reads a column the row leaves unknown.
+fn unknown_filtered<'a>(row: &'a Row, filters: &[FieldFilter]) -> Option<&'a str> {
+    filters.iter().find_map(|f| row[f.field].unknown())
+}
+
 fn refusal(t: &TableDef, why: &str) -> StoreError {
     StoreError::Refused(format!("{}: {why}", t.name))
 }
@@ -157,14 +179,23 @@ impl Mat {
             known_cols.push(e.known_cols);
         }
         let clean = poison.iter().all(Option::is_none);
+        let unknown_cols = unknown_cols(t, &rows, &poison);
         Mat {
             rows,
             poison,
             known,
             known_cols,
             clean,
+            unknown_cols,
             memo: Default::default(),
         }
+    }
+
+    /// Whether a filter of the set reads a column some row leaves unknown: only then are the rows checked one by one.
+    fn filters_unknown(&self, filters: &[FieldFilter]) -> bool {
+        filters
+            .iter()
+            .any(|f| self.unknown_cols.get(f.field).copied().unwrap_or(false))
     }
 
     /// The same listing with every row changed by `f` (the key columns must stay as they are).
@@ -175,6 +206,7 @@ impl Mat {
             known: self.known.clone(),
             known_cols: self.known_cols.clone(),
             clean: self.clean,
+            unknown_cols: self.unknown_cols.clone(),
             memo: Default::default(),
         }
     }
@@ -210,7 +242,7 @@ impl Mat {
     /// filters; `None` for the first scan, for a small listing and for one with a poisoned row. The result is the
     /// same as testing each row: the listing never changes.
     fn passing(&self, filters: &[FieldFilter]) -> Option<std::sync::Arc<Vec<u32>>> {
-        if !self.clean || self.rows.len() < MEMO_MIN_ROWS || filters.is_empty() {
+        if !self.clean || self.rows.len() < MEMO_MIN_ROWS || filters.is_empty() || self.filters_unknown(filters) {
             return None;
         }
         let key = format!("{filters:?}");
@@ -263,12 +295,18 @@ impl Mat {
             };
             return Ok(pick.map(|i| self.rows[i as usize].clone()));
         }
+        let check_unknown = self.filters_unknown(filters);
         let at = |i: usize| -> Result<Option<Row>, StoreError> {
             let r = &self.rows[i];
             match &self.poison[i] {
                 Some(why) if may_pass(t, r, self.known[i], &self.known_cols[i], filters) => Err(refusal(t, why)),
                 Some(_) => Ok(None),
-                None => Ok(passes(r, filters).then(|| r.clone())),
+                None => {
+                    if let Some(why) = unknown_filtered(r, filters).filter(|_| check_unknown) {
+                        return Err(StoreError::Refused(why.to_string()));
+                    }
+                    Ok(passes(r, filters).then(|| r.clone()))
+                }
             }
         };
         if ascending {
@@ -324,13 +362,35 @@ impl Mat {
             };
             return self.walk(t, band.start..end.min(band.end), false, scan.filters);
         }
+        // An order by a column some row leaves unknown: that row's place is not known.
+        let key_unknown = t
+            .keys
+            .get(scan.key)
+            .is_some_and(|k| k.iter().any(|&c| self.unknown_cols.get(c).copied().unwrap_or(false)));
+        let check_unknown = self.filters_unknown(scan.filters);
         let mut best: Option<(Vec<Value>, &Row)> = None;
-        for (i, r) in self.rows.iter().enumerate().filter(|(_, r)| later(r)) {
+        for (i, r) in self.rows.iter().enumerate() {
+            // A row that passes the filters but whose place is not known: whether it comes later is not known either.
+            if key_unknown
+                && self.poison[i].is_none()
+                && !unknown_filtered(r, scan.filters).is_some()
+                && passes(r, scan.filters)
+            {
+                if let Some(why) = t.keys[scan.key].iter().find_map(|&c| r[c].unknown()) {
+                    return Err(StoreError::Refused(why.to_string()));
+                }
+            }
+            if !later(r) {
+                continue;
+            }
             if let Some(why) = &self.poison[i] {
                 if may_pass(t, r, self.known[i], &self.known_cols[i], scan.filters) {
                     return Err(refusal(t, why));
                 }
                 continue;
+            }
+            if let Some(why) = unknown_filtered(r, scan.filters).filter(|_| check_unknown) {
+                return Err(StoreError::Refused(why.to_string()));
             }
             if !passes(r, scan.filters) {
                 continue;
@@ -354,13 +414,19 @@ impl Mat {
     pub(crate) fn count(&self, t: &TableDef, filters: &[FieldFilter]) -> Result<usize, StoreError> {
         let mut n = 0;
         let band = self.band(t, filters);
+        let check_unknown = self.filters_unknown(filters);
         for (i, r) in self.rows.iter().enumerate().skip(band.start).take(band.len()) {
             match &self.poison[i] {
                 Some(why) if may_pass(t, r, self.known[i], &self.known_cols[i], filters) => {
                     return Err(refusal(t, why));
                 }
                 Some(_) => {}
-                None => n += usize::from(passes(r, filters)),
+                None => {
+                    if let Some(why) = unknown_filtered(r, filters).filter(|_| check_unknown) {
+                        return Err(StoreError::Refused(why.to_string()));
+                    }
+                    n += usize::from(passes(r, filters))
+                }
             }
         }
         Ok(n)
@@ -420,6 +486,50 @@ mod tests {
             expr: FilterExpr::Range(Some(Value::Integer(lo)), Some(Value::Integer(hi))),
             group: 0,
         }
+    }
+
+    #[test]
+    fn a_filter_or_an_order_on_a_column_a_row_leaves_unknown_refuses_and_the_rest_runs() {
+        let mut t = table();
+        t.keys.push(vec![1]);
+        let unknown = Value::Unknown("the value of field 'Name' is not known".into());
+        let m = Mat::new(
+            &t,
+            vec![Entry::ok(row(1, "a")), Entry::ok(vec![Value::Integer(2), unknown])],
+        );
+        // Without a filter on Name both rows count and come back, the unknown value with them.
+        assert_eq!(m.count(&t, &[]).ok(), Some(2));
+        let after_1 = [Value::Integer(1), Value::Integer(1)];
+        assert!(matches!(m.next(&t, &scan(&[], Some(&after_1), true)), Ok(Some(r)) if r[1].unknown().is_some()));
+        // A filter on ID that leaves row 2 out is decided.
+        assert_eq!(m.count(&t, &[id_filter(1, 1)]).ok(), Some(1));
+        // A filter on Name would read row 2's value: refused, with the reason.
+        let name_is_a = FieldFilter {
+            field: 1,
+            expr: FilterExpr::Eq(Value::Text("a".into())),
+            group: 0,
+        };
+        let refused =
+            |r: Result<_, StoreError>| matches!(r, Err(StoreError::Refused(w)) if w.contains("'Name' is not known"));
+        assert!(refused(m.count(&t, std::slice::from_ref(&name_is_a)).map(|_| ())));
+        // A scan from the end meets row 2 first; one from the start finds row 1 before it.
+        assert!(refused(
+            m.next(&t, &scan(std::slice::from_ref(&name_is_a), None, false))
+                .map(|_| ())
+        ));
+        assert!(
+            matches!(m.next(&t, &scan(std::slice::from_ref(&name_is_a), None, true)), Ok(Some(r)) if matches!(r[0], Value::Integer(1)))
+        );
+        // Unless the other filters leave the row out first.
+        assert_eq!(m.count(&t, &[id_filter(1, 1), name_is_a]).ok(), Some(1));
+        // An order by Name: the place of row 2 is not known.
+        let by_name = Scan {
+            key: 1,
+            filters: &[],
+            ascending: true,
+            after: None,
+        };
+        assert!(refused(m.next(&t, &by_name).map(|_| ())));
     }
 
     #[test]
@@ -662,13 +772,13 @@ mod shared_tests {
         let t = def(RtType::Integer);
         let m = Mat::new(&t, vec![Entry::ok(vec![Value::Integer(1)])]);
         fn is_send_sync<T: Send + Sync>(_: &T) {}
-        is_send_sync(&SharedMat::try_new(m).ok().expect("plain"));
+        is_send_sync(&SharedMat::try_new(m).expect("plain"));
     }
 
     #[test]
     fn a_listing_holding_a_handle_cannot_be_shared() {
         let t = def(RtType::Integer);
         let handle = Value::List(Default::default());
-        assert!(SharedMat::try_new(Mat::new(&t, vec![Entry::ok(vec![handle])])).is_err());
+        assert!(SharedMat::try_new(Mat::new(&t, vec![Entry::ok(vec![handle])])).is_none());
     }
 }

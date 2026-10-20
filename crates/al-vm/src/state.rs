@@ -75,6 +75,13 @@ pub(crate) struct PageClients {
     /// A page opened for a `RunObject` action looks its handler up without failing when there is
     /// none (al-vm pages/runobject.rs).
     pub(crate) lenient_bind: bool,
+    /// The page's own trigger (lower case) whose AL error ended the last page trigger call that failed, with the page's
+    /// object; `None` after an extension's trigger failed. Read where the client turns a trigger's error into its own.
+    pub(crate) failed_trigger: Option<(u32, String)>,
+    /// The open that starts next is a TestPage's own OpenEdit, OpenView or OpenNew (taken by `open_page_as`).
+    pub(crate) test_open: bool,
+    /// The close that starts next is a TestPage's own Close() (taken by `close_with`).
+    pub(crate) test_close: bool,
 }
 
 /// Event subscriptions and what the Event Subscription table reports.

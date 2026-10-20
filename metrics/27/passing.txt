@@ -13098,8 +13098,14 @@
 84275 SourceTableView_ResetThenUpdate_EditMode
 84275 SourceTableView_ResetThenUpdate_ViewMode
 84275 ToolTip_1100Characters_PageOpens
+84275 TriggerError_OnAfterGetCurrRecord
+84275 TriggerError_OnAfterGetRecord
+84275 TriggerError_OnClosePage
+84275 TriggerError_OnFindRecord
 84275 TriggerError_OnInit
+84275 TriggerError_OnNextRecord
 84275 TriggerError_OnOpenPage
+84275 TriggerError_OnQueryClosePage
 84282 Item49_LockCard_OpenEdit_New
 84282 Item49_LockCard_OpenNew
 84282 Item49_LockCard_OpenView

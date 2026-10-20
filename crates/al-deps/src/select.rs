@@ -106,7 +106,22 @@ pub enum SelectError {
     /// The dependencies lead back to an app already being resolved.
     Cycle(Vec<String>),
     /// Two dependents need versions no single package satisfies.
-    Conflict { dep: DepDecl, chosen: Version },
+    Conflict(Box<Conflict>),
+}
+
+/// Two dependents need versions of one app that no single package satisfies.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Conflict {
+    /// The dependency that came second and is not satisfied.
+    pub dep: DepDecl,
+    /// The version chosen for the first dependent, and where that package came from.
+    pub chosen: Version,
+    pub chosen_origin: String,
+    /// The app that declares `dep` ("the project" for a root dependency) and where it came from.
+    pub needed_by: String,
+    pub needed_by_origin: String,
+    /// The packages in the search that have a version `dep` accepts, as "version from origin".
+    pub satisfying: Vec<String>,
 }
 
 impl fmt::Display for SelectError {
@@ -147,11 +162,35 @@ impl fmt::Display for SelectError {
                 found.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(", ")
             ),
             SelectError::Cycle(path) => write!(f, "dependency cycle: {}", path.join(" -> ")),
-            SelectError::Conflict { dep, chosen } => write!(
-                f,
-                "dependency `{}` needs version {} or higher, but version {chosen} was already chosen for another app",
-                dep.name, dep.min
-            ),
+            SelectError::Conflict(c) => {
+                let Conflict {
+                    dep,
+                    chosen,
+                    chosen_origin,
+                    needed_by,
+                    needed_by_origin,
+                    satisfying,
+                } = &**c;
+                write!(
+                    f,
+                    "dependency `{}` needs version {} or higher for `{needed_by}` (from {needed_by_origin}), but version {chosen} from {chosen_origin} was already chosen for another app; ",
+                    dep.name, dep.min
+                )?;
+                if satisfying.is_empty() {
+                    write!(
+                        f,
+                        "no package found has version {} or higher; to fix it, remove the older package or replace it with version {} or higher of `{}`",
+                        dep.min, dep.min, dep.name
+                    )
+                } else {
+                    write!(
+                        f,
+                        "found with a version that fits: {}; to fix it, remove the older package {chosen_origin} or replace it with version {} or higher",
+                        satisfying.join(", "),
+                        dep.min
+                    )
+                }
+            }
         }
     }
 }
@@ -200,8 +239,8 @@ struct Resolver<'a> {
     /// Lower-case app id to the pool index chosen for it.
     chosen: HashMap<String, usize>,
     state: Vec<State>,
-    /// Names of the packages being resolved, for the cycle path.
-    stack: Vec<String>,
+    /// The packages being resolved (pool indices), for the cycle path and the dependent of a conflict.
+    stack: Vec<usize>,
     plan: Plan,
 }
 
@@ -280,10 +319,22 @@ impl Resolver<'_> {
                 // Done: nothing to do. Still being resolved: a cycle.
                 return self.visit(c);
             }
-            return Err(SelectError::Conflict {
+            let (needed_by, needed_by_origin) = match self.stack.last() {
+                Some(&p) => (self.pool[p].name.clone(), self.pool[p].origin.clone()),
+                None => ("the project".to_string(), "its app.json".to_string()),
+            };
+            return Err(SelectError::Conflict(Box::new(Conflict {
                 dep: dep.clone(),
                 chosen: self.pool[c].version,
-            });
+                chosen_origin: self.pool[c].origin.clone(),
+                needed_by,
+                needed_by_origin,
+                satisfying: matching
+                    .iter()
+                    .filter(|&&i| self.pool[i].version >= dep.min)
+                    .map(|&i| format!("{} from {}", self.pool[i].version, self.pool[i].origin))
+                    .collect(),
+            })));
         }
         let mut satisfying: Vec<usize> = matching
             .iter()
@@ -362,16 +413,15 @@ impl Resolver<'_> {
         match self.state[i] {
             State::Done => return Ok(()),
             State::Visiting => {
-                let name = &self.pool[i].name;
-                let from = self.stack.iter().position(|n| n == name).unwrap_or(0);
-                let mut path: Vec<String> = self.stack[from..].to_vec();
-                path.push(name.clone());
+                let from = self.stack.iter().position(|&n| n == i).unwrap_or(0);
+                let mut path: Vec<String> = self.stack[from..].iter().map(|&n| self.pool[n].name.clone()).collect();
+                path.push(self.pool[i].name.clone());
                 return Err(SelectError::Cycle(path));
             }
             State::Unvisited => {}
         }
         self.state[i] = State::Visiting;
-        self.stack.push(self.pool[i].name.clone());
+        self.stack.push(i);
         let c = &self.pool[i];
         self.visit_deps(&c.deps, c.platform, c.application)?;
         self.stack.pop();
@@ -726,5 +776,18 @@ mod tests {
         )
         .unwrap_err();
         assert!(matches!(err, SelectError::Conflict { .. }), "{err:?}");
+        // The message names where each version came from and how to fix it.
+        let text = err.to_string();
+        for part in [
+            "`App base`",
+            "2.0.0.0",
+            "base_1.0.0.0.app",
+            "`App y`",
+            "y_1.0.0.0.app",
+            "base_2.0.0.0.app",
+        ] {
+            assert!(text.contains(part), "{part} missing from: {text}");
+        }
+        assert!(text.contains("to fix it"), "{text}");
     }
 }

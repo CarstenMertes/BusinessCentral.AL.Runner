@@ -191,6 +191,10 @@ session, under TestIsolation = Codeunit (the default of Microsoft's test runner)
 DEPENDENCIES
     Looked up for the closure of the APPs' app.json dependencies, in this order:
     --dep, --package-cache, each APP folder's .alpackages, then Microsoft's artifact feed.
+    A Microsoft app in .alpackages that is older than the BC version of the run (--bc-version,
+    or the build taken from the feed) gives way to the feed's copy of that version; it is used
+    only when the feed does not have the app. With --no-download it is used as before. Apps
+    from --dep and --package-cache, and other publishers' apps, are always used as found.
     --dep PATH           A package file (.app, *.Source.zip), an app folder or a folder of
                          packages. Repeatable.
     --package-cache DIR  A folder of .app files. Repeatable.

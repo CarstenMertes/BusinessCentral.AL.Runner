@@ -581,6 +581,7 @@ impl Session {
             .map_err(|e| Signal::Unsupported(format!("{e}")))?
         {
             WriteOutcome::Done => {
+                self.deletes += 1;
                 for (i, g) in media {
                     self.release_media(&cx, t, i, g)?;
                 }
@@ -2268,6 +2269,7 @@ impl Session {
                 self.store_for(rec)
                     .delete_all(&cx, &t, &filters)
                     .map_err(|e| Signal::Unsupported(format!("{e}")))?;
+                self.deletes += 1;
                 Ok(Value::Null)
             }
             RecordOp::Get => {

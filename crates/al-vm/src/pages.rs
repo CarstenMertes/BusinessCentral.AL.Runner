@@ -224,6 +224,53 @@ impl Session {
         }
     }
 
+    /// Runs `f` and names the trigger of `st`'s page (lower case) whose AL error `f` failed with, if it was one.
+    fn traced<T>(
+        &mut self,
+        st: &St,
+        f: impl FnOnce(&mut Self) -> Result<T, Signal>,
+    ) -> (Result<T, Signal>, Option<String>) {
+        self.pages.failed_trigger = None;
+        let r = f(self);
+        let object = st.borrow().object;
+        let origin = match (&r, self.pages.failed_trigger.take()) {
+            (Err(Signal::Error(_)), Some((o, name))) if o == object => Some(name),
+            _ => None,
+        };
+        (r, origin)
+    }
+
+    /// A mark that changes with every insert, modify and delete the store takes (SystemRowVersion and the delete count).
+    fn write_mark(&self) -> (i64, u64) {
+        (self.next_row_version, self.deletes)
+    }
+
+    /// Whether the page is of type Card.
+    fn is_card(&self, st: &St) -> bool {
+        matches!(
+            self.engine.object_facts[st.borrow().object as usize].page_type,
+            Some(al_ir::PageType::Card)
+        )
+    }
+
+    /// The error the client raises when a page trigger's AL error forces the page to close: "Page <caption> has to close."
+    /// with the code FormAbort:Dialog (corpus pages/lt-cc-page-leads/CcPageLeads.al:525, :538, :551 on open, :564 with the
+    /// key on Next). Pinned for an AL `Error` (code Dialog) on a page with no caption of its own, where the caption is the
+    /// page's name; any other error, or a page with a caption, raises an error whose text and code are not pinned.
+    fn has_to_close(&self, st: &St, e: &AlError, caption: String) -> Signal {
+        let object = st.borrow().object as usize;
+        let named = self.page_caption(st) == self.engine.program.objects[object].name;
+        if e.code != "Dialog" || !named {
+            return Signal::Error(Box::new(al_builtins::native::unpinned_error()));
+        }
+        Signal::Error(Box::new(AlError {
+            message: format!("Page {caption} has to close."),
+            code: "FormAbort:Dialog".into(),
+            call_stack: e.call_stack.clone(),
+            ..Default::default()
+        }))
+    }
+
     /// Runs page trigger `name` (lower case) if the page declares it, then the same trigger of
     /// each page extension that declares it. The page's own trigger runs first (assumed, see
     /// docs/probes-needed.md "Page extensions"); the lowering refuses two extensions that
@@ -244,7 +291,12 @@ impl Session {
             let inst = st.borrow().instance.clone().expect("open page");
             match self.call(object, r, inst, args.clone()) {
                 Ok((v, _)) => answer = Some(v),
-                Err(e) => result = Err(e),
+                Err(e) => {
+                    if matches!(e, Signal::Error(_)) {
+                        self.pages.failed_trigger = Some((object as u32, name.to_string()));
+                    }
+                    result = Err(e)
+                }
             }
         }
         if result.is_ok() {
@@ -252,6 +304,7 @@ impl Session {
                 if n == name {
                     let inst = self.owner_instance(st, Some(*e));
                     if let Err(err) = self.call(*e, *r, inst, args.clone()) {
+                        self.pages.failed_trigger = None;
                         result = Err(err);
                         break;
                     }

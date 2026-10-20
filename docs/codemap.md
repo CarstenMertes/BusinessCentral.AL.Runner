@@ -372,7 +372,8 @@ functions or methods; the file is in the module list above.
    `discover::test_codeunits` over each APP's files (which test codeunits exist, which the selection picks) ->
    `al_version::choose_target` -> `apps::combined_project` (the APPs' dependencies, plus the `Application` and `System`
    floors as declared Microsoft dependencies) -> `deps::load_project` (search list: `--dep`, `--package-cache`, each folder
-   APP's `.alpackages`, then the artifact feed; `al_deps::load::scan_path` reads a directory, a package file or an app folder).
+   APP's `.alpackages`, then the artifact feed; `al_deps::load::scan_path` reads a directory, a package file or an app folder;
+   a Microsoft package in `.alpackages` older than the run's BC version gives way to the feed, `artifact::load_with_artifacts`).
 3. An APP with an `application` or `platform` floor gets the dependencies it implies (`Dependencies::implied_dependencies`),
    so it sees Base Application without declaring it.
 4. `CorpusRuntime::run_suites_with` (the same compile and run as the corpus job; see "Corpus run" step 4), with

@@ -1153,14 +1153,14 @@ impl Session {
         if how == PageMethod::Next && at + 1 == window.len() && read_to_end {
             return Ok(Some(false));
         }
-        // First on the first row of a list with OnFindRecord and OnNextRecord whose refresh read the view from its start reads
-        // nothing (pages/lt-ai-list-order/AiListOrderTests.al:174 Same_Nav_OnOpenRow and :203 Same_NavCurr_OnOpenRow
-        // `after_first` empty, after CurrPage.Update).
-        if how == PageMethod::First && at == 0 && find_page && self.declares(st, "onnextrecord") {
-            return Ok(Some(true));
-        }
-        // The same on a list whose action's filter left its row: it settled on the first row of the new view
-        // (AiListOrderTests.al:339 DropCurrent_RowsAfter_Plain, :373 DropCurrent_RowsAfter_PlainCurr).
+        // First on the first row right after the refresh of CurrPage.Update settled the list there reads nothing: on a list with
+        // OnFindRecord and OnNextRecord (pages/lt-ai-list-order/AiListOrderTests.al:174 Same_Nav_OnOpenRow, :203
+        // Same_NavCurr_OnOpenRow `after_first` empty; pages/lt-f3-pages/F3ListTests.al:72 Nav_ActionChangesViewThenUpdate
+        // `after_walk` empty), and on a list whose action's filter left its row (AiListOrderTests.al:339
+        // DropCurrent_RowsAfter_Plain, :373 DropCurrent_RowsAfter_PlainCurr). Only a field read may come between (`settled_first_row`).
+        // In any other state First on the first row of a list with OnFindRecord and OnNextRecord is not pinned; it keeps reading
+        // the row as before, for baseline cases 86441 NextList_OpenAndWalk, NextList_NextLog and FreeList_OpenAndWalk (First after
+        // the open).
         if how == PageMethod::First && at == 0 && std::mem::take(&mut st.borrow_mut().settled_first_row) {
             return Ok(Some(true));
         }

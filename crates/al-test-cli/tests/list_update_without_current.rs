@@ -22,7 +22,27 @@ page 62503 "LUW Plain Curr" { PageType = List; SourceTable = "LUW Row"; Editable
         action(Drop) { trigger OnAction() var L: Codeunit "LUW Log"; begin L.Add('A:filter'); Rec.SetFilter(Qty, '>%1', Rec.Qty); CurrPage.Update(false); L.Add('A:done'); end; } } }
     trigger OnAfterGetRecord() var L: Codeunit "LUW Log"; begin L.Add('R:' + Rec."No."); end;
     trigger OnAfterGetCurrRecord() var L: Codeunit "LUW Log"; begin L.Add('C:' + Rec."No."); end; }
+page 62504 "LUW Nav" { PageType = List; SourceTable = "LUW Row"; Editable = false;
+    layout { area(Content) { repeater(G) { field(NoCtl; Rec."No.") { } } } }
+    actions { area(Processing) {
+        action(Same) { trigger OnAction() var L: Codeunit "LUW Log"; begin L.Add('A:update'); CurrPage.Update(false); L.Add('A:done'); end; } } }
+    trigger OnFindRecord(Which: Text): Boolean var L: Codeunit "LUW Log"; Found: Boolean; begin Found := Rec.Find(Which); L.Add('F:' + Which + '=' + Format(Found)); exit(Found); end;
+    trigger OnNextRecord(Steps: Integer): Integer var L: Codeunit "LUW Log"; N: Integer; begin N := Rec.Next(Steps); L.Add('N:' + Format(Steps) + '=' + Format(N)); exit(N); end;
+    trigger OnAfterGetRecord() var L: Codeunit "LUW Log"; begin L.Add('R:' + Rec."No."); end; }
 "#;
+
+fn outcomes(tests: &str) -> Vec<(String, Outcome)> {
+    let src = format!("{OBJECTS}\ncodeunit 62510 T {{ Subtype = Test; {tests} }}");
+    let o = al_testkit::outcomes_in(&src, "T");
+    assert!(!o.is_empty());
+    o.into_iter().map(|(n, r)| (n.to_string(), r)).collect()
+}
+
+fn refused(tests: &str) {
+    for (n, r) in outcomes(tests) {
+        assert!(matches!(r, Outcome::NotRun(_)), "{n}: {r:?}");
+    }
+}
 
 fn passes(tests: &str) {
     let src = format!("{OBJECTS}\ncodeunit 62510 T {{ Subtype = Test; {tests} }}");
@@ -63,6 +83,47 @@ fn update_after_the_filter_left_the_row_settles_on_the_next_row() {
             P.Drop.Invoke();
             if L.Dump() <> 'R:R1002;A:filter;A:done;R:R1003;R:R1003;R:R1004;R:R1005;R:R1006;R:R1003;R:R1003;C:R1003' then Error('update %1', L.Dump());
             L.Clear(); P.First(); if P.NoCtl.Value() <> 'R1003' then Error('first %1', P.NoCtl.Value()); if L.Dump() <> '' then Error('after first %1', L.Dump());
+        end;"#,
+    );
+}
+
+// AiListOrderTests.al:174 Same_Nav_OnOpenRow: right after CurrPage.Update on a list with OnFindRecord and OnNextRecord, First on the
+// first row reads nothing (a field read between them is allowed). Other shapes keep the
+// earlier rules.
+#[test]
+fn first_on_the_first_row_of_a_find_and_next_list_reads_nothing_only_after_update() {
+    passes(
+        r#"[Test] procedure AfterUpdate() var L: Codeunit "LUW Log"; P: TestPage "LUW Nav"; begin
+            L.Seed(); P.OpenView(); P.Same.Invoke();
+            if P.NoCtl.Value() <> 'R1001' then Error('current %1', P.NoCtl.Value());
+            L.Clear(); if not P.First() then Error('first'); if L.Dump() <> '' then Error('after first %1', L.Dump());
+        end;"#,
+    );
+}
+
+// AiListOrderTests.al:39, :233: after a GoToKey that moved a list without OnAfterGetCurrRecord, the extra read is pinned only for an
+// action that follows at once; Next, GoToKey, First and Last read only what they read (AiListOrderTests.al:1012-1021,
+// TestPageRuntimeContracts.al:342-357). Any other call next, and an action after a field read, are not pinned: refused.
+#[test]
+fn goto_key_on_a_list_without_current_record_trigger_then_another_call_is_refused() {
+    refused(
+        r#"[Test] procedure ThenSetFilter() var L: Codeunit "LUW Log"; P: TestPage "LUW Plain"; begin
+            L.Seed(); P.OpenView(); P.GoToKey('R1002'); P.Filter.SetFilter(Qty, '<5');
+        end;
+        [Test] procedure ThenValue() var L: Codeunit "LUW Log"; P: TestPage "LUW Plain"; begin
+            L.Seed(); P.OpenView(); P.GoToKey('R1002'); if P.NoCtl.Value() = '' then; P.KeepFilter.Invoke();
+        end;
+        [Test] procedure ThenPrevious() var L: Codeunit "LUW Log"; P: TestPage "LUW Plain"; begin
+            L.Seed(); P.OpenView(); P.GoToKey('R1002'); P.Previous();
+        end;"#,
+    );
+}
+
+#[test]
+fn goto_key_on_a_list_without_current_record_trigger_then_next_reads_nothing_more() {
+    passes(
+        r#"[Test] procedure ThenNext() var L: Codeunit "LUW Log"; P: TestPage "LUW Plain"; begin
+            L.Seed(); P.OpenView(); P.GoToKey('R1002'); L.Clear(); P.Next(); if L.Dump() <> '' then Error('next %1', L.Dump());
         end;"#,
     );
 }

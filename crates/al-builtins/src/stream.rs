@@ -372,6 +372,9 @@ pub struct InState {
     pub hit_end: bool,
     /// `HttpContent.WriteFrom` took the stream: only `EOS` is pinned afterwards (see [`hand_to_content`]).
     pub handed_to_content: bool,
+    /// Set once a use through [`with_in`] leaves the stream at its end: `HttpContent.ReadAs(Text)` after the body was handed
+    /// out as this stream is pinned only then (see `http::read_as`).
+    pub end_marker: Option<std::rc::Rc<std::cell::Cell<bool>>>,
 }
 
 impl InState {
@@ -382,6 +385,7 @@ impl InState {
             enc,
             hit_end: false,
             handed_to_content: false,
+            end_marker: None,
         }
     }
 
@@ -392,6 +396,7 @@ impl InState {
             enc,
             hit_end: false,
             handed_to_content: false,
+            end_marker: None,
         }
     }
 
@@ -617,7 +622,13 @@ fn with_in_of<T>(
             if s.handed_to_content && !handed_ok {
                 return unsupported("use of an InStream after HttpContent.WriteFrom took it (only EOS is pinned)");
             }
-            f(s)
+            let out = f(s);
+            if let Some(m) = &s.end_marker
+                && s.pos >= s.len()
+            {
+                m.set(true);
+            }
+            out
         }
         _ => unsupported("use of an InStream that was never created"),
     }

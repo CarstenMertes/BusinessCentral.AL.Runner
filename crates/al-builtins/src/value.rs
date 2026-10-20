@@ -415,11 +415,16 @@ pub struct PageState {
     /// A TestPage GoToKey moved the cursor of a list without OnAfterGetCurrRecord: the client reads the new row once more before
     /// the next action (pages/lt-ai-list-order/AiListOrderTests.al:39 Keep_Nav `update` = `R:R1002;R:R1002;A:filter...`).
     pub read_after_goto: bool,
+    /// A field read or SetValue came between that GoToKey and the next call: whether the row is still read again before an
+    /// action is not pinned (the action is refused).
+    pub read_after_goto_doubt: bool,
     /// The reads after an action on a list without OnAfterGetCurrRecord ended the refresh: `CurrPage.Update` reads nothing more
     /// (pages/lt-ai-list-order/AiListOrderTests.al:233 Keep_Plain).
     pub refresh_read_done: bool,
     /// The client's rows were read again from the row a list settled on after an action's filter left its row, with no row before
     /// it: First stays on that row and reads nothing (pages/lt-ai-list-order/AiListOrderTests.al:339, :373 `after_first` empty).
+    /// Also set by the refresh of CurrPage.Update on a list with OnFindRecord and OnNextRecord that ends on the first row (:174,
+    /// :203). Any TestPage call but First and a field read clears it.
     pub settled_first_row: bool,
     /// The caption was assigned while the page was not open: it stays for every later run of the variable.
     pub caption_assigned_closed: bool,
@@ -577,6 +582,7 @@ impl PageState {
             save_record_called: false,
             view_left: false,
             read_after_goto: false,
+            read_after_goto_doubt: false,
             refresh_read_done: false,
             settled_first_row: false,
             caption_assigned_closed: false,
@@ -1093,6 +1099,8 @@ pub struct HttpContentState {
     pub copied: bool,
     /// The last `WriteFrom` took an `InStream`.
     pub from_stream: bool,
+    /// The stream the body was first handed out as has been read to its end (shared with that `InStream`).
+    pub stream_read_to_end: Option<std::rc::Rc<std::cell::Cell<bool>>>,
 }
 
 impl Default for HttpContentState {
@@ -1110,6 +1118,7 @@ impl Default for HttpContentState {
             written: false,
             copied: false,
             from_stream: false,
+            stream_read_to_end: None,
         }
     }
 }

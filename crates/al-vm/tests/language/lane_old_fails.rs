@@ -61,6 +61,29 @@ fn http_content_read_as_text_after_a_stream_was_taken() {
 
 /// `WriteFrom(InStream)` leaves the source stream where it was: it is not at its end
 /// (network/lt-db-http-leads/DbHttpContentLeads.al:310). Any other use of the source afterwards is not pinned.
+/// `ReadAs(var Text)` after a stream of the body that was not read to its end is not pinned (the pins DbHttpContentLeads.al:113,
+/// :146, :336 and P97ContentRead.al:89 all read the stream to its end): refused, for each kind of content.
+#[test]
+fn http_content_read_as_text_after_a_partly_read_stream_is_refused() {
+    for (vars, body) in [
+        (
+            "R: HttpResponseMessage; C: HttpContent; S: InStream; T: Text; Line: Text;",
+            "R.Content().WriteFrom('a' + Format(10) + 'b'); C := R.Content(); C.ReadAs(S); C.ReadAs(T); exit('ran ' + T);",
+        ),
+        (
+            "R: HttpResponseMessage; S: InStream; T: Text; Line: Text; Nl: Text[1];",
+            "Nl[1] := 10; R.Content().WriteFrom('a' + Nl + 'b'); R.Content().ReadAs(S); S.ReadText(Line); R.Content().ReadAs(T); exit('ran ' + T);",
+        ),
+        (
+            "C: HttpContent; S: InStream; T: Text;",
+            "C.WriteFrom('body'); C.ReadAs(S); C.ReadAs(T); exit('ran ' + T);",
+        ),
+    ] {
+        let r = text(vars, body);
+        assert!(r.starts_with("refused:"), "{body}: {r}");
+    }
+}
+
 #[test]
 fn http_content_write_from_stream_leaves_the_source_not_at_its_end() {
     let src = r#"table 50101 B { fields { field(1; Id; Integer) { } field(2; Data; Blob) { } } }

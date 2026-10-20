@@ -691,6 +691,15 @@ impl Session {
             && page_of(&engine, st).controls[idx].run_object.is_none()
             && page_of(&engine, st).controls[idx].trigger("onaction").is_some();
         let read_after_goto = std::mem::take(&mut st.borrow_mut().read_after_goto);
+        let doubt = std::mem::take(&mut st.borrow_mut().read_after_goto_doubt);
+        // Pinned only for an action that reads rows, right after the GoToKey (AiListOrderTests.al:39, :233). After a field call
+        // between them it is refused. An action that reads no rows (a RunObject action) reads nothing more: not pinned, kept for
+        // baseline case 67019 PrecompiledRunPageModeView_OpensTheTargetReadOnly.
+        if read_after_goto && doubt {
+            return unsupported(
+                "an action after a GoToKey moved a list without OnAfterGetCurrRecord, with a field call between them (not pinned)",
+            );
+        }
         if reads_rows {
             let rec = self.page_rec(st);
             if self.stored_row(&rec)?.is_some() {
@@ -1277,12 +1286,16 @@ impl Session {
             st.borrow_mut().window_from_start = true;
             st.borrow_mut().window_eof = true;
             st.borrow_mut().refresh = false;
+            // F3ListTests.al:72 `after_walk` empty: a First right after this reads nothing (see `rows.rs`).
+            st.borrow_mut().settled_first_row = true;
             return self.sync_parts(st);
         }
         rec.borrow_mut().fields = first.stored.clone();
         if !with_current {
             // Without OnAfterGetCurrRecord the refresh ends after the step back: no row is put back and `=` is not asked
             // (pages/lt-ai-list-order/AiListOrderTests.al:39 Keep_Nav, :73 Same_Nav, :170 Same_Nav_OnOpenRow).
+            // AiListOrderTests.al:174 Same_Nav_OnOpenRow: a First right after this on the first row reads nothing (see `rows.rs`).
+            st.borrow_mut().settled_first_row = before.is_empty() && self.declares(st, "onnextrecord");
             before.extend(forward);
             st.borrow_mut().window = before;
             st.borrow_mut().window_from_start = true;
@@ -1304,6 +1317,8 @@ impl Session {
             self.page_event(st, "onaftergetcurrrecordevent", None, None)
         })();
         self.torn_down_on_error(st, r)?;
+        // AiListOrderTests.al:203 Same_NavCurr_OnOpenRow: a First right after this on the first row reads nothing (see `rows.rs`).
+        st.borrow_mut().settled_first_row = before.is_empty() && self.declares(st, "onnextrecord");
         before.extend(forward);
         st.borrow_mut().window = before;
         st.borrow_mut().window_from_start = true;

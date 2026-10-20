@@ -209,20 +209,55 @@ impl Session {
         } else {
             Vec::new()
         };
-        // Only an action right after the GoToKey is pinned to read the row once more; any other call drops it.
+        // Only an action right after the GoToKey is pinned to read the row once more (AiListOrderTests.al:39, :233): whether any
+        // other call reads it is not pinned, so that call is refused.
+        // A move after it reads only what the move reads: Next (AiListOrderTests.al:1012-1021 Paging_GoToKeyThenWalk_Nav, every
+        // `at` log empty), GoToKey, Last and First (handlers/TestPageRuntimeContracts.al:342-357 on a list with OnAfterGetRecord
+        // alone). Close drops it too: not pinned, kept for baseline cases 68335 List_Window_AfterGoToKeyOutsideTheRowsRead and
+        // List_Window_SmallTable and 67095 Nav_TwelveRows_OpenLastPreviousFirstNext.
         let read_after_goto = std::mem::take(&mut st.borrow_mut().read_after_goto);
-        if read_after_goto && name == PageMethod::Invoke {
-            st.borrow_mut().read_after_goto = true;
+        let doubt = std::mem::take(&mut st.borrow_mut().read_after_goto_doubt);
+        if read_after_goto {
+            match name {
+                PageMethod::Invoke => {
+                    let mut s = st.borrow_mut();
+                    s.read_after_goto = true;
+                    s.read_after_goto_doubt = doubt;
+                }
+                PageMethod::Next | PageMethod::GoToKey | PageMethod::Last | PageMethod::First | PageMethod::Close => {}
+                // A read of the page itself is a field call as in `controls.rs` (kept for baseline case 68164
+                // TestPage_Control_Texts_GuidDurationAndBlankNumbers, IsExpanded): an action after it is refused.
+                PageMethod::IsExpanded
+                | PageMethod::Caption
+                | PageMethod::Editable
+                | PageMethod::ValidationErrorCount
+                | PageMethod::GetValidationError => {
+                    let mut s = st.borrow_mut();
+                    s.read_after_goto = true;
+                    s.read_after_goto_doubt = true;
+                }
+                _ => {
+                    return unsupported(format!(
+                        "TestPage.{} right after a GoToKey moved a list without OnAfterGetCurrRecord (whether the row is read again is not pinned)",
+                        name.name()
+                    ));
+                }
+            }
         }
-        if matches!(
+        // First reads nothing only right after the refresh that settled the list (a field read between them is pinned:
+        // AiListOrderTests.al:163-166, :336-338); any other call ends that.
+        let field_read = matches!(
             name,
-            PageMethod::Next
-                | PageMethod::Previous
-                | PageMethod::Last
-                | PageMethod::GoToKey
-                | PageMethod::GoToRecord
-                | PageMethod::New
-        ) {
+            PageMethod::Value
+                | PageMethod::AsBoolean
+                | PageMethod::AsDate
+                | PageMethod::AsDateTime
+                | PageMethod::AsDecimal
+                | PageMethod::AsInteger
+                | PageMethod::AsTime
+                | PageMethod::GetField
+        );
+        if name != PageMethod::First && !field_read {
             st.borrow_mut().settled_first_row = false;
         }
         let r = match self.test_page_op_inner(method, st, args) {

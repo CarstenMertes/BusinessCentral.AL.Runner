@@ -1,10 +1,11 @@
 //! The install baseline (ADR-013 decision 5), mirroring AL Runner (`InstallTriggerRunner`,
 //! `CompanyInitializer`, `TestExecutor`): once per run, before the first test,
 //!
-//! 1. every dependency app's install codeunits, dependency apps first; within a codeunit
-//!    `OnInstallAppPerCompany`, then `OnInstallAppPerDatabase`;
+//! 1. every dependency app's install code (install codeunit triggers and `Extension Triggers` subscribers, ADR-046
+//!    decision 1), in dependency order; per app every `OnInstallAppPerCompany`, then every `OnInstallAppPerDatabase`;
 //! 2. Base Application's `Company-Initialize` (codeunit 2), once, after the dependency installs;
-//! 3. a capture of the data ([`Baseline`], ADR-004), put back at the start of every test codeunit.
+//! 3. the install code of the apps under test, one app after the other (`install.rs`, ADR-046 step A);
+//! 4. a capture of the data ([`Baseline`], ADR-004), put back at the start of every test codeunit.
 //!
 //! Only install triggers run, never upgrade triggers. A trigger that cannot run stops where it
 //! stops: `Company-Initialize` keeps the rows it wrote before (as AL Runner's partial company
@@ -77,7 +78,7 @@ fn is_install(o: &al_ir::Object) -> bool {
             .any(|(k, v)| k.eq_ignore_ascii_case("Subtype") && v.trim().eq_ignore_ascii_case("Install"))
 }
 
-fn trigger(o: &al_ir::Object, name: &str) -> Option<usize> {
+pub(crate) fn trigger(o: &al_ir::Object, name: &str) -> Option<usize> {
     o.routines
         .iter()
         .position(|r| r.is_trigger && r.name.eq_ignore_ascii_case(name))
@@ -102,27 +103,19 @@ pub fn run(engine: &Arc<Engine>, lowered: &Lowered) -> Option<BaselineRun> {
 /// [`run`], and with `trace` what the install code raised and touched (`BaselineRun::trace`, ADR-043 step 2).
 pub fn run_traced(engine: &Arc<Engine>, lowered: &Lowered, trace: bool) -> Option<BaselineRun> {
     let objs = &lowered.program.objects;
-    // Install codeunits, dependencies first (the apps of the program are in dependency order).
-    let mut installs: Vec<usize> = (0..objs.len())
-        .filter(|&oi| lowered.dependency[oi] && is_install(&objs[oi]))
-        .collect();
-    installs.sort_by_key(|&oi| (objs[oi].app, oi));
-    // (object, trigger, keep what it wrote when it stops early, no company chosen)
+    // (object, routine, keep what it wrote when it stops early, no company chosen)
     //
-    // Per app: every codeunit's OnInstallAppPerCompany, then every OnInstallAppPerDatabase, which
-    // runs last and with CompanyName() empty. Measured on real BC 27.5 (a fresh install with two
-    // companies, a scratch app; docs/probes-needed.md). AL Runner and ADR-013 as first written ran
-    // per codeunit, per-company then per-database, with the company set.
+    // Per dependency app, in dependency order: its install code (install codeunit triggers and "Extension Triggers"
+    // subscribers, ADR-046 decision 1), every per-company routine, then every per-database routine, which runs last and
+    // with CompanyName() empty. Measured on real BC 27.5 (a fresh install with two companies, a scratch app;
+    // docs/probes-needed.md) and pinned by install/lt-bf-install-probes/BfInstallTests.al:138-140, :239.
     let mut roots: Vec<(usize, usize, bool, bool)> = Vec::new();
-    let mut apps: Vec<usize> = installs.iter().map(|&oi| objs[oi].app as usize).collect();
-    apps.dedup();
-    for app in apps {
-        for (name, no_company) in [("OnInstallAppPerCompany", false), ("OnInstallAppPerDatabase", true)] {
-            for &oi in installs.iter().filter(|&&oi| objs[oi].app as usize == app) {
-                if let Some(ri) = trigger(&objs[oi], name) {
-                    roots.push((oi, ri, false, no_company));
-                }
-            }
+    for app in crate::install::plan(lowered, &engine.events, true) {
+        for &(oi, ri) in &app.company {
+            roots.push((oi, ri, false, false));
+        }
+        for &(oi, ri) in &app.database {
+            roots.push((oi, ri, false, true));
         }
     }
     let company_initialize = (0..objs.len()).find(|&oi| {
@@ -140,6 +133,7 @@ pub fn run_traced(engine: &Arc<Engine>, lowered: &Lowered, trace: bool) -> Optio
         return None;
     }
 
+    crate::install::ensure_facts(engine, lowered);
     let mut session = Session::with_host(engine.clone(), crate::host::system_host());
     session.set_install_scope(true);
     if trace {
@@ -155,12 +149,17 @@ pub fn run_traced(engine: &Arc<Engine>, lowered: &Lowered, trace: bool) -> Optio
     session.set_company(&company);
     for &(oi, ri, keep_prefix, no_company) in &roots {
         let label = format!("{}.{}", objs[oi].name, objs[oi].routines[ri].name);
-        let inst = session.instance(oi);
         if no_company {
             session.set_company("");
         }
         session.clear_fault_site();
-        let why = match session.call(oi, ri, inst, Vec::new()) {
+        let called = if is_install(&objs[oi]) || keep_prefix {
+            let inst = session.instance(oi);
+            session.call(oi, ri, inst, Vec::new()).map(|_| ())
+        } else {
+            session.call_parameterless_subscriber(oi, ri)
+        };
+        let why = match called {
             Ok(_) => None,
             // Where it stopped: the innermost routine and its source position.
             Err(Signal::Unsupported(r)) => Some(match session.fault_site().last() {

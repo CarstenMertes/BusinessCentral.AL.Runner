@@ -527,7 +527,13 @@ impl Session {
         for (slot, inst, g) in &f.aliases {
             inst.borrow_mut().globals[*g] = f.locals[*slot].clone();
         }
+        if try_call {
+            self.enter_used_try();
+        }
         let result = self.call(object, routine, inst, values);
+        if try_call {
+            self.leave_used_try();
+        }
         for (slot, inst, g) in &f.aliases {
             f.locals[*slot] = inst.borrow().globals[*g].clone();
         }
@@ -541,6 +547,10 @@ impl Session {
             }
         }
         let (ret, finals) = match (result, try_call) {
+            // A write the try was not allowed to make is not trapped by it (misc/lt-cu-odd-leads/CuTryTests.al:83-150).
+            (Err(Signal::Error(e)), true) if e.code == crate::transactions::TRY_FUNCTION_WRITE => {
+                return Err(Signal::Error(e));
+            }
             (Err(Signal::Error(mut e)), true) => {
                 self.add_top_frame(&mut e);
                 self.last_error = *e;

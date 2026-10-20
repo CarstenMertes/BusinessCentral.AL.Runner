@@ -24,6 +24,19 @@ pub enum TxModel {
     None,
 }
 
+/// The error code of a write inside a TryFunction whose result is used (misc/lt-cu-odd-leads/CuTryTests.al:83-150).
+pub(crate) const TRY_FUNCTION_WRITE: &str = "TryFunctionWrite";
+
+/// A TryFunction call on the call stack whose result is used (`Session::enter_used_try`).
+pub(crate) struct UsedTry {
+    /// The scope name the TryFunctionWrite error names; `None` where it is not pinned.
+    scope: Option<String>,
+    /// `tx_world` when the call began.
+    world: usize,
+    /// `Codeunit.Run` calls begun inside the call that have not ended.
+    runs: usize,
+}
+
 /// The `[CommitBehavior(...)]` in force for the dynamic extent of a procedure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) enum CommitBehavior {
@@ -48,6 +61,17 @@ impl TxModel {
 }
 
 impl CommitBehavior {
+    /// The behavior inside a procedure that declares `inner`, called where `self` is in force: an outer `Error` stays,
+    /// an inner `Error` wins over an outer `Ignore` (misc/lt-cu-odd-leads/CuCommitTests.al:217-245,
+    /// Nested_ErrorOuter_IgnoreInner and Nested_IgnoreOuter_ErrorInner).
+    pub(crate) fn nested(self, inner: CommitBehavior) -> CommitBehavior {
+        if self == CommitBehavior::Error {
+            CommitBehavior::Error
+        } else {
+            inner
+        }
+    }
+
     /// The behaviour named by a `[CommitBehavior(CommitBehavior::X)]` attribute's source text.
     pub(crate) fn from_attribute(text: &str) -> Option<CommitBehavior> {
         let t = text.to_ascii_lowercase();
@@ -214,6 +238,14 @@ impl Session {
         if self.tx.commit_behavior == CommitBehavior::Error {
             return Err(al_error_code(COMMIT_PROHIBITED, "DB:Ok"));
         }
+        // Inside a TryFunction whose result is used, after the `[CommitBehavior]` checks (misc/lt-cu-odd-leads/
+        // CuCommitTests.al:203-264 TryFunction_WithCommitBehavior, :361-381 Commit_InTryFunction).
+        self.gate_used_try_write("COMMIT")?;
+        // A table `Consistent(false)` marked fails the Commit (misc/lt-cu-odd-leads/CuCommitTests.al:405-419
+        // Consistent_False_ThenCommit); `Consistent(true)` lifts the mark (:422-433).
+        if let Some(&table) = self.tx.inconsistent.first() {
+            return Err(self.inconsistent_error(table as usize));
+        }
         // A deferred duplicate-key Insert comes out here (corpus record/TestRecordRuntimeTextsAndViews.al:
         // Record_Insert_DuplicateKey_WithoutBlobField_IsDeferred_...: "raised by Commit").
         if let Some((_, e)) = self.tx.deferred_insert.take() {
@@ -227,6 +259,174 @@ impl Session {
         self.tx.tx_phase = TX_FRESH;
         self.tx.transaction_type = 1;
         Ok(())
+    }
+
+    /// The error of a Commit while `Consistent(false)` marks `table` (misc/lt-cu-odd-leads/CuCommitTests.al:405-419). The
+    /// table is named in the text; only a table whose caption is its name is pinned.
+    fn inconsistent_error(&self, table: usize) -> Signal {
+        let t = &self.engine.program.objects[table];
+        let caption = t
+            .properties
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case("Caption"))
+            .map(|(_, v)| v.trim().trim_matches('\'').to_string());
+        if caption.is_some_and(|c| c != t.name) {
+            return Signal::Unsupported(format!(
+                "Commit after Consistent(false) on table {}, which has a caption other than its name (which one the error names is not pinned)",
+                t.name
+            ));
+        }
+        al_error_code(
+            &format!(
+                "The transaction cannot be completed because it will cause inconsistencies in the {} table. Check where and how \
+                 the CONSISTENT function is used in the transaction to find the reason for the error.\\\\Contact your system \
+                 administrator.\\\\Tables can be marked as inconsistent during comprehensive tasks, such as posting. This \
+                 prevents data from being updated incorrectly.",
+                t.name
+            ),
+            "DB:TableInConsistent",
+        )
+    }
+
+    /// A transaction that ends other than by `Commit()` while `Consistent(false)` marks a table: what BC does is not
+    /// pinned (only `Commit()` is, misc/lt-cu-odd-leads/CuCommitTests.al:405-419), so it is refused.
+    pub(crate) fn refuse_inconsistent_end(&self, how: &str) -> Result<(), Signal> {
+        match self.tx.inconsistent.first() {
+            Some(&t) => Err(Signal::Unsupported(format!(
+                "{how} ends a transaction while Consistent(false) marks table {} (only Commit() is pinned)",
+                self.engine.program.objects[t as usize].name
+            ))),
+            None => Ok(()),
+        }
+    }
+
+    /// `Record.Consistent(Value)` on a database table marks or unmarks it for the open transaction
+    /// (misc/lt-cu-odd-leads/CuCommitTests.al:382-433). A temporary record is not pinned.
+    pub(crate) fn set_consistent(&mut self, table: u32, temporary: bool, consistent: bool) -> Result<(), Signal> {
+        if temporary {
+            return Err(Signal::Unsupported(
+                "Consistent on a temporary record (not pinned)".into(),
+            ));
+        }
+        self.tx.inconsistent.retain(|&t| t != table);
+        if !consistent {
+            self.tx.inconsistent.push(table);
+        }
+        Ok(())
+    }
+
+    /// A TryFunction call whose result is used begins: `consumer` is the frame count of the caller that uses the
+    /// result. What the TryFunctionWrite error names is the caller of that procedure: the test method when a helper
+    /// of it uses the result (misc/lt-cu-odd-leads/CuTryTests.al:105-121 TryInsertThenError_IfNotForm), the test
+    /// runner's root scope when the test method uses it itself (:236-238 measured 'RunTests' under the classic runner
+    /// on BC 27.5 and 'RootMethodScope' under the TestRunnerHub runner on 28.5/29.0). Any other caller is not pinned:
+    /// the error is raised with an unpinned text.
+    pub(crate) fn enter_used_try(&mut self) {
+        let scope = match self.call_stack.len() {
+            // The corpus masks this name, so the runner's name is not pinned per version: the TestRunnerHub one is used for
+            // every major (the classic runner, measured on 27.5, says 'RunTests').
+            0 | 1 => Some("RootMethodScope".to_string()),
+            2 => {
+                let (o, r) = (self.frames[0], self.call_stack[0].routine);
+                let obj = &self.engine.program.objects[o];
+                let is_test_method = obj
+                    .properties
+                    .iter()
+                    .any(|(k, v)| k.eq_ignore_ascii_case("Subtype") && v.trim().eq_ignore_ascii_case("Test"))
+                    && obj.routines[r]
+                        .attributes
+                        .iter()
+                        .any(|a| a.name.eq_ignore_ascii_case("Test"));
+                is_test_method.then(|| obj.routines[r].name.clone())
+            }
+            _ => None,
+        };
+        self.tx.used_tries.push(UsedTry {
+            scope,
+            world: self.tx.tx_world,
+            runs: 0,
+        });
+    }
+
+    pub(crate) fn leave_used_try(&mut self) {
+        self.tx.used_tries.pop();
+    }
+
+    /// A write `function` (as BC names it, `INSERT`) inside a TryFunction whose result is used fails with
+    /// TryFunctionWrite (misc/lt-cu-odd-leads/CuTryTests.al:83-150, CuCommitTests.al:361-381); the try does not trap
+    /// it (`finish_call`). Inside a `Codeunit.Run` that began in the try it is not pinned and refused.
+    pub(crate) fn gate_used_try_write(&self, function: &str) -> Result<(), Signal> {
+        let Some(t) = self.tx.used_tries.last() else {
+            return Ok(());
+        };
+        if let Some(r) = self.used_try_nested_world()? {
+            return r;
+        }
+        if self.tx_model == TxModel::AutoRollback {
+            return Err(Signal::Unsupported(format!(
+                "{function} inside a TryFunction whose result is used, under TransactionModel::AutoRollback (not pinned)"
+            )));
+        }
+        Err(match &t.scope {
+            Some(scope) => Signal::Error(Box::new(AlError {
+                message: format!(
+                    "Call to the function '{function}' is not allowed inside the call to '{scope}' when it is used as a TryFunction."
+                ),
+                code: TRY_FUNCTION_WRITE.into(),
+                ..Default::default()
+            })),
+            None => Signal::Error(Box::new(AlError {
+                code: TRY_FUNCTION_WRITE.into(),
+                ..al_builtins::native::unpinned_error_for("TryFunctionWrite scope name")
+            })),
+        })
+    }
+
+    /// Writes other than Insert inside a TryFunction whose result is used are not pinned (docs/probes-needed.md).
+    pub(crate) fn refuse_used_try_write(&self, method: RecordOp) -> Result<(), Signal> {
+        // Truncate has a refusal of its own inside any try function (`autoinc.rs`).
+        if self.tx.used_tries.is_empty() || method == RecordOp::Truncate {
+            return Ok(());
+        }
+        if let Some(r) = self.used_try_nested_world()? {
+            return r;
+        }
+        Err(Signal::Unsupported(format!(
+            "{} of a database table inside a TryFunction whose result is used (only Insert and Commit are pinned)",
+            method.name()
+        )))
+    }
+
+    /// A write inside an XmlPort import or a report the try function started (their own transaction world) is not a
+    /// write of the try: BC lets it happen (xmlport/TestXmlPortObject.al:234-251 TryImportUniversalXmlPort and the
+    /// tests that use it, errors/lt-ms-refusals-136/P136Report.al:165-180 TryRunOne and TryRunTwo). Inside a `Codeunit.Run` the try started it
+    /// is not pinned and refused. `None` when the write is the try's own.
+    fn used_try_nested_world(&self) -> Result<Option<Result<(), Signal>>, Signal> {
+        let Some(t) = self.tx.used_tries.last() else {
+            return Ok(Some(Ok(())));
+        };
+        if t.runs > 0 {
+            return Err(Signal::Unsupported(
+                "a write inside a Codeunit.Run inside a TryFunction whose result is used (not pinned)".into(),
+            ));
+        }
+        Ok((self.tx.tx_world != t.world).then_some(Ok(())))
+    }
+
+    /// A TestPage operation inside a TryFunction whose result is used is a call of the page client, not of the try:
+    /// the writes its triggers make are allowed (pageext/lt-z-page-ext-props/ZPageExtProps.al:663-690
+    /// ZDeleteAllowed_1, pages/lt-cf-page-leads/CfPageLeads.al:373-390 FlowFieldRelation_OpenNew, baseline cases).
+    pub(crate) fn outside_used_tries<T>(
+        &mut self,
+        body: impl FnOnce(&mut Session) -> Result<T, Signal>,
+    ) -> Result<T, Signal> {
+        if self.tx.used_tries.is_empty() {
+            return body(self);
+        }
+        let saved = std::mem::take(&mut self.tx.used_tries);
+        let r = body(self);
+        self.tx.used_tries = saved;
+        r
     }
 
     /// `Codeunit.Run(id)` in its statement form, as the test runner's own AL code calls it (an error is not trapped).
@@ -325,6 +525,22 @@ impl Session {
             // Without a record Rec is a blank record; a temporary one is handed over by reference like any other
             // (session/TestProbeSessionMiscContracts.al:CodeunitRun_TableNo_NoRecord, CodeunitRun_TableNo_TemporaryRecord).
             self.ensure_initialized(&inst);
+            // A record of another table fails before the run, and the guarded form does not trap it
+            // (misc/lt-cu-odd-leads/CuWriteTxTests.al:203-233, codeunit/TestCodeunitRunErrorTextsAndModels.al:273-297).
+            if let (Some(Value::Record(rc)), Value::Record(own)) = (record_arg, &inst.borrow().globals[slot]) {
+                let (given, wanted) = (rc.borrow().table as usize, own.borrow().table as usize);
+                if given != wanted {
+                    let id = |o: usize| engine.program.objects[o].id.unwrap_or(0);
+                    return Err(al_error_code(
+                        &format!(
+                            "Record({}) is not compatible with Codeunit.Run(Record({})).",
+                            id(given),
+                            id(wanted)
+                        ),
+                        "InvalidType",
+                    ));
+                }
+            }
             if let Some(Value::Record(rc)) = record_arg {
                 inst.borrow_mut().globals[slot] = Value::Record(rc.clone());
             }
@@ -359,7 +575,13 @@ impl Session {
         // (codeunit/TestWriteTxTestBoundary.al:Test10_ARunCodeunitMayWriteUnderNone).
         let began_world = self.tx_model == TxModel::None && self.tx.tx_world == 0;
         self.tx.tx_world += 1;
+        if let Some(t) = self.tx.used_tries.last_mut() {
+            t.runs += 1;
+        }
         let result = self.call(object, on_run, inst, Vec::new());
+        if let Some(t) = self.tx.used_tries.last_mut() {
+            t.runs -= 1;
+        }
         self.tx.tx_world -= 1;
 
         match result {
@@ -387,16 +609,24 @@ impl Session {
                     return Ok(Value::Boolean(false));
                 }
                 if self.pages.bg_worker.is_none() {
+                    self.refuse_inconsistent_end("A guarded Codeunit.Run")?;
                     self.commit_transaction();
                 }
                 Ok(Value::Boolean(true))
             }
             Ok(_) => {
                 if began_world {
+                    self.refuse_inconsistent_end("Codeunit.Run")?;
                     self.commit_transaction();
                 }
                 Ok(Value::Null)
             }
+            // Whether a guarded run traps a TryFunctionWrite error is not pinned (only asserterror is,
+            // misc/lt-cu-odd-leads/CuTryTests.al:83-150).
+            Err(Signal::Error(e)) if guarded && e.code == TRY_FUNCTION_WRITE => Err(Signal::Unsupported(
+                "a guarded Codeunit.Run whose run fails with TryFunctionWrite (whether it traps it is not pinned)"
+                    .into(),
+            )),
             Err(Signal::Error(mut e)) if guarded => {
                 self.add_top_frame(&mut e);
                 // The run's writes since its last Commit are undone, the error becomes the last
@@ -451,6 +681,7 @@ impl Session {
         let r = body(self);
         self.tx.tx_world -= 1;
         if began_world && r.is_ok() {
+            self.refuse_inconsistent_end("A TestPage operation")?;
             self.commit_transaction();
         }
         r

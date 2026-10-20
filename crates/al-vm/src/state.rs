@@ -37,6 +37,11 @@ pub(crate) struct TxState {
     pub(crate) immediate_errors: bool,
     /// Try functions on the call stack (Truncate is refused inside them).
     pub(crate) try_depth: usize,
+    /// The TryFunction calls on the call stack whose result is used, innermost last: a write inside one fails with
+    /// TryFunctionWrite (`transactions::try_write_error`).
+    pub(crate) used_tries: Vec<transactions::UsedTry>,
+    /// The tables (object indexes) `Consistent(false)` marked in the open transaction: `Commit` fails while one is marked.
+    pub(crate) inconsistent: Vec<u32>,
 }
 
 /// Handler functions and notifications of the running test method.

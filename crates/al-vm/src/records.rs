@@ -1434,6 +1434,13 @@ impl Session {
         {
             self.bg_refuse_write(t.object as usize, method.name())?;
             self.gate_write(method)?;
+            // Inside a TryFunction whose result is used only Insert is pinned (misc/lt-cu-odd-leads/CuTryTests.al:83-150);
+            // writes to a temporary record are allowed (:153-171), and never reach here.
+            if method == RecordOp::Insert {
+                self.gate_used_try_write("INSERT")?;
+            } else {
+                self.refuse_used_try_write(method)?;
+            }
             self.user_bulk_refusal(&t, rec.borrow().temporary, method)?;
             // A write call starts the transaction, also a DeleteAll that finds no row
             // (session/ProbeSystemEnumMembers.al:143-161, session/TestDatabaseExtended.al:

@@ -400,6 +400,7 @@ impl Session {
                 Op::BaseInstance { d } => self.op_base(f, d)?,
                 Op::Aux { s, d, a } => self.op_aux(&chunk.aux[s as usize], f, d, a, nl)?,
                 Op::Assert { end: stop, from } => pc = self.op_assert(chunk, f, pc, stop as usize, from)?,
+                Op::TryArgs { end: stop, d } => pc = self.op_try_args(chunk, f, pc, stop as usize, d)?,
                 Op::ForeachInit { s } => self.op_foreach_init(&chunk.foreachs[s as usize], f, nl)?,
                 Op::ForeachNext { s, t } => {
                     if !self.op_foreach_next(&chunk.foreachs[s as usize], f)? {
@@ -418,6 +419,28 @@ impl Session {
             }
         }
         Ok(pc)
+    }
+
+    /// The arguments of a TryFunction call whose result is used (`Op::TryArgs`): runs `pc..stop`, which evaluates
+    /// them; on an error the call answers false and the code goes on after it.
+    #[inline(never)]
+    fn op_try_args(&mut self, chunk: &Chunk, f: &mut Frame, pc: usize, stop: usize, d: u16) -> Result<usize, Signal> {
+        let open = self.cap_stmt_depth();
+        match self.run_range::<true>(chunk, f, pc, stop) {
+            Ok(at) => Ok(at),
+            // Only an error of a procedure the arguments call is pinned (its frame is in the error's call stack already). An
+            // error of the argument expression itself (a conversion, an overflow, a builtin) goes on at the call as before:
+            // lane T14 keeps the conversion of a by-value argument there, not pinned (docs/probes-needed.md).
+            Err(Signal::Error(e)) if e.call_stack.is_empty() => Err(Signal::Error(e)),
+            Err(Signal::Error(mut e)) => {
+                self.cap_stmt_truncate(open);
+                self.add_top_frame(&mut e);
+                self.last_error = *e;
+                set(&mut f.locals[d as usize], Value::Boolean(false));
+                Ok(stop + 1)
+            }
+            Err(other) => Err(other),
+        }
     }
 
     /// `asserterror`: runs the body `pc..stop`; returns where the code goes on.

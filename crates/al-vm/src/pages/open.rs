@@ -682,7 +682,7 @@ impl Session {
         let save = self.close_denied_modify(st).and_then(|()| self.save_row(st));
         match save {
             Err(Signal::Error(e)) if swallow_save_errors => {
-                al_builtins::native::refuse_unpinned(&e, "The error list of a page row")?;
+                al_builtins::native::refuse_unpinned_text(&e, "The error list of a page row")?;
                 let key_ctl = self.key_control(st);
                 st.borrow_mut().errors.push((key_ctl, e.message));
                 return Ok(Value::Null);
@@ -758,7 +758,7 @@ impl Session {
         // (corpus handlers/TestPageQueryCloseError_Tests.al:1-25).
         let veto = match self.query_close_answer(st, vec![Value::Option(ordinal, members)]) {
             Err(Signal::Error(e)) => {
-                al_builtins::native::refuse_unpinned(&e, "The message shown for an error of OnQueryClosePage")?;
+                al_builtins::native::refuse_unpinned_text(&e, "The message shown for an error of OnQueryClosePage")?;
                 self.ui_message(e.message)?;
                 st.borrow_mut().close_error = true;
                 return Ok(Value::Null);

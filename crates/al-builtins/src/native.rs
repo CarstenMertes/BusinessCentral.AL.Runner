@@ -920,24 +920,37 @@ pub fn unpinned_error_for(probe: &str) -> AlError {
     }
 }
 
-/// Whether the text and code of `e` are not pinned ([`unpinned_error`], [`unpinned_error_for`]).
-pub fn is_unpinned(e: &AlError) -> bool {
-    e.code == UNPINNED_ERROR
+/// Whether the text of `e` is not pinned ([`unpinned_error`], [`unpinned_error_for`]). Some errors have a pinned text and an
+/// unpinned code (the code alone is the mark).
+pub fn text_unpinned(e: &AlError) -> bool {
+    e.message.starts_with(UNPINNED_ERROR)
 }
 
-/// Refuses a read of the text or code of an error whose text is not pinned: `what` is the read, the reason names the probe
-/// when the error carries one. Every place that hands an error's text or code to AL code or to the test result calls it.
-pub fn refuse_unpinned(e: &AlError, what: &str) -> Result<(), Signal> {
-    if !is_unpinned(e) {
-        return Ok(());
-    }
+fn unpinned_refusal(e: &AlError, what: &str) -> Signal {
     match e.message.strip_prefix(UNPINNED_ERROR).filter(|p| !p.is_empty()) {
-        Some(probe) => Err(Signal::Unsupported(format!(
+        Some(probe) => Signal::Unsupported(format!(
             "{what} of an error whose text is not pinned (probe wanted: {probe}, docs/probes-needed.md)"
-        ))),
-        None => Err(Signal::Unsupported(format!(
-            "{what} of an error whose text is not pinned"
-        ))),
+        )),
+        None => Signal::Unsupported(format!("{what} of an error whose text is not pinned")),
+    }
+}
+
+/// Refuses a read of the text of an error whose text is not pinned: `what` is the read; the reason names the probe when the
+/// error carries one. Every place that hands an error's text to AL code or to the test result calls it.
+pub fn refuse_unpinned_text(e: &AlError, what: &str) -> Result<(), Signal> {
+    if text_unpinned(e) {
+        Err(unpinned_refusal(e, what))
+    } else {
+        Ok(())
+    }
+}
+
+/// Refuses a read of the text or the code of an error when either is not pinned.
+pub fn refuse_unpinned(e: &AlError, what: &str) -> Result<(), Signal> {
+    if text_unpinned(e) || e.code == UNPINNED_ERROR {
+        Err(unpinned_refusal(e, what))
+    } else {
+        Ok(())
     }
 }
 
@@ -1159,7 +1172,7 @@ fn abs_other(v: &Value) -> Result<Value, Signal> {
 
 fn get_last_error_text(ctx: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
     let e = ctx.last_error();
-    refuse_unpinned(&e, "GetLastErrorText")?;
+    refuse_unpinned_text(&e, "GetLastErrorText")?;
     Ok(Value::Text(e.message.into()))
 }
 
@@ -1175,7 +1188,7 @@ fn get_last_error_text_without_customer_content(
         return get_last_error_text(ctx, r, &mut []);
     }
     let e = ctx.last_error();
-    refuse_unpinned(&e, "GetLastErrorText(true)")?;
+    refuse_unpinned_text(&e, "GetLastErrorText(true)")?;
     if e.message.is_empty() {
         return Ok(Value::Text(String::new().into()));
     }

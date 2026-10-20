@@ -57,7 +57,7 @@ impl Session {
                 PageMethod::New | PageMethod::Next | PageMethod::Last => {
                     let key_ctl = self.key_control(st);
                     let mut s = st.borrow_mut();
-                    al_builtins::native::refuse_unpinned(&e, "The error list of a page row")?;
+                    al_builtins::native::refuse_unpinned_text(&e, "The error list of a page row")?;
                     if !s.refused {
                         s.errors.push((key_ctl, e.message));
                         s.refused = true;

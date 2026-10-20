@@ -67,12 +67,27 @@ pub(crate) fn run_install_codeunits(lowered: &Lowered, session: &mut Session) ->
                 for (so, sr) in subscribers_reached(&session.engine.clone(), lowered, oi, ri) {
                     touched.extend(tables_touched(lowered, so, sr));
                 }
+                // AllObj and AllObjWithCaption are listed from the compiled objects alone and cannot be written:
+                // nothing an installer does shows in them, so a test that reads them is not held back.
+                touched.retain(|&t| !listed_from_objects(lowered, t));
                 skipped.push((touched, format!("install codeunit {} could not run: {why}", o.name)));
             }
         }
     }
     session.commit_transaction();
     skipped
+}
+
+/// Whether the table at object index `table` is a platform table whose rows are computed from the compiled objects
+/// only (AllObj, AllObjWithCaption): no database write, and so no install code, changes them.
+fn listed_from_objects(lowered: &Lowered, table: u32) -> bool {
+    use al_builtins::platform::{Provider, REGISTRY, Virtual};
+    let Some(id) = lowered.program.objects.get(table as usize).and_then(|o| o.id) else {
+        return false;
+    };
+    REGISTRY
+        .iter()
+        .any(|(rid, _, p)| *rid == id && matches!(p, Provider::Virtual(Virtual::AllObj | Virtual::AllObjWithCaption)))
 }
 
 /// Tables whose records appear in the slots of anything `routine` can reach.

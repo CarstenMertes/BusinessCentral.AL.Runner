@@ -322,7 +322,10 @@ codeunit 51444 "TP Test"
 /// PagePartLinkUnsavedHost.al:178, :218); what the page shows afterwards is refused.
 #[test]
 fn a_new_card_with_two_parts_linked_on_its_key_stores_the_row_when_the_key_is_typed() {
-    assert_eq!(al_testkit::int(al_testkit::run_in(TWO_PARTS_SRC, "TP Test", "KeyThenClose")), 11);
+    assert_eq!(
+        al_testkit::int(al_testkit::run_in(TWO_PARTS_SRC, "TP Test", "KeyThenClose")),
+        11
+    );
     let r = al_testkit::run_in(TWO_PARTS_SRC, "TP Test", "KeyThenRead");
     assert!(matches!(r, Err(al_builtins::native::Signal::Unsupported(_))), "{r:?}");
 }

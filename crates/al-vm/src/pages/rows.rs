@@ -261,7 +261,9 @@ impl Session {
             return Ok(false);
         }
         if (rows.len() == 1 && !after_move) || rows.len() > 3 {
-            return unsupported("a part viewing its linked field with a number of rows other than 2 or 3 (reads not pinned)");
+            return unsupported(
+                "a part viewing its linked field with a number of rows other than 2 or 3 (reads not pinned)",
+            );
         }
         for row in rows.iter_mut().rev() {
             rec.borrow_mut().fields = row.stored.clone();

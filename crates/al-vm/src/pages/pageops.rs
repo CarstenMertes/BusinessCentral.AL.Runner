@@ -234,16 +234,21 @@ impl Session {
                     Some(key) => self.has_source(st) && Self::same_key(&self.row_key(&self.page_rec(st))?, key),
                     None => false,
                 };
-                match name {
+                let skipped_unlinked = match name {
                     PageMethod::Next | PageMethod::Previous => {
-                        self.sync_parts_after_move(st, name == PageMethod::Previous)?
+                        self.sync_parts_after_move(st, name == PageMethod::Previous)?;
+                        true
                     }
                     PageMethod::First | PageMethod::Last if before.is_some() && !stayed => {
-                        self.sync_parts_after_move(st, name == PageMethod::First)?
+                        self.sync_parts_after_move(st, name == PageMethod::First)?;
+                        true
                     }
-                    _ => self.sync_parts(st)?,
-                }
-                self.refresh_parts_asked_by_host(st, &waiting, name == PageMethod::Next)?;
+                    _ => {
+                        self.sync_parts(st)?;
+                        false
+                    }
+                };
+                self.refresh_parts_asked_by_host(st, &waiting, name == PageMethod::Next, skipped_unlinked)?;
             }
         }
         Ok(r)

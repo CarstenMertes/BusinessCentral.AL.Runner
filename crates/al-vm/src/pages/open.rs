@@ -376,7 +376,7 @@ impl Session {
                 st.borrow_mut().never_stored = never;
             }
             self.sync_parts_at_open(st)?;
-            self.refresh_parts_asked_by_host(st, &waiting, true)
+            self.refresh_parts_asked_by_host(st, &waiting, true, false)
         })();
         if let Err(e) = result {
             // The open raises the error itself and leaves the variable closed
@@ -715,10 +715,13 @@ impl Session {
             let shown = all.iter().any(|(_, _, h)| !h);
             let hidden: Vec<St> = all.iter().filter(|(_, _, h)| *h).map(|(_, c, _)| c.clone()).collect();
             let parts: Vec<St> = all.into_iter().map(|(_, c, _)| c).collect();
-            (parts, shown.then_some(hidden).unwrap_or_default())
+            (parts, if shown { hidden } else { Vec::new() })
         };
         for hidden in &mixed_order {
-            if ["onqueryclosepage", "onclosepage"].iter().any(|t| self.declares(hidden, t)) {
+            if ["onqueryclosepage", "onclosepage"]
+                .iter()
+                .any(|t| self.declares(hidden, t))
+            {
                 return unsupported(
                     "closing a host with a shown part and a part hidden by a Visible expression that has close triggers (order not pinned)",
                 );

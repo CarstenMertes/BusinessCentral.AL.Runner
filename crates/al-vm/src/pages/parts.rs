@@ -336,7 +336,11 @@ impl Session {
         if let Sync::Move { .. } = how {
             let mut linked = Vec::new();
             for (i, child) in parts {
-                let entries = page.controls[i].part_link.as_ref().map(|l| &l.entries[..]).unwrap_or(&[]);
+                let entries = page.controls[i]
+                    .part_link
+                    .as_ref()
+                    .map(|l| &l.entries[..])
+                    .unwrap_or(&[]);
                 if entries.is_empty() {
                     continue;
                 }
@@ -399,24 +403,22 @@ impl Session {
     /// HiddenPartCurrPageUpdateTrue.al:196-198: `part-OnAfterGetRecord:1 | :2 | :1` after `host-end`, twice at open, once
     /// after Next). `before` are the parts that waited already before the host's code ran. Pinned for a part without a
     /// SubPageLink hidden by a Visible expression, standing on no row typed into; any other part is refused.
-    /// `pinned` is false for a host move other than Next: such a refresh is refused.
+    /// `pinned` is false for a host move other than Next; `skipped_unlinked` says the move left the parts without a link alone.
     pub(super) fn refresh_parts_asked_by_host(
         &mut self,
         st: &St,
         before: &[(usize, St)],
         pinned: bool,
+        skipped_unlinked: bool,
     ) -> Result<(), Signal> {
-        let asked: Vec<(usize, St)> = self
-            .parts_waiting_refresh(st)
-            .into_iter()
-            .filter(|(i, _)| !before.iter().any(|(b, _)| b == i))
-            .collect();
+        let asked = self.parts_waiting_refresh(st);
         if asked.is_empty() {
             return Ok(());
         }
         let engine = self.engine();
         let page = page_of(&engine, st);
         for (i, child) in asked {
+            let newly = !before.iter().any(|(b, _)| *b == i);
             let hidden = st.borrow().hidden_parts.iter().any(|(h, _)| *h == i);
             let linked = page.controls[i]
                 .part_link
@@ -426,7 +428,8 @@ impl Session {
                 let c = child.borrow();
                 (c.draft, c.dirty)
             };
-            let shape_pinned = pinned
+            let shape_pinned = newly
+                && pinned
                 && hidden
                 && !linked
                 && !draft
@@ -434,9 +437,15 @@ impl Session {
                 && !self.declares(&child, "onfindrecord")
                 && !self.declares(&child, "onnextrecord");
             if !shape_pinned {
-                // Kept, not pinned: before this refresh was pinned such a request was never carried out. Refusing it loses a
-                // baseline case (handlers/TestPageActionRunObjectKindsPrecompiled_Tests.al:101: Base Application's
-                // Receivables-Payables, whose host updates its shown parts from OnAfterGetCurrRecord), so it stays so.
+                // Kept, not pinned: before this refresh was pinned such a request was not carried out on its own. Refusing it
+                // loses baseline cases, so the earlier behavior stays: at open nothing more happens (handlers/
+                // TestPageActionRunObjectKindsPrecompiled_Tests.al:101, Base Application's Receivables-Payables); after a
+                // host move that left a shown part without a link alone, that part fills again, as every move made it do
+                // before (crates/al-test-cli/tests/list_read_order.rs, Microsoft's ERM Base Calendar 134233).
+                if skipped_unlinked && !hidden && !linked {
+                    child.borrow_mut().refresh = false;
+                    self.sync_part(st, i, &child)?;
+                }
                 continue;
             }
             child.borrow_mut().refresh = false;
@@ -498,12 +507,16 @@ impl Session {
         let host_table = self.table(&self.page_rec(st))?.name.to_ascii_lowercase();
         let parts = st.borrow().parts.clone();
         for (i, child) in &parts {
-            let Some(link) = page.controls[*i].part_link.as_ref() else { continue };
+            let Some(link) = page.controls[*i].part_link.as_ref() else {
+                continue;
+            };
             if link.provider.is_some() || !self.has_source(child) {
                 continue;
             }
             let ti = self.page_rec(child).borrow().table as usize;
-            let Some(table) = engine.program.objects[ti].table.as_ref() else { continue };
+            let Some(table) = engine.program.objects[ti].table.as_ref() else {
+                continue;
+            };
             for e in &link.entries {
                 if let ir::LinkEntry::Field(pf, hf) = e
                     && *hf == pos
@@ -741,7 +754,7 @@ impl Session {
         // and parts without rows (:181-183); what the page does after that is not understood (the shape conflicts with
         // pages/lt-part-line-before-host-key/PartLineBeforeHostKey.al:401, a Document page that stores nothing). The row is
         // stored, and every later call on the page or its parts but Close is refused.
-        let linked_on_key = parts_linked_on(&page, &st.borrow().parts, pos);
+        let linked_on_key = parts_linked_on(page, &st.borrow().parts, pos);
         let new_card = {
             let s = st.borrow();
             s.host.is_none() && s.draft && !s.draft_stored && s.cursor != Cursor::None
@@ -753,9 +766,7 @@ impl Session {
         // Only the shape of that file: one of the parts links a field whose TableRelation names another table than the
         // host's (its "Group Code"). A Card whose two parts both relate to the host (pages/lt-new-line-stamps-filters/
         // NewLineStampsFilters.al:289 PartB_OpenNewHeader_NoThenType) carries on as before.
-        let foreign_relation = new_card
-            && linked_on_key >= 2
-            && self.part_link_relates_elsewhere(st, pos)?;
+        let foreign_relation = new_card && linked_on_key >= 2 && self.part_link_relates_elsewhere(st, pos)?;
         if foreign_relation {
             st.borrow_mut().dirty = true;
             self.save_row(st)?;

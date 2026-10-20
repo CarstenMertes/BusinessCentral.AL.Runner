@@ -76,7 +76,10 @@ impl Session {
             let key = &table.keys[0];
             let key_blank = key.iter().all(|k| {
                 let v = &rec.borrow().fields[*k];
-                Self::same_values(std::slice::from_ref(v), std::slice::from_ref(&Value::default_for(&table.fields[*k].ty)))
+                Self::same_values(
+                    std::slice::from_ref(v),
+                    std::slice::from_ref(&Value::default_for(&table.fields[*k].ty)),
+                )
             });
             if !key.contains(&pos) && key_blank {
                 st.borrow_mut().typed_before_key = true;

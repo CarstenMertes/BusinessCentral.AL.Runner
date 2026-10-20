@@ -97,6 +97,7 @@ fn special(id: al_builtins::builtin_id::BuiltinId) -> bool {
             | ids::RECORD_CURRFIELDNO_1
             | ids::SYSTEM_CLEARALL_1
             | ids::SESSION_APPLICATIONAREA_1
+            | ids::TEXT_MAXSTRLENOFVARPARAMETER_1
     )
 }
 
@@ -327,6 +328,12 @@ impl<'a> Compiler<'a> {
                 place = Some(self.rplace(p)?);
             }
             ids::SYSTEM_CLEARALL_1 => {}
+            ids::TEXT_MAXSTRLENOFVARPARAMETER_1 => {
+                let Some(ir::Arg::Ref(p)) = args.first() else {
+                    return Ok(false);
+                };
+                place = Some(self.rplace(p)?);
+            }
             ids::SESSION_APPLICATIONAREA_1 => match args.first() {
                 None => {}
                 Some(ir::Arg::Value(e)) => arg = Some(self.expr_copy(e)?),

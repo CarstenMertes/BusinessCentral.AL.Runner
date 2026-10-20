@@ -1,5 +1,5 @@
 # Installs alrunner from GitHub releases (Windows x64).
-#   install.ps1 [-Version <edge | latest-alpha | v3.0.0-alpha.1>]
+#   install.ps1 [-Version <edge | latest-alpha | v3.0.0-alpha.2>]
 # Default is latest-alpha. Environment: ALRUNNER_INSTALL_DIR (default %LOCALAPPDATA%\alrunner\bin),
 # ALRUNNER_REPO (default StefanMaron/al-runtime-rs).
 param([string]$Version = "latest-alpha")

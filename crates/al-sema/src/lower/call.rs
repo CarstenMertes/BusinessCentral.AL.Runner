@@ -174,6 +174,22 @@ impl Lowerer<'_> {
             // carry (text/TestTextExtended.al MaxStrLen_*: 50 for Text[50], 2147483647 for Text).
             Some(Res::Builtin(id)) if id.starts_with("Text.MaxStrLen#") => {
                 let arg = args.first().ok_or("MaxStrLen without an argument")?;
+                // A `var` Text or Code parameter reports the declared length of the caller's variable or field, which the
+                // call hands to the frame (text/lt-text-functions/MaxStrLen.Codeunit.al:91-151, LT_BU_MaxStrLen_TextParameters:
+                // `var text with field text100 = 100`, `var text30 with field text100 = 100`, `var code30 with code20 = 20`).
+                if arg.kind() == SyntaxKind::NameRef
+                    && matches!(self.ty_of(arg), Ty::Text(_) | Ty::Code(_))
+                    && let Ok(ir::Place::Local(i)) = self.place(arg)
+                    && self.var_params.get(i).copied().unwrap_or(false)
+                {
+                    self.reads_var_max_len = true;
+                    return Ok(ir::Expr::Builtin {
+                        id: builtin_id("Text.MaxStrLenOfVarParameter#1")?,
+                        receiver: None,
+                        args: vec![ir::Arg::Ref(ir::Place::Local(i))],
+                        ret_used: true,
+                    });
+                }
                 match self.ty_of(arg) {
                     Ty::Text(Some(n)) | Ty::Code(Some(n)) => Ok(ir::Expr::Const(ir::Const::Integer(n as i32))),
                     Ty::Text(None) | Ty::Code(None) => Ok(ir::Expr::Const(ir::Const::Integer(i32::MAX))),

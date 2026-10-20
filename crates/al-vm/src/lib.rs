@@ -159,6 +159,9 @@ pub(crate) struct RoutineFacts {
     /// An attribute is declared that the runtime does not understand (`CommitBehavior` other than Ignore and Error,
     /// `ErrorBehavior` other than Collect, or more than one of either): the call takes the slow path, which reports it.
     pub odd_attributes: bool,
+    /// A call hands the routine the declared lengths of its `var` Text and Code arguments (`ir::Routine::reads_var_max_len`;
+    /// never for a publisher, whose subscribers would see them).
+    pub var_lens: bool,
 }
 
 fn routine_facts(r: &ir::Routine, publisher: bool) -> RoutineFacts {
@@ -182,6 +185,7 @@ fn routine_facts(r: &ir::Routine, publisher: bool) -> RoutineFacts {
         }
     }
     f.odd_attributes |= commits > 1 || collects > 1;
+    f.var_lens = r.reads_var_max_len && !publisher;
     f
 }
 
@@ -753,6 +757,7 @@ impl Session {
                 sender_refused: None,
                 var_origins: Vec::new(),
                 next_aliases: Vec::new(),
+                next_var_lens: Vec::new(),
                 unpinned_event_depth: 0,
                 skip_dependency_subscribers: false,
                 global_setups: Default::default(),
@@ -1283,14 +1288,20 @@ impl Session {
             };
         }
         self.return_vec(args);
+        let facts = engine.facts[object][routine];
+        let var_lens = if facts.var_lens {
+            std::mem::take(&mut self.events.next_var_lens)
+        } else {
+            Vec::new()
+        };
         let mut frame = Frame {
             object,
             routine,
             instance,
             locals,
             aliases,
+            var_lens,
         };
-        let facts = engine.facts[object][routine];
         let is_try = facts.is_try;
         // [CommitBehavior] governs the whole dynamic extent of the procedure and ends when it
         // returns (error-handling/TestCommitBehaviorAttribute.al:CommitBehavior_Ignore_ScopeIsPoppedOnReturn).
@@ -1511,6 +1522,9 @@ struct Frame {
     /// slot). Kept in step with the global around every call the frame makes (`finish_call`), so a change the sender makes to
     /// the global shows in the parameter and the other way round (corpus events/lt-event-var-through-sender).
     aliases: Vec<(usize, Rc<RefCell<Instance>>, usize)>,
+    /// Per parameter: what `MaxStrLen` of a `var` Text or Code parameter answers, the declared length of the variable or
+    /// field the caller passed (set by `finish_call`; `None`: not known, and `MaxStrLen` refuses).
+    var_lens: Vec<Option<i32>>,
 }
 
 fn int(v: &Value) -> Result<i64, Signal> {

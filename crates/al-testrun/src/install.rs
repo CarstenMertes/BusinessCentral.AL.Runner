@@ -491,5 +491,8 @@ fn touched(engine: &Engine, lowered: &Lowered, oi: usize, ri: usize) -> BTreeSet
     for (so, sr) in crate::runtime::subscribers_reached(engine, lowered, oi, ri) {
         t.extend(crate::runtime::tables_touched(lowered, so, sr));
     }
+    // AllObj and AllObjWithCaption are listed from the compiled objects alone and cannot be written: nothing an install
+    // routine does shows in them, so a test that reads them is not held back.
+    t.retain(|&x| !crate::runtime::listed_from_objects(lowered, x));
     t
 }

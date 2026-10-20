@@ -451,7 +451,12 @@ pub(super) fn all_obj_with_caption_rows(p: &Providers, t: &TableDef) -> Vec<Entr
             let pkg = package_of(&c, o);
             r[pos(t, 4)] = Value::Text(o.name.clone().into());
             r[pos(t, 20)] = Value::Text(truncate(&caption(o), 249).into());
-            r[pos(t, 30)] = Value::Text(subtype_text(&c, o)?.into());
+            // A subtype the runtime has no pinned text for (a CDS table) leaves only that column unknown: the other
+            // columns still answer a filter or a count (install/lt-cm-install-leads/CmInstallObjects.al:73-79).
+            r[pos(t, 30)] = match subtype_text(&c, o) {
+                Ok(s) => Value::Text(s.into()),
+                Err(why) => Value::Unknown(format!("AllObjWithCaption: {why}").into()),
+            };
             r[pos(t, 60)] = Value::Guid(pkg);
             r[pos(t, 61)] = Value::Guid(runtime_package_id(&c, o));
             r[pos(t, 62)] = Value::Guid(if carries_app_id(o.kind) { owner } else { [0; 16] });

@@ -1136,6 +1136,10 @@ pub struct Routine {
     /// The static type of each expression of the body, in post-order (see [`types`]). Empty: every one is unknown.
     #[serde(default)]
     pub expr_tys: Vec<types::ExprTy>,
+    /// The body reads MaxStrLen of a `var` Text or Code parameter (`Text.MaxStrLenOfVarParameter#1`): a call hands the
+    /// routine the declared lengths of its arguments, which no other call pays for.
+    #[serde(default)]
+    pub reads_var_max_len: bool,
 }
 
 fn no_pos() -> u32 {
@@ -1467,6 +1471,7 @@ mod tests {
             begin_pos: NO_POS,
             body,
             expr_tys: vec![],
+            reads_var_max_len: false,
         }
     }
 
@@ -1583,6 +1588,7 @@ mod tests {
                     end_pos: NO_POS,
                     begin_pos: NO_POS,
                     expr_tys: vec![],
+                    reads_var_max_len: false,
                     body: vec![
                         Stmt::Pos(0),
                         Stmt::Assign(

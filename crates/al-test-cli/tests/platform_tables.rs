@@ -1236,6 +1236,43 @@ fn published_application_description_is_refused_until_the_manifest_text_is_kept(
     assert!(why.contains("Description"), "{why}");
 }
 
+/// AllObjWithCaption: a table whose TableType the runtime has no pinned Object Subtype for (CDS) still lists its
+/// other columns, so a count over them is answered (install/lt-cm-install-leads/CmInstallObjects.al:73-79 counts
+/// the app's objects, record/lt-u-table-field-props/UTableCdsOrdinals.al:9 declares a CDS table); a read of the
+/// Object Subtype itself is refused.
+#[test]
+fn an_object_subtype_nothing_pins_is_refused_and_the_other_columns_of_the_row_read() {
+    let o = outcomes(
+        r#"table 50001 "Cds Thing" { TableType = CDS; ExternalName = 'cdsthing'; fields { field(1; Id; Guid) { ExternalName = 'cdsthingid'; } }
+  keys { key(PK; Id) { Clustered = true; } } }
+codeunit 50000 "T" { Subtype = Test;
+  [Test] procedure CountByName() var A: Record AllObjWithCaption; begin A.SetRange("Object ID", 50001); A.SetRange("Object Name", 'Cds Thing'); if A.Count() <> 1 then Error('count %1', A.Count()); end;
+  [Test] procedure ReadSubtype() var A: Record AllObjWithCaption; begin A.Get(A."Object Type"::Table, 50001); if A."Object Subtype" = '' then; end; }"#,
+    );
+    passes(&o, "CountByName");
+    let why = not_run(&o, "ReadSubtype");
+    assert!(why.contains("TableType `CDS`"), "{why}");
+}
+
+/// An install codeunit that cannot run (here: Confirm outside a test method) holds back the tests that touch the
+/// tables it could have written. AllObj and AllObjWithCaption are listed from the compiled objects only, so an
+/// install that reads them changes nothing a test reads there: a test that reads them still runs
+/// (install/lt-cm-install-leads/CmInstallObjects.al:73-79 reads AllObjWithCaption and then calls Confirm).
+#[test]
+fn an_install_that_cannot_run_does_not_hold_back_tests_of_the_object_listings() {
+    let o = outcomes(
+        r#"table 50001 "Seed" { fields { field(1; Code; Code[30]) { } } keys { key(PK; Code) { Clustered = true; } } }
+codeunit 50002 "Inst" { Subtype = Install;
+  trigger OnInstallAppPerCompany() var A: Record AllObjWithCaption; S: Record Seed; begin S.Code := Format(A.Count()); S.Insert(); if Confirm('q') then; end; }
+codeunit 50000 "T" { Subtype = Test;
+  [Test] procedure ReadsAllObj() var A: Record AllObjWithCaption; begin A.Get(A."Object Type"::Table, 50001); end;
+  [Test] procedure ReadsSeed() var S: Record Seed; begin if S.FindFirst() then; end; }"#,
+    );
+    passes(&o, "ReadsAllObj");
+    let why = not_run(&o, "ReadsSeed");
+    assert!(why.contains("install codeunit Inst could not run"), "{why}");
+}
+
 /// Table Metadata DataCaptionFields lists the ids of the fields named, a table extension's included; LinkedObject reads the
 /// property (record/lt-x-table-props/XTablePropsTests.al:570-591).
 #[test]

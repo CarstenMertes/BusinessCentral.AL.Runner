@@ -2,7 +2,7 @@
 # Installs alrunner from GitHub releases (Linux x64, macOS arm64).
 #   install.sh [VERSION]
 # VERSION: "edge" (newest build of the release branch), "latest-alpha" (default: the newest numbered
-# alpha), or a tag such as v3.0.0-alpha.1.
+# alpha), or a tag such as v3.0.0-alpha.2.
 # Environment: ALRUNNER_DOWNLOAD_BASE (a folder or URL holding the files, for tests), ALRUNNER_INSTALL_DIR (default ~/.local/bin), ALRUNNER_REPO (default StefanMaron/al-runtime-rs).
 set -eu
 

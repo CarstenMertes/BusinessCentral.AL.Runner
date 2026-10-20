@@ -536,15 +536,23 @@ fn a_constant_gives_the_same_value_every_time_it_is_evaluated() {
 }
 
 #[test]
-fn a_for_loop_reads_its_counter_back_and_refuses_a_counter_beyond_integer() {
+fn a_for_loop_reads_its_counter_back_and_fails_on_an_end_beyond_integer() {
     let src = cu("procedure Moved(): Integer var i: Integer; n: Integer; begin for i := 1 to 10 do begin n += 1; i += 2; end; exit(n); end;
         procedure Down(): Integer var i: Integer; n: Integer; begin for i := 5 downto 1 do n := n * 10 + i; exit(n); end;
         procedure Wide(): Integer var i: Integer; n: Integer; b: BigInteger; begin b := 2147483647; b += 1; for i := 2147483646 to b do n += 1; exit(n); end;");
     // The body moves the counter: 1 -> 3 (+1) = 4, 7, 10, 13.
     assert_eq!(int(run(&src, "Moved", vec![])), 4);
     assert_eq!(int(run(&src, "Down", vec![])), 54321);
+    // A BigInteger end beyond Integer raises the conversion error before the first round
+    // (misc/lt-system-functions/ControlFlow.al:779-830, `end max+1`).
     match run(&src, "Wide", vec![]) {
-        Err(Signal::Unsupported(m)) => assert!(m.contains("overflows Integer"), "{m}"),
+        Err(Signal::Error(e)) => assert_eq!(
+            (e.message.as_str(), e.code.as_str()),
+            (
+                "Overflow under conversion of System.Int64 value 2147483648 to System.Int32.",
+                "ConversionCast"
+            )
+        ),
         other => panic!("{other:?}"),
     }
 }

@@ -404,7 +404,7 @@ impl Session {
                 // :GuardedRun_InstanceForm_CommitThenError_KeepsCommittedRowOnly).
                 // (Nothing to undo in a page background worker: the caller's rows are not its own.)
                 if self.pages.bg_worker.is_none() {
-                    self.rollback_transaction();
+                    self.rollback_in_run()?;
                 }
                 self.error_finals = None;
                 self.last_error = *e;

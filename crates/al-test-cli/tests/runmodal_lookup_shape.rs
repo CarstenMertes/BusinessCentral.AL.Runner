@@ -110,3 +110,37 @@ fn run_modal_zero_follows_the_same_rule() {
             Check('lookupMode=No,editable=Yes,rows=[A][B][]', Log.Take()); end;",
     );
 }
+
+const CARD: &str = r#"
+page 62603 "LS Card"
+{
+    PageType = Card;
+    layout { area(Content) { field(TxtCtl; TxtVar) { } } }
+    var TxtVar: Text[20];
+}
+"#;
+
+// errors/lt-ms-refusals-132/P132TwoModalHandlers.al:466 PW_ProbeB_Statement and :508 PW_ProbeB_InIf: Page.RunModal(Id) as a
+// statement opens a card without its Cancel action; with the return value used Cancel is there.
+#[test]
+fn run_modal_without_a_record_as_a_statement_has_no_cancel_action() {
+    let src = format!(
+        "{OBJECTS}{CARD}\ncodeunit 62691 T {{ Subtype = Test; {HELPERS}
+        [TryFunction] local procedure TryCancel(var P: TestPage \"LS Card\") begin P.Cancel().Invoke(); end;
+        [ModalPageHandler] procedure Probe(var P: TestPage \"LS Card\") begin
+            if TryCancel(P) then begin Log.Add('cancel'); exit; end;
+            Log.Add('cancel ' + GetLastErrorCode()); ClearLastError(); P.OK().Invoke(); Log.Add('ok'); end;
+        [Test] [HandlerFunctions('Probe')]
+        procedure Statement() begin Log.Take(); Page.RunModal(Page::\"LS Card\"); Check('cancel TestActionNotFound,ok', Log.Take()); end;
+        [Test] [HandlerFunctions('Probe')]
+        procedure InIf() begin Log.Take();
+            if Page.RunModal(Page::\"LS Card\") = Action::LookupCancel then Log.Add('if=LookupCancel');
+            Check('cancel,if=LookupCancel', Log.Take()); end;
+        }}"
+    );
+    let o = al_testkit::outcomes_in(&src, "T");
+    assert_eq!(o.len(), 2);
+    for (n, r) in &o {
+        assert_eq!(r, &Outcome::Pass, "{n}");
+    }
+}

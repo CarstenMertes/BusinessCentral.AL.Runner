@@ -133,16 +133,13 @@ impl Session {
                 // the list opens in lookup mode with no new-row line; called as a statement it is a plain modal page
                 // (pages/lt-be-runmodal-onlookup/BeRunModalOnLookup.al:18-27, :616 Direct_NoLookupPageId_KeyFilter_WalkOnly,
                 // :916 Shape_ReturnNotUsed_WalkOnly, :949 Shape_ReturnInIf_WalkOnly, :1100-1126 Shape_RunModalZero_*).
-                // Without a record the call stays a lookup either way (only its used form is pinned, above).
+                // Without a record the same: a statement leaves a card without its Cancel action
+                // (errors/lt-ms-refusals-132/P132TwoModalHandlers.al:466 PW_ProbeB_Statement, :508 PW_ProbeB_InIf).
                 if method == PageOp::PageRunModalStatic {
                     let mut s = st.borrow_mut();
-                    if record.is_some() {
-                        s.lookup = used;
-                        s.lookup_set = used;
-                        s.statement_run = !used;
-                    } else {
-                        s.lookup = true;
-                    }
+                    s.lookup = used;
+                    s.lookup_set = used;
+                    s.statement_run = !used && record.is_some();
                 }
                 // A record of another table than the page's is refused before anything opens, and so is a field number the table
                 // lacks (a negative one or 0 goes on; pages/lt-page-run-overloads-testpart/P106RunErrors.al: Err_WrongTableRecord,

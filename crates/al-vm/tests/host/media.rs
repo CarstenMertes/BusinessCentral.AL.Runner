@@ -172,15 +172,16 @@ fn a_temporary_record_keeps_its_media_set() {
 }
 
 #[test]
-fn export_stream_writes_what_was_imported() {
-    // media/TestMediaPngImport.al:99-168: the exported stream is the image that went in (its PNG
-    // signature and dimensions); the byte count is encoder-dependent and not asserted there.
+fn a_look_at_the_exported_bytes_is_refused() {
+    // types/W7Media.al:141-145 (corpus bump 34): BC re-encodes an imported PNG on every major, into bytes the corpus does not
+    // pin, so reading what ExportStream wrote is refused (media/TestMediaPngImport.al:99-168 asserts only the signature and
+    // the dimensions, which the runtime cannot produce without the encoder).
     let body = format!(
         "Rec.Code := 'PNG2'; Rec.Insert(); {} Rec.Picture.ImportStream(ins, 'png'); Rec.Modify(); Rec.Get('PNG2');
          Rec2.Src.CreateOutStream(outs); Rec.Picture.ExportStream(outs); Rec2.Src.CreateInStream(ins); ins.ReadText(a); exit(a);",
         feed("Rec", "PNG-signature-and-1x1")
     );
-    assert_eq!(text("", &body).unwrap(), "PNG-signature-and-1x1");
+    assert!(matches!(text("", &body), Err(Signal::Unsupported(_))));
 }
 
 #[test]
@@ -212,14 +213,15 @@ fn what_the_corpus_does_not_pin_is_refused() {
     );
 }
 
-// media/PXMediaFileName.al: importing into a Media field that already holds a value replaces it.
+// media/PXMediaFileName.al: importing into a Media field that already holds a value replaces it. The exported bytes cannot
+// show it any more (they are refused, types/W7Media.al:141-145); the second import still runs.
 #[test]
 fn importing_into_a_media_that_holds_a_value_replaces_it() {
     let body = format!(
         "Rec.Code := 'R1'; Rec.Insert(); {} Rec.Picture.ImportStream(ins, 'a'); {} Rec.Picture.ImportStream(ins, 'b');
-         Rec2.Src.CreateOutStream(outs); Rec.Picture.ExportStream(outs); Rec2.Src.CreateInStream(ins); ins.ReadText(a); exit(a);",
+         exit(Format(Rec.Picture.HasValue()));",
         feed("Rec", "x"),
         feed("Rec", "y")
     );
-    assert_eq!(text("", &body).unwrap(), "y");
+    assert_eq!(text("", &body).unwrap(), "Yes");
 }

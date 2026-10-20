@@ -106,11 +106,10 @@ pub enum Gate {
     /// `Base64Convert.FromBase64` of text that is not Base64 raises from BC 28 (types/PVBase64.al, corpus bump 9).
     /// Not consumed yet.
     FromBase64InvalidTextRaises,
-    /// Exporting a Media from BC 29 writes the imported bytes back (types/W7Media.al, corpus bump 9). Consumed by
-    /// Media.ExportStream (al-builtins media.rs). Corpus bump 34 shows this was the Linux image before bc-linux #161: Windows
-    /// BC 29 re-encodes an imported PNG to 99 bytes as 27 and 28 do (types/W7Media.al:141-145, DdStreamLeads.al:283-285). Only
-    /// the first exported bytes still differ on BC 29 (W7Media.al:145). The consumer is wrong on BC 29 and is the next lane's.
-    MediaExportKeepsTheImportedBytes,
+    /// BC 29 pins the first bytes of an exported Media (types/W7Media.al:134,145, an observation only BC 29 makes). Every major
+    /// re-encodes an imported PNG to 99 bytes (W7Media.al:141-145, corpus bump 34; before bc-linux #161 the Linux image gave the
+    /// imported bytes back on 29). Not consumed: Media.ExportStream refuses a look at the exported bytes on every major.
+    MediaExportFirstBytesProbedFrom29,
     /// The platform metadata tables (All Obj, All Obj with Caption, Field, Key, Table and Codeunit Metadata) list other
     /// columns and rows from BC 29 (metadata/W6*.al, corpus bump 9). Consumed by `RecordRef.FieldExist(2000000005)`
     /// (al-vm refs.rs) and by the four user-name system fields of the Field table at 2000000005-8 (al-vm platform/fields.rs,
@@ -226,7 +225,7 @@ impl Gate {
         Gate::RecordIsDirtyFrom29,
         Gate::BigIntegerToEnumVariableFrom29,
         Gate::FromBase64InvalidTextRaises,
-        Gate::MediaExportKeepsTheImportedBytes,
+        Gate::MediaExportFirstBytesProbedFrom29,
         Gate::PlatformMetadataColumnsFrom29,
         Gate::TableFilterEvaluateError,
         Gate::ConversionErrorTextsFrom28,
@@ -257,7 +256,7 @@ impl Gate {
             | Gate::ReportLayoutSelectionPartNamesFrom29
             | Gate::ReportPartNamePropertiesFrom29
             | Gate::BigIntegerToEnumVariableFrom29
-            | Gate::MediaExportKeepsTheImportedBytes
+            | Gate::MediaExportFirstBytesProbedFrom29
             | Gate::PlatformMetadataColumnsFrom29
             | Gate::InterfaceListCodeunitFrom29
             | Gate::DefaultInterfaceMethodsFrom29
@@ -832,7 +831,7 @@ impl Gate {
                 file: "../al-language-onprem/lt-file-type/FileQProbes.al",
                 lines: "92",
             }],
-            Gate::MediaExportKeepsTheImportedBytes => &[Evidence {
+            Gate::MediaExportFirstBytesProbedFrom29 => &[Evidence {
                 file: "types/W7Media.al",
                 lines: "134,145",
             }],

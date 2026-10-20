@@ -377,7 +377,7 @@ impl Session {
                 if has_provider(*i) == pass {
                     if how == Sync::Stayed && child.borrow().open && self.filtered_find_list_without_row_triggers(child)
                     {
-                        al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::FindRecordFilteredView);
+                        // The part asks its page nothing while the host stays (pagefindrecord/QcFindViewTests.al:540 DocPart_OpenEdit_LinesOfH2, `part_walk_log` empty).
                         continue;
                     }
                     if opening && self.view_names_link_field(st, *i, child)? {

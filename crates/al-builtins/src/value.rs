@@ -343,6 +343,11 @@ pub struct PageState {
     /// The caption each control's CaptionClass resolved to when the page filled: (control index, class text, caption).
     /// `Caption()` reads it without raising OnResolveCaptionClass again (corpus misc/W2CaptionClass.al:113-116).
     pub control_captions: Vec<(usize, String, String)>,
+    /// The caption of each control over a table field whose CaptionClass is an expression, as the page filled it: (control
+    /// index, caption). `Caption()` reads it and runs nothing (record/lt-qd-captionclass-areas/QdCaptionClassAreas.al:422-481).
+    pub field_captions: Vec<(usize, String)>,
+    /// The open ran the CaptionClass expressions of the source table's fields with an empty record (`field_captions`).
+    pub field_captions_opened: bool,
     /// Primary keys of the rows a repeater page has populated (its window).
     pub window: Vec<WindowRow>,
     /// The window holds the rows from the first row of the view on, with none missing: the page
@@ -542,6 +547,8 @@ impl PageState {
             frozen_visible: Vec::new(),
             open_language: None,
             control_captions: Vec::new(),
+            field_captions: Vec::new(),
+            field_captions_opened: false,
             window: Vec::new(),
             window_from_start: false,
             window_eof: false,

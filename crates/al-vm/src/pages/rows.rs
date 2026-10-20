@@ -6,7 +6,7 @@ const FIELD_ARGUMENT_WITH_HANDLER: &str = "Page.Run or Page.RunModal with a fiel
 
 impl Session {
     /// The caption a CaptionClass text stands for. Area 3 is the literal text. Other numeric areas
-    /// are the platform's resolvers, which are not modelled. An area that is not a number, or no
+    /// go to the platform's translation (`caption_class_translate`). An area that is not a number, or no
     /// area at all, goes to no built-in resolver: the System Application's Caption Class codeunit
     /// raises OnResolveCaptionClass for it, and when no subscriber claims it the text stays as
     /// written (corpus handlers/TestPageCaptionClass.al:90
@@ -29,10 +29,12 @@ impl Session {
         let (area, expr) = text.split_once(',').unwrap_or(("", text));
         // An empty area before the comma is not resolved either (P84Captions.al: c14 ',x', no event call).
         if text.contains(',') && (area.trim().parse::<u32>().is_ok() || area.is_empty()) {
-            // A numeric area other than 3 (dimension, currency, county captions of Base Application) is not resolved here
-            // and raises no event: the caption stays as written, also when a subscriber would resolve it
-            // (pages/lt-page-report-events/P84Captions.al: Page_NoSubscriber c01..c13, Page_Resolve_A/B, BC 29).
-            return Ok(text.to_string());
+            // A numeric area other than 3 (dimension, VAT, county, currency captions of Base Application) goes to the platform's
+            // translation as FieldCaption does: Base Application's subscribers resolve it (record/lt-qd-captionclass-areas/
+            // QdCaptionClassAreas.al:422-481 Page_ControlCaptions `lit20`, `lit53`, `pageExpr`), a text no subscriber resolves stays
+            // as written, and a text the session translated before raises no event (pages/lt-page-report-events/P84Captions.al:
+            // Page_NoSubscriber c01..c13, Page_Log_*, Page_Resolve_A/B after the table reads of the same texts).
+            return self.caption_class_translate(text);
         }
         let _ = st;
         self.raise_resolve_caption_class(area, expr, text)
@@ -60,11 +62,26 @@ impl Session {
                     "CaptionClassTranslate of a text translated before GlobalLanguage changed (whether BC translates it again is not pinned)",
                 );
             }
-            return Ok(caption.clone());
+            let caption = caption.clone();
+            return self.refuse_setup_caption(area, text, caption);
         }
         let caption = self.raise_resolve_caption_class(area, expr, text)?;
         self.caption_translations
             .push((text.to_string(), self.global_language, caption.clone()));
+        self.refuse_setup_caption(area, text, caption)
+    }
+
+    /// Base Application resolves areas 1 (dimensions) and 101 (currencies) from General Ledger Setup. The corpus database
+    /// holds CRONUS's setup (record/lt-qd-captionclass-areas/QdCaptionClassAreas.al:254 `Amount (GBP)`, :256 `Department Code`);
+    /// without Microsoft's test data the runtime's setup row is the one the install code writes, so a caption those areas
+    /// resolved is refused. A text they leave as written does not read the setup (pages/lt-page-report-events/P84Captions.al:
+    /// '1,1,x' and the other area 1 texts).
+    fn refuse_setup_caption(&self, area: &str, text: &str, caption: String) -> Result<String, Signal> {
+        if self.engine.test_data.is_none() && matches!(area.trim(), "1" | "101") && caption != text {
+            return unsupported(format!(
+                "CaptionClass `{text}`: Base Application resolves area {area} from General Ledger Setup, whose corpus database row the runtime's database does not hold"
+            ));
+        }
         Ok(caption)
     }
 
@@ -171,6 +188,77 @@ impl Session {
                     _ => {}
                 }
             }
+        }
+        self.fill_field_caption_expressions(st)
+    }
+
+    /// A page open runs the CaptionClass expression of every field of the source table that has one, also those without a
+    /// control, 20 times with an empty record, then once for each control over such a field with the current row; `Caption()`
+    /// of the control reads that caption and runs nothing (record/lt-qd-captionclass-areas/QdCaptionClassAreas.al:422-481
+    /// Page_ControlCaptions, a Card opened with OpenView: `open_calls = id0=240 ... rest=20@3;...`, `exprId = Id 3 call 245`
+    /// twice). An empty result and `3,` read as the empty text on a control (`exprEmpty`, `expr3`). Other page types and open
+    /// modes, and the fills after the open (a move to another row), mark the assumption page-open-caption-class-expressions.
+    fn fill_field_caption_expressions(&mut self, st: &St) -> Result<(), Signal> {
+        if !self.has_source(st) {
+            return Ok(());
+        }
+        let rec = self.page_rec(st);
+        let t = self.table(&rec)?;
+        let exprs: Vec<(usize, String)> = (0..t.fields.len())
+            .filter_map(|pos| {
+                let raw = self.field_property(&t, pos, "CaptionClass")?;
+                crate::recmeta::string_literal(&raw)
+                    .is_none()
+                    .then(|| (pos, raw.trim().to_string()))
+            })
+            .collect();
+        if exprs.is_empty() {
+            return Ok(());
+        }
+        if let Some(why) = exprs
+            .iter()
+            .find_map(|(pos, _)| self.field_caption_class_refusal(&t, *pos))
+        {
+            return unsupported(why);
+        }
+        let pinned = self.is_card(st) && st.borrow().mode == PageMode::View;
+        if !st.borrow().field_captions_opened {
+            st.borrow_mut().field_captions_opened = true;
+            if !pinned {
+                al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::PageOpenCaptionClassExpressions);
+            }
+            let Value::Record(empty) = self.default_value(&RtType::Record(t.object, false)) else {
+                return unsupported("an empty record of the page's source table");
+            };
+            for _ in 0..20 {
+                for (pos, expr) in &exprs {
+                    self.field_caption_class_value(&t, *pos, Some(&empty), expr)?;
+                }
+            }
+        } else {
+            al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::PageOpenCaptionClassExpressions);
+        }
+        let engine = self.engine();
+        let page = page_of(&engine, st);
+        for (idx, c) in page.controls.iter().enumerate() {
+            if c.prop("captionclass").is_some() {
+                continue;
+            }
+            let Some(field) = self.control_field(st, idx) else {
+                continue;
+            };
+            let Some((pos, expr)) = exprs.iter().find(|(pos, _)| t.fields[*pos].id == field.id) else {
+                continue;
+            };
+            let class = self.field_caption_class_value(&t, *pos, Some(&rec), expr)?;
+            let caption = match crate::recmeta::expression_class(&t.fields[*pos].name, &class)? {
+                crate::recmeta::ExprCaption::FieldCaption => String::new(),
+                crate::recmeta::ExprCaption::Text(c) => c,
+                crate::recmeta::ExprCaption::Translate => self.caption_class_translate(&class)?,
+            };
+            let mut s = st.borrow_mut();
+            s.field_captions.retain(|(i, _)| *i != idx);
+            s.field_captions.push((idx, caption));
         }
         Ok(())
     }

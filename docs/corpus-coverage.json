@@ -331,7 +331,7 @@
           29
         ],
         "id": "Codeunit.Run#3",
-        "ms_uses": 538,
+        "ms_uses": 541,
         "name": "Run",
         "pinned": true,
         "scope": "",
@@ -709,7 +709,7 @@
           29
         ],
         "id": "Database.ChangeUserPassword#1",
-        "ms_uses": 0,
+        "ms_uses": 1,
         "name": "ChangeUserPassword",
         "pinned": true,
         "scope": "",
@@ -741,7 +741,7 @@
           29
         ],
         "id": "Database.Commit#1",
-        "ms_uses": 802,
+        "ms_uses": 810,
         "name": "Commit",
         "pinned": true,
         "scope": "",
@@ -757,7 +757,7 @@
           29
         ],
         "id": "Database.CompanyName#1",
-        "ms_uses": 181,
+        "ms_uses": 193,
         "name": "CompanyName",
         "pinned": true,
         "scope": "",
@@ -981,7 +981,7 @@
           29
         ],
         "id": "Database.SelectLatestVersion#1",
-        "ms_uses": 3,
+        "ms_uses": 4,
         "name": "SelectLatestVersion",
         "pinned": true,
         "scope": "",
@@ -997,7 +997,7 @@
           29
         ],
         "id": "Database.SelectLatestVersion#2",
-        "ms_uses": 0,
+        "ms_uses": 1,
         "name": "SelectLatestVersion",
         "pinned": true,
         "scope": "",
@@ -1141,7 +1141,7 @@
           29
         ],
         "id": "Database.UserId#1",
-        "ms_uses": 602,
+        "ms_uses": 612,
         "name": "UserId",
         "pinned": true,
         "scope": "",
@@ -1157,7 +1157,7 @@
           29
         ],
         "id": "Database.UserSecurityId#1",
-        "ms_uses": 214,
+        "ms_uses": 232,
         "name": "UserSecurityId",
         "pinned": true,
         "scope": "",
@@ -1669,7 +1669,7 @@
           29
         ],
         "id": "Dialog.Confirm#1",
-        "ms_uses": 644,
+        "ms_uses": 645,
         "name": "Confirm",
         "pinned": true,
         "scope": "",
@@ -1701,7 +1701,7 @@
           29
         ],
         "id": "Dialog.Error#2",
-        "ms_uses": 5645,
+        "ms_uses": 5654,
         "name": "Error",
         "pinned": true,
         "scope": "",
@@ -1765,7 +1765,7 @@
           29
         ],
         "id": "Dialog.Message#1",
-        "ms_uses": 741,
+        "ms_uses": 742,
         "name": "Message",
         "pinned": true,
         "scope": "",
@@ -1829,7 +1829,7 @@
           29
         ],
         "id": "Dictionary.Add#1",
-        "ms_uses": 860,
+        "ms_uses": 878,
         "name": "Add",
         "pinned": true,
         "scope": "",
@@ -1845,7 +1845,7 @@
           29
         ],
         "id": "Dictionary.ContainsKey#1",
-        "ms_uses": 196,
+        "ms_uses": 197,
         "name": "ContainsKey",
         "pinned": true,
         "scope": "",
@@ -1877,7 +1877,7 @@
           29
         ],
         "id": "Dictionary.Get#1",
-        "ms_uses": 189,
+        "ms_uses": 192,
         "name": "Get",
         "pinned": true,
         "scope": "",
@@ -1909,7 +1909,7 @@
           29
         ],
         "id": "Dictionary.Keys#1",
-        "ms_uses": 72,
+        "ms_uses": 74,
         "name": "Keys",
         "pinned": true,
         "scope": "",
@@ -1941,7 +1941,7 @@
           29
         ],
         "id": "Dictionary.Set#1",
-        "ms_uses": 72,
+        "ms_uses": 74,
         "name": "Set",
         "pinned": true,
         "scope": "",
@@ -2069,7 +2069,7 @@
           29
         ],
         "id": "Enum.Ordinals#1",
-        "ms_uses": 26,
+        "ms_uses": 27,
         "name": "Ordinals",
         "pinned": true,
         "scope": "",
@@ -10026,7 +10026,7 @@
           29
         ],
         "id": "List.Add#1",
-        "ms_uses": 568,
+        "ms_uses": 571,
         "name": "Add",
         "pinned": true,
         "scope": "",
@@ -10074,7 +10074,7 @@
           29
         ],
         "id": "List.Contains#1",
-        "ms_uses": 131,
+        "ms_uses": 132,
         "name": "Contains",
         "pinned": true,
         "scope": "",
@@ -10090,7 +10090,7 @@
           29
         ],
         "id": "List.Count#1",
-        "ms_uses": 191,
+        "ms_uses": 192,
         "name": "Count",
         "pinned": true,
         "scope": "",
@@ -10106,7 +10106,7 @@
           29
         ],
         "id": "List.Get#1",
-        "ms_uses": 92,
+        "ms_uses": 98,
         "name": "Get",
         "pinned": true,
         "scope": "",
@@ -10634,7 +10634,7 @@
           29
         ],
         "id": "ModuleInfo.AppVersion#1",
-        "ms_uses": 9,
+        "ms_uses": 12,
         "name": "AppVersion",
         "pinned": true,
         "scope": "",
@@ -10724,7 +10724,7 @@
           29
         ],
         "id": "ModuleInfo.Id#1",
-        "ms_uses": 113,
+        "ms_uses": 119,
         "name": "Id",
         "pinned": true,
         "scope": "",
@@ -10740,7 +10740,7 @@
           29
         ],
         "id": "ModuleInfo.Name#1",
-        "ms_uses": 2,
+        "ms_uses": 3,
         "name": "Name",
         "pinned": true,
         "scope": "",
@@ -10786,7 +10786,7 @@
           29
         ],
         "id": "ModuleInfo.Publisher#1",
-        "ms_uses": 25,
+        "ms_uses": 26,
         "name": "Publisher",
         "pinned": true,
         "scope": "",
@@ -10866,7 +10866,7 @@
           29
         ],
         "id": "NavApp.GetCallerModuleInfo#1",
-        "ms_uses": 121,
+        "ms_uses": 129,
         "name": "GetCallerModuleInfo",
         "pinned": true,
         "scope": "",
@@ -10882,7 +10882,7 @@
           29
         ],
         "id": "NavApp.GetCurrentModuleInfo#1",
-        "ms_uses": 20,
+        "ms_uses": 21,
         "name": "GetCurrentModuleInfo",
         "pinned": true,
         "scope": "",
@@ -11832,7 +11832,7 @@
           29
         ],
         "id": "Page.Close#1",
-        "ms_uses": 170,
+        "ms_uses": 171,
         "name": "Close",
         "pinned": true,
         "scope": "",
@@ -12022,7 +12022,7 @@
           29
         ],
         "id": "Page.RunModal#1",
-        "ms_uses": 914,
+        "ms_uses": 916,
         "name": "RunModal",
         "pinned": true,
         "scope": "",
@@ -12070,7 +12070,7 @@
           29
         ],
         "id": "Page.RunModal#5",
-        "ms_uses": 880,
+        "ms_uses": 881,
         "name": "RunModal",
         "pinned": true,
         "scope": "",
@@ -12211,7 +12211,7 @@
           29
         ],
         "id": "Page.Update#1",
-        "ms_uses": 1632,
+        "ms_uses": 1633,
         "name": "Update",
         "pinned": true,
         "scope": "",
@@ -12371,7 +12371,7 @@
           29
         ],
         "id": "Query.Open#1",
-        "ms_uses": 132,
+        "ms_uses": 133,
         "name": "Open",
         "pinned": true,
         "scope": "",
@@ -12387,7 +12387,7 @@
           29
         ],
         "id": "Query.Read#1",
-        "ms_uses": 150,
+        "ms_uses": 151,
         "name": "Read",
         "pinned": true,
         "scope": "",
@@ -12595,7 +12595,7 @@
           29
         ],
         "id": "Query.SetRange#1",
-        "ms_uses": 317,
+        "ms_uses": 318,
         "name": "SetRange",
         "pinned": true,
         "scope": "",
@@ -12851,7 +12851,7 @@
           29
         ],
         "id": "Record.Count#1",
-        "ms_uses": 965,
+        "ms_uses": 969,
         "name": "Count",
         "pinned": true,
         "scope": "",
@@ -12915,7 +12915,7 @@
           29
         ],
         "id": "Record.Delete#1",
-        "ms_uses": 797,
+        "ms_uses": 802,
         "name": "Delete",
         "pinned": true,
         "scope": "",
@@ -12931,7 +12931,7 @@
           29
         ],
         "id": "Record.DeleteAll#1",
-        "ms_uses": 2206,
+        "ms_uses": 2208,
         "name": "DeleteAll",
         "pinned": true,
         "scope": "",
@@ -12995,7 +12995,7 @@
           29
         ],
         "id": "Record.FieldCaption#1",
-        "ms_uses": 3661,
+        "ms_uses": 3662,
         "name": "FieldCaption",
         "pinned": true,
         "scope": "",
@@ -13059,7 +13059,7 @@
           29
         ],
         "id": "Record.FieldNo#1",
-        "ms_uses": 6655,
+        "ms_uses": 6656,
         "name": "FieldNo",
         "pinned": true,
         "scope": "",
@@ -13091,7 +13091,7 @@
           29
         ],
         "id": "Record.Find#1",
-        "ms_uses": 2585,
+        "ms_uses": 2588,
         "name": "Find",
         "pinned": true,
         "scope": "",
@@ -13107,7 +13107,7 @@
           29
         ],
         "id": "Record.FindFirst#1",
-        "ms_uses": 2716,
+        "ms_uses": 2728,
         "name": "FindFirst",
         "pinned": true,
         "scope": "",
@@ -13123,7 +13123,7 @@
           29
         ],
         "id": "Record.FindLast#1",
-        "ms_uses": 739,
+        "ms_uses": 740,
         "name": "FindLast",
         "pinned": true,
         "scope": "",
@@ -13155,7 +13155,7 @@
           29
         ],
         "id": "Record.FindSet#1",
-        "ms_uses": 3346,
+        "ms_uses": 3357,
         "name": "FindSet",
         "pinned": true,
         "scope": "",
@@ -13186,7 +13186,7 @@
           29
         ],
         "id": "Record.Get#1",
-        "ms_uses": 12130,
+        "ms_uses": 12155,
         "name": "Get",
         "pinned": true,
         "scope": "",
@@ -13362,7 +13362,7 @@
           29
         ],
         "id": "Record.Init#1",
-        "ms_uses": 2285,
+        "ms_uses": 2287,
         "name": "Init",
         "pinned": true,
         "scope": "",
@@ -13378,7 +13378,7 @@
           29
         ],
         "id": "Record.Insert#1",
-        "ms_uses": 3069,
+        "ms_uses": 3084,
         "name": "Insert",
         "pinned": true,
         "scope": "",
@@ -13394,7 +13394,7 @@
           29
         ],
         "id": "Record.Insert#2",
-        "ms_uses": 684,
+        "ms_uses": 685,
         "name": "Insert",
         "pinned": true,
         "scope": "",
@@ -13440,7 +13440,7 @@
           29
         ],
         "id": "Record.IsEmpty#1",
-        "ms_uses": 2524,
+        "ms_uses": 2545,
         "name": "IsEmpty",
         "pinned": true,
         "scope": "",
@@ -13488,7 +13488,7 @@
           29
         ],
         "id": "Record.LockTable#1",
-        "ms_uses": 754,
+        "ms_uses": 756,
         "name": "LockTable",
         "pinned": true,
         "scope": "",
@@ -13536,7 +13536,7 @@
           29
         ],
         "id": "Record.Modify#1",
-        "ms_uses": 3352,
+        "ms_uses": 3362,
         "name": "Modify",
         "pinned": true,
         "scope": "",
@@ -13568,7 +13568,7 @@
           29
         ],
         "id": "Record.Next#1",
-        "ms_uses": 5271,
+        "ms_uses": 5282,
         "name": "Next",
         "pinned": true,
         "scope": "",
@@ -13600,7 +13600,7 @@
           29
         ],
         "id": "Record.ReadIsolation#1",
-        "ms_uses": 315,
+        "ms_uses": 317,
         "name": "ReadIsolation",
         "pinned": true,
         "scope": "",
@@ -13616,7 +13616,7 @@
           29
         ],
         "id": "Record.ReadPermission#1",
-        "ms_uses": 315,
+        "ms_uses": 323,
         "name": "ReadPermission",
         "pinned": true,
         "scope": "",
@@ -13696,7 +13696,7 @@
           29
         ],
         "id": "Record.Reset#1",
-        "ms_uses": 3265,
+        "ms_uses": 3270,
         "name": "Reset",
         "pinned": true,
         "scope": "",
@@ -13792,7 +13792,7 @@
           29
         ],
         "id": "Record.SetFilter#1",
-        "ms_uses": 4685,
+        "ms_uses": 4690,
         "name": "SetFilter",
         "pinned": true,
         "scope": "",
@@ -13856,7 +13856,7 @@
           29
         ],
         "id": "Record.SetRange#1",
-        "ms_uses": 23613,
+        "ms_uses": 23648,
         "name": "SetRange",
         "pinned": true,
         "scope": "",
@@ -14256,7 +14256,7 @@
           29
         ],
         "id": "Record.TestField#21",
-        "ms_uses": 254,
+        "ms_uses": 255,
         "name": "TestField",
         "pinned": true,
         "scope": "",
@@ -14336,7 +14336,7 @@
           29
         ],
         "id": "Record.TransferFields#1",
-        "ms_uses": 667,
+        "ms_uses": 670,
         "name": "TransferFields",
         "pinned": true,
         "scope": "",
@@ -14368,7 +14368,7 @@
           29
         ],
         "id": "Record.Validate#1",
-        "ms_uses": 6313,
+        "ms_uses": 6319,
         "name": "Validate",
         "pinned": true,
         "scope": "",
@@ -14384,7 +14384,7 @@
           29
         ],
         "id": "Record.WritePermission#1",
-        "ms_uses": 97,
+        "ms_uses": 100,
         "name": "WritePermission",
         "pinned": true,
         "scope": "",
@@ -16237,7 +16237,7 @@
           29
         ],
         "id": "Report.Run#3",
-        "ms_uses": 46,
+        "ms_uses": 47,
         "name": "Run",
         "pinned": true,
         "scope": "",
@@ -16891,7 +16891,7 @@
           29
         ],
         "id": "SecretText.IsEmpty#1",
-        "ms_uses": 97,
+        "ms_uses": 99,
         "name": "IsEmpty",
         "pinned": true,
         "scope": "",
@@ -16907,7 +16907,7 @@
           29
         ],
         "id": "SecretText.SecretStrSubstNo#1",
-        "ms_uses": 38,
+        "ms_uses": 39,
         "name": "SecretStrSubstNo",
         "pinned": true,
         "scope": "",
@@ -16923,7 +16923,7 @@
           29
         ],
         "id": "SecretText.Unwrap#1",
-        "ms_uses": 67,
+        "ms_uses": 69,
         "name": "Unwrap",
         "pinned": true,
         "scope": "",
@@ -16971,7 +16971,7 @@
           29
         ],
         "id": "Session.BindSubscription#1",
-        "ms_uses": 84,
+        "ms_uses": 87,
         "name": "BindSubscription",
         "pinned": true,
         "scope": "",
@@ -16987,7 +16987,7 @@
           29
         ],
         "id": "Session.CurrentClientType#1",
-        "ms_uses": 21,
+        "ms_uses": 26,
         "name": "CurrentClientType",
         "pinned": true,
         "scope": "",
@@ -17067,7 +17067,7 @@
           29
         ],
         "id": "Session.GetExecutionContext#1",
-        "ms_uses": 25,
+        "ms_uses": 28,
         "name": "GetExecutionContext",
         "pinned": true,
         "scope": "",
@@ -17147,7 +17147,7 @@
           29
         ],
         "id": "Session.LogMessage#2",
-        "ms_uses": 1225,
+        "ms_uses": 1249,
         "name": "LogMessage",
         "pinned": true,
         "scope": "",
@@ -17355,7 +17355,7 @@
           29
         ],
         "id": "SessionSettings.Company#1",
-        "ms_uses": 1,
+        "ms_uses": 2,
         "name": "Company",
         "pinned": true,
         "scope": "",
@@ -17371,7 +17371,7 @@
           29
         ],
         "id": "SessionSettings.Init#1",
-        "ms_uses": 9,
+        "ms_uses": 10,
         "name": "Init",
         "pinned": true,
         "scope": "",
@@ -17419,7 +17419,7 @@
           29
         ],
         "id": "SessionSettings.ProfileAppId#1",
-        "ms_uses": 2,
+        "ms_uses": 3,
         "name": "ProfileAppId",
         "pinned": true,
         "scope": "",
@@ -17435,7 +17435,7 @@
           29
         ],
         "id": "SessionSettings.ProfileId#1",
-        "ms_uses": 2,
+        "ms_uses": 3,
         "name": "ProfileId",
         "pinned": true,
         "scope": "",
@@ -17451,7 +17451,7 @@
           29
         ],
         "id": "SessionSettings.ProfileSystemScope#1",
-        "ms_uses": 2,
+        "ms_uses": 3,
         "name": "ProfileSystemScope",
         "pinned": true,
         "scope": "",
@@ -17467,7 +17467,7 @@
           29
         ],
         "id": "SessionSettings.RequestSessionUpdate#1",
-        "ms_uses": 8,
+        "ms_uses": 9,
         "name": "RequestSessionUpdate",
         "pinned": true,
         "scope": "",
@@ -17611,7 +17611,7 @@
           29
         ],
         "id": "System.Clear#1",
-        "ms_uses": 2240,
+        "ms_uses": 2248,
         "name": "Clear",
         "pinned": true,
         "scope": "",
@@ -17835,7 +17835,7 @@
           29
         ],
         "id": "System.CreateDateTime#1",
-        "ms_uses": 160,
+        "ms_uses": 162,
         "name": "CreateDateTime",
         "pinned": true,
         "scope": "",
@@ -17867,7 +17867,7 @@
           29
         ],
         "id": "System.CreateGuid#1",
-        "ms_uses": 119,
+        "ms_uses": 120,
         "name": "CreateGuid",
         "pinned": true,
         "scope": "",
@@ -17883,7 +17883,7 @@
           29
         ],
         "id": "System.CurrentDateTime#1",
-        "ms_uses": 447,
+        "ms_uses": 455,
         "name": "CurrentDateTime",
         "pinned": true,
         "scope": "",
@@ -17995,7 +17995,7 @@
           29
         ],
         "id": "System.DT2Date#1",
-        "ms_uses": 75,
+        "ms_uses": 79,
         "name": "DT2Date",
         "pinned": true,
         "scope": "",
@@ -18091,7 +18091,7 @@
           29
         ],
         "id": "System.Evaluate#1",
-        "ms_uses": 616,
+        "ms_uses": 618,
         "name": "Evaluate",
         "pinned": true,
         "scope": "",
@@ -18155,7 +18155,7 @@
           29
         ],
         "id": "System.Format#1",
-        "ms_uses": 2555,
+        "ms_uses": 2562,
         "name": "Format",
         "pinned": true,
         "scope": "",
@@ -18331,7 +18331,7 @@
           29
         ],
         "id": "System.GetUrl#1",
-        "ms_uses": 29,
+        "ms_uses": 30,
         "name": "GetUrl",
         "pinned": true,
         "scope": "",
@@ -18363,7 +18363,7 @@
           29
         ],
         "id": "System.GlobalLanguage#1",
-        "ms_uses": 220,
+        "ms_uses": 225,
         "name": "GlobalLanguage",
         "pinned": true,
         "scope": "",
@@ -18379,7 +18379,7 @@
           29
         ],
         "id": "System.GuiAllowed#1",
-        "ms_uses": 540,
+        "ms_uses": 547,
         "name": "GuiAllowed",
         "pinned": true,
         "scope": "",
@@ -18411,7 +18411,7 @@
           29
         ],
         "id": "System.Hyperlink#1",
-        "ms_uses": 110,
+        "ms_uses": 111,
         "name": "Hyperlink",
         "pinned": true,
         "scope": "",
@@ -18667,7 +18667,7 @@
           29
         ],
         "id": "System.Time#1",
-        "ms_uses": 93,
+        "ms_uses": 94,
         "name": "Time",
         "pinned": true,
         "scope": "",
@@ -18683,7 +18683,7 @@
           29
         ],
         "id": "System.Today#1",
-        "ms_uses": 274,
+        "ms_uses": 278,
         "name": "Today",
         "pinned": true,
         "scope": "",
@@ -18731,7 +18731,7 @@
           29
         ],
         "id": "System.WindowsLanguage#1",
-        "ms_uses": 5,
+        "ms_uses": 6,
         "name": "WindowsLanguage",
         "pinned": true,
         "scope": "",
@@ -18747,7 +18747,7 @@
           29
         ],
         "id": "System.WorkDate#1",
-        "ms_uses": 706,
+        "ms_uses": 708,
         "name": "WorkDate",
         "pinned": true,
         "scope": "",
@@ -18779,7 +18779,7 @@
           29
         ],
         "id": "TaskScheduler.CanCreateTask#1",
-        "ms_uses": 17,
+        "ms_uses": 19,
         "name": "CanCreateTask",
         "pinned": true,
         "scope": "",
@@ -18811,7 +18811,7 @@
           29
         ],
         "id": "TaskScheduler.CreateTask#1",
-        "ms_uses": 14,
+        "ms_uses": 15,
         "name": "CreateTask",
         "pinned": true,
         "scope": "",
@@ -20863,7 +20863,7 @@
           29
         ],
         "id": "Text.CopyStr#1",
-        "ms_uses": 1889,
+        "ms_uses": 1893,
         "name": "CopyStr",
         "pinned": true,
         "scope": "",
@@ -21039,7 +21039,7 @@
           29
         ],
         "id": "Text.LowerCase#1",
-        "ms_uses": 139,
+        "ms_uses": 140,
         "name": "LowerCase",
         "pinned": true,
         "scope": "",
@@ -21071,7 +21071,7 @@
           29
         ],
         "id": "Text.MaxStrLen#2",
-        "ms_uses": 499,
+        "ms_uses": 503,
         "name": "MaxStrLen",
         "pinned": true,
         "scope": "",
@@ -21295,7 +21295,7 @@
           29
         ],
         "id": "Text.StrSubstNo#1",
-        "ms_uses": 3710,
+        "ms_uses": 3717,
         "name": "StrSubstNo",
         "pinned": true,
         "scope": "",
@@ -21375,7 +21375,7 @@
           29
         ],
         "id": "Text.TrimEnd#1",
-        "ms_uses": 20,
+        "ms_uses": 21,
         "name": "TrimEnd",
         "pinned": true,
         "scope": "",

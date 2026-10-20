@@ -14054,6 +14054,24 @@
           "corpus_uses": 0,
           "group": "codeunit",
           "ms_uses": 0,
+          "name": "OnCompanyOpen",
+          "pinned": false,
+          "runtime_reads": true,
+          "site": null
+        },
+        {
+          "corpus_uses": 0,
+          "group": "codeunit",
+          "ms_uses": 0,
+          "name": "OnCompanyOpenCompleted",
+          "pinned": false,
+          "runtime_reads": true,
+          "site": null
+        },
+        {
+          "corpus_uses": 0,
+          "group": "codeunit",
+          "ms_uses": 0,
           "name": "OnDatabaseDelete",
           "pinned": false,
           "runtime_reads": true,
@@ -14541,24 +14559,6 @@
           "group": "codeunit",
           "ms_uses": 0,
           "name": "OnCompanyClose",
-          "pinned": false,
-          "runtime_reads": false,
-          "site": null
-        },
-        {
-          "corpus_uses": 0,
-          "group": "codeunit",
-          "ms_uses": 0,
-          "name": "OnCompanyOpen",
-          "pinned": false,
-          "runtime_reads": false,
-          "site": null
-        },
-        {
-          "corpus_uses": 0,
-          "group": "codeunit",
-          "ms_uses": 0,
-          "name": "OnCompanyOpenCompleted",
           "pinned": false,
           "runtime_reads": false,
           "site": null
@@ -16261,7 +16261,7 @@
         "code": "NotSupportedOperation",
         "file": "crates/al-vm/src/interp.rs",
         "generic": false,
-        "line": 816,
+        "line": 819,
         "pinned": true,
         "site": "recordref/lt-recordref-variant-record/RecordRefVariantToRecord.al:147",
         "template": "The requested operation is not supported."
@@ -16270,7 +16270,7 @@
         "code": "IndexOutOfBounds",
         "file": "crates/al-vm/src/interp.rs",
         "generic": false,
-        "line": 1058,
+        "line": 1061,
         "pinned": true,
         "site": "collections/lt-array-rows/ArrayRows.al:185",
         "template": "Index out of bounds."
@@ -16279,7 +16279,7 @@
         "code": "IndexOutOfBounds",
         "file": "crates/al-vm/src/interp.rs",
         "generic": false,
-        "line": 1135,
+        "line": 1138,
         "pinned": true,
         "site": "collections/lt-array-rows/ArrayRows.al:185",
         "template": "Index out of bounds."
@@ -16288,7 +16288,7 @@
         "code": "IndexOutOfBounds",
         "file": "crates/al-vm/src/interp.rs",
         "generic": false,
-        "line": 1145,
+        "line": 1148,
         "pinned": true,
         "site": "collections/lt-array-rows/ArrayRows.al:185",
         "template": "Index out of bounds."
@@ -16297,7 +16297,7 @@
         "code": "StackOverflow",
         "file": "crates/al-vm/src/lib.rs",
         "generic": false,
-        "line": 1084,
+        "line": 1158,
         "pinned": true,
         "site": "record/TestCalcFieldsTruncateUniqueContracts.al:179",
         "template": "There is insufficient memory to execute this function. This can be caused by recursive function calls. Contact your system administrator."
@@ -16351,7 +16351,7 @@
         "code": "RenameArgument",
         "file": "crates/al-vm/src/records.rs",
         "generic": false,
-        "line": 2758,
+        "line": 2839,
         "pinned": true,
         "site": "recordref/lt-refs/RfTWrite.al:223",
         "template": "The number of field arguments does not match the primary key size."

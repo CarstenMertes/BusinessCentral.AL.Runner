@@ -88,7 +88,12 @@ pub(crate) enum Stored {
 /// closing date), the DateTimes 1753-01-01 00:00 and 1752-12-31 12:00, and a DateTime that rounds past 9999-12-31. Any other
 /// value before 1753-01-02 is refused. 0001-01-01 reads back as it was written (:261-262: Format gives '' and it equals
 /// the value written, which a blank date would not: types/lt-datetime/Arithmetic.al:111-116).
-pub(crate) fn store(t: &TableDef, field_caption: &dyn Fn(usize) -> String, table_caption: &str, row: &mut [Value]) -> Result<Stored, Signal> {
+pub(crate) fn store(
+    t: &TableDef,
+    field_caption: &dyn Fn(usize) -> String,
+    table_caption: &str,
+    row: &mut [Value],
+) -> Result<Stored, Signal> {
     let first_good = i64::from(day_from_civil(1753, 1, 2));
     let (d1752, d1753) = (day_from_civil(1752, 12, 31), day_from_civil(1753, 1, 1));
     for (i, f) in t.fields.iter().enumerate() {
@@ -113,7 +118,8 @@ pub(crate) fn store(t: &TableDef, field_caption: &dyn Fn(usize) -> String, table
                     (d, true) if d == d1752 => Some(format!("C{m:02}/{dd:02}/{y:04}")),
                     _ => {
                         return Err(Signal::Unsupported(
-                            "a Date before 1753-01-02 in a database table, other than the pinned ones (not pinned)".into(),
+                            "a Date before 1753-01-02 in a database table, other than the pinned ones (not pinned)"
+                                .into(),
                         ));
                     }
                 }

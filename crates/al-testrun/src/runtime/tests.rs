@@ -140,7 +140,7 @@ fn a_failure_after_a_test_that_was_refused_mid_run_is_not_trusted() {
     // reads nothing the refused test can change stays a failure.
     let src = "table 60901 T9 { fields { field(1; K; Code[10]) { } } }
             codeunit 60103 T { Subtype = Test; var Flag: Boolean; Count: Integer;
-                [Test] procedure T1() var R: Record T9; begin Flag := true; R.LockTable(false); Count += 1; end;
+                [Test] procedure T1() var R: Record T9; begin Flag := true; R.LockTable(true, true); Count += 1; end;
                 [Test] procedure T2() begin if not Flag then Error('flag lost'); end;
                 [Test] procedure T3() begin if Count = 0 then Error('real failure'); end;
                 [Test] procedure T4() begin Error('real failure'); end; }

@@ -770,11 +770,9 @@ impl Session {
                 let mut a: Vec<Value> = args.iter().take(1).cloned().collect();
                 self.record_meta_op(RecordOp::LockTable, &rec, &t, &mut a)
             }
-            "ReadConsistency" | "RecordLevelLocking" | "ReadPermission" | "WritePermission"
-            | "CountApprox" | "ReadIsolation" | "SecurityFiltering" | "GetPosition" | "SetPosition" | "Ascending"
-            | "SetRecFilter" | "Mark" | "MarkedOnly" | "ClearMarks" => {
-                self.record_meta_op(record_method(method), &rec, &t, args)
-            }
+            "ReadConsistency" | "RecordLevelLocking" | "ReadPermission" | "WritePermission" | "CountApprox"
+            | "ReadIsolation" | "SecurityFiltering" | "GetPosition" | "SetPosition" | "Ascending" | "SetRecFilter"
+            | "Mark" | "MarkedOnly" | "ClearMarks" => self.record_meta_op(record_method(method), &rec, &t, args),
             // Doc (RecordRef.Get): loads the row a RecordId names; the table must be the ref's own.
             "Get" => {
                 let key = match args.first() {

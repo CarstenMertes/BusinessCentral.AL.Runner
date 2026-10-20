@@ -1615,7 +1615,10 @@ impl Session {
 /// The error of `LockTable` with Wait = false (record/lt-record-write/RcBMeta.al:418-419).
 pub(crate) fn lock_table_bad_parm(t: &TableDef) -> Signal {
     error(
-        format!("The request to lock the {} table with a Wait parameter of FALSE is not supported.", t.name),
+        format!(
+            "The request to lock the {} table with a Wait parameter of FALSE is not supported.",
+            t.name
+        ),
         "AL:LockTableBadParm",
     )
 }

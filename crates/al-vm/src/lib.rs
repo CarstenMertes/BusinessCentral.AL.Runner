@@ -6,6 +6,9 @@ use al_builtins::native::{AlError, Signal};
 use al_builtins::ops;
 use al_builtins::value::{Instance, RecordState, RtType, Value};
 use al_ir as ir;
+
+/// A media object a Modify or Delete removed from Tenant Media, kept so a rollback can put it back.
+type RemovedMedia = (al_builtins::media::Id, al_builtins::media::MediaObject);
 use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::rc::Rc;
@@ -521,8 +524,8 @@ pub struct Session {
     /// Imported media objects and media sets (the platform tables behind Media fields).
     pub(crate) media: al_builtins::media::MediaStore,
     /// Media objects a Modify or Delete removed from Tenant Media: `.0` since the last commit (a rollback puts them back),
-    /// `.1` committed since the test runner's checkpoint (its restore puts them back). See `Session::remove_media`.
-    pub(crate) media_removed: (Vec<(al_builtins::media::Id, al_builtins::media::MediaObject)>, Vec<(al_builtins::media::Id, al_builtins::media::MediaObject)>),
+    /// `.1` committed since the test runner's checkpoint (its restore puts them back). See `Session::release_media`.
+    pub(crate) media_removed: (Vec<RemovedMedia>, Vec<RemovedMedia>),
     /// The host session behind `DotNet` values; ends with the session (ADR-014 section 6).
     pub(crate) dotnet: dotnet::DotNetState,
     /// The session's application areas as `ApplicationArea()` reads them: `#Basic,#Suite`, or the

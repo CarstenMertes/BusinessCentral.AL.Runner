@@ -396,7 +396,13 @@ impl Session {
     /// row of the same field still holds it (media/TestMediaPngImport.al:297-334: kept while the other row holds it, removed with
     /// the Delete of that row; record/lt-ar-records/ArRecordProbes.al:141-143: removed when no row holds it). A media another
     /// table or field holds is not pinned and refused. The removal is undone by a rollback (`Session::rollback_transaction`).
-    fn release_media(&mut self, cx: &al_data::AccessContext, t: &TableDef, pos: usize, id: [u8; 16]) -> Result<(), Signal> {
+    fn release_media(
+        &mut self,
+        cx: &al_data::AccessContext,
+        t: &TableDef,
+        pos: usize,
+        id: [u8; 16],
+    ) -> Result<(), Signal> {
         let held = |s: &mut Self, table: &TableDef, field: usize| -> Result<bool, Signal> {
             let filters = [FieldFilter {
                 field,
@@ -409,14 +415,21 @@ impl Session {
                 ascending: true,
                 after: None,
             };
-            Ok(s.store.next(cx, table, &scan).map_err(|e| Signal::Unsupported(format!("{e}")))?.is_some())
+            Ok(s.store
+                .next(cx, table, &scan)
+                .map_err(|e| Signal::Unsupported(format!("{e}")))?
+                .is_some())
         };
         if held(self, t, pos)? {
             return Ok(());
         }
         let engine = self.engine.clone();
         // The platform's own tables (ids from 2000000000, e.g. Media Resources) hold no row of AL code's.
-        let system = |o: u32| engine.program.objects[o as usize].id.is_some_and(|id| id >= 2_000_000_000);
+        let system = |o: u32| {
+            engine.program.objects[o as usize]
+                .id
+                .is_some_and(|id| id >= 2_000_000_000)
+        };
         for other in engine.tables.iter().flatten().filter(|o| !system(o.object)) {
             for i in (0..other.fields.len()).filter(|&i| is_media_field(other, i)) {
                 if (other.object, i) != (t.object, pos) && held(self, other, i)? {
@@ -1709,7 +1722,10 @@ impl Session {
                     // (errors/lt-ms-refusals-130/P130DateFilters.al:255-275, stage `get`), as for a duplicate key. With a Blob
                     // field, an AutoIncrement field, the result used, an after-insert trigger or event, or a page write it is
                     // not pinned.
-                    let has_blob = t.fields.iter().any(|f| matches!(&f.ty, RtType::Library(al_builtins::library_kind::LibraryKind::Blob)));
+                    let has_blob = t
+                        .fields
+                        .iter()
+                        .any(|f| matches!(&f.ty, RtType::Library(al_builtins::library_kind::LibraryKind::Blob)));
                     if self.ret_used
                         || has_blob
                         || auto.is_some()
@@ -2146,9 +2162,12 @@ impl Session {
                         // Code[20] key). A negative number, one longer than the field and a Text key are not pinned.
                         Some(Value::Integer(i)) if matches!(ty, RtType::Code(_)) => {
                             let digits = i.to_string();
-                            let fits = matches!(ty, RtType::Code(len) if len.is_none_or(|l| digits.len() <= l as usize));
+                            let fits =
+                                matches!(ty, RtType::Code(len) if len.is_none_or(|l| digits.len() <= l as usize));
                             if *i < 0 || !fits {
-                                return unsupported("Get with a negative or too long Integer on a Code key (not pinned)");
+                                return unsupported(
+                                    "Get with a negative or too long Integer on a Code key (not pinned)",
+                                );
                             }
                             Value::Code(digits.into())
                         }
@@ -2157,7 +2176,9 @@ impl Session {
                             if !rec.borrow().temporary
                                 && !ops::compare(&crate::sqltime::rounded(v), v).is_ok_and(|o| o.is_eq()) =>
                         {
-                            return unsupported("Get with a Time or DateTime key value the SQL column rounds (not pinned)");
+                            return unsupported(
+                                "Get with a Time or DateTime key value the SQL column rounds (not pinned)",
+                            );
                         }
                         Some(v) => ops::convert(v.clone(), &ty)?,
                         None => self.default_value(&ty),
@@ -3042,5 +3063,9 @@ impl Session {
 
 /// Field `i` of `t` is a stored Media field.
 fn is_media_field(t: &TableDef, i: usize) -> bool {
-    t.fields[i].stored && matches!(t.fields[i].ty, RtType::Library(al_builtins::library_kind::LibraryKind::Media))
+    t.fields[i].stored
+        && matches!(
+            t.fields[i].ty,
+            RtType::Library(al_builtins::library_kind::LibraryKind::Media)
+        )
 }

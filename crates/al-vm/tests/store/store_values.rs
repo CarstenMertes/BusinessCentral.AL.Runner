@@ -159,7 +159,11 @@ fn locktable_with_wait_false_fails() {
 // Not pinned: Record.LockTable(true, true) (only the RecordRef form is, RfTViews.al:314-315).
 #[test]
 fn record_locktable_true_true_is_refused() {
-    assert!(matches!(run("RecordLockTrueTrue"), Err(Signal::Unsupported(_))), "{:?}", run("RecordLockTrueTrue"));
+    assert!(
+        matches!(run("RecordLockTrueTrue"), Err(Signal::Unsupported(_))),
+        "{:?}",
+        run("RecordLockTrueTrue")
+    );
 }
 
 // AtGetIntegerOnCodeKey.al:86-140: an Integer (literal or variable) on a Code key reads as its digits; found, not found, and
@@ -168,22 +172,38 @@ fn record_locktable_true_true_is_refused() {
 fn get_with_an_integer_on_a_code_key() {
     assert_eq!(text(run("GetIntegerOnCodeKey")), "Yes123hitYes123hitNo|");
     let e = al_testkit::error_message(run("GetIntegerOnCodeKeyBare"));
-    assert_eq!(e, "The SV Code Key does not exist. Identification fields and values: No.='123'");
+    assert_eq!(
+        e,
+        "The SV Code Key does not exist. Identification fields and values: No.='123'"
+    );
 }
 
 // Not pinned: a negative Integer on a Code key.
 #[test]
 fn get_with_a_negative_integer_on_a_code_key_is_refused() {
-    assert!(matches!(run("GetNegativeIntegerOnCodeKey"), Err(Signal::Unsupported(_))));
+    assert!(matches!(
+        run("GetNegativeIntegerOnCodeKey"),
+        Err(Signal::Unsupported(_))
+    ));
 }
 
 // CnTransferFieldsModify.al:133-150: TransferFields with the primary key takes the source's row version, so the Modify of a
 // stale buffer succeeds; :153-173: without the key it does not, and the Modify fails with DB:RecordChanged.
 #[test]
 fn transferfields_with_the_key_takes_the_row_version() {
-    let with = al_testkit::run_with(SRC, "C", "TransferFromNewer", vec![al_builtins::value::Value::Boolean(true)]);
+    let with = al_testkit::run_with(
+        SRC,
+        "C",
+        "TransferFromNewer",
+        vec![al_builtins::value::Value::Boolean(true)],
+    );
     assert_eq!(text(with.map(|r| r.0)), "9");
-    let without = al_testkit::run_with(SRC, "C", "TransferFromNewer", vec![al_builtins::value::Value::Boolean(false)]);
+    let without = al_testkit::run_with(
+        SRC,
+        "C",
+        "TransferFromNewer",
+        vec![al_builtins::value::Value::Boolean(false)],
+    );
     match without {
         Err(Signal::Error(e)) => assert_eq!(e.code.as_str(), "DB:RecordChanged"),
         other => panic!("{other:?}"),
@@ -397,7 +417,9 @@ fn date(y: i32, m: u32, d: u32, closing: bool) -> al_builtins::value::Value {
 }
 
 fn datetime(y: i32, m: u32, d: u32, ms: i64) -> al_builtins::value::Value {
-    al_builtins::value::Value::DateTime((i64::from(al_builtins::format::day_from_civil(y, m, d)) - 1) * 86_400_000 + ms + 1)
+    al_builtins::value::Value::DateTime(
+        (i64::from(al_builtins::format::day_from_civil(y, m, d)) - 1) * 86_400_000 + ms + 1,
+    )
 }
 
 // P130DateFilters.al:162-183: a non-temporary DateTime and Time are stored in 1/300 s; the variable keeps what it was given.
@@ -440,25 +462,46 @@ fn dates_out_of_the_sql_range_fail_at_the_next_access() {
     };
     let blank_dtm = al_builtins::value::Value::DateTime(0);
     let blank_dt = al_builtins::value::Value::Date(0, false);
-    assert_eq!(text(dates("Store", vec![blank_dt.clone(), blank_dtm.clone()])), "stored|stored:||Yes|Yes|Dialog");
-    assert_eq!(text(dates("Store", vec![date(1753, 1, 1, false), blank_dtm.clone()])), msg("01/01/1753", "Dt"));
-    assert_eq!(text(dates("Store", vec![date(1752, 12, 31, false), blank_dtm.clone()])), msg("12/31/1752", "Dt"));
-    assert_eq!(text(dates("Store", vec![date(1752, 12, 31, true), blank_dtm.clone()])), msg("C12/31/1752", "Dt"));
+    assert_eq!(
+        text(dates("Store", vec![blank_dt.clone(), blank_dtm.clone()])),
+        "stored|stored:||Yes|Yes|Dialog"
+    );
+    assert_eq!(
+        text(dates("Store", vec![date(1753, 1, 1, false), blank_dtm.clone()])),
+        msg("01/01/1753", "Dt")
+    );
+    assert_eq!(
+        text(dates("Store", vec![date(1752, 12, 31, false), blank_dtm.clone()])),
+        msg("12/31/1752", "Dt")
+    );
+    assert_eq!(
+        text(dates("Store", vec![date(1752, 12, 31, true), blank_dtm.clone()])),
+        msg("C12/31/1752", "Dt")
+    );
     assert_eq!(
         text(dates("Store", vec![blank_dt.clone(), datetime(1753, 1, 1, 0)])),
         msg("01/01/1753 12:00 AM", "Dtm")
     );
     assert_eq!(
-        text(dates("Store", vec![blank_dt.clone(), datetime(1752, 12, 31, 12 * 3_600_000)])),
+        text(dates(
+            "Store",
+            vec![blank_dt.clone(), datetime(1752, 12, 31, 12 * 3_600_000)]
+        )),
         msg("12/31/1752 12:00 PM", "Dtm")
     );
     // :306-318.
     assert_eq!(
-        text(dates("Store", vec![blank_dt.clone(), datetime(9999, 12, 31, 86_399_997)])),
+        text(dates(
+            "Store",
+            vec![blank_dt.clone(), datetime(9999, 12, 31, 86_399_997)]
+        )),
         "stored|stored:|9999-12-31T23:59:59.997Z|Yes|Yes|Dialog"
     );
     assert_eq!(
-        text(dates("Store", vec![blank_dt.clone(), datetime(9999, 12, 31, 86_399_999)])),
+        text(dates(
+            "Store",
+            vec![blank_dt.clone(), datetime(9999, 12, 31, 86_399_999)]
+        )),
         msg("12/31/9999 11:59 PM", "Dtm")
     );
 }
@@ -476,7 +519,10 @@ fn unpinned_sql_range_cases_are_refused() {
         let r = dates(routine, vec![d.clone()]);
         assert!(matches!(r, Err(Signal::Unsupported(_))), "{routine} {d:?}: {r:?}");
     }
-    let r = dates("Store", vec![date(1600, 6, 1, false), al_builtins::value::Value::DateTime(0)]);
+    let r = dates(
+        "Store",
+        vec![date(1600, 6, 1, false), al_builtins::value::Value::DateTime(0)],
+    );
     assert!(matches!(r, Err(Signal::Unsupported(_))), "{r:?}");
 }
 

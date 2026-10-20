@@ -803,6 +803,7 @@ impl Session {
                 report_flow: None,
                 flow_unwind: None,
                 request_only_page: false,
+                zero_date_view_failed: false,
                 report_executed: Vec::new(),
                 report_save_tried: Vec::new(),
                 prepared: Vec::new(),

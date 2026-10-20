@@ -873,3 +873,138 @@ fn save_as_xml_writes_the_parameters_file_in_its_raw_form() {
         [RequestPageHandler] procedure SaveHandler(var RP: TestRequestPage \"RQ Report\") begin RP.SaveAsXml(TemporaryPath() + 'p.xml', TemporaryPath() + 'd.xml'); end;"
     ));
 }
+
+/// Lane T8: a request page with two actions out of reach, a seeded control and a caption set in OnOpenPage
+/// (report/lt-aq/AqFixtures.al:172-205, :550-610).
+const LANE_T8: &str = r#"
+table 61404 "T8 Row" { fields { field(1; Number; Integer) { } } keys { key(PK; Number) { } } }
+codeunit 61400 "T8 Log"
+{
+    SingleInstance = true;
+    var Lines: Text; CurrentMode: Integer;
+    procedure Add(Line: Text) begin Lines += Line + ';'; end;
+    procedure Take(): Text var R: Text; begin R := Lines; Lines := ''; exit(R); end;
+    procedure SetMode(M: Integer) begin CurrentMode := M; end;
+    procedure Mode(): Integer begin exit(CurrentMode); end;
+}
+report 61401 "T8 Caption"
+{
+    Caption = 'T8 static caption';
+    ProcessingOnly = true;
+    dataset { dataitem(Row; "T8 Row") { } }
+    requestpage
+    {
+        Caption = 'T8 request page caption';
+        layout { area(Content) { field(Ctl; Ctl) { ApplicationArea = All; } } }
+        trigger OnOpenPage() begin RequestOptionsPage.Caption := 'T8 caption set in OnOpenPage'; end;
+    }
+    var Ctl: Integer;
+}
+report 61402 "T8 Req Page"
+{
+    ProcessingOnly = true;
+    dataset { dataitem(Row; "T8 Row") { trigger OnPreDataItem() begin CurrReport.Break(); end; } }
+    requestpage
+    {
+        layout { area(Content) { field(IntCtl; IntVal) { ApplicationArea = All; } field(OptCtl; OptVal) { ApplicationArea = All; } } }
+        actions
+        {
+            area(Processing)
+            {
+                action(DisAct) { ApplicationArea = All; Enabled = false; trigger OnAction() begin Log.Add('DisAct ran'); end; }
+                action(InvAct) { ApplicationArea = All; Visible = false; trigger OnAction() begin Log.Add('InvAct ran'); end; }
+            }
+        }
+        trigger OnInit()
+        begin
+            if Log.Mode() = 1 then
+                IntVal := 5;
+            Log.Add('OnInit int=' + Format(IntVal) + ' opt=' + Format(OptVal));
+        end;
+        trigger OnOpenPage() begin Log.Add('OnOpenPage int=' + Format(IntVal) + ' opt=' + Format(OptVal)); end;
+    }
+    var Log: Codeunit "T8 Log"; IntVal: Integer; OptVal: Option Alpha,Beta,Gamma;
+}
+codeunit 61403 T
+{
+    Subtype = Test;
+    var Log: Codeunit "T8 Log"; Seen: Text; ReadPhase: Boolean;
+    local procedure Check(Expected: Text; Actual: Text) begin if Expected <> Actual then Error('expected [%1] got [%2]', Expected, Actual); end;
+
+    [Test] [HandlerFunctions('CaptionHandler')]
+    procedure CaptionSetInOnOpenPage() begin Seen := ''; Report.Run(Report::"T8 Caption"); Check('T8 caption set in OnOpenPage', Seen); end;
+    [RequestPageHandler] procedure CaptionHandler(var RP: TestRequestPage "T8 Caption") begin Seen := RP.Caption(); RP.Cancel().Invoke(); end;
+
+    [Test] [HandlerFunctions('ActionsHandler')]
+    procedure ActionsOutOfReach()
+    var Params: Text;
+    begin
+        Log.SetMode(0); Log.Take(); Seen := '';
+        Params := Report.RunRequestPage(Report::"T8 Req Page");
+        Check('disabled: The action with ID = 1719343332 is not found on the page. code=TestActionNotFound;hidden: The action with ID = 1370392163 is not found on the page. code=TestActionNotFound;', Seen);
+        Check('OnInit int=0 opt=Alpha;OnOpenPage int=0 opt=Alpha;', Log.Take());
+    end;
+    [RequestPageHandler] procedure ActionsHandler(var RP: TestRequestPage "T8 Req Page")
+    begin
+        asserterror RP.DisAct.Invoke();
+        Seen += 'disabled: ' + GetLastErrorText() + ' code=' + GetLastErrorCode() + ';';
+        asserterror RP.InvAct.Invoke();
+        Seen += 'hidden: ' + GetLastErrorText() + ' code=' + GetLastErrorCode() + ';';
+        RP.Cancel().Invoke();
+    end;
+
+    [Test] [HandlerFunctions('ValuesHandler')]
+    procedure SeedAppliesAfterOnInit()
+    var Params: Text;
+    begin
+        Log.SetMode(1); Log.Take();
+        Params := Report.RunRequestPage(Report::"T8 Req Page");
+        Log.Take(); Seen := ''; ReadPhase := true;
+        Params := Report.RunRequestPage(Report::"T8 Req Page", Params);
+        ReadPhase := false; Log.SetMode(0);
+        Check('int=9 opt=Gamma', Seen);
+        Check('OnInit int=5 opt=Alpha;OnOpenPage int=9 opt=Gamma;', Log.Take());
+    end;
+    [RequestPageHandler] procedure ValuesHandler(var RP: TestRequestPage "T8 Req Page")
+    begin
+        if ReadPhase then
+            Seen := 'int=' + RP.IntCtl.Value() + ' opt=' + RP.OptCtl.Value()
+        else begin
+            RP.IntCtl.SetValue(9);
+            RP.OptCtl.SetValue('Gamma');
+        end;
+        RP.OK().Invoke();
+    end;
+}
+"#;
+
+// report/lt-aq/AqTests.al:313-330 (caption set in OnOpenPage), :334-358 (actions out of reach), :362-381 (seed after OnInit).
+#[test]
+fn lane_t8_request_page_caption_actions_and_seed() {
+    let o = al_testkit::outcomes_in(LANE_T8, "T");
+    assert_eq!(o.len(), 3, "{o:?}");
+    for (n, r) in &o {
+        assert_eq!(r, &Outcome::Pass, "{n}: {r:?}");
+    }
+}
+
+// Review of lane T8: a parameters string that sets a data item view, on a report whose request page has OnInit (or
+// whose report has OnInitReport). The view now loads after OnInit (report/lt-aq/AqTests.al:362-381 pins only a control
+// value); whether a view set in OnInit is replaced by the seed is not pinned: refused.
+#[test]
+fn a_seeded_data_item_view_on_a_request_page_with_on_init_is_refused() {
+    let why = refused(&format!(
+        "{HELPERS}
+        var Reads: Integer;
+        [Test] [HandlerFunctions('Filtering')]
+        procedure SeededView() var First, Second: Report \"RQ Init\"; Seed: Text; begin
+            Seed(); Seed := First.RunRequestPage();
+            if StrPos(Seed, 'WHERE(Field1=1') = 0 then Error(Seed);
+            Param := Second.RunRequestPage(Seed); end;
+        [RequestPageHandler] procedure Filtering(var RP: TestRequestPage \"RQ Init\") begin
+            Reads += 1;
+            if Reads = 1 then RP.Rows.SetFilter(\"Entry No.\", '1');
+            RP.OK().Invoke(); end;"
+    ));
+    assert!(why.contains("OnInit"), "{why}");
+}

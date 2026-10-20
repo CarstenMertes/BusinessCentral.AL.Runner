@@ -714,7 +714,7 @@ impl<'a> Checker<'a> {
                 let callee = &kids[0];
                 let args: Vec<SyntaxNode> = kids.get(1).map(|a| a.children().collect()).unwrap_or_default();
                 let target = match (callee.kind() == NameRef)
-                    .then(|| self.lookup_callable(sc, &name_of(callee)))
+                    .then(|| self.lookup_callable(sc, node, &name_of(callee)))
                     .flatten()
                 {
                     Some(c) => E::Callable(c),

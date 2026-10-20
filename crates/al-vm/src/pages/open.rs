@@ -411,6 +411,20 @@ impl Session {
                     handler = Some(self.bind_page_handler(kind, st.borrow().object)?);
                 }
             }
+            // The parameters string of `Report.RunRequestPage(Id, Parameters)`, after OnInit (see `run_request_page`).
+            let seed = st.borrow_mut().request_seed.take();
+            if let Some(xml) = seed {
+                let (inst, exts, object) = {
+                    let s = st.borrow();
+                    (
+                        s.instance.clone().expect("an open request page"),
+                        s.ext_instances.clone(),
+                        s.object as usize,
+                    )
+                };
+                self.refuse_seeded_view_after_init(&inst, object, &xml)?;
+                self.apply_request_parameters(&inst, &exts, object, &xml)?;
+            }
             self.restore_page_values(st);
             self.check_page_events(st)?;
             let opened = self.page_trigger(st, "onopenpage", vec![]);

@@ -459,6 +459,8 @@ pub fn copy_content(v: &Value) -> Result<Value, Signal> {
 // ------------------------------------------------------------------------------------------------ headers
 
 const INVALID_HEADER: &str = "Invalid HTTP header. Please, make sure the format of the header is correct.";
+const GET_VALUES_MISSING: &str =
+    "Exception of type 'Microsoft.Dynamics.Nav.Types.Exceptions.NavNclInvalidHeaderException' was thrown.";
 const INVALID_OPERATION: &str = "The requested operation cannot be performed in this context.";
 
 fn is_token_char(c: char) -> bool {
@@ -508,7 +510,13 @@ fn is_media_type(v: &str) -> bool {
     let token = |s: &str| !s.is_empty() && s.chars().all(is_token_char);
     token(t)
         && token(st)
-        && parts.all(|p| matches!(p.split_once('='), Some((n, v)) if token(n.trim()) && !v.trim().is_empty()))
+        && parts.all(|p| matches!(p.split_once('='), Some((n, v)) if token(n.trim()) && param_value(v.trim())))
+}
+
+/// A parameter value: not empty, and a value that opens a quote closes it (network/lt-ay-http/AyHeaderAddResult.al:101 refuses
+/// `a/b; q="`).
+fn param_value(v: &str) -> bool {
+    !v.is_empty() && (!v.starts_with('"') || (v.len() >= 2 && v.ends_with('"')))
 }
 
 /// An RFC 1123 date (`Tue, 15 Nov 1994 08:12:31 GMT`).
@@ -919,6 +927,188 @@ fn typed_add(bag: &HeaderBag, name: &str, value: &str) -> Result<Option<Typed>, 
     }
 }
 
+/// A whole number as .NET writes it back: digits with no leading zero, at most nine of them (so it fits an Int32). A number with a
+/// leading zero or more digits is not measured.
+fn plain_number(v: &str) -> Result<bool, Signal> {
+    if v.is_empty() || !v.chars().all(|c| c.is_ascii_digit()) {
+        return Ok(false);
+    }
+    if (v.len() > 1 && v.starts_with('0')) || v.len() > 9 {
+        return unsupported(format!(
+            "HttpHeaders.Add of the number '{v}': its stored form is not measured"
+        ));
+    }
+    Ok(true)
+}
+
+/// A uri header (Referer, Location, Content-Location): a relative uri is stored with its spaces as `%20`
+/// (network/lt-ay-http/AyHeaderAddResult.al:256, :311, :355 `a%20b`); an absolute one as written when it is already in its normal form
+/// (:255, :354 `https://a.example/x`). Other characters of a relative uri, and an absolute uri .NET would rewrite, are not measured.
+fn uri_header(v: &str) -> Result<String, Signal> {
+    let has_scheme = v.split_once(':').is_some_and(|(s, _)| {
+        s.starts_with(|c: char| c.is_ascii_alphabetic())
+            && s.chars().all(|c| c.is_ascii_alphanumeric() || "+.-".contains(c))
+    });
+    if has_scheme {
+        return match normalize_uri(v) {
+            Ok(n) if n == v => Ok(n),
+            _ => unsupported(format!(
+                "HttpHeaders.Add of the uri '{v}': its stored form is not measured"
+            )),
+        };
+    }
+    if v.chars()
+        .all(|c| c == ' ' || c.is_ascii_alphanumeric() || "-._~/?#[]@!$&'()*+,;=%".contains(c))
+    {
+        return Ok(v.replace(' ', "%20"));
+    }
+    unsupported(format!(
+        "HttpHeaders.Add of the relative uri '{v}': its stored form is not measured"
+    ))
+}
+
+/// `bytes 0-9/10` (AyHeaderAddResult.al:285; lt-http-header-names-cache-control/Hdr198Helper.al `bytes 0-1/2`): a unit, one space, a
+/// range `first-last` and `/length`. `abc` is refused (AyHeaderAddResult.al:297). `*` forms are not measured.
+fn content_range(v: &str) -> Result<bool, Signal> {
+    let Some((unit, rest)) = v.split_once(' ') else {
+        return Ok(false);
+    };
+    let digits = |s: &str| !s.is_empty() && s.chars().all(|c| c.is_ascii_digit());
+    let ok = is_token(unit)
+        && rest
+            .split_once('/')
+            .is_some_and(|(r, len)| digits(len) && r.split_once('-').is_some_and(|(a, b)| digits(a) && digits(b)));
+    if !ok && rest.contains('*') {
+        return unsupported(format!("HttpHeaders.Add of the Content-Range '{v}': not measured"));
+    }
+    Ok(ok)
+}
+
+/// The typed headers `typed_add` leaves alone, measured by network/lt-ay-http/AyHeaderAddResult.al (codeunit 80507) on the collection
+/// it used: the request headers If-Range, Max-Forwards, Referer and Expect; the content headers Content-Range, Content-MD5,
+/// Content-Location and Allow; the response headers Age, ETag, Location, Retry-After, Vary, WWW-Authenticate and Accept-Ranges.
+/// `None` is a header with no value rule here.
+fn typed_add_more(bag: &HeaderBag, name: &str, value: &str) -> Result<Option<Typed>, Signal> {
+    let lower = name.to_ascii_lowercase();
+    let v = value.trim();
+    let one = |s: String| {
+        Ok(Some(Typed {
+            values: vec![s],
+            replace: false,
+        }))
+    };
+    let fail = || header_error::<Option<Typed>>("Format");
+    let request = ["if-range", "max-forwards", "referer", "expect"];
+    let content = ["content-range", "content-md5", "content-location", "allow"];
+    let response = [
+        "age",
+        "etag",
+        "location",
+        "retry-after",
+        "vary",
+        "www-authenticate",
+        "accept-ranges",
+    ];
+    let probed_here = match bag.kind {
+        HeaderKind::Request => request.contains(&lower.as_str()),
+        HeaderKind::Content => content.contains(&lower.as_str()),
+        HeaderKind::Response => response.contains(&lower.as_str()),
+        HeaderKind::Default => false,
+    };
+    // On another collection the header keeps the earlier rule, stored as written (the HeaderNameCase*.al probes add valid values of
+    // these names to every collection; assumption http-header-rules).
+    if !probed_here {
+        return Ok(None);
+    }
+    let existing = find(&bag.items, name).is_some();
+    let single_unmeasured = || unsupported(format!("HttpHeaders.Add of {name} a second time: not measured"));
+    let token_list = |v: &str| {
+        let items = split_list(v);
+        if !items.is_empty() && items.iter().all(|i| is_token(i)) {
+            Ok(Some(Typed {
+                values: items,
+                replace: false,
+            }))
+        } else {
+            fail()
+        }
+    };
+    match lower.as_str() {
+        // `abc` refused (:241); `"a"` accepted (Hdr198Helper.al); an HTTP date is not measured here.
+        "if-range" => match () {
+            _ if existing => single_unmeasured(),
+            _ if is_entity_tag(v) && v != "*" => one(v.to_string()),
+            _ if is_http_date(v) => unsupported("HttpHeaders.Add of If-Range with a date: not measured"),
+            _ => fail(),
+        },
+        // `5` accepted, `five` refused (:242-243).
+        "max-forwards" | "age" => match () {
+            _ if existing => single_unmeasured(),
+            _ if plain_number(v)? => one(v.to_string()),
+            _ => fail(),
+        },
+        // `120` accepted, `later` refused (:367-368); a date is not measured here.
+        "retry-after" => match () {
+            _ if existing => single_unmeasured(),
+            _ if plain_number(v)? => one(v.to_string()),
+            _ if is_http_date(v) => unsupported("HttpHeaders.Add of Retry-After with a date: not measured"),
+            _ => fail(),
+        },
+        "referer" | "location" | "content-location" => match () {
+            _ if existing => single_unmeasured(),
+            _ => one(uri_header(v)?),
+        },
+        // `=` refused (:257); `100-continue` accepted (Hdr198Helper.al). A value or parameters are not measured.
+        "expect" => {
+            let items = split_list(v);
+            if items.iter().any(|i| i.contains(['=', ';']))
+                && items
+                    .iter()
+                    .all(|i| is_token(i.split(['=', ';']).next().unwrap_or("").trim()))
+            {
+                return unsupported("HttpHeaders.Add of Expect with a value or parameters: not measured");
+            }
+            token_list(v)
+        }
+        // A base-64 text (:298) read back as written; `not base64!` refused (:299). Base 64 that .NET would write another way is not
+        // measured.
+        "content-md5" => match crate::platform_native::b64_decode(v) {
+            _ if existing => single_unmeasured(),
+            Ok(bytes) if crate::platform_native::b64_encode(&bytes, false) == v => one(v.to_string()),
+            Ok(_) => unsupported(format!(
+                "HttpHeaders.Add of the Content-MD5 '{v}': its stored form is not measured"
+            )),
+            Err(_) => fail(),
+        },
+        "content-range" => match () {
+            _ if existing => single_unmeasured(),
+            _ if content_range(v)? => one(v.to_string()),
+            _ => fail(),
+        },
+        // `"abc"` accepted, `abc` refused (:339-341, :353).
+        "etag" => match () {
+            _ if existing => single_unmeasured(),
+            _ if is_entity_tag(v) && v != "*" => one(v.to_string()),
+            _ => fail(),
+        },
+        // Token lists: `G E T`, `a b` refused (:327, :369, :382); `GET` accepted (Hdr198Helper.al).
+        "allow" | "vary" | "accept-ranges" => token_list(v),
+        // A lone comma is an empty list: Add answers true and nothing is stored, so GetValues raises (:381, :384). A challenge is
+        // not measured.
+        "www-authenticate" => {
+            if split_list(v).is_empty() && !v.is_empty() {
+                Ok(Some(Typed {
+                    values: Vec::new(),
+                    replace: false,
+                }))
+            } else {
+                unsupported("HttpHeaders.Add of a WWW-Authenticate challenge: not measured")
+            }
+        }
+        _ => Ok(None),
+    }
+}
+
 fn find<'a>(items: &'a [(String, Vec<String>)], name: &str) -> Option<&'a (String, Vec<String>)> {
     items.iter().find(|(n, _)| n.eq_ignore_ascii_case(name))
 }
@@ -949,7 +1139,10 @@ fn add_header(bag: &mut HeaderBag, name: &str, value: &str, secret: bool) -> Res
         return Ok(());
     }
     let stored = stored_name(&bag.items, name)?;
-    let typed = typed_add(bag, name, value)?;
+    let typed = match typed_add(bag, name, value)? {
+        Some(t) => Some(t),
+        None => typed_add_more(bag, name, value)?,
+    };
     // The value rules of a typed header other than Cache-Control (pinned by network/lt-http-header-names-cache-control/CacheControl*.al) rest
     // on the probes measured so far (assumption http-header-rules).
     if typed.is_some() && !name.eq_ignore_ascii_case("cache-control") {
@@ -1010,10 +1203,18 @@ fn headers_add(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
     let added = with_bag(r.as_deref(), |b| add_header(b, &name, &value, secret))?;
     match added {
         Ok(()) => Ok(Value::Boolean(true)),
-        // A statement raises the invalid header; `Format(H.Add(...))` answers false instead, as a Boolean method does when its
-        // result is used (HttpWriteFromStream.al:P100_PresetContentType_ThenWrite, `add_type` No on a Content-Type that is there;
-        // lt-http-header-rules/P87Twice.al raises it for the statement). Assumption http-headers-add-used-result.
-        Err(Signal::Error(e)) if ret_used && e.code == "InvalidHeader:Format" => {
+        // A statement raises the invalid header; an Add whose result is used answers false instead, for a refused value
+        // (network/lt-ay-http/AyHeaderAddResult.al:88-89, :115-116, :129-130 and the typed headers below them), a name that is no
+        // token (:157-158, :171-173, :185), an empty name (:159, InvalidHeader:Argument) and a name the collection refuses (:186-187,
+        // :383, InvalidOperation). lt-http-header-rules/P87Twice.al raises it for the statement. What the last error holds after the
+        // false is not measured (assumption http-headers-add-used-result).
+        Err(Signal::Error(e))
+            if ret_used
+                && matches!(
+                    e.code.as_str(),
+                    "InvalidHeader:Format" | "InvalidHeader:Argument" | "InvalidOperation"
+                ) =>
+        {
             assume(crate::assumptions::Assumption::HttpHeadersAddUsedResult);
             Ok(Value::Boolean(false))
         }
@@ -1080,20 +1281,42 @@ fn headers_keys(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Out 
     Ok(Value::List(Rc::new(RefCell::new(keys.into()))))
 }
 
-/// `GetValues(Name, var Values)` fills an array or a list with the values in order and answers true; a name that is
-/// not there answers false and leaves the target as it was.
-fn headers_get_values(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
+/// `GetValues(Name, var Values)` fills an array or a list with the values in order and answers true. For a name that is not
+/// there it answers false, leaves the target as it was and puts the error in GetLastErrorText when its result is used, and raises
+/// that error as a statement (network/lt-http/HttpContent.al:OldHeadersHandle_AfterWriteFrom, :226 with :281-283 and :270 with
+/// :290-291, on content headers; network/lt-http/HttpHeaders.al:GetValuesOnMissingLeavesArray for the result).
+fn headers_get_values(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
     let name = text(a, 0)?;
     // A content header name asked of request, response or client headers is no header there: GetValues answers false
     // (lt-http-header-rules/P87Matrix.al `get=No/n=0`), where Contains raises.
-    let values = with_bag(r.as_deref(), |b| {
+    let (values, kind) = with_bag(r.as_deref(), |b| {
         if restricted_lookup(b, &name).is_err() {
-            return Ok::<_, Signal>(None);
+            return Ok::<_, Signal>((None, b.kind));
         }
-        Ok(find(&b.items, &name).map(|(_, v)| v.clone()))
+        Ok((find(&b.items, &name).map(|(_, v)| v.clone()), b.kind))
     })??;
     let Some(values) = values else {
-        return Ok(Value::Boolean(false));
+        let error = crate::native::AlError {
+            message: GET_VALUES_MISSING.into(),
+            code: "InvalidHeader".into(),
+            ..Default::default()
+        };
+        if kind != HeaderKind::Content {
+            // On request, response and client headers a statement raises too, for a name that is not there, no token or a content
+            // header (network/lt-ay-http/AyHeaderAddResult.al `get=E` after every refused Add, :88 to :383); the text and code are
+            // measured on content headers only, and with the result used nothing about the last error is measured there
+            // (assumption http-get-values-missing-error).
+            if c.ret_used() {
+                return Ok(Value::Boolean(false));
+            }
+            assume(crate::assumptions::Assumption::HttpGetValuesMissingError);
+            return Err(Signal::Error(Box::new(error)));
+        }
+        if c.ret_used() {
+            c.set_last_error(error);
+            return Ok(Value::Boolean(false));
+        }
+        return Err(Signal::Error(Box::new(error)));
     };
     match a.get(1) {
         Some(Value::Array(arr)) => {

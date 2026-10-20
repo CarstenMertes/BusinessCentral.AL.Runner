@@ -745,6 +745,55 @@ impl Session {
         Ok(())
     }
 
+    /// `Report.RunRequestPage(Id, Parameters)` loads the parameters string after the request page's OnInit
+    /// (report/lt-aq/AqTests.al:362-381 pins it for a control value only). On a report with an OnInit or OnInitReport
+    /// trigger, a data item view in the string that differs from the view the item has at that point is refused: whether
+    /// it replaces or adds to a view those triggers set, and what they read of it, is not pinned.
+    pub(crate) fn refuse_seeded_view_after_init(
+        &mut self,
+        inst: &Inst,
+        object: usize,
+        xml: &str,
+    ) -> Result<(), Signal> {
+        let engine = self.engine();
+        let o = &engine.program.objects[object];
+        let page = o.page.as_ref().expect("a request page");
+        let on_init = |p: &ir::Page| p.triggers.iter().any(|(n, _)| n == "oninit");
+        let has_init = on_init(page)
+            || o.report.as_ref().is_some_and(|r| r.on_init.is_some())
+            || page
+                .extensions
+                .iter()
+                .any(|&e| engine.program.objects[e].page.as_ref().is_some_and(on_init));
+        if !has_init {
+            return Ok(());
+        }
+        let items = xml
+            .split("<DataItems>")
+            .nth(1)
+            .and_then(|r| r.split("</DataItems>").next())
+            .unwrap_or("");
+        for (name, view) in named_elements(items, "DataItem") {
+            let Some(c) = page
+                .controls
+                .iter()
+                .find(|c| c.kind == ir::ControlKind::DataItem && c.name == name)
+            else {
+                continue;
+            };
+            let ir::Binding::Var(slot) = c.binding else { continue };
+            let Value::Record(rec) = inst.borrow().globals[slot].clone() else {
+                continue;
+            };
+            if self.parameter_view(&rec)?.trim() != view.trim() {
+                return unsupported(format!(
+                    "a view for the data item {name} in the parameters of RunRequestPage, on a report with OnInit or OnInitReport (whether it replaces the view those triggers set is not pinned)"
+                ));
+            }
+        }
+        Ok(())
+    }
+
     /// The inverse of `parameter_view`.
     fn apply_parameter_view(&mut self, rec: &Rec, view: &str) -> Result<(), Signal> {
         let t = self.table(rec)?;

@@ -422,6 +422,7 @@ impl Session {
                         s.object as usize,
                     )
                 };
+                self.refuse_seeded_view_after_init(&inst, object, &xml)?;
                 self.apply_request_parameters(&inst, &exts, object, &xml)?;
             }
             self.restore_page_values(st);

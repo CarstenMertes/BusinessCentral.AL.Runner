@@ -265,3 +265,34 @@ fn same_name_procedure_in_a_data_item_runs_the_tables() {
         "prereport foo=report;row foo=table 1;row foo=table 2;|YesYesNo"
     );
 }
+
+/// The same report with the table's `Foo` taking other parameters than the report's, or declared by a table extension:
+/// which one an unqualified call in the data item runs is not pinned (CjDataset.al:215-241 pins only the same
+/// parameters on the table itself), so the call is refused.
+#[test]
+fn same_name_procedure_with_other_parameters_or_on_a_table_extension_is_refused() {
+    let other_params = SAME_NAME.replace(
+        "procedure Foo(): Text begin exit('table ' + Format(Id)); end;",
+        "procedure Foo(X: Integer): Text begin exit('table x'); end;",
+    );
+    let extra_overload = SAME_NAME.replace(
+        "procedure Foo(): Text begin exit('table ' + Format(Id)); end;",
+        "procedure Foo(): Text begin exit('table ' + Format(Id)); end; procedure Foo(X: Integer): Text begin exit('table x'); end;",
+    );
+    let on_extension = SAME_NAME
+        .replace("procedure Foo(): Text begin exit('table ' + Format(Id)); end;", "")
+        .replace(
+            "codeunit 60971",
+            "tableextension 60974 \"RP Named Ext\" extends \"RP Named\" { procedure Foo(): Text begin exit('ext'); end; }\ncodeunit 60971",
+        );
+    for (what, src) in [
+        ("other parameters", other_params),
+        ("an extra overload on the table", extra_overload),
+        ("table extension", on_extension),
+    ] {
+        match al_testkit::run_in(&src, "C", "Run") {
+            Err(Signal::Unsupported(s)) => assert!(s.contains("not pinned") && s.contains("Foo"), "{what}: {s}"),
+            other => panic!("{what}: expected a refusal, got {other:?}"),
+        }
+    }
+}

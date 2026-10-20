@@ -987,3 +987,24 @@ fn lane_t8_request_page_caption_actions_and_seed() {
         assert_eq!(r, &Outcome::Pass, "{n}: {r:?}");
     }
 }
+
+// Review of lane T8: a parameters string that sets a data item view, on a report whose request page has OnInit (or
+// whose report has OnInitReport). The view now loads after OnInit (report/lt-aq/AqTests.al:362-381 pins only a control
+// value); whether a view set in OnInit is replaced by the seed is not pinned: refused.
+#[test]
+fn a_seeded_data_item_view_on_a_request_page_with_on_init_is_refused() {
+    let why = refused(&format!(
+        "{HELPERS}
+        var Reads: Integer;
+        [Test] [HandlerFunctions('Filtering')]
+        procedure SeededView() var First, Second: Report \"RQ Init\"; Seed: Text; begin
+            Seed(); Seed := First.RunRequestPage();
+            if StrPos(Seed, 'WHERE(Field1=1') = 0 then Error(Seed);
+            Param := Second.RunRequestPage(Seed); end;
+        [RequestPageHandler] procedure Filtering(var RP: TestRequestPage \"RQ Init\") begin
+            Reads += 1;
+            if Reads = 1 then RP.Rows.SetFilter(\"Entry No.\", '1');
+            RP.OK().Invoke(); end;"
+    ));
+    assert!(why.contains("OnInit"), "{why}");
+}

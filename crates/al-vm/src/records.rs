@@ -1209,6 +1209,55 @@ impl Session {
         }
     }
 
+    /// A `LinkedObject = true` table has no SQL table behind it in a test database: Insert and Count raise the SQL error
+    /// (record/lt-x-table-props/XTablePropsTests.al:720-737, text and code). The other database operations are not pinned.
+    fn linked_object_check(&self, t: &TableDef, rec: &Rec, method: RecordOp) -> Result<(), Signal> {
+        if rec.borrow().temporary {
+            return Ok(());
+        }
+        let linked = self.engine.program.objects[t.object as usize]
+            .properties
+            .iter()
+            .any(|(k, v)| k.eq_ignore_ascii_case("LinkedObject") && v.trim().eq_ignore_ascii_case("true"));
+        if !linked {
+            return Ok(());
+        }
+        match method {
+            RecordOp::Insert if self.ret_used => unsupported(format!(
+                "Insert with its result used on LinkedObject table {} (only the statement form is pinned)",
+                t.name
+            )),
+            RecordOp::Insert | RecordOp::Count => Err(crate::transactions::al_error_code(
+                "An unexpected error occurred after a database command was cancelled.",
+                "Sql:Sql",
+            )),
+            m if m.writes()
+                || matches!(
+                    m,
+                    RecordOp::Find
+                        | RecordOp::FindFirst
+                        | RecordOp::FindLast
+                        | RecordOp::FindSet
+                        | RecordOp::Next
+                        | RecordOp::Get
+                        | RecordOp::GetBySystemId
+                        | RecordOp::IsEmpty
+                        | RecordOp::CountApprox
+                        | RecordOp::CalcSums
+                        | RecordOp::CalcFields
+                        | RecordOp::LockTable
+                ) =>
+            {
+                unsupported(format!(
+                    "{} on LinkedObject table {} (only Insert and Count are pinned)",
+                    m.name(),
+                    t.name
+                ))
+            }
+            _ => Ok(()),
+        }
+    }
+
     /// The first use of a record of a `TableType = CRM` table fails while no CRM table connection is
     /// registered, whatever the use (Init, TableCaption, a field, IsEmpty): text and code from
     /// session/TestCrmTableNoConnectionContracts.al:15-17,111-118. With a connection registered what
@@ -1232,6 +1281,7 @@ impl Session {
     pub(crate) fn record_op(&mut self, method: RecordOp, rec: &Rec, args: &mut [Value]) -> Result<Value, Signal> {
         self.connection_check(rec)?;
         let t = self.table(rec)?;
+        self.linked_object_check(&t, rec, method)?;
         self.note_table(t.object, method.writes());
         if matches!(
             method,

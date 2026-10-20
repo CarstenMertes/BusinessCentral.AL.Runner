@@ -367,6 +367,7 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("TextBuilder.AppendVariant#1", crate::textfns::tb_append_variant),
     ("TextBuilder.AppendFieldValue#1", crate::textfns::tb_append_field_value),
     ("System.FormatDecimalField#1", format_decimal_field),
+    ("System.OptionCaptionML#1", option_caption_ml),
     ("System.Evaluate#1", crate::evaluate::evaluate),
     (
         "System.EvaluateVariableOption#1",
@@ -970,6 +971,22 @@ fn format_variant(ctx: &mut dyn Ctx, r: Option<&mut Value>, args: &mut [Value]) 
         })));
     }
     format_1(ctx, r, args)
+}
+
+/// An Option value with the OptionCaptionML captions of the session language (the lowering passes the property text):
+/// `Format` then shows the caption (record/lt-x-table-props/XTablePropsTests.al:219-228). See
+/// [`crate::format::ml_text_in_language`] for what is pinned.
+fn option_caption_ml(ctx: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Result<Value, Signal> {
+    let (Some(Value::Option(o, names)), Some(ml)) = (a.first(), a.get(1).and_then(text_of)) else {
+        return unsupported("OptionCaptionML without an Option value and its property text");
+    };
+    let list = crate::format::ml_text_in_language(ml.as_str(), ctx.language())
+        .map_err(|e| Signal::Unsupported(format!("OptionCaptionML {e}")))?;
+    let captions: Vec<String> = list.split(',').map(str::to_string).collect();
+    if captions.len() != names.len() {
+        return unsupported("OptionCaptionML with another number of entries than the members (not pinned)");
+    }
+    Ok(Value::Option(*o, captions.into()))
 }
 
 /// `Format(Rec.Field)` of a Decimal field that declares its places (`DecimalPlaces` or an `AutoFormatExpression` precision;
@@ -2294,6 +2311,7 @@ pub(crate) mod tests {
             "System.FormatVariant#1",
             "TextBuilder.AppendVariant#1",
             "System.FormatDecimalField#1",
+            "System.OptionCaptionML#1",
             "Dialog.ErrorNotLiteral#1",
             "TextBuilder.AppendFieldValue#1",
             "Media.ToVariant#1",

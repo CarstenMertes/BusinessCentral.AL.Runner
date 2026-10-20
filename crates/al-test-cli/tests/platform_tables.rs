@@ -1235,3 +1235,18 @@ fn published_application_description_is_refused_until_the_manifest_text_is_kept(
     let why = not_run(&o, "Description");
     assert!(why.contains("Description"), "{why}");
 }
+
+/// Table Metadata DataCaptionFields lists the ids of the fields named, a table extension's included; LinkedObject reads the
+/// property (record/lt-x-table-props/XTablePropsTests.al:570-591).
+#[test]
+fn table_metadata_reads_data_caption_fields_of_an_extension_and_linked_object() {
+    let o = outcomes(
+        r#"table 50001 Thing { fields { field(1; "No."; Integer) { } field(2; A; Text[10]) { } field(4; B; Text[10]) { } } keys { key(PK; "No.") { } } }
+tableextension 50003 ThingX extends Thing { DataCaptionFields = "No.", B; }
+table 50004 Linked { LinkedObject = true; fields { field(1; K; Integer) { } } keys { key(PK; K) { } } }
+codeunit 50000 "T" { Subtype = Test;
+  [Test] procedure Meta() var M: Record "Table Metadata"; begin M.Get(50001); if M.DataCaptionFields <> '1,4' then Error('fields %1', M.DataCaptionFields);
+    if M.LinkedObject then Error('linked'); M.Get(50004); if not M.LinkedObject then Error('not linked'); end; }"#,
+    );
+    passes(&o, "Meta");
+}

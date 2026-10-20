@@ -1304,6 +1304,11 @@ impl al_ir::walk::RefVisitor for Unembed<'_> {
 /// The `OnBeforeValidate` and `OnAfterValidate` triggers one extension attaches to the field of a name: (extension, field name, before, after).
 type ExtTriggers = (usize, String, Vec<(usize, usize)>, Vec<(usize, usize)>);
 
+/// The object-level properties of a table that a table extension sets on it: the extension's value is the table's
+/// (record/lt-x-table-props/XTablePropsTests.al:TableProperties_Metadata_LookupDrillDownDataCaption :585-587,
+/// TableExt_DataCaptionFields_TestPageCaption :609).
+const TABLE_EXTENSION_TABLE_PROPERTIES: &[&str] = &["DataCaptionFields", "LookupPageId", "DrillDownPageId"];
+
 /// Takes what the table extensions declare out of the tables that hold it: their fields, their keys
 /// and their changes to other fields (`modify`). The table keeps its own; link merges the rest again.
 fn split_tables(
@@ -1426,6 +1431,18 @@ fn split_tables(
         touched.sort_unstable();
         touched.dedup();
         for e in touched {
+            // The table properties an extension may set (record/lt-x-table-props/XTablePropsTests.al:585-587, :609).
+            let ext_props: Vec<(String, String)> = staged[e]
+                .object
+                .properties
+                .iter()
+                .filter(|(k, _)| {
+                    TABLE_EXTENSION_TABLE_PROPERTIES
+                        .iter()
+                        .any(|n| n.eq_ignore_ascii_case(k))
+                })
+                .cloned()
+                .collect();
             let c = contributions[e].get_or_insert_with(|| {
                 let modifies = (lookups.modify_properties)(e)
                     .into_iter()
@@ -1440,6 +1457,7 @@ fn split_tables(
                     fields: Vec::new(),
                     keys: Vec::new(),
                     modifies,
+                    properties: ext_props,
                 }
             });
             if let Some(pos) = by_ext.iter().position(|(x, _)| *x == e) {

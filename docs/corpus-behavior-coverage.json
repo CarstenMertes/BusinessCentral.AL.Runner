@@ -12748,6 +12748,15 @@
           "site": "report/lt-y-report-props/YReportExt.al:101"
         },
         {
+          "corpus_uses": 1,
+          "group": "table",
+          "ms_uses": 0,
+          "name": "LinkedObject",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "record/lt-x-table-props/XTableObjects.al:105"
+        },
+        {
           "corpus_uses": 3,
           "group": "table/field",
           "ms_uses": 0,
@@ -13745,15 +13754,6 @@
           "pinned": true,
           "runtime_reads": false,
           "site": "record/lt-x-table-props/XTableObjects.al:106"
-        },
-        {
-          "corpus_uses": 1,
-          "group": "table",
-          "ms_uses": 0,
-          "name": "LinkedObject",
-          "pinned": true,
-          "runtime_reads": false,
-          "site": "record/lt-x-table-props/XTableObjects.al:105"
         },
         {
           "corpus_uses": 3,
@@ -15883,7 +15883,7 @@
         "code": "Evaluate",
         "file": "crates/al-builtins/src/evaluate.rs",
         "generic": false,
-        "line": 1313,
+        "line": 1318,
         "pinned": true,
         "site": "codeunit/TestCrossAppDispatch.al:61",
         "template": "Evaluate"
@@ -15892,7 +15892,7 @@
         "code": "",
         "file": "crates/al-builtins/src/evaluate.rs",
         "generic": false,
-        "line": 1316,
+        "line": 1321,
         "pinned": true,
         "site": "codeunit/TestCrossAppDispatch.al:61",
         "template": "Evaluate"
@@ -15973,7 +15973,7 @@
         "code": "InvalidOperation",
         "file": "crates/al-builtins/src/native.rs",
         "generic": false,
-        "line": 696,
+        "line": 697,
         "pinned": true,
         "site": "codeunit/TestInterfaceRuntimeContracts.al:85",
         "template": "Interface not initialized"
@@ -16333,7 +16333,7 @@
         "code": "RenameArgument",
         "file": "crates/al-vm/src/records.rs",
         "generic": false,
-        "line": 2683,
+        "line": 2733,
         "pinned": true,
         "site": "recordref/lt-refs/RfTWrite.al:223",
         "template": "The number of field arguments does not match the primary key size."
@@ -27872,7 +27872,7 @@
         "pinned": true,
         "scope": "",
         "site": "record/lt-x-table-props/XTableObjects.al:105",
-        "state": "unknown"
+        "state": "implemented"
       },
       {
         "area": "properties",

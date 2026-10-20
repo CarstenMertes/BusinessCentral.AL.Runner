@@ -2742,10 +2742,23 @@ impl Session {
                 };
                 d.to_string()
             }
-            // An Option field shows its OptionCaption (`Beta cap`), the way Format(Opt) does.
+            // The column's OptionCaptionML: the caption of the session language, ENU where it has none
+            // (record/lt-x-table-props/XTablePropsTests.al:741-785, `EnuOnly` shows `Only B` in 1031).
+            Value::Option(n, _) if c.option_caption_ml.is_some() => {
+                let ml = c.option_caption_ml.as_deref().expect("checked");
+                let list =
+                    al_builtins::format::ml_text_in_language(ml, al_builtins::format::FormatCtx::language(&*self))
+                        .map_err(|e| Signal::Unsupported(format!("OptionCaptionML of report column {} {e}", c.name)))?;
+                match usize::try_from(*n).ok().and_then(|i| list.split(',').nth(i)) {
+                    Some(caption) => dataset::escape(caption)?,
+                    None => n.to_string(),
+                }
+            }
+            // An Option field shows its OptionCaption (`Beta cap`), the way Format(Opt) does; its OptionCaptionML the caption
+            // of the session language (XTablePropsTests.al:741-785, `Plain` shows `Zwei` in 1031).
             Value::Option(n, _) if t.is_some() && c.field.is_some() => {
                 let (t, pos) = (t.as_ref().expect("checked"), c.field.expect("checked"));
-                match self.members_of_field(t, pos)? {
+                match self.members_of_field_in(t, pos, true)? {
                     Some((_, members)) => match members.iter().find(|(ord, _, _)| ord == n) {
                         Some((_, _, caption)) => dataset::escape(caption)?,
                         None => n.to_string(),

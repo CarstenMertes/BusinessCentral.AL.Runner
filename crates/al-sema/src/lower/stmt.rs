@@ -236,25 +236,43 @@ impl Lowerer<'_> {
     /// caption, not the member name (corpus fieldref/TestPrecompiledFieldOptionCaption.al:47-55,
     /// a Base Application table whose caption differs from its member). The value keeps its
     /// ordinal and takes the caption list. Other Format forms on such a field are not pinned.
+    ///
+    /// A member named through the field, `Format(Row.Opt::Two)`, shows its caption too (misc/lt-probes-needed-2/
+    /// PnBRecordMisc.al:96, :113: `Dos`).
     pub(crate) fn format_option_field(&mut self, plain: bool, arg: &SyntaxNode) -> L<ir::Expr> {
         let value = self.expr(arg)?;
-        let Some(Res::Field { table, id: field }) = self.res(arg).cloned() else {
+        let field_node = if arg.kind() == SyntaxKind::ScopeExpr {
+            match arg.children().next() {
+                Some(lhs) => lhs,
+                None => return Ok(value),
+            }
+        } else {
+            arg.clone()
+        };
+        let Some(Res::Field { table, id: field }) = self.res(&field_node).cloned() else {
             return Ok(value);
         };
         let Some(f) = self.members[table].fields.iter().find(|f| f.id == field) else {
             return Ok(value);
         };
-        // OptionCaptionML gives the captions of the session language (record/lt-x-table-props/XTablePropsTests.al:219-228);
-        // it is not read, so Format of such a field is refused rather than formatted from another list.
-        if matches!(f.ty, Ty::Option(_))
-            && f.properties
+        // OptionCaptionML gives the captions of the session language (record/lt-x-table-props/XTablePropsTests.al:219-228):
+        // the value takes them when it runs.
+        if let (Ty::Option(_), Some((_, ml))) = (
+            &f.ty,
+            f.properties
                 .iter()
-                .any(|(k, _)| k.eq_ignore_ascii_case("OptionCaptionML"))
-        {
-            return Err(format!(
-                "Format of option field {} with OptionCaptionML is not supported",
-                f.name
-            ));
+                .find(|(k, _)| k.eq_ignore_ascii_case("OptionCaptionML")),
+        ) {
+            let ml = ml.clone();
+            return Ok(ir::Expr::Builtin {
+                id: super::call::builtin_id("System.OptionCaptionML#1")?,
+                receiver: None,
+                args: vec![
+                    ir::Arg::Value(value),
+                    ir::Arg::Value(ir::Expr::Const(ir::Const::Text(ml))),
+                ],
+                ret_used: true,
+            });
         }
         let (Ty::Option(names), Some((_, text))) = (
             &f.ty,
@@ -281,6 +299,27 @@ impl Lowerer<'_> {
             ));
         }
         Ok(ir::Expr::Convert(RtType::Option(captions), Box::new(value)))
+    }
+
+    /// Evaluate into an Option field with OptionCaptionML: which captions it accepts is not pinned, so it is refused.
+    pub(crate) fn refuse_evaluate_option_caption_ml(&mut self, arg: &SyntaxNode) -> L<()> {
+        let Some(Res::Field { table, id: field }) = self.res(arg).cloned() else {
+            return Ok(());
+        };
+        let Some(f) = self.members[table].fields.iter().find(|f| f.id == field) else {
+            return Ok(());
+        };
+        if matches!(f.ty, Ty::Option(_))
+            && f.properties
+                .iter()
+                .any(|(k, _)| k.eq_ignore_ascii_case("OptionCaptionML"))
+        {
+            return Err(format!(
+                "Evaluate into option field {} with OptionCaptionML (which captions it takes is not pinned)",
+                f.name
+            ));
+        }
+        Ok(())
     }
 
     /// The OptionCaption entries of an Option table field passed as `arg`, as a comma list, when the field has a literal

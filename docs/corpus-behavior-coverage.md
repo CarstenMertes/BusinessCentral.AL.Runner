@@ -12,7 +12,7 @@ The catalog of each area is what the AL language server offers in probe files (`
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
 | attributes | 42 | 32 | 76.2% | 28 | 66.7% | 0 | 14 | 2 |
 | events | 23 | 16 | 69.6% | 22 | 95.7% | 0 | 1 | 0 |
-| properties | 720 | 669 | 92.9% | 562 | 78.1% | 18 | 140 | 3 |
+| properties | 720 | 669 | 92.9% | 563 | 78.2% | 18 | 139 | 3 |
 | syntax | 16 | 16 | 100.0% | 16 | 100.0% | 0 | 0 | 0 |
 | triggers | 128 | 128 | 100.0% | 116 | 90.6% | 3 | 9 | 0 |
 
@@ -93,7 +93,7 @@ Left out: 293 presentation-only properties (Caption, ToolTip, ApplicationArea, .
 | ReportExtensionModify | 2 | 2 | 100.0% | 2 | 100.0% | 0 | 0 | 0 |
 | ReportLayout | 12 | 9 | 75.0% | 12 | 100.0% | 0 | 0 | 0 |
 | RequestPage | 22 | 20 | 90.9% | 22 | 100.0% | 0 | 0 | 1 |
-| Table | 24 | 23 | 95.8% | 17 | 70.8% | 0 | 7 | 1 |
+| Table | 24 | 23 | 95.8% | 18 | 75.0% | 0 | 6 | 1 |
 | TableExtension | 4 | 4 | 100.0% | 3 | 75.0% | 0 | 1 | 0 |
 | XmlPort | 26 | 26 | 100.0% | 24 | 92.3% | 2 | 0 | 0 |
 | XmlPortFieldAttribute | 7 | 7 | 100.0% | 5 | 71.4% | 2 | 0 | 0 |

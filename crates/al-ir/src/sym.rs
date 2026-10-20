@@ -282,6 +282,10 @@ pub struct TableContribution {
     pub fields: Vec<crate::Field>,
     pub keys: Vec<KeyDecl>,
     pub modifies: Vec<FieldModify>,
+    /// The object-level properties the extension sets on its table (`DataCaptionFields`, `LookupPageId`,
+    /// `DrillDownPageId`), as (name, value) in declared order.
+    #[serde(default)]
+    pub properties: Vec<(String, String)>,
 }
 
 /// A control of a page among the controls of the page and of its extensions.

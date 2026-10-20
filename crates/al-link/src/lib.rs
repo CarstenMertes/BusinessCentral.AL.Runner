@@ -1000,12 +1000,19 @@ impl Merges {
             if !self.symbolic[base] || objects[base].uncompiled {
                 continue;
             }
-            let Some(table) = objects[base].table.as_mut() else {
+            let obj = &mut objects[base];
+            let Some(table) = obj.table.as_mut() else {
                 continue;
             };
             let adds: Vec<al_ir::sym::TableContribution> =
                 exts.iter().filter_map(|&e| contributions[e].table.take()).collect();
             for c in &adds {
+                for (k, v) in &c.properties {
+                    match obj.properties.iter_mut().find(|(pk, _)| pk.eq_ignore_ascii_case(k)) {
+                        Some(slot) => slot.1 = v.clone(),
+                        None => obj.properties.push((k.clone(), v.clone())),
+                    }
+                }
                 table.fields.extend(c.fields.iter().cloned());
                 for m in &c.modifies {
                     if let Some(f) = table.fields.iter_mut().find(|f| f.name.eq_ignore_ascii_case(&m.field)) {
@@ -1589,6 +1596,7 @@ mod tests {
                     before_validate: vec![],
                     after_validate: vec![],
                 }],
+                properties: vec![],
             });
             s
         };

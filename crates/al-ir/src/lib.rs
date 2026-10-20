@@ -377,6 +377,10 @@ pub struct ReportColumn {
     /// The `DecimalPlaces` property as written (`1 : 1`); it decides the `decimalformatter`.
     #[serde(default)]
     pub decimal_places: Option<String>,
+    /// The `OptionCaptionML` property as written (`ENU = '..', DEU = '..'`): an Option value shows the caption of the session
+    /// language (record/lt-x-table-props/XTablePropsTests.al:741-785).
+    #[serde(default)]
+    pub option_caption_ml: Option<String>,
 }
 
 /// What a reportextension adds to a run of the report it extends.

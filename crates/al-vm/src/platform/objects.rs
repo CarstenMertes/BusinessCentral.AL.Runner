@@ -561,6 +561,28 @@ fn ordinal_of(members: &[&str], text: &str) -> Option<i32> {
         .map(|i| i as i32)
 }
 
+/// The ids of the fields a table's `DataCaptionFields` names, comma-joined (empty without the property).
+fn data_caption_field_ids(o: &Object) -> Result<String, String> {
+    let Some(v) = prop(o, "DataCaptionFields") else {
+        return Ok(String::new());
+    };
+    let fields = o
+        .table
+        .as_ref()
+        .map(|t| &t.fields)
+        .ok_or_else(|| format!("table '{}' has no fields", o.name))?;
+    let mut ids = Vec::new();
+    for name in v.split(',') {
+        let name = ident(name);
+        let f = fields
+            .iter()
+            .find(|f| f.name.eq_ignore_ascii_case(&name))
+            .ok_or_else(|| format!("table '{}': DataCaptionFields names `{name}`, not a field", o.name))?;
+        ids.push(f.id.to_string());
+    }
+    Ok(ids.join(","))
+}
+
 pub(super) fn table_metadata_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
     let engine = p.engine();
     let c = Catalog::new(&engine);
@@ -594,6 +616,11 @@ pub(super) fn table_metadata_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
             r[pos(t, 4)] = Value::Boolean(prop(o, "DataPerCompany").is_none_or(truthy));
             r[pos(t, 5)] = Value::Integer(page("LookupPageId")?);
             r[pos(t, 6)] = Value::Integer(page("DrillDownPageId")?);
+            // DataCaptionFields: the ids of the fields it names, comma-joined; a table extension's counts (link merges it,
+            // record/lt-x-table-props/XTablePropsTests.al:578, :586 `1,4`).
+            r[pos(t, 7)] = Value::Text(data_caption_field_ids(o)?.into());
+            // LinkedObject (XTablePropsTests.al:579-591: `Yes` on a table that declares it, `No` without).
+            r[pos(t, 9)] = Value::Boolean(prop(o, "LinkedObject").is_some_and(truthy));
             // PasteIsValid defaults to true in AL; no corpus test reads it.
             r[pos(t, 8)] = Value::Boolean(prop(o, "PasteIsValid").is_none_or(truthy));
             r[pos(t, 11)] = option(t, 11, opt("TableType", TABLE_TYPES, 0)?);

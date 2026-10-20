@@ -84,6 +84,19 @@ impl Lowerer<'_> {
         let (spec, with_value) = match self.ty_of(arg) {
             // DotNetTypeScalars.al: an Option is an Int32, a Code and a Text a String, a Date and a Time a DateTime.
             Ty::Integer | Ty::Option(_) => (fixed("System.Int32"), true),
+            // An AL Enum is an Int32 (lt-bb-dotnet/BbGetDotNetType.al:341), pinned for Enum "Sales Document Type" only.
+            Ty::Enum(name) if name.eq_ignore_ascii_case("Sales Document Type") => (fixed("System.Int32"), true),
+            Ty::Enum(name) => {
+                return Err(format!(
+                    "GetDotNetType of an Enum other than \"Sales Document Type\" (Enum \"{name}\") is not pinned (docs/probes-needed.md)"
+                ));
+            }
+            // lt-bb-dotnet/BbGetDotNetType.al:352-353.
+            Ty::DateFormula => (
+                "error:GetDotNetType() does not support the type Microsoft.Dynamics.Nav.Runtime.NavDateFormula."
+                    .to_string(),
+                false,
+            ),
             Ty::BigInteger => (fixed("System.Int64"), true),
             Ty::Decimal => (fixed("System.Decimal"), true),
             Ty::Boolean => (fixed("System.Boolean"), true),

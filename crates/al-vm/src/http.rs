@@ -65,12 +65,16 @@ impl Session {
     pub(crate) fn http_send_impl(&mut self, request: HttpOutgoing) -> Result<TestHttpResponseState, Signal> {
         let policy = self.http_policy;
         let bound = self.has_http_handler();
-        // Before BC 29 a bound handler does not answer under BlockOutboundRequests: the request raises as with no handler
-        // (al-language-onprem/session/PZHttpBlock.al:54-57). The bound handler counts as run: the test, with
-        // `[HandlerFunctions('Handler')]` and the error expected, passes on real BC 27 and 28 (oracle/27/junit-onprem.xml:430,
-        // oracle/28/junit-onprem.xml:445).
-        let blocked_anyway =
-            policy == Some("BlockOutboundRequests") && !self.has(al_version::Gate::HttpHandlerUnderBlockOutboundFrom29);
+        // Before BC 29 a bound handler does not answer under BlockOutboundRequests or AllowOutboundFromHandler: the request
+        // raises as with no handler, whatever its path, and the handler is not called (al-language-onprem/session/PZHttpBlock.al:54-57;
+        // al-language-onprem/network/lt-ay-http-handler/AyHttpHandler.al, the BC 27 and 28 legs: `calls` 0). The bound handler
+        // counts as run: those tests, with `[HandlerFunctions(...)]` and the error expected, pass on real BC 27 and 28
+        // (oracle/27/junit-onprem.xml:430, oracle/28/junit-onprem.xml:445).
+        let blocked_anyway = match policy {
+            Some("BlockOutboundRequests") => !self.has(al_version::Gate::HttpHandlerUnderBlockOutboundFrom29),
+            Some("AllowOutboundFromHandler") => !self.has(al_version::Gate::HttpHandlerUnderAllowFromHandlerFrom29),
+            _ => false,
+        };
         if blocked_anyway && bound {
             self.http_handlers_count_as_run();
         }
@@ -87,17 +91,27 @@ impl Session {
                 ),
             };
         }
+        // A handler is pinned under BlockOutboundRequests (PZHttpBlock.al) and AllowOutboundFromHandler (PZHttpHandler.al,
+        // AyHttpHandler.al) only; under the default policy or AllowAllOutboundRequests nothing is measured.
+        if !matches!(policy, Some("BlockOutboundRequests" | "AllowOutboundFromHandler")) {
+            return unsupported(
+                "an [HttpClientHandler] under TestHttpRequestPolicy AllowAllOutboundRequests or no policy: whether it answers is not measured (docs/probes-needed.md)",
+            );
+        }
         if !request.url.contains("://") {
+            // With no base address, `a/b`, `a.b` and `?q=1` raise the empty-uri error before the handler runs
+            // (AyHttpHandler.al:NoBaseAddress_RelativePaths_1 and _2, BC 29). Other forms are not measured.
+            // The handler is not called, and that does not fail the test (the tests pass on real BC 29).
+            if al_builtins::http::is_empty_uri_form(&request.url) {
+                self.http_handlers_count_as_run();
+                return raise("Invalid URI: The URI is empty.", "AL:UriFormat");
+            }
             return unsupported(
                 "a request to a relative path with no base address, or with no uri, reaches a [HttpClientHandler]: what the handler sees is not measured",
             );
         }
-        if request.joined_with_base {
+        if request.unpinned_join {
             assume(Assumption::HttpRelativeRequestPath);
-        }
-        // Under BlockOutboundRequests the BC 29 answer is pinned (PZHttpBlock.al:54-55); elsewhere it is assumed.
-        if policy != Some("BlockOutboundRequests") {
-            assume(Assumption::HttpHandlerEveryVersion);
         }
         let (path, params) = split_url(&request.url);
         let query = Value::Dictionary(Rc::new(RefCell::new(
@@ -125,26 +139,46 @@ impl Session {
         match answer {
             Value::Boolean(false) | Value::Null => {}
             Value::Boolean(true) => {
-                // BC then sends the request for real. The runtime never opens a connection, so the request fails the way
-                // one to an unresolvable host does (session/PZHttpHandler.al:HandlerAnsweringTrue_SendsTheRealRequest,
-                // example.invalid: the call answers false). The handler's response is dropped.
-                assume(Assumption::HttpTrueIsUnresolvable);
+                // BC then asks whether to allow the real request (StrMenu "Allow Always,Allow Once,Block Always,Block Once"); with
+                // no StrMenu handler the call answers false with that unhandled-UI error as the last error, whatever the host
+                // (AyHttpHandler.al:Handler_FallThrough_ConnectionRefused, http://localhost:1; PZHttpHandler.al:
+                // HandlerAnsweringTrue_SendsTheRealRequest, example.invalid). What a StrMenu handler's choice does is not measured.
+                if self.has_ui_handler(crate::ui::UiKind::StrMenu) {
+                    return unsupported(
+                        "an [HttpClientHandler] answering true with a StrMenuHandler bound: what the allow-request choice does is not measured",
+                    );
+                }
                 let mut failed = fresh_test_response();
                 failed.request_failed = true;
-                failed.status = 0;
-                failed.reason = String::new();
-                failed.success = false;
+                failed.failure = Some((
+                    "Unhandled UI: StrMenu Allow Always,Allow Once,Block Always,Block Once".into(),
+                    "MissingUIHandler".into(),
+                ));
                 return Ok(failed);
             }
             other => return unsupported(format!("an [HttpClientHandler] that answers {}", other.describe())),
         }
         match resp {
             Value::Library(_, cell) => match &*cell.borrow() {
-                LibraryValue::TestHttpResponse(s) => Ok(s.clone()),
+                LibraryValue::TestHttpResponse(s) => with_reason_phrase(s.clone()),
                 LibraryValue::Empty => Ok(fresh_test_response()),
                 _ => unsupported("an [HttpClientHandler] left something else than a TestHttpResponseMessage"),
             },
             _ => unsupported("an [HttpClientHandler] left something else than a TestHttpResponseMessage"),
         }
     }
+}
+
+/// A response whose handler set a status but no `ReasonPhrase` gets the status's reason phrase: 200 keeps "OK"
+/// (PZHttpHandler.al:EmptyHandler_AnswersADefaultResponse) and 404 gives "Not Found" (AyHttpHandler.al:Handler_OnlyStatus404,
+/// BC 29). Another status's phrase is not measured: reading it is refused (`reason_unpinned`).
+fn with_reason_phrase(mut s: TestHttpResponseState) -> Result<TestHttpResponseState, Signal> {
+    if !s.reason_set {
+        match s.status {
+            200 => s.reason = "OK".into(),
+            404 => s.reason = "Not Found".into(),
+            _ => s.reason_unpinned = true,
+        }
+    }
+    Ok(s)
 }

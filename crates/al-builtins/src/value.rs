@@ -1055,6 +1055,8 @@ pub struct CookieState {
 pub struct HttpResponseState {
     pub status: i32,
     pub reason: String,
+    /// A handler set a status whose reason phrase BC gives is not measured: reading `ReasonPhrase` is refused.
+    pub reason_unpinned: bool,
     /// The `HttpContent` handle, shared with `Content`.
     pub content: Value,
     pub headers: HttpHeaderList,
@@ -1097,8 +1099,14 @@ pub struct TestHttpResponseState {
     /// The handler answered true and the request, which the runtime never sends, failed like one to an unresolvable
     /// host: the call answers false and the response keeps nothing of the handler's.
     pub request_failed: bool,
+    /// The error a failed request leaves as the last error (text, code) when the call's result is used.
+    pub failure: Option<(String, String)>,
     pub status: i32,
     pub reason: String,
+    /// The handler set `ReasonPhrase`; when it did not, BC gives the reason phrase of the status.
+    pub reason_set: bool,
+    /// See [`HttpResponseState::reason_unpinned`].
+    pub reason_unpinned: bool,
     pub success: bool,
     pub blocked: bool,
     pub content: Value,

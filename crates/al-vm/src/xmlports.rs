@@ -962,13 +962,46 @@ impl Session {
         let table_node = schema.node(n.table_node.expect("field nodes have a table node"));
         let pos = n.field.expect("field nodes have a field");
         let rec = self.xp_record(inst, table_node)?;
-        let ty = {
+        let (ty, calc) = {
             let r = rec.borrow();
+            let calc = self.engine.program.objects[r.table as usize]
+                .table
+                .as_ref()
+                .and_then(|s| s.fields.get(pos))
+                .filter(|f| !f.stored && !f.flow_filter)
+                .map(|f| f.calc.as_ref().map(|c| c.method));
             match &self.engine.tables[r.table as usize] {
-                Some(t) => t.fields[pos].ty.clone(),
+                Some(t) => (t.fields[pos].ty.clone(), calc),
                 None => return unsupported("XmlPort import into a table without a schema"),
             }
         };
+        // A field element bound to a FlowField is skipped by an Xml import: the field keeps its value and OnAfterAssignField
+        // does not run (xmlport/lt-ay-xmlport/AyXmlPortLookupFlowField.al:Import_AutoCalc and Import_NoAutoCalc for Lookup,
+        // `before-insert=;`; xmlport/lt-xmlport-flowfield-sum-count/XmlPortFlowFieldSumCount.al:326-347 for Sum with the
+        // trigger, `total seen` empty, and :350-372 for Sum and Count). The other formats, the other methods, a trigger on a
+        // Lookup or Count element and a text that is no value of the type are not pinned.
+        if let Some(method) = calc {
+            use al_ir::CalcMethod;
+            let pinned = schema.xp().format == al_ir::XmlFormat::Xml
+                && match method {
+                    Some(CalcMethod::Sum) => true,
+                    Some(CalcMethod::Lookup | CalcMethod::Count) => n.trigger("onafterassignfield").is_none(),
+                    _ => false,
+                };
+            if !pinned {
+                return unsupported(format!(
+                    "XmlPort import of field element {} bound to a FlowField of this kind (not pinned)",
+                    n.name
+                ));
+            }
+            if !text.is_empty() && self.xp_value(text, &ty, false).is_err() {
+                return unsupported(format!(
+                    "XmlPort import of field element {} bound to a FlowField with a text that is no value of its type (not pinned)",
+                    n.name
+                ));
+            }
+            return Ok((pos, None));
+        }
         let value = if schema.xp().format_evaluate_xml {
             let members = {
                 let r = rec.borrow();

@@ -704,6 +704,7 @@ impl Session {
                 committed_row_version: 0,
                 last_commit_wrote: false,
                 deferred_insert: None,
+                deferred_raised: 0,
                 immediate_errors: false,
                 try_depth: 0,
             },

@@ -29,6 +29,9 @@ pub(crate) struct TxState {
     /// or at Commit (corpus record/TestRecordRuntimeTextsAndViews.al:
     /// Record_Insert_DuplicateKey_WithoutBlobField_IsDeferred_AndSurfacesAtTheNextAccess).
     pub(crate) deferred_insert: Option<(usize, AlError)>,
+    /// How many deferred duplicate-key Inserts have come out so far (a TestPage action wraps the code of one its own
+    /// Insert left, `action_invoke`).
+    pub(crate) deferred_raised: u32,
     /// Set while the page client or an XmlPort import writes a record: their duplicate-key
     /// errors are raised at once (their own tests pin it), not deferred like an AL `Insert`.
     pub(crate) immediate_errors: bool,

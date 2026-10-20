@@ -190,6 +190,21 @@ fn merged_members(ws: &Workspace, i: usize) -> Members {
                     // lt-object-properties-runtime-effect/TableExtModifyTableRelation.al: Validate of the field finds the related table, and
                     // `FieldRef.Relation()` names it).
                     if k.eq_ignore_ascii_case("TableRelation") {
+                        // A field that has a relation already keeps it, and the extension's arms come after its arms
+                        // (tableextension/TestTableExtFieldTableRelation.al:241-298): the property is listed once more, and
+                        // `relation_arms` in lower/tables.rs joins the arms (or refuses a combination that is not pinned).
+                        // The first entry stays what a single relation answers (`Field.RelationTableNo` names the base's
+                        // table, :262).
+                        if field.table_relation
+                            && field
+                                .properties
+                                .iter()
+                                .any(|(pk, _)| pk.eq_ignore_ascii_case("TableRelation"))
+                        {
+                            field.relation_tables.extend(relation_targets(&v));
+                            field.properties.push((k, v));
+                            continue;
+                        }
                         field.table_relation = true;
                         field.relation_table = Some(relation_target(&v));
                         field.relation_tables = relation_targets(&v);

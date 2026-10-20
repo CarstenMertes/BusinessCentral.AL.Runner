@@ -1159,26 +1159,16 @@ impl Session {
             let mut s = st.borrow_mut();
             s.cursor = Cursor::NewLine;
             s.draft = true;
+            s.typed_before_key = false;
         }
         // The blank line of a part is a started record: the client runs NewRecord when it becomes
         // current (corpus handlers/TestPagePartDraftLineLink.al:LinkedPart_DraftLine_*,
         // handlers/TestPagePartOnNewRecordCount.al). A top-level list does the same, and both then
         // run OnAfterGetCurrRecord on the blank row (corpus testpart/TestPartTriggerOrderAndRefresh.al:
         // 258-273 TopLevelList_BlankLine_RunsOnNewRecord, Part_BlankLine_RunsOnNewRecord).
-        // A part whose host record is not saved yet (a card opened with OpenNew whose key was just typed) copies the link
-        // values without validating them: the host row they point to does not exist yet (Microsoft's Allocation Account
-        // page, 34 Tests-ERM tests failed on the table relation of "Allocation Account No."). Assumed, see
-        // Assumption::PartLinkNotValidatedForUnsavedHost.
-        let host_unsaved = st
-            .borrow()
-            .host
-            .as_ref()
-            .and_then(|(h, _)| h.upgrade())
-            .is_some_and(|h| h.borrow().draft);
-        if host_unsaved {
-            al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::PartLinkNotValidatedForUnsavedHost);
-        }
-        self.stamp_from_filters(st, !host_unsaved)?;
+        // A part whose host record is not saved yet links to a blank value, which is validated like any other
+        // (pages/lt-part-line-before-host-key/PartLineBeforeHostKey.al:398, :400; see `sync_part`).
+        self.stamp_from_filters(st, true)?;
         self.page_trigger(st, "onnewrecord", vec![Value::Boolean(true)])?;
         self.page_event(st, "onnewrecordevent", None, Some(true))?;
         // xRec is the new record itself there (misc/lt-probes-needed-7/PnGNewRecord.al:HandedRecordNoFilters `AGCR(,)`,

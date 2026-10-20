@@ -210,3 +210,80 @@ fn a_part_hidden_by_an_expression_closes_with_its_host() {
     let r = al_testkit::run_in(CLOSE_SRC, "CL Test", "Run");
     assert_eq!(text(r), "expr=p.OnQueryClosePage(None);p.OnClosePage;|static=");
 }
+
+const UNSAVED_SRC: &str = r#"
+table 51430 "UH Header" { fields { field(1; "No."; Code[20]) { } } keys { key(PK; "No.") { } } }
+table 51431 "UH Line"
+{
+    fields
+    {
+        field(1; "Document No."; Code[20]) { TableRelation = "UH Header"; trigger OnValidate() var Log: Codeunit "UH Log"; begin Log.Add('V:' + "Document No."); end; }
+        field(2; "Line No."; Integer) { }
+        field(3; Descr; Text[30]) { }
+    }
+    keys { key(PK; "Document No.", "Line No.") { } }
+}
+codeunit 51432 "UH Log"
+{
+    SingleInstance = true;
+    var T: Text;
+    procedure Add(S: Text) begin T += S + ';'; end;
+    procedure Take(): Text var R: Text; begin R := T; T := ''; exit(R); end;
+}
+page 51433 "UH Lines"
+{
+    PageType = ListPart;
+    SourceTable = "UH Line";
+    AutoSplitKey = true;
+    layout { area(Content) { repeater(R) { field(Descr; Rec.Descr) { } } } }
+}
+page 51434 "UH Document"
+{
+    PageType = Document;
+    SourceTable = "UH Header";
+    layout { area(Content) { field("No."; Rec."No.") { } part(Lines; "UH Lines") { SubPageLink = "Document No." = field("No."); } } }
+}
+codeunit 51435 "UH Test"
+{
+    procedure Run(): Text
+    var Log: Codeunit "UH Log"; Host: TestPage "UH Document"; T: Text;
+    begin
+        Host.OpenNew();
+        T := 'open=' + Log.Take();
+        Host."No.".SetValue('D2');
+        T += '|key=' + Log.Take();
+        exit(T);
+    end;
+    procedure Write(): Text
+    var L: Record "UH Line"; H: Record "UH Header"; Log: Codeunit "UH Log"; Host: TestPage "UH Document";
+    begin
+        Host.OpenNew();
+        Host."No.".SetValue('D3');
+        Log.Take();
+        Host.Lines.Descr.SetValue('x');
+        if not H.Get('D3') then exit('host not saved');
+        Host.Close();
+        L.FindFirst();
+        exit(Log.Take() + '|' + L."Document No.");
+    end;
+}
+"#;
+
+/// While the host row is not stored, the part's blank line takes a blank link value and validates it, also after the host's
+/// key was typed (pages/lt-part-line-before-host-key/PartLineBeforeHostKey.al:398, :400: `L.OnValidate(Document No.):`).
+#[test]
+fn a_part_of_an_unsaved_host_validates_a_blank_link() {
+    let r = text(al_testkit::run_in(UNSAVED_SRC, "UH Test", "Run"));
+    let (open, key) = r.split_once("|key=").unwrap();
+    assert!(open.contains("V:;"), "{r}");
+    assert!(key.contains("V:;") && !key.contains("V:D2"), "{r}");
+}
+
+/// A write into the part of a host row that is not stored saves the host first and links the line to it: the line's link
+/// is validated with the typed key (PartLineBeforeHostKey.al:406 `HP.OnInsertRecord:D2 | H.OnInsert:D2 |
+/// L.OnValidate(Document No.):D2 ...` for New(); handlers/TestPageOpenNewPartLink.al:100 for a write).
+#[test]
+fn a_part_write_saves_the_unsaved_host_first() {
+    let r = text(al_testkit::run_in(UNSAVED_SRC, "UH Test", "Write"));
+    assert!(r.starts_with("V:D3;") && r.ends_with("|D3"), "{r}");
+}

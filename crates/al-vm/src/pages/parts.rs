@@ -491,6 +491,32 @@ impl Session {
         Ok(found)
     }
 
+    /// A write into part `child` (SetValue, New) while its host stands on a typed row that is not stored yet: the host row is
+    /// saved first, and the parts link to it (pages/lt-part-line-before-host-key/PartLineBeforeHostKey.al:406
+    /// `HP.OnInsertRecord:D2 | H.OnInsert:D2 | L.OnValidate(Document No.):D2 | ...` for New(); handlers/
+    /// TestPageOpenNewPartLink.al:100 OpenNew_NumberTyped_PartWriteCarriesTheNumber for a write).
+    pub(super) fn save_unsaved_host_first(&mut self, child: &St) -> Result<(), Signal> {
+        let Some(host) = child.borrow().host.as_ref().and_then(|(h, _)| h.upgrade()) else {
+            return Ok(());
+        };
+        let unsaved = {
+            let h = host.borrow();
+            h.open && h.host.is_none() && h.draft && !h.draft_stored && h.dirty && h.cursor != Cursor::None
+        };
+        if !unsaved || !self.has_source(&host) {
+            return Ok(());
+        }
+        // A new host whose fields were typed before its key: what BC stores then is not known (pages/
+        // lt-new-line-stamps-filters/NewLineStampsFilters.al:264 PartB_OpenNewHeader_TypeThenNo stores the line with a
+        // blank link though the key was typed; the rule is not found).
+        if host.borrow().typed_before_key {
+            return unsupported(
+                "a part written into while its new host row had a field typed before its key (what is stored is not pinned)",
+            );
+        }
+        self.save_row(&host)
+    }
+
     /// After part `child` moved, the parts that take their link from it follow.
     pub(super) fn sync_dependents(&mut self, child: &St) -> Result<(), Signal> {
         let Some((host, idx)) = child.borrow().host.clone() else {
@@ -564,7 +590,14 @@ impl Session {
                         // The row the link reads, else the type's blank value: a page that shows
                         // no row links to nothing (corpus testpart/TestPartProviderMove.al:
                         // ProviderLinkedPart_HostMovesToAnEmptyProvider_ReadsBlank).
-                        let value = if src_page.borrow().cursor == Cursor::None {
+                        // A host row that is not stored yet links to nothing either, also after its key was typed: the
+                        // part's blank line takes the blank value and validates it (pages/lt-part-line-before-host-key/
+                        // PartLineBeforeHostKey.al:398, :400 `H.OnValidate(No.):D2 | L.OnValidate(Document No.): | ...`).
+                        let unsaved_host = {
+                            let p = src_page.borrow();
+                            p.host.is_none() && p.draft && !p.draft_stored
+                        };
+                        let value = if src_page.borrow().cursor == Cursor::None || unsaved_host {
                             let host_ty = engine.program.objects[*src_table]
                                 .table
                                 .as_ref()
@@ -631,8 +664,29 @@ impl Session {
         let ir::Binding::Field(pos) = page.controls[control].binding else {
             return Ok(());
         };
+        // A key field typed on a host row that is stored (a new row the host inserted when a field outside the key was
+        // typed first): BC keeps the parts' blank lines on the old link value (pages/lt-new-line-stamps-filters/
+        // NewLineStampsFilters.al:264 PartB_OpenNewHeader_TypeThenNo, the line is stored with a blank "Document No.");
+        // the rule is not found, so it is refused.
+        let key_of_stored_row = {
+            let s = st.borrow();
+            !s.draft && s.cursor == Cursor::Row
+        } && self.has_source(st)
+            && self.table(&self.page_rec(st))?.keys[0].contains(&pos)
+            && st.borrow().typed_before_key;
         let parts = st.borrow().parts.clone();
         for (i, child) in &parts {
+            if key_of_stored_row
+                && page.controls[*i].part_link.as_ref().is_some_and(|l| {
+                    l.entries
+                        .iter()
+                        .any(|e| matches!(e, ir::LinkEntry::Field(_, hf) if *hf == pos))
+                })
+            {
+                return unsupported(
+                    "a key field typed on a new host row stored after a field outside its key was typed, with parts linked on it (not pinned)",
+                );
+            }
             let reads = page.controls[*i].part_link.as_ref().is_some_and(|l| {
                 l.provider.is_none()
                     && l.entries

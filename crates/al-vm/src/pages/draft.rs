@@ -230,6 +230,7 @@ impl Session {
         }
         let existed = self.stored_row(&rec)?.is_some();
         st.borrow_mut().draft_stored = existed;
+        st.borrow_mut().typed_before_key = false;
         if let Some(last) = last_held {
             self.set_xrec_fields(st, last);
         }

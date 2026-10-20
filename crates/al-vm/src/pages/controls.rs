@@ -64,6 +64,23 @@ impl Session {
         // first because the focus leaves the key control (corpus record/PWTableGlobals.al:392-405,
         // PageInsert_NewThenSetTxtThenClose_ValidationBeforeInsert: OnInsert reads Counter 0 though
         // OnNewRecord set 9).
+        if st.borrow().host.is_some() {
+            self.save_unsaved_host_first(st)?;
+        } else if let ir::Binding::Field(pos) = page_of(&self.engine(), st).controls[idx].binding
+            && st.borrow().draft
+            && self.has_source(st)
+        {
+            let rec = self.page_rec(st);
+            let table = self.table(&rec)?;
+            let key = &table.keys[0];
+            let key_blank = key.iter().all(|k| {
+                let v = &rec.borrow().fields[*k];
+                Self::same_values(std::slice::from_ref(v), std::slice::from_ref(&Value::default_for(&table.fields[*k].ty)))
+            });
+            if !key.contains(&pos) && key_blank {
+                st.borrow_mut().typed_before_key = true;
+            }
+        }
         if matches!(page_of(&self.engine(), st).controls[idx].binding, ir::Binding::Field(_)) && self.has_source(st) {
             let rec = self.page_rec(st);
             self.reset_table_globals(&rec);

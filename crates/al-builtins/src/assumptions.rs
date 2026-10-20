@@ -427,12 +427,6 @@ registry! {
         tests: "Service Credit Memo, Service Invoice and Service Order pages (OnFindRecord: Rec.Find(Which), else SetRange(\"No.\") and Find again): ServiceCreditMemoByPage, ServiceInvoiceByPage and about 30 more Tests-SCM-Service tests, and the 24 that follow them in their codeunits.",
         probe: "A list or card with OnFindRecord(Which) that notes Which in a trace, a source table with and without rows: OpenNew, then the trace, xRec of OnNewRecord and the first Rec. Asked in corpus #641.",
     },
-    PartLinkNotValidatedForUnsavedHost => {
-        id: "part-link-not-validated-for-unsaved-host",
-        assumed: "The blank line of a part whose host record is a new, unsaved row takes the SubPageLink values without validating them (the table relation of a link field would not find the host row yet); it is stamped and validated again when the host is saved.",
-        tests: "Allocation Account (ListPlus page with parts linked on \"No.\"), OpenNew then \"No.\".SetValue: Alloc. Account Sales and Purchase E2E tests, about 34.",
-        probe: "A card with a part linked on the card's key, DelayedInsert false: OpenNew, SetValue of the key, then read the part's draft line and its link field; SetValue of a second field and read again. Asked in corpus #641.",
-    },
     NewLineStampsAllBeforeValidating => {
         id: "new-line-stamps-all-before-validating",
         assumed: "The blank line of a part (or list) takes every single-valued filter value (key fields, Document Type from SourceTableView and the SubPageLink fields) onto the record first, and only then runs the OnValidate and table relation of each, in field order; a link field declared before Document Type is validated with the Document Type already set.",

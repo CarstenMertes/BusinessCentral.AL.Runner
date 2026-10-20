@@ -849,6 +849,7 @@ impl Session {
             }
             PageMethod::New => {
                 self.require_open(st)?;
+                self.save_unsaved_host_first(st)?;
                 self.new_record(st)
             }
             PageMethod::ValidationErrorCount => {

@@ -1419,6 +1419,7 @@ higher, and the resolver failed with a version conflict.
 1. **Held back for the feed** (`artifact.rs`, `load_with_artifacts`). Before a build is chosen, a package published by
    Microsoft in a folder named `.alpackages` whose major and minor are below `--bc-version` is held back, so the feed is asked
    for the app. Once a build is chosen, the same holds against the build's major and minor.
+   The platform's `System` is compared on its major only: it carries the platform version (27.0.x in every 27 build).
 2. **Fallback.** A held-back package whose app the feed does not supply is put back after the last round and used as before.
 3. **Unchanged.** `--dep` and `--package-cache` packages, other publishers' packages and runs with `--no-download`.
 4. **Conflict message.** A version conflict names the dependent app and where it came from, where the chosen version came

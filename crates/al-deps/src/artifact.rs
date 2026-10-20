@@ -227,9 +227,16 @@ fn requested_major_minor(prefix: &str) -> Option<(u32, Option<u32>)> {
     Some((major, minor))
 }
 
-/// A Microsoft package older than the BC version `target` (major, and minor when known).
+/// A Microsoft package older than the BC version `target` (major, and minor when known). The platform's
+/// `System` carries the platform version, whose minor is 0 in every build of a major (the corpus's `.alpackages`
+/// holds System 27.0.46760.0 beside the 27.5 apps), so only its major is compared.
 fn older_microsoft(f: &Found, target: (u32, Option<u32>)) -> bool {
     let v = f.manifest.version;
+    let target = if f.manifest.id.eq_ignore_ascii_case(crate::select::SYSTEM_APP_ID) {
+        (target.0, None)
+    } else {
+        target
+    };
     f.manifest.publisher.eq_ignore_ascii_case("Microsoft")
         && match target {
             (major, Some(minor)) => (v.0, v.1) < (major, minor),
@@ -2002,6 +2009,32 @@ mod tests {
         .unwrap();
         let any = p.loaded.apps.iter().find(|a| a.app.name == "Any").unwrap();
         assert!(any.path.starts_with(&alpkg), "{}", any.path.display());
+    }
+
+    /// The platform's `System` carries the platform version, whose minor is 0 in every build of a major (the
+    /// corpus's `.alpackages` holds System 27.0.46760.0 beside the 27.5 apps): only its major counts.
+    #[test]
+    fn the_system_app_of_the_requested_major_is_kept_whatever_its_minor() {
+        let dir = tempfile::tempdir().unwrap();
+        let cdn = FixtureCdn::new(dir.path(), &["27.5.46862.56249"]);
+        let alpkg = alpackages(dir.path());
+        let own = ms_package(&alpkg, SYS, "System", "27.0.46760.0");
+        let out = run(
+            &alpkg,
+            &fetch(&dir.path().join("cache"), true, Some("27.5")),
+            &cdn,
+            MissingPolicy::Error,
+            &any_and_library_project(),
+        )
+        .unwrap();
+        let sys = out.loaded.apps.iter().find(|a| a.app.name == "System").unwrap();
+        assert_eq!(sys.path, own);
+        let used = out.artifact.as_ref().unwrap();
+        assert!(
+            !used.fetched.iter().any(|f| f.ends_with("System.app")),
+            "{:?}",
+            used.fetched
+        );
     }
 
     /// An older Microsoft package the feed does not have is still used.

@@ -19,9 +19,10 @@ pub struct Preprocessed {
     pub diagnostics: Vec<Diagnostic>,
 }
 
-/// Symbols are matched case-insensitively.
+/// Symbols are matched case-sensitively: corpus misc/lt-bm-preprocessor-scope/BmPreprocessorDefine.al:83
+/// (`#if ltbmdefined` after `#define LTBMDEFINED` is false; BmPreprocessorScope.al:35).
 pub fn preprocess(src: &str, tokens: &[Token], symbols: &BTreeSet<String>) -> Preprocessed {
-    let mut syms: BTreeSet<String> = symbols.iter().map(|s| s.to_ascii_uppercase()).collect();
+    let mut syms: BTreeSet<String> = symbols.clone();
     let mut frames: Vec<Frame> = Vec::new();
     let mut out: Vec<Token> = Vec::with_capacity(tokens.len());
     let mut diagnostics = Vec::new();
@@ -82,10 +83,18 @@ pub fn preprocess(src: &str, tokens: &[Token], symbols: &BTreeSet<String>) -> Pr
                     }
                 }
                 "define" if active => {
-                    syms.insert(rest.trim().to_ascii_uppercase());
+                    syms.insert(rest.trim().to_string());
                 }
                 "undef" if active => {
-                    syms.remove(&rest.trim().to_ascii_uppercase());
+                    let name = rest.trim();
+                    // Whether `#undef x` removes a symbol defined only as `X` is not pinned (`#if` is case-sensitive,
+                    // BmPreprocessorDefine.al:83): the file is refused (docs/probes-needed.md).
+                    if !syms.contains(name) && syms.iter().any(|s| s.eq_ignore_ascii_case(name)) {
+                        diag(format!(
+                            "#undef {name} names a symbol that is defined only in another case (not pinned)"
+                        ));
+                    }
+                    syms.remove(name);
                 }
                 _ => {}
             }
@@ -130,7 +139,14 @@ struct Frame {
 /// atom := SYMBOL | '(' or ')'`
 fn eval(expr: &str, syms: &BTreeSet<String>) -> Result<bool, String> {
     let spaced = expr.replace('(', " ( ").replace(')', " ) ");
-    let toks: Vec<String> = spaced.split_whitespace().map(|w| w.to_ascii_uppercase()).collect();
+    // The keywords `not`, `and` and `or` are matched in any case; symbols keep their case.
+    let toks: Vec<String> = spaced
+        .split_whitespace()
+        .map(|w| match w.to_ascii_uppercase().as_str() {
+            k @ ("NOT" | "AND" | "OR") => k.to_string(),
+            _ => w.to_string(),
+        })
+        .collect();
     let mut i = 0;
     let v = or(&toks, &mut i, syms)?;
     if i != toks.len() {
@@ -222,8 +238,22 @@ mod tests {
     }
 
     #[test]
-    fn symbols_are_case_insensitive() {
-        assert_eq!(code(SRC, &["bc29plus"]), vec!["a", ";", "b", ";", "d", ";"]);
+    fn undef_of_a_symbol_defined_only_in_another_case_is_diagnosed() {
+        let (_, diags) = run("#define X\n#undef x\n", &[]);
+        assert_eq!(diags.len(), 1, "{diags:?}");
+        let (_, diags) = run("#undef bc29plus\n", &["BC29PLUS"]);
+        assert_eq!(diags.len(), 1, "{diags:?}");
+        let (_, diags) = run("#define X\n#undef X\n#undef Y\n", &[]);
+        assert!(diags.is_empty(), "{diags:?}");
+    }
+
+    #[test]
+    fn symbols_are_case_sensitive() {
+        // corpus misc/lt-bm-preprocessor-scope/BmPreprocessorDefine.al:83 (`#if ltbmdefined` after
+        // `#define LTBMDEFINED` takes the #else branch), read by BmPreprocessorScope.al:25, :35.
+        assert_eq!(code(SRC, &["bc29plus"]), vec!["a", ";", "c", ";", "d", ";"]);
+        let src = "#define LTBMDEFINED\n#if ltbmdefined\na\n#else\nb\n#endif\n";
+        assert_eq!(code(src, &[]), vec!["b"]);
     }
 
     #[test]

@@ -12,9 +12,9 @@ pass rate is measured against: every `<testcase>` in it passed on real BC.
 
 | Major | Oracle leg | Corpus commit of the run | Workflow run | Artifact | Artifact id | Cases |
 |---|---|---|---|---|---|---|
-| 27 | 27.5 | `df2bad6` (head of corpus PR 686, same tree as the pin) | 39400288455 | `junit-test-results-27.5` | 12259323351 | 16718 |
-| 28 | 28.5 | `df2bad6` (head of corpus PR 686, same tree as the pin) | 39400288455 | `junit-test-results-28.5` | 12258464196 | 16810 (+26 `OnRun`) |
-| 29 | 29.0 | `df2bad6` (head of corpus PR 686, same tree as the pin) | 39400288455 | `junit-test-results-29.0` | 12256584812 | 16892 (+26 `OnRun`) |
+| 27 | 27.5 | `fc154a4` (the pin) | 39400288455 | `junit-test-results-27.5` | 12259323351 | 16718 |
+| 28 | 28.5 | `fc154a4` (the pin) | 39400288455 | `junit-test-results-28.5` | 12258464196 | 16810 (+26 `OnRun`) |
+| 29 | 29.0 | `fc154a4` (the pin) | 39400288455 | `junit-test-results-29.0` | 12256584812 | 16892 (+26 `OnRun`) |
 
 The master push run of the pin (39413290893) was cancelled when the next bump landed, so the files come from the
 green pull request run of PR 686, whose head `df2bad6` has the same tree as the pin (the last attempt of each job).

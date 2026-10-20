@@ -2019,6 +2019,15 @@ fn clear(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result
         // pageupdate/PageUpdateFacts.Page.al:58 `Clear(Derived)` on an array of Decimal).
         Value::Array(a) => {
             let a = a.clone();
+            // An array of JsonObject keeps every element as it was (json/lt-db-json-leads/DbJsonLeads.al:150-164). An array
+            // of another JSON type is not pinned.
+            match a.borrow().first() {
+                Some(Value::Library(name, _)) if name.as_str() == "JsonObject" => return Ok(Value::Null),
+                Some(Value::Library(name, _)) if matches!(name.as_str(), "JsonArray" | "JsonValue" | "JsonToken") => {
+                    return unsupported(&format!("Clear of an array of {} (not pinned)", name.as_str()));
+                }
+                _ => {}
+            }
             for e in a.borrow_mut().iter_mut() {
                 clear(ctx, None, std::slice::from_mut(e))?;
             }

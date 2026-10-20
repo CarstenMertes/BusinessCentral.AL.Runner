@@ -370,6 +370,8 @@ pub struct InState {
     /// A read already found the stream at its end: the next typed read there raises (streams/StTStreams.al:ReadPastEnd against
     /// streams/lt-stream-read-write-media/P102ReadTyped.al `pastend`: the first one answers 0).
     pub hit_end: bool,
+    /// `HttpContent.WriteFrom` took the stream: only `EOS` is pinned afterwards (see [`hand_to_content`]).
+    pub handed_to_content: bool,
 }
 
 impl InState {
@@ -379,6 +381,7 @@ impl InState {
             pos: 0,
             enc,
             hit_end: false,
+            handed_to_content: false,
         }
     }
 
@@ -388,6 +391,7 @@ impl InState {
             pos: 0,
             enc,
             hit_end: false,
+            handed_to_content: false,
         }
     }
 
@@ -578,16 +582,40 @@ pub fn refuse_pending_in(v: &mut Value) -> Result<(), Signal> {
 }
 
 /// Reads the rest of an `InStream` value and moves its position to the end.
+/// `HttpContent.WriteFrom(InStream)`: the bytes the stream has left, and the stream stays where it was, not at its end
+/// (network/lt-db-http-leads/DbHttpContentLeads.al:310). What a read, `Length`, `Position` or `ResetPosition` of it gives
+/// afterwards is not pinned: they are refused.
+pub fn hand_to_content(v: &mut Value) -> Result<Vec<u8>, Signal> {
+    with_in(Some(v), |s| {
+        let pos = s.pos;
+        let bytes = s.with_data(|d| d.get(pos..).map(<[u8]>::to_vec).unwrap_or_default());
+        s.handed_to_content = true;
+        Ok(bytes)
+    })
+}
+
 pub fn drain_in(v: &mut Value) -> Result<Vec<u8>, Signal> {
     with_in(Some(v), |s| Ok(s.drain()))
 }
 
 fn with_in<T>(r: Option<&mut Value>, f: impl FnOnce(&mut InState) -> Result<T, Signal>) -> Result<T, Signal> {
+    with_in_of(r, false, f)
+}
+
+/// [`with_in`]; `handed_ok` lets a stream HttpContent.WriteFrom took through (only `EOS` reads it).
+fn with_in_of<T>(
+    r: Option<&mut Value>,
+    handed_ok: bool,
+    f: impl FnOnce(&mut InState) -> Result<T, Signal>,
+) -> Result<T, Signal> {
     let mut g = in_state(r)?;
     match &mut *g {
         LibraryValue::InStream(s) => {
             if let Some(report) = s.render_pending() {
                 return Err(render_pending_error(&report));
+            }
+            if s.handed_to_content && !handed_ok {
+                return unsupported("use of an InStream after HttpContent.WriteFrom took it (only EOS is pinned)");
             }
             f(s)
         }
@@ -636,7 +664,9 @@ pub(crate) fn read_all_text(stream: &mut Value) -> Result<String, Signal> {
 }
 
 fn in_eos(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> NResult {
-    with_in(r, |s| Ok(Value::Boolean(s.pos >= s.len())))
+    // A stream HttpContent.WriteFrom took is not at its end (network/lt-db-http-leads/DbHttpContentLeads.al:310): its position
+    // did not move.
+    with_in_of(r, true, |s| Ok(Value::Boolean(s.pos >= s.len())))
 }
 
 fn in_reset(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> NResult {

@@ -1072,6 +1072,10 @@ pub struct HttpContentState {
     /// The value is a copy an assignment or a by-value parameter made (`deep_copy`), not the content a request handed out.
     /// `ReadAs` on an uninitialized content runs only the shapes the corpus pins, and the two pins differ in this.
     pub copied: bool,
+    /// The content a response holds (`HttpResponseMessage.Content`), not one of a variable or a request.
+    pub of_response: bool,
+    /// The last `WriteFrom` took an `InStream`.
+    pub from_stream: bool,
 }
 
 impl Default for HttpContentState {
@@ -1088,6 +1092,8 @@ impl Default for HttpContentState {
             stream_taken: false,
             written: false,
             copied: false,
+            of_response: false,
+            from_stream: false,
         }
     }
 }

@@ -917,11 +917,16 @@ fn arith_general(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
             );
         }
         (V::Time(a), V::Time(b)) if op == Arith::Sub => {
+            // 0T - 0T is 0 (misc/lt-cq-odd-leads/CqOddLeads.al:147-149); 0T - Time and Time - 0T raise
+            // (misc/lt-probes-needed-6/PnF31TimeArithmetic.al:115-116).
+            if *a == 0 && *b == 0 {
+                return Ok(V::Integer(0));
+            }
             if *a == 0 {
                 return raise("Subtracting from an undefined (0T) time.", "InvalidTime");
             }
             if *b == 0 {
-                return unsupported("subtraction of an undefined Time from a Time (not pinned)".to_string());
+                return raise("Subtracting an undefined (0T) time.", "InvalidTime");
             }
             // Time - Time is a number of milliseconds (`Format(T1 - T2, 0, 9)` is `-9000000`; ExpressionBinaryDateTimeOperands.al:
             // P195_Binary_TimeAndDateTimeOperands), which a Duration variable takes back (`Diff := T2 - T1`).
@@ -1702,12 +1707,24 @@ mod tests {
                 noon.clone(),
                 "Subtracting from an undefined (0T) time.",
             ),
+            // misc/lt-probes-needed-6/PnF31TimeArithmetic.al:115.
+            (
+                Arith::Sub,
+                noon.clone(),
+                Value::Time(0),
+                "Subtracting an undefined (0T) time.",
+            ),
         ] {
             let Err(Signal::Error(e)) = arith(op, &l, &r) else {
                 panic!("expected an error")
             };
             assert_eq!((e.message.as_str(), e.code.as_str()), (text, "InvalidTime"));
         }
+        // 0T - 0T is 0 (misc/lt-cq-odd-leads/CqOddLeads.al:147-149).
+        assert!(matches!(
+            arith(Arith::Sub, &Value::Time(0), &Value::Time(0)),
+            Ok(Value::Integer(0))
+        ));
         let Err(Signal::Error(e)) = arith(Arith::Add, &noon, &d("1500.5")) else {
             panic!("expected an error")
         };

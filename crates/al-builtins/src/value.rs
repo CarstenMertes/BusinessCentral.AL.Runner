@@ -416,6 +416,9 @@ pub struct PageState {
     /// `editable_off` came from `CurrPage.Editable(false)` in OnInit/OnOpenPage (not from a preset): its effect depends on
     /// the open mode (see `PageOps::page_editable`).
     pub editable_off_in_open: bool,
+    /// Controls given a value by `SetValue` since the page opened (a Decimal FlowFilter control at zero shows '' only
+    /// while it is unset).
+    pub set_controls: Vec<usize>,
     /// `P.Editable(false)` or `P.Editable := false` on a Page variable before it runs: the page
     /// opens non-editable (handlers/TestPageVariableEditableContracts.al).
     pub editable_preset: Option<bool>,
@@ -530,6 +533,7 @@ impl PageState {
             opening: false,
             editable_off: false,
             editable_off_in_open: false,
+            set_controls: Vec::new(),
             editable_preset: None,
             caption: None,
             parts: Vec::new(),

@@ -323,3 +323,59 @@ fn a_big_integer_literal_in_a_control_expression_is_refused_on_bc_27_only() {
     let r = run_on("28.5", &src);
     assert!(matches!(r, Ok(Value::Text(ref t)) if t.as_str() == "No"), "{r:?}");
 }
+
+const READ_LOCK: &str = r#"
+table 69970 "CP Row" { fields { field(1; Id; Integer) { } } keys { key(PK; Id) { } } }
+page 69971 "CP Read Card"
+{
+    PageType = Card; SourceTable = "CP Row"; ApplicationArea = All;
+    layout { area(Content) { field(IdCtl; Rec.Id) { } } }
+    actions { area(Processing) { action(Read) { trigger OnAction() begin if CurrPage.Editable() then; end; } } }
+    trigger OnOpenPage() begin CurrPage.Editable(false); end;
+}
+codeunit 69972 C
+{
+    procedure New()
+    var P: TestPage "CP Read Card";
+    begin
+        P.OpenNew();
+        P.Read.Invoke();
+    end;
+}
+"#;
+
+/// CurrPage.Editable() read from page code on an OpenNew page after CurrPage.Editable(false): not pinned
+/// (CdTestPageLeads.al:117 pins TestPage.Editable() only), refused.
+#[test]
+fn curr_page_editable_read_on_a_new_page_after_editable_false_is_refused() {
+    match al_testkit::run_in(READ_LOCK, "C", "New") {
+        Err(Signal::Unsupported(why)) => assert!(why.contains("CurrPage.Editable()"), "{why}"),
+        other => panic!("expected a refusal, got {other:?}"),
+    }
+}
+
+const FILTER_ZERO: &str = r#"
+table 69973 "CP FRow" { fields { field(1; Id; Integer) { } field(3; AmtFilter; Decimal) { FieldClass = FlowFilter; } } keys { key(PK; Id) { } } }
+page 69974 "CP FCard" { PageType = Card; SourceTable = "CP FRow"; layout { area(Content) { field(AmtFilter; Rec.AmtFilter) { } } } }
+codeunit 69975 C
+{
+    procedure Zero(): Text
+    var R: Record "CP FRow"; P: TestPage "CP FCard";
+    begin
+        R.Id := 1; R.Insert();
+        P.OpenEdit();
+        P.First();
+        P.AmtFilter.SetValue('0');
+        exit(P.AmtFilter.Value());
+    end;
+}
+"#;
+
+/// A Decimal FlowFilter control given an explicit zero: only the unset field is pinned (N582TestPageEdges.al:400), refused.
+#[test]
+fn a_decimal_flowfilter_control_set_to_zero_is_refused() {
+    match al_testkit::run_in(FILTER_ZERO, "C", "Zero") {
+        Err(Signal::Unsupported(why)) => assert!(why.contains("FlowFilter"), "{why}"),
+        other => panic!("expected a refusal, got {other:?}"),
+    }
+}

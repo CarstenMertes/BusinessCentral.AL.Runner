@@ -190,6 +190,7 @@ impl Session {
             s.result = None;
             s.editable_off = false;
             s.editable_off_in_open = false;
+            s.set_controls = Vec::new();
             s.expanded = Vec::new();
             // A caption assigned to the variable before its first run stays.
             // It stays for a second run too (types/lt-caption-assigned-before-run/CaptionAssignedBeforeRun.al:P187_SecondRun_NoReassign,

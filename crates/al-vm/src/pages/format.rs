@@ -173,7 +173,16 @@ impl Session {
                     .iter()
                     .any(|(k, v)| k.eq_ignore_ascii_case("FieldClass") && v.trim().eq_ignore_ascii_case("FlowFilter"))
         }) {
-            f.blank_zero = true;
+            if st.borrow().set_controls.contains(&idx) {
+                // Only the unset field is pinned: after an explicit SetValue a zero's text is not.
+                if matches!(self.control_value(st, idx)?, Value::Decimal(d) if d.is_zero()) {
+                    return unsupported(
+                        "the text of a Decimal FlowFilter control after SetValue gave it zero (not pinned)",
+                    );
+                }
+            } else {
+                f.blank_zero = true;
+            }
         }
         if let Some(b) = lit("blanknumbers").or_else(|| from_field("blanknumbers")) {
             f.blank = Blank::parse(&b).unwrap_or_default();
@@ -827,7 +836,7 @@ impl Session {
     /// does depends on the mode: OpenEdit locks every control (handlers/TestPageControlEditableRoutes.al:553); OpenView
     /// leaves a page-variable control editable (pages/lt-cd-testpage-leads/CdTestPageLeads.al:95, Item49_LockCard_OpenView);
     /// OpenNew keeps the page editable and locks the Rec controls (CdTestPageLeads.al:117-118, Item49_LockCard_OpenNew).
-    fn open_lock(&self, st: &St) -> Option<PageMode> {
+    pub(super) fn open_lock(&self, st: &St) -> Option<PageMode> {
         let s = st.borrow();
         (s.editable_off && s.editable_off_in_open).then_some(s.mode)
     }

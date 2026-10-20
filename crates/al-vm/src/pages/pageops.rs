@@ -499,6 +499,11 @@ impl Session {
                         }
                         Ok(Value::Null)
                     }
+                    // Read from page code on an OpenNew page after CurrPage.Editable(false): only TestPage.Editable() is
+                    // pinned there (pages/lt-cd-testpage-leads/CdTestPageLeads.al:117).
+                    None if self.open_lock(st) == Some(PageMode::New) => unsupported(
+                        "CurrPage.Editable() read on a page opened with OpenNew whose OnOpenPage called CurrPage.Editable(false) (not pinned)",
+                    ),
                     None => Ok(Value::Boolean(self.page_editable(st))),
                 }
             }

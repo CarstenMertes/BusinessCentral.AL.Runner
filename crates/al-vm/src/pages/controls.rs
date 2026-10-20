@@ -8,6 +8,15 @@ impl Session {
     /// and records a refusal in the control's ledger (corpus handlers/TestPageValidationError_Tests.al,
     /// TestPageReadOnlySetValue.al:1-30, TestPageBooleanSpelling_Tests.al).
     pub(super) fn control_set_value(&mut self, st: &St, idx: usize, args: &mut [Value]) -> Result<Value, Signal> {
+        let r = self.control_set_value_now(st, idx, args);
+        // The control now holds an explicit value (see `PageState::set_controls`).
+        if !st.borrow().set_controls.contains(&idx) {
+            st.borrow_mut().set_controls.push(idx);
+        }
+        r
+    }
+
+    fn control_set_value_now(&mut self, st: &St, idx: usize, args: &mut [Value]) -> Result<Value, Signal> {
         // A control's ValuesAllowed rejects a value outside the list (pageext/lt-page-ext-properties/PageFieldValuesAllowed.al:
         // 64-73; on a request page, pages/lt-report-page-properties/05-requestpage-valuesallowed.al:57-59); the client does not
         // check it, so a write to such a control is refused rather than taken.

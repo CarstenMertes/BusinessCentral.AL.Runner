@@ -1063,3 +1063,17 @@ Refused shapes next to what bump 29 pinned (enum option list, AsDecimal of a Tex
 | "Your entry of" naming an entry of 20 to 24 or more than 25 characters | REFUSED. Up to 19 shows whole (P106TestFieldAsDateTime.al:61, W2ValueControls.al:456); an Enum entry of 25 keeps its first and last 8 around `...` (CvEnumCaptionComma.al:151). | Refused entries of 20, 21, 24, 26 and 40 characters on Enum, Integer and Date controls. |
 | AsDecimal of a Text control whose text has digits but is no number (`1x2`, `1,2,3`) | REFUSED. '', ' ' and a word raise AL:Format (pages/lt-ca-odd-667/CaTestPageTests.al:90-91, :130-135). | AsDecimal of `1x2`, `1,234.5`, `1e3`, and AsInteger of a Text control. |
 | ValuesAllowed of a table field on a list, on a page without a row, on a non-text field, with a lower-case entry into a Code field, an entry that differs only in case, or the empty text when '' is not listed | REFUSED. Pinned: a Code[1] field with `'', 'A', 'N'` on a card (pages/lt-cd-testpage-leads/CdTestPageLeads.al:396-423). | Those shapes on the CD Status Card and on a list. |
+
+## Page views and filters (lane T5, lane-page-views, 2026-10-20)
+
+Refused or kept shapes next to what bump 29 pinned (pages/lt-cd-testpage-leads/CdTestPageLeads.al items 58-63, pages/lt-ce-page-run/CePageRun.al):
+
+| Shape | Status | Probe wanted |
+|---|---|---|
+| SourceTableView `const('')` on a Code, Integer or other non-Text field | REFUSED. On a Text field it sets no filter (CdTestPageLeads.al:539). | The CD ConstOthers list with `const('')` on a Code field and on an Option field; RunPageLink and SubPageView `const('')` stay as pinned (they filter on blank). |
+| `const(0D)` / `filter(0D)` in a SourceTableView: what GetFilters and a TestPage Filter read | REFUSED. The rows (blank dates) are pinned (CdTestPageLeads.al:508, :521); a TestPage Filter read of the field, and a page with any code that could read it, are refused. | Rec.GetFilters in OnOpenPage (FilterGroup 2) and TestPage.Filter.GetFilter(D) on the Const0D list. |
+| What Rec holds in FilterGroup(-1) after OnOpenPage, on a page with later triggers or a TestPage Filter read | REFUSED. The rows shown ignore group -1 (CdTestPageLeads.al:776). | Rec.GetFilters at group -1 and Rec.Count in OnAfterGetRecord; TestPage.Filter.GetFilter after it. |
+| OnFindRecord on a page whose SourceTableView has a WHERE part: the find string at open | REFUSED. `=><` is pinned with no view and with sorting/order only (CePageRun.al OpenView_DescendingWithOnFindRecord_CurrentRow). | The Desc Find list with a WHERE added. |
+| TestPage.Filter.GetFilter of an Enum range of two values, or of an Option field filtered by a value | REFUSED. A single Enum value reads as the ordinal, text filters as names (CePageRun.al SetTableView_*). | SetRange(Kind, A, B) and SetRange(Opt, B) handed to a list, read with Filter.GetFilter. |
+| Blank line of a list run on a record filtered on a non-key Code/Text/Integer field whose blank value fails the filter | KEPT (the line shows). A Boolean is pinned (ModalListNewRowKeyFilters.al P157_NonKeyFilter); refusing the other shapes loses 63 baseline cases. Enum and Option hide it (CePageRun.al RunModal_*Filter_RowsAndNewRowDefault). | RunModal(id, Rec) with SetRange(Name, 'x') on a non-key Text field, walked to the end. |
+| AutoSplitKey of a New() from the placeholder line below a negative line or above another line | REFUSED. Below the last line it gives last + 20000 (CdTestPageLeads.al:587). | Next onto the blank line below -10000, then New(). |

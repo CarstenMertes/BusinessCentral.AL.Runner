@@ -263,7 +263,20 @@ impl Session {
                 .then(|| s.window.last().map(|w| w.stored.clone()))
                 .flatten()
         };
-        self.note_lower_key(st)?;
+        // New() from the untouched placeholder line the cursor moved onto keeps the row above it as the lower neighbour and
+        // burns one interval on the placeholder (pages/lt-cd-testpage-leads/CdTestPageLeads.al:587 Item59_EnumSubPageLink_NewLine:
+        // Next() onto the blank line below 10000, New(), the typed line is 30000), as an empty grid does (see `auto_split_key`).
+        let from_placeholder = {
+            let s = st.borrow();
+            s.cursor == Cursor::NewLine && s.placeholder_line && !s.dirty && s.lower_key.is_some()
+        };
+        if from_placeholder {
+            st.borrow_mut().split_burned = true;
+        } else {
+            self.note_lower_key(st)?;
+            st.borrow_mut().split_burned = false;
+        }
+        st.borrow_mut().placeholder_line = false;
         // A list line started below a stored row: remember the row (see `PageState::after_new`).
         let anchor = (keep_focus && st.borrow().cursor == Cursor::Row && !st.borrow().draft)
             .then(|| rec.borrow().fields.clone());

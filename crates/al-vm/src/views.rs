@@ -589,6 +589,71 @@ pub(crate) fn property_view(raw: &str) -> String {
     property_view_with(raw, true)
 }
 
+/// A page's `SourceTableView` (already through [`property_view`]) as the page applies it, and the fields it names with a
+/// `const` on an Enum field (the page holds those as typed values: a TestPage's `Filter.GetFilter` reads the ordinal, pages/
+/// lt-ce-page-run/CePageRun.al SetTableView_FilterOnAnotherField `Kind=0`).
+/// - `const(0D)` and `filter(0D)` on a Date field filter on the blank date (the third list: how the filter reads back is not
+///   pinned, so the page refuses every read of it) (pages/lt-cd-testpage-leads/CdTestPageLeads.al:508
+///   Item58_SourceTableView_Const0D, :521 Item58_SourceTableView_Filter0D: the rows with 0D show).
+/// - `const('')` on a Text field sets no filter (CdTestPageLeads.al:539 Item58_SourceTableView_ConstEmptyTextAndEnum: a row
+///   whose field is `x` shows). On a field of another type nothing pins it, so it is refused.
+pub(crate) fn page_source_view(t: &TableDef, view: &str) -> Result<(String, Vec<usize>, Vec<usize>), Signal> {
+    let mut parts = Vec::new();
+    let mut enum_consts = Vec::new();
+    let mut blank_dates = Vec::new();
+    let mut rest = view.trim();
+    while !rest.is_empty() {
+        let (Some(open), Some((inner, after))) = (rest.find('('), rest.find('(').and_then(|o| balanced(&rest[o..])))
+        else {
+            return Ok((view.to_string(), enum_consts, blank_dates));
+        };
+        let word = &rest[..open];
+        if word.trim().eq_ignore_ascii_case("where") {
+            let mut items = Vec::new();
+            for item in split_top(inner, ',') {
+                let parsed = item.split_once('=').and_then(|(field, cond)| {
+                    let o = cond.find('(')?;
+                    let (value, tail) = balanced(&cond[o..])?;
+                    let pos = field_by_name(t, field.trim())?;
+                    Some((field, pos, cond[..o].trim().to_ascii_uppercase(), value.trim(), tail))
+                });
+                let Some((field, pos, kind, value, tail)) = parsed else {
+                    items.push(item.to_string());
+                    continue;
+                };
+                let ty = &t.fields[pos].ty;
+                use al_builtins::value::RtType;
+                match ty {
+                    RtType::Date if value.eq_ignore_ascii_case("0d") && matches!(kind.as_str(), "CONST" | "FILTER") => {
+                        blank_dates.push(pos);
+                        items.push(format!("{field}={kind}(''){tail}"));
+                    }
+                    _ if kind == "CONST" && value == "''" => {
+                        if !matches!(ty, RtType::Text(_)) {
+                            return unsupported(format!(
+                                "SourceTableView const('') on a field of type {} (pinned for a Text field only)",
+                                ty.describe()
+                            ));
+                        }
+                    }
+                    RtType::Enum(_) if kind == "CONST" => {
+                        enum_consts.push(pos);
+                        items.push(item.to_string());
+                    }
+                    _ => items.push(item.to_string()),
+                }
+            }
+            if !items.is_empty() {
+                parts.push(format!("{word}({})", items.join(",")));
+            }
+        } else {
+            parts.push(format!("{word}({inner})"));
+        }
+        rest = after.trim();
+    }
+    Ok((parts.join(" "), enum_consts, blank_dates))
+}
+
 /// [`property_view`] for a part control's `SubPageView`: a quoted filter stays as written, so a view like `filter('>10')` is
 /// refused.
 pub(crate) fn sub_page_view_text(raw: &str) -> String {

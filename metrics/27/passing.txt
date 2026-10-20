@@ -12852,6 +12852,7 @@
 80503 XPath_Variables_2
 80506 CookieSetter_AsExpression_FreshCookie
 80506 CookieSetter_AsExpression_OtherValues
+80506 CookieSetter_EmptyName
 80506 CookieSetter_EmptyValue
 80507 Add_AsExpression_BadNames_1
 80507 Add_AsExpression_BadNames_2
@@ -12877,6 +12878,7 @@
 80507 Add_TypedResponseHeaders_ValidAndInvalid_4
 80508 ContentLength_AroundReadAsInStream
 80508 ContentLength_AroundReadAsText
+80508 ContentLength_SecondWriteFrom
 80508 ContentLength_WriteFromInStream
 80514 Export_AutoCalc_CalcFields
 80514 Export_AutoCalc_NoCalcFields

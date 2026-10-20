@@ -177,7 +177,7 @@ An item is **pinned** when it occurs in a corpus file in a routine that static r
 | Platform and system events | 123 | 37 | 17 | 0 | 0 |
 | Statements and expressions | 64 | 60 | 58 | 0 | 0 |
 | Method attributes | 34 | 32 | 13 | 2 | 1 |
-| Runtime error sites (text pinned) | 72 | 72 | - | 0 | - |
+| Runtime error sites (text pinned) | 74 | 73 | - | 1 | - |
 
 Presentation-only properties (Caption, ToolTip, ApplicationArea, ... ) are left out of the property catalog.
 
@@ -554,7 +554,8 @@ Presentation-only properties (Caption, ToolTip, ApplicationArea, ... ) are left 
 | procedure | `InherentPermissions` | 100 | yes | 0 |
 | procedure | `Native` | 25 | no | 0 |
 
-## Runtime error sites without a corpus test (0 of 72; 0 have too little fixed text to match)
+## Runtime error sites without a corpus test (1 of 74; 0 have too little fixed text to match)
 
 A site is pinned when a corpus string literal holds the message text. Codes are not matched. Sites with a computed message are not listed.
 
+- crates/al-vm/src/http.rs:107 `Invalid URI: The URI is empty.` code `AL:UriFormat`

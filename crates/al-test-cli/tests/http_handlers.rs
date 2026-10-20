@@ -129,11 +129,10 @@ fn a_handler_that_sets_nothing_answers_200_ok() {
 }
 
 // PZHttpHandler.al:HandlerAnsweringTrue_SendsTheRealRequest (BC 29.0): a handler that answers true lets the real request
-// go; to an unresolvable name (example.invalid) the call answers false, the handler ran once, and the response is not
-// the one the handler could have filled. The runtime never sends: every such request is treated as one to an
-// unresolvable host (assumption http-true-is-unresolvable for hosts other than .invalid).
+// go; the call answers false, the handler ran once, and the response is not the one the handler could have filled (BC asks
+// whether to allow the request first: see on_bc_29_a_handler_answering_true_ends_in_the_unhandled_strmenu).
 #[test]
-fn a_handler_that_answers_true_lets_the_request_fail_like_an_unresolvable_host() {
+fn a_handler_that_answers_true_makes_the_call_answer_false() {
     all_pass(
         "TestHttpRequestPolicy = AllowOutboundFromHandler;",
         r#"
@@ -336,4 +335,319 @@ fn before_bc_29_a_handler_does_not_answer_under_block_outbound_requests() {
             assert_eq!(outcome, Outcome::Pass, "{bc}: {name}");
         }
     }
+}
+
+/// The handlers and helpers of al-language-onprem/network/lt-ay-http-handler/AyHttpHandler.al (codeunit 98550).
+const AY: &str = r#"
+    var Seen: Text; Calls: Integer;
+    [HttpClientHandler]
+    procedure PathHandler(Request: TestHttpRequestMessage; var Response: TestHttpResponseMessage): Boolean
+    var Params: Dictionary of [Text, Text]; ParamName: Text;
+    begin
+        Calls += 1;
+        Seen += '[' + Request.Path + ']';
+        Params := Request.QueryParameters;
+        foreach ParamName in Params.Keys() do
+            Seen += ParamName + '=' + Params.Get(ParamName) + '&';
+        Response.HttpStatusCode := 200;
+        exit(false);
+    end;
+    [HttpClientHandler]
+    procedure NotFoundHandler(Request: TestHttpRequestMessage; var Response: TestHttpResponseMessage): Boolean
+    begin
+        Calls += 1;
+        Response.HttpStatusCode := 404;
+        exit(false);
+    end;
+    [HttpClientHandler]
+    procedure TeapotHandler(Request: TestHttpRequestMessage; var Response: TestHttpResponseMessage): Boolean
+    begin
+        Calls += 1;
+        Response.HttpStatusCode := 418;
+        exit(false);
+    end;
+    [HttpClientHandler]
+    procedure FallThroughHandler(Request: TestHttpRequestMessage; var Response: TestHttpResponseMessage): Boolean
+    begin
+        Calls += 1;
+        Response.HttpStatusCode := 202;
+        exit(true);
+    end;
+    [TryFunction]
+    local procedure TryGet(var Client: HttpClient; Url: Text; var Resp: HttpResponseMessage; var Ret: Boolean)
+    begin
+        Ret := Client.Get(Url, Resp);
+    end;
+    local procedure Path(var Client: HttpClient; Url: Text): Text
+    var Resp: HttpResponseMessage; Ret: Boolean;
+    begin
+        Seen := '';
+        ClearLastError();
+        if TryGet(Client, Url, Resp, Ret) then
+            exit(Format(Ret) + ' ' + Seen);
+        exit('E[' + CopyStr(GetLastErrorText(), 1, 70) + '|' + GetLastErrorCode() + '] ' + Seen);
+    end;
+    local procedure Outcome(Url: Text): Text
+    var Client: HttpClient; Resp: HttpResponseMessage; Ret: Boolean;
+    begin
+        Calls := 0;
+        ClearLastError();
+        if TryGet(Client, Url, Resp, Ret) then
+            exit('ret=' + Format(Ret) + ' status=' + Format(Resp.HttpStatusCode) + ' reason=[' + Resp.ReasonPhrase + '] success=' + Format(Resp.IsSuccessStatusCode) + ' blocked=' + Format(Resp.IsBlockedByEnvironment) + ' last=' + GetLastErrorText() + '|' + GetLastErrorCode() + ' calls=' + Format(Calls));
+        exit('error status=' + Format(Resp.HttpStatusCode) + ' last=' + GetLastErrorText() + '|' + GetLastErrorCode() + ' calls=' + Format(Calls));
+    end;
+    local procedure Check(Got: Text; Expected: Text)
+    begin
+        if Got <> Expected then Error('got %1', Got);
+    end;
+"#;
+
+const ALLOW_FROM_HANDLER: &str = "TestHttpRequestPolicy = AllowOutboundFromHandler;";
+
+fn ay_on(bc: &str, tests: &str) -> Vec<(String, Outcome)> {
+    run_on(bc, ALLOW_FROM_HANDLER, &format!("{AY}{tests}"))
+}
+
+// AyHttpHandler.al:BaseAddress_RelativePaths_1 and _2 (BC 29): the path a handler sees for a relative path joined to the base
+// address: a plain word joins the base directory, a rooted path replaces the base path, `../x` drops the last directory,
+// and a query alone keeps the base path.
+#[test]
+fn on_bc_29_a_handler_sees_the_relative_path_joined_to_the_base_address() {
+    let tests = r#"
+    [Test] [HandlerFunctions('PathHandler')] procedure Joined()
+    var Client: HttpClient;
+    begin
+        Client.SetBaseAddress('https://example.invalid/api/v1/');
+        Check(Path(Client, 'orders'), 'Yes [https://example.invalid/api/v1/orders]');
+        Check(Path(Client, '/orders'), 'Yes [https://example.invalid/orders]');
+        Check(Path(Client, '../x'), 'Yes [https://example.invalid/api/x]');
+        Check(Path(Client, '?q=1'), 'Yes [https://example.invalid/api/v1/]q=1&');
+    end;"#;
+    for (name, outcome) in ay_on("29.0", tests) {
+        assert_eq!(outcome, Outcome::Pass, "{name}");
+    }
+}
+
+// AyHttpHandler.al:NoBaseAddress_RelativePaths_1 and _2 (BC 29): with no base address, `a/b`, `a.b` and `?q=1` raise
+// "Invalid URI: The URI is empty." (AL:UriFormat) before the handler runs.
+#[test]
+fn on_bc_29_a_relative_path_without_a_base_address_raises_the_empty_uri_error() {
+    let tests = r#"
+    [Test] [HandlerFunctions('PathHandler')] procedure NoBase()
+    var Client: HttpClient;
+    begin
+        Check(Path(Client, 'a/b'), 'E[Invalid URI: The URI is empty.|AL:UriFormat] ');
+        Check(Path(Client, 'a.b'), 'E[Invalid URI: The URI is empty.|AL:UriFormat] ');
+        Check(Path(Client, '?q=1'), 'E[Invalid URI: The URI is empty.|AL:UriFormat] ');
+        if Calls <> 0 then Error('calls %1', Calls);
+    end;"#;
+    for (name, outcome) in ay_on("29.0", tests) {
+        assert_eq!(outcome, Outcome::Pass, "{name}");
+    }
+}
+
+// AyHttpHandler.al (BC 27 and 28 legs): under AllowOutboundFromHandler a request is not given to the handler: every form
+// raises the unhandled-request error, the handler is not called and the response keeps status 200.
+#[test]
+fn before_bc_29_a_handler_does_not_answer_under_allow_outbound_from_handler() {
+    let unhandled = "Unhandled outbound HTTP requests are not permitted when the TestHttpRequestPolicy property is set to ''AllowOutboundFromHandler''. Please ensure that an HTTP client handler is configured.|TestCodeunitUnhandledHttpRequest";
+    let short =
+        "E[Unhandled outbound HTTP requests are not permitted when the TestHttpRe|TestCodeunitUnhandledHttpRequest] ";
+    let tests = format!(
+        r#"
+    [Test] [HandlerFunctions('PathHandler')] procedure Paths()
+    var Client: HttpClient; NoBase: HttpClient;
+    begin
+        Client.SetBaseAddress('https://example.invalid/api/v1/');
+        Check(Path(Client, 'orders'), '{short}');
+        Check(Path(Client, '../x'), '{short}');
+        Check(Path(NoBase, 'a/b'), '{short}');
+        Check(Path(NoBase, '?q=1'), '{short}');
+    end;
+    [Test] [HandlerFunctions('NotFoundHandler')] procedure NotFound()
+    begin
+        Check(Outcome('https://example.invalid/missing'), 'error status=200 last={unhandled} calls=0');
+    end;
+    [Test] [HandlerFunctions('FallThroughHandler')] procedure FallThrough()
+    begin
+        Check(Outcome('http://localhost:1/x'), 'error status=200 last={unhandled} calls=0');
+    end;"#
+    );
+    for bc in ["27.5", "28.5"] {
+        for (name, outcome) in ay_on(bc, &tests) {
+            assert_eq!(outcome, Outcome::Pass, "{bc}: {name}");
+        }
+    }
+}
+
+// AyHttpHandler.al:Handler_OnlyStatus404 (BC 29): a handler that sets only status 404 answers true with reason "Not Found".
+#[test]
+fn on_bc_29_a_handler_that_sets_only_404_gives_the_reason_not_found() {
+    let tests = r#"
+    [Test] [HandlerFunctions('NotFoundHandler')] procedure NotFound()
+    begin
+        Check(Outcome('https://example.invalid/missing'), 'ret=Yes status=404 reason=[Not Found] success=No blocked=No last=| calls=1');
+    end;"#;
+    for (name, outcome) in ay_on("29.0", tests) {
+        assert_eq!(outcome, Outcome::Pass, "{name}");
+    }
+}
+
+// The reason phrase BC gives a status the handler set without a reason is pinned for 200 and 404 only: another is refused.
+#[test]
+fn a_handler_status_whose_reason_phrase_is_not_pinned_is_refused() {
+    let tests = r#"
+    [Test] [HandlerFunctions('TeapotHandler')] procedure Teapot()
+    begin
+        Check(Outcome('https://example.invalid/tea'), 'x');
+    end;
+    [Test] [HandlerFunctions('TeapotHandler')] procedure TeapotStatusOnly()
+    var Client: HttpClient; Resp: HttpResponseMessage;
+    begin
+        if not Client.Get('https://example.invalid/tea', Resp) then Error('false');
+        Check(Format(Resp.HttpStatusCode), '418');
+    end;"#;
+    let got = ay_on("29.0", tests);
+    assert!(
+        matches!(&got[0].1, Outcome::NotRun(w) if w.contains("ReasonPhrase")),
+        "{got:?}"
+    );
+    // The status alone, with the phrase never read, runs.
+    assert_eq!(got[1].1, Outcome::Pass, "{got:?}");
+}
+
+// AyHttpHandler.al:Handler_FallThrough_ConnectionRefused (BC 29): a handler that answers true makes BC ask whether to allow
+// the request (StrMenu); with no handler for it the call answers false, the last error is the unhandled StrMenu and the
+// response keeps status 200 OK. PZHttpHandler.al:HandlerAnsweringTrue_SendsTheRealRequest has the same for example.invalid.
+#[test]
+fn on_bc_29_a_handler_answering_true_ends_in_the_unhandled_strmenu() {
+    let tests = r#"
+    [Test] [HandlerFunctions('FallThroughHandler')] procedure FallThrough()
+    begin
+        Check(Outcome('http://localhost:1/x'), 'ret=No status=200 reason=[OK] success=Yes blocked=No last=Unhandled UI: StrMenu Allow Always,Allow Once,Block Always,Block Once|MissingUIHandler calls=1');
+    end;"#;
+    for (name, outcome) in ay_on("29.0", tests) {
+        assert_eq!(outcome, Outcome::Pass, "{name}");
+    }
+}
+
+// What a handler does under the default policy or AllowAllOutboundRequests is not measured: refused (no probe yet).
+#[test]
+fn a_handler_under_an_unprobed_policy_is_refused() {
+    let body = format!(
+        r#"{AY}
+    [Test] [HandlerFunctions('NotFoundHandler')] procedure NotFound()
+    begin
+        Check(Outcome('https://example.invalid/missing'), 'x');
+    end;"#
+    );
+    for header in ["", "TestHttpRequestPolicy = AllowAllOutboundRequests;"] {
+        let got = run_on("29.0", header, &body);
+        assert!(
+            matches!(&got[0].1, Outcome::NotRun(w) if w.contains("policy")),
+            "{header}: {got:?}"
+        );
+    }
+}
+
+// network/lt-ay-http/AyCookieSetterExpression.al:CookieSetter_EmptyName: Name('') raises and keeps the old name.
+#[test]
+fn a_cookie_name_of_empty_text_raises_and_keeps_the_old_name() {
+    all_pass(
+        "",
+        r#"
+    [Test] procedure EmptyName()
+    var C: Cookie; Ignored: Text;
+    begin
+        Ignored := C.Name('old-name');
+        asserterror Ignored := C.Name('');
+        if GetLastErrorText() <> 'The ''Name''='''' part of the cookie is invalid.' then Error('text %1', GetLastErrorText());
+        if GetLastErrorCode() <> 'AL:Cookie' then Error('code %1', GetLastErrorCode());
+        if C.Name() <> 'old-name' then Error('name %1', C.Name());
+    end;"#,
+    );
+}
+
+// network/lt-ay-http/AyContentLength.al:ContentLength_SecondWriteFrom: the Content-Length a read put in the headers stays when
+// a later WriteFrom('') empties the body.
+#[test]
+fn a_content_length_from_a_read_stays_after_writing_empty_text() {
+    all_pass(
+        "",
+        r#"
+    [Test] procedure SecondWrite()
+    var C: HttpContent; H: HttpHeaders; Vals: List of [Text]; T: Text;
+    begin
+        C.WriteFrom('hello');
+        C.WriteFrom('a longer text');
+        C.ReadAs(T);
+        C.WriteFrom('');
+        C.GetHeaders(H);
+        if not H.GetValues('Content-Length', Vals) then Error('no length');
+        if Vals.Get(1) <> '13' then Error('length %1', Vals.Get(1));
+    end;"#,
+    );
+}
+
+// After a read put a Content-Length in, a WriteFrom of another non-empty length leaves a value nothing pins: reading it is
+// refused; the rest of the content still runs (P87Content.al:RewriteKeepsHeader reads only the keys).
+#[test]
+fn a_content_length_after_a_rewrite_of_another_length_is_refused_when_read() {
+    let got = run_with(
+        "",
+        r#"
+    [Test] procedure Other()
+    var C: HttpContent; H: HttpHeaders; Vals: List of [Text]; T: Text;
+    begin
+        C.WriteFrom('hello');
+        C.ReadAs(T);
+        C.WriteFrom('a longer text');
+        C.GetHeaders(H);
+        if not H.Contains('Content-Length') then Error('gone');
+        H.GetValues('Content-Length', Vals);
+    end;"#,
+    );
+    assert!(
+        matches!(&got[0].1, Outcome::NotRun(w) if w.contains("Content-Length")),
+        "{got:?}"
+    );
+}
+
+// Only the pinned no-base-address forms `a/b`, `a.b` and `?q=1` raise the empty-uri error (AyHttpHandler.al:
+// NoBaseAddress_RelativePaths_1 and _2); another form reaching a handler on BC 29 is refused.
+#[test]
+fn an_unpinned_no_base_address_form_reaching_a_handler_is_refused() {
+    for url in ["x/y", "a/b/c", "ab.cd"] {
+        let tests = format!(
+            r#"
+    [Test] [HandlerFunctions('PathHandler')] procedure Other()
+    var Client: HttpClient;
+    begin
+        Check(Path(Client, '{url}'), 'x');
+    end;"#
+        );
+        let got = ay_on("29.0", &tests);
+        assert!(matches!(&got[0].1, Outcome::NotRun(_)), "{url}: {got:?}");
+    }
+}
+
+// GetDotNetType of an AL Enum is pinned for Enum "Sales Document Type" only (lt-bb-dotnet/BbGetDotNetType.al:341): another
+// enum is refused when lowered.
+#[test]
+fn get_dotnet_type_of_an_unpinned_enum_is_refused() {
+    let (ws, l) = compile(
+        r#"codeunit 69400 T { Subtype = Test;
+    [Test] procedure OtherEnum()
+    var T: DotNet LtT; E: Enum "LT Other";
+    begin
+        T := GetDotNetType(E);
+    end;
+}
+enum 69401 "LT Other" { value(0; A) { } }
+dotnet { assembly("mscorlib") { type("System.Type"; LtT) { } } }"#
+            .to_string(),
+    );
+    assert!(ws.diagnostics.is_empty(), "{:?}", ws.diagnostics);
+    let reasons = format!("{:?}", l.unsupported);
+    assert!(reasons.contains("GetDotNetType of an Enum"), "{reasons}");
 }

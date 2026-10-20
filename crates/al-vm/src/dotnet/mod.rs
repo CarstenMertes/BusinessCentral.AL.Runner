@@ -179,6 +179,26 @@ impl Session {
                     clr_type.clone(),
                 ),
             },
+            // `X.GetType()` on an unassigned `System.Object` variable raises in a codeunit
+            // (tests/al-language-onprem-dotnet/lt-dotnet-interop/DotNetTypeOfDotNet.al:224 `Unassigned_error`, after
+            // GetDotNetType(X) answered System.Object: lt-bb-dotnet/BbGetDotNetType.al:364).
+            (MemberKind::Call, Value::Null)
+                if member.eq_ignore_ascii_case("GetType")
+                    && values.is_empty()
+                    && decl.as_ref().is_some_and(|d| d.name == "System.Object") =>
+            {
+                let o = &self.engine.program.objects[f.object];
+                if o.kind != al_ir::ObjKind::Codeunit || o.uncompiled {
+                    return unsupported(
+                        "GetType of an unassigned DotNet variable outside a codeunit (the object kind's spelling in the error is not pinned)",
+                    );
+                }
+                let message = format!(
+                    "A DotNet variable has not been instantiated. Attempting to call System.Object.GetType in CodeUnit {}: {}",
+                    o.name, o.routines[f.routine].name
+                );
+                return al_builtins::native::raise(message, "DotNetVariableNotCreated");
+            }
             (_, Value::Null) => match &decl {
                 Some(d) => Target::Static(d.clone()),
                 None => {

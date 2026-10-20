@@ -108,8 +108,9 @@ pub struct HttpOutgoing {
     /// written, which only a request that no handler sees can carry (network/lt-http-relative-request/HttpRelativeRequestPath.al).
     pub url: String,
     pub has_secret_uri: bool,
-    /// The uri came from joining a path to the client's base address (registry entry http-relative-request-path).
-    pub joined_with_base: bool,
+    /// The uri came from joining a path to the client's base address in a form the corpus does not pin (registry entry
+    /// http-relative-request-path).
+    pub unpinned_join: bool,
 }
 
 /// The field an `Evaluate` into a `FieldRef` writes (see [`Ctx::evaluate_field_target`]).

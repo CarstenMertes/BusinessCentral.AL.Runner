@@ -1440,6 +1440,7 @@ impl Lowerer<'_> {
                         self.field_pos(table, id).ok_or_else(|| "field position".to_string())?;
                     } else {
                         self.readable_field_pos(table, id)?;
+                        self.coverage_test_id_read(n, table, id)?;
                     }
                     let field = self.field_ref(table, id);
                     let base = match n.kind() {

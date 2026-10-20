@@ -1402,6 +1402,52 @@ fn a_tests_run_row_keeps_its_test_id_across_recordings_and_several_recorded_test
     passes(&o, "TwoTestsCodeCoverageRows");
 }
 
+/// The corpus pins only shapes of the Test ID: equal between recordings and rows, and not 1 (coverage/W6CodeCoverageIds.al:
+/// 111-112, :167-168; codeunit/TestCodeCoveragePerTest.al:116 filters the lookup rows by it). Any other read of its value
+/// (formatted, compared with another number, a filter or a key of a literal, a FieldRef) would show the runtime's own
+/// number: refused.
+#[test]
+fn a_read_of_the_exact_test_id_value_is_refused_and_the_pinned_shapes_run() {
+    let rec = "Initialize(); CodeCoverageLog(true, false); Helper(); CodeCoverageLog(false, false); R.FindFirst();";
+    let src = r#"codeunit 50000 "T" { Subtype = Test;
+  procedure Initialize() var C: Record "Code Coverage"; R: Record "Code Coverage Tests Run"; L: Record "Code Coverage Test Lookup"; begin CodeCoverageLog(false, false); C.DeleteAll(); R.DeleteAll(); L.DeleteAll(); end;
+  procedure Inner() begin if StrLen('x') = 0 then Error('x'); end;
+  [Test] procedure Helper() begin Inner(); end;
+  [Test] procedure Formatted() var R: Record "Code Coverage Tests Run"; begin REC if Format(R."Test ID") = '' then; end;
+  [Test] procedure ComparedWithTwo() var R: Record "Code Coverage Tests Run"; begin REC if R."Test ID" = 2 then; end;
+  [Test] procedure Ordered() var R: Record "Code Coverage Tests Run"; begin REC if R."Test ID" > 1 then; end;
+  [Test] procedure HolderFormatted() var R: Record "Code Coverage Tests Run"; X: Integer; begin REC X := R."Test ID"; if Format(X) = '' then; end;
+  [Test] procedure LookupFormatted() var R: Record "Code Coverage Tests Run"; L: Record "Code Coverage Test Lookup"; begin REC L.FindFirst(); if Format(L."Test ID") = '' then; end;
+  [Test] procedure FilterLiteral() var R: Record "Code Coverage Tests Run"; begin REC R.SetRange("Test ID", 2); if R.IsEmpty() then; end;
+  [Test] procedure FilterText() var R: Record "Code Coverage Tests Run"; begin REC R.SetFilter("Test ID", '>1'); if R.IsEmpty() then; end;
+  [Test] procedure GetLiteral() var R: Record "Code Coverage Tests Run"; begin REC if R.Get(2) then; end;
+  [Test] procedure FieldRefValue() var R: Record "Code Coverage Tests Run"; RR: RecordRef; begin REC RR.GetTable(R); if Format(RR.Field(1).Value()) = '' then; end;
+  [Test] procedure PinnedShapes()
+  var R: Record "Code Coverage Tests Run"; L: Record "Code Coverage Test Lookup"; First: Integer;
+  begin REC First := R."Test ID";
+    REC if R."Test ID" - First <> 0 then Error('changed'); if R."Test ID" <> First then Error('differs');
+    if (R."Test ID" = 1) or (First = 1) then Error('one');
+    L.SetRange("Test ID", R."Test ID"); if L.Count() <> 1 then Error('lookup %1', L.Count());
+  end; }"#
+        .replace("REC", rec);
+    let o = outcomes(&src);
+    for t in [
+        "Formatted",
+        "ComparedWithTwo",
+        "Ordered",
+        "HolderFormatted",
+        "LookupFormatted",
+        "FilterLiteral",
+        "FilterText",
+        "GetLiteral",
+        "FieldRefValue",
+    ] {
+        let why = not_run(&o, t);
+        assert!(why.contains("Test ID") && why.contains("not pinned"), "{t}: {why}");
+    }
+    passes(&o, "PinnedShapes");
+}
+
 /// BC's test environment has the Test Runner app's codeunits 130450-130455 (permissions/lt-ba-testpermissions/BaTpEnv.al:
 /// 26-28). The runtime does not load that app, so an AllObj read that may land on one of them is refused; ids BC's test
 /// environment lacks (130301 there) still answer.

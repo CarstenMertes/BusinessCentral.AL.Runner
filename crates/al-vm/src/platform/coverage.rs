@@ -21,7 +21,8 @@
 //!   leaves no per-test row (same file, `PerTestTables_NoTestStartedWhileRecording_AreEmpty...`).
 //! - `Test ID` and `Method ID` are only compared between rows, never to a literal. The Test ID is the same for every test
 //!   recorded in one recording and in two recordings of one test, and is not 1 (coverage/W6CodeCoverageIds.al:96-97,
-//!   :111-112, :167-168). Its value is not pinned ([`Session::RUN_TEST_ID`]). Tests Run is keyed by Test ID alone, so the
+//!   :111-112, :167-168). Its value is not pinned ([`Session::RUN_TEST_ID`]): a read of it outside those shapes is refused
+//!   (al-sema lower/coverage_ids.rs; a FieldRef read here). Tests Run is keyed by Test ID alone, so the
 //!   runtime cannot hold two recorded tests at once: a read of the per-test tables is refused then.
 //!
 //! - Of an app compiled without its source in the symbols, every row's `Line` holds the platform's
@@ -170,6 +171,13 @@ impl Session {
     /// More than one `[Test]` procedure was recorded since the per-test tables were emptied.
     fn several_recorded_tests(&self) -> bool {
         self.coverage.recorder.tests.len() > 1
+    }
+
+    /// Whether field `field` of `t` is the Test ID of a per-test coverage table.
+    pub(crate) fn is_coverage_test_id(&self, t: &TableDef, field: u32) -> bool {
+        self.engine.program.objects[t.object as usize]
+            .id
+            .is_some_and(|id| al_builtins::platform::COVERAGE_TEST_ID.contains(&(id, field)))
     }
 
     fn coverage_table(&self, t: &TableDef) -> Option<u32> {
@@ -368,7 +376,8 @@ impl Session {
 
     /// The "Test ID" of every Tests Run and Test Lookup row. Pinned: one value for the tests of a recording and for two
     /// recordings of one test, and not 1 (coverage/W6CodeCoverageIds.al:111-112, :167-168). The number itself is not
-    /// pinned (BC computes it per run, codeunit/TestCodeCoveragePerTest.al:14): docs/probes-needed.md.
+    /// pinned (BC computes it per run, codeunit/TestCodeCoveragePerTest.al:14): every read that would show it is refused
+    /// (al-sema lower/coverage_ids.rs, `FieldRef.Value`), so no outcome depends on it.
     const RUN_TEST_ID: i32 = 2;
 
     fn lookup_rows(&self, t: &TableDef) -> Vec<Row> {

@@ -1112,6 +1112,12 @@ impl Session {
                     if let Value::Unknown(why) = &v {
                         return unsupported(why.to_string());
                     }
+                    // A coverage Test ID read by number: no pinned shape (platform::coverage_test_id_refusal).
+                    if !rec.borrow().temporary && self.is_coverage_test_id(&t, field.id) {
+                        return unsupported(al_builtins::platform::coverage_test_id_refusal(
+                            "FieldRef.Value of the Test ID",
+                        ));
+                    }
                     let order = {
                         let r = rec.borrow();
                         self.install_row_order(r.table, r.temporary, pos, &r.fields)

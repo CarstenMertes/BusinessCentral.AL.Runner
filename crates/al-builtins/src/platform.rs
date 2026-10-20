@@ -541,6 +541,21 @@ pub fn unpinned_column(table: u32, field: u32) -> Option<String> {
     ))
 }
 
+/// The `Test ID` column of the per-test code coverage tables, as (table, field): Code Coverage Tests Run (2000000289)
+/// and Code Coverage Test Lookup (2000000288).
+pub const COVERAGE_TEST_ID: [(u32, u32); 2] = [(2_000_000_289, 1), (2_000_000_288, 4)];
+
+/// Why `what` (a read of a coverage `Test ID`) is refused. The corpus pins only that the Test ID is the same for the tests
+/// of a recording and for two recordings of one test, that the lookup rows of a test carry it, and that it is not 1
+/// (coverage/W6CodeCoverageIds.al:111-112, :167-168; codeunit/TestCodeCoveragePerTest.al:116). BC computes the number per
+/// run (codeunit/TestCodeCoveragePerTest.al:14), so any other read would show the runtime's own choice.
+pub fn coverage_test_id_refusal(what: &str) -> String {
+    format!(
+        "{what}: the value of the Code Coverage Test ID is not pinned (only that it is equal across rows and recordings and \
+         not 1, coverage/W6CodeCoverageIds.al:111-112, :167-168)"
+    )
+}
+
 /// The first id of the platform's system objects.
 pub const SYSTEM_OBJECT_BASE: u32 = 2_000_000_000;
 

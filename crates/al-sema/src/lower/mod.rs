@@ -419,6 +419,7 @@ mod assemble;
 mod call;
 mod compile;
 mod convert;
+mod coverage_ids;
 mod dotnet;
 mod expr;
 mod localize;

@@ -371,6 +371,10 @@ fn run_version(
     let app_versions = version.app_versions_for_leg(target::read_app_versions(&root.join(&cfg.corpus_app))?)?;
     let mut chosen = al_version::choose_target(Some(&leg), &app_versions, &leg).map_err(|e| e.to_string())?;
     println!("target: BC {}, runtime {}", chosen.target.bc, chosen.target.runtime);
+    // Which build ran: two runs compared as "the same build" must show the same line.
+    if let Some(b) = al_test_cli::binary_identity() {
+        println!("binary: {b}");
+    }
     for note in &chosen.notes {
         eprintln!("note: {note}");
     }
@@ -501,13 +505,13 @@ fn run_version(
     let host = Arc::new(SidecarHost::new(SidecarConfig {
         sidecar: args.dotnet_sidecar.clone(),
         source_root: Some(root.to_path_buf()),
-        // ADR-014 section 3, step 2: after the user's folders, the service tier of the platform artifact in use.
-        assembly_dirs: al_testrun::dotnet::probe_dirs(
-            &args.dotnet_assembly_dirs,
-            al_deps::cache::bcartifacts_sandbox_from_env().as_deref(),
-            bc_build.as_deref(),
-            u32::from(chosen.target.bc.major),
-        ),
+        // Only the user's folders. ADR-014 section 3, step 2 (the service folder of the platform package the run
+        // selected) is skipped: the artifact cache holds no service folder, and BcContainerHelper's
+        // `~/.bcartifacts.cache/sandbox`, which `alrunner` reads, is a machine's own folder, often of another build
+        // of the major. Read here, it made a corpus case pass or be refused by what HOME held (99100
+        // AL_JsonTextWriter_SimpleObject needs Newtonsoft.Json from it), so one build gave two results
+        // (corpus_harness.rs `outcomes_do_not_depend_on_threads_or_home`). A missing assembly is refused, as on CI.
+        assembly_dirs: args.dotnet_assembly_dirs.clone(),
         allow_roll_forward: args.dotnet_allow_roll_forward,
         timeout: Duration::from_secs(args.dotnet_timeout_secs.unwrap_or(60)),
         ..Default::default()

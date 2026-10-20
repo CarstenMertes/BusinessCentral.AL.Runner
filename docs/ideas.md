@@ -224,3 +224,24 @@ The owner had this idea for the v2 runner. Nothing here is decided or planned.
    With a full run in a few minutes this matters less, but it makes the loop seconds long
    and tells the developer which tests are relevant at all. The coverage map per test could
    be built once per BC version and shipped with the compile cache.
+
+## Benchmarking and profiling AL code in the runner (owner, 2026-10-20)
+
+The owner's idea. Nothing here is decided or planned, and no work starts on it now.
+
+1. **Profile our own runs natively.** A bucket run of Microsoft's tests says only how long the
+   whole bucket took. A native profile (for example `perf` on the release binary) of the slowest
+   tests would show where the interpreter spends its time. The first look at Tests-SCM
+   (2026-10-20) showed that one codeunit sets the bucket's floor, because a codeunit's tests run
+   one after another, and that tests refused in the middle of their run cost about a third of
+   the summed test time.
+2. **Benchmarks for developers.** The runner runs AL in one process, with no network, no SQL
+   server and no other sessions. That makes timings far more stable than on a service tier. A
+   developer could time a procedure or a test, compare two versions of their code, and find the
+   slow parts of their own tests. A per-routine profile of an AL run (time and call counts per
+   procedure and trigger) would come from the interpreter itself.
+3. **Open question, to probe first:** whether runner timings are representative of real service
+   tier execution. Database access, locking and the .NET runtime of the service tier have other
+   costs than the runner's in-memory store. The idea is only useful if the relative order holds
+   (code that is slower in the runner is also slower on BC). That needs a set of benchmark
+   procedures timed on both, before anyone builds on it.

@@ -9775,6 +9775,7 @@
 72293 P123_ValuesAllowedOnTableField
 72295 P123_CompressedBlobRoundTrip
 72299 P123_ExtOptionMembers
+72307 BP_TableExtCaptionClass_ProcedureCall
 72307 P123_ExtFieldCaptionClass
 72317 P123_AnalysisModeDisabled
 72321 P123_PageMaxLength

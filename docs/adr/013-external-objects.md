@@ -1408,3 +1408,23 @@ session of its own.
   would need its suite tables and the event with a `Test Method Line`; the steps are short and cited line by line.
 - The order is the source's: 131006 before ClearLastError and ApplicationArea, then 130301, 130302, 132553; 131006 again
   after the method's transaction ended.
+
+## Amendment 2026-10-20 (owner decision, branch `dep-resolve`): older Microsoft packages in `.alpackages` give way to the feed
+
+**Decision (owner).** A project's `.alpackages` holds compile symbols, often of several older builds. With `--bc-version`
+set, a Microsoft app there that is older than the requested BC version must not win over the artifact feed. The case: the
+project's `.alpackages` holds `Any` 27.1, the run asks for BC 29.0, the test library the feed supplies needs `Any` 29.0 or
+higher, and the resolver failed with a version conflict.
+
+1. **Held back for the feed** (`artifact.rs`, `load_with_artifacts`). Before a build is chosen, a package published by
+   Microsoft in a folder named `.alpackages` whose major and minor are below `--bc-version` is held back, so the feed is asked
+   for the app. Once a build is chosen, the same holds against the build's major and minor.
+2. **Fallback.** A held-back package whose app the feed does not supply is put back after the last round and used as before.
+3. **Unchanged.** `--dep` and `--package-cache` packages, other publishers' packages and runs with `--no-download`.
+4. **Conflict message.** A version conflict names the dependent app and where it came from, where the chosen version came
+   from (a path, or "the artifact feed, cached at ..."), the packages that would fit, and the fix. With `--no-download` it
+   says the `.alpackages` package was not replaced.
+
+### Decided without owner review (2026-10-20)
+- The rule also applies against the chosen build when `--bc-version` is not given, but a build is still taken from the
+  feed: the run loads that build's Microsoft apps, so an older test library would conflict the same way.

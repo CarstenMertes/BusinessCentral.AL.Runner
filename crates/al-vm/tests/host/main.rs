@@ -6,3 +6,4 @@ mod gzip;
 mod last_error_object;
 mod media;
 mod streams;
+mod xml_read_bom;

@@ -10,6 +10,7 @@ pub mod capture;
 pub mod compile_cache;
 pub mod coverage;
 mod cpuclock;
+pub mod crash;
 pub mod deps;
 pub mod disabled;
 pub mod discover;

@@ -2902,6 +2902,7 @@ impl Session {
         // pinned and stay empty (docs/probes-needed.md).
         let mut company_line1 = String::new();
         let mut company_line2 = String::new();
+        let mut company_values: Vec<(&'static str, String)> = Vec::new();
         if self.has(al_version::Gate::ReportSaveAsXmlHeaderHasCompanyBlock) {
             if let Some(obj) = self.compiled_table(79) {
                 let t = self.engine.tables[obj].clone().expect("a compiled table has a schema");
@@ -2929,6 +2930,26 @@ impl Session {
                                 OTHER.iter().any(|a| a.eq_ignore_ascii_case(&f.name))
                                     && value(*i).is_some_and(|v| !v.is_empty())
                             });
+                            // The other elements write the value of their field (misc/lt-probes-needed-2/PnBReportSaveAs.al:568-592).
+                            // The logo is the Picture field in base64; how BC encodes it is not built, so a picture is refused.
+                            for (element, field) in dataset::COMPANY_FIELDS {
+                                let Some(i) = t.fields.iter().position(|f| f.name.eq_ignore_ascii_case(field)) else {
+                                    continue;
+                                };
+                                if element == "CompanyLogo" {
+                                    self.load_blobs(&rec, &[i])?;
+                                    if !matches!(&rec.borrow().fields[i], Value::Blob(b) if b.borrow().bytes.is_empty())
+                                    {
+                                        return unsupported(
+                                            "the CompanyLogo of the dataset header (Company Information has a Picture; its encoding is not built)",
+                                        );
+                                    }
+                                    continue;
+                                }
+                                if let Some(v) = value(i).filter(|v| !v.is_empty()) {
+                                    company_values.push((element, v.to_string()));
+                                }
+                            }
                             if let Some((_, f)) = set {
                                 return unsupported(format!(
                                     "the company address lines of the dataset header (Company Information has \"{}\" set; \
@@ -2944,6 +2965,7 @@ impl Session {
         Ok(dataset::Header {
             company_line1,
             company_line2,
+            company_values,
             extension_id: app.map(|a| a.id.clone()).unwrap_or_default(),
             extension_name: app
                 .map(|a| header_extension_name(&a.name, &a.publisher))

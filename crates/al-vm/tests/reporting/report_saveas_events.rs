@@ -222,7 +222,7 @@ codeunit 50978 "SE Header Tests"
         B.Data.CreateInStream(InS, TextEncoding::UTF8);
         while not InS.EOS() do begin
             InS.ReadText(Line);
-            if Line.Contains('CompanyAddressLine') then
+            if Line.Contains('CompanyAddressLine') and not Line.Contains('CompanyAddressLines') then
                 Result += Line.Trim();
         end;
         exit(Result);

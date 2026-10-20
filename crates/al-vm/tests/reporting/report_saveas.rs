@@ -792,6 +792,54 @@ fn the_header_lists_its_elements_in_the_order_the_probe_pins() {
     }
 }
 
+// The parents of the header elements: misc/lt-probes-needed-2/PnBReportSaveAs.al:526-575 and report/W3ReportDataset.al:510-590
+// (BC 29). `DateTimeValues` holds the clock parts on BC 27 and 28 too: report/W3ReportDataset.al:256 counts 46 line ends
+// there, two more than a flat list gives.
+#[test]
+fn the_header_groups_the_clock_parts_and_the_company_metadata() {
+    for bc in ["27.5", "28.5", "29.0"] {
+        let text = match run_on(Some(bc), DATASET) {
+            Ok(Value::Text(t)) => t,
+            other => panic!("{other:?}"),
+        };
+        let at = text.find("      <DateTimeValues>|").expect("a DateTimeValues element");
+        assert!(
+            text[at..].starts_with("      <DateTimeValues>|        <Year>"),
+            "BC {bc}: {text}"
+        );
+        assert!(
+            text.contains("        <Minute>")
+                && text.contains("</Minute>|      </DateTimeValues>|    </ReportRequest>|"),
+            "BC {bc}: {text}"
+        );
+        if bc == "29.0" {
+            assert!(
+                text.contains("    </ReportRequest>|    <CompanyMetadata>|      <CompanyName>"),
+                "{text}"
+            );
+            assert!(
+                text.contains("</CompanyDisplayName>|      <CompanyAddressLines>|        <CompanyAddressLine1>"),
+                "{text}"
+            );
+            assert!(
+                text.contains(
+                    "        <CompanyAddressLine8></CompanyAddressLine8>|      </CompanyAddressLines>|      <CompanyPhone></CompanyPhone>|      <CompanyPhoneCaption>Phone No.</CompanyPhoneCaption>|"
+                ),
+                "{text}"
+            );
+            assert!(
+                text.contains("      <CompanyGiroNoCaption>Giro No.</CompanyGiroNoCaption>|    </CompanyMetadata>|  </BCReportInformation>|"),
+                "{text}"
+            );
+        } else {
+            assert!(
+                text.contains("    </ReportRequest>|  </BCReportInformation>|"),
+                "BC {bc}: {text}"
+            );
+        }
+    }
+}
+
 // handlers/TestReportSaveAsDatasetContracts.al:SaveAs_Xml_WritesAByteOrderMarkDeclarationAndHeader (:221-222)
 #[test]
 fn the_header_names_the_report_and_the_company() {

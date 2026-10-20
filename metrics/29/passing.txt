@@ -12647,6 +12647,7 @@
 76220 ZCustModifyAllowed
 76220 ZCustPromotedActionCategories_ActionUnchanged
 76360 ZAssistEdit_TriggerFires
+76360 ZBP_CaptionClass_ProcedureCallInModify
 76360 ZBlankZero_TestPageText
 76360 ZCaptionClass_LiteralAndResolved
 76360 ZClosingDates_ValueAndStored
@@ -12655,6 +12656,7 @@
 76360 ZLookupPageId_PlainControlHasNoLookup
 76360 ZOptionCaptionML_PerLanguage
 76360 ZPresentationControls_Read
+76360 ZShowMandatory_NotEnforced
 76510 AA_CharAllowed_PageField
 76510 AA_CharAllowed_TableField
 76510 AA_DateFormula_PageField

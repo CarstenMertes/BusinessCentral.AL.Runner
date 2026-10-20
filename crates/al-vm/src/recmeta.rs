@@ -1343,6 +1343,20 @@ impl Session {
         self.foreign_transfers
             .retain(|(w, _)| w.upgrade().is_some_and(|r| !Rc::ptr_eq(&r, rec)));
         if src_table != t.object as usize {
+            // From another table the buffer takes the source's SystemCreatedAt and SystemModifiedAt and keeps its own
+            // SystemId and SystemRowVersion (record/lt-cn-transferfields-modify/CnTransferFieldsModify.al:11-16,
+            // QE_TF_Other_SystemFields_AfterModify). Not built yet, so a read of them is refused; SystemCreatedBy and
+            // SystemModifiedBy are not pinned and refused too.
+            for id in 2_000_000_001..=2_000_000_004 {
+                if let Some(i) = t.fields.iter().position(|f| f.id == id) {
+                    updates.push((
+                        i,
+                        Value::Unknown(std::sync::Arc::from(
+                            "a SystemCreatedAt, SystemCreatedBy, SystemModifiedAt or SystemModifiedBy after a TransferFields from another table (not built)",
+                        )),
+                    ));
+                }
+            }
             if let Some(sp) = from.fields.iter().position(|f| f.id == 2_000_000_005) {
                 self.foreign_transfers
                     .push((Rc::downgrade(rec), src_fields[sp].clone()));

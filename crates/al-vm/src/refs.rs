@@ -1044,6 +1044,13 @@ impl Session {
                     if let Value::Unknown(why) = &v {
                         return unsupported(why.to_string());
                     }
+                    let order = {
+                        let r = rec.borrow();
+                        self.install_row_order(r.table, r.temporary, pos, &r.fields)
+                    };
+                    if let Some(why) = order {
+                        return unsupported(why);
+                    }
                     // A read loads a field the partial buffer left out (RecordRefIsDirtyEdges.al:IsDirty_SetLoadFields_ReadUnloadedThenCompare).
                     if rec.borrow().load.partial {
                         rec.borrow_mut().load.touch(pos);

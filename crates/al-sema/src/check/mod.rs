@@ -303,6 +303,20 @@ pub fn check_with(ws: &Workspace, members: &MemberTable<'_>, catalog: &Catalog, 
             if roots.baseline {
                 c.reach_baseline();
             }
+            // Install code of an app under test that runs: an install codeunit, or a subscriber to the install events
+            // of `Extension Triggers` (ADR-046 decision 1), that the selection keeps.
+            let install_code = (0..ws.objects.len()).any(|oi| {
+                !ws.is_dependency(oi)
+                    && !skip(oi)
+                    && ws.objects[oi].kind == ObjKind::Codeunit
+                    && ws.object_ast(oi).properties().any(|p| {
+                        p.name().eq_ignore_ascii_case("Subtype") && p.value_text().eq_ignore_ascii_case("Install")
+                    })
+            }) || ws
+                .extension_triggers_subscribers()
+                .into_iter()
+                .any(|(o, _)| !ws.is_dependency(o) && !skip(o));
+            c.reach_install_events(roots.baseline, install_code);
             c.reach_test_runner();
             timings.baseline = started.elapsed();
             let started = std::time::Instant::now();

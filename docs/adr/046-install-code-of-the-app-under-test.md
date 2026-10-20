@@ -207,12 +207,7 @@ Each step is built only after the probes it names have landed and the submodule 
   Company table (`session/TestProbeSessionMiscContracts.al:705`), and `TestInstall_CompanyGetConsultsTheKeyDuringInstall`
   reads what the install code's `Comp.Get('NO SUCH COMPANY')` answered (`install/TestInstallSeeder.al:72`,
   `install/TestInstallEnvVisible_Tests.al:64`). Expected: `EventLog_InstallRowCompany` passes on 27, 28 and 29.
-- **Interim, until step A (2026-10-20):** the runtime does not run "Extension Triggers" install subscribers. Each
-  subscriber of a workspace app is listed by `events::Registry::install_subscribers`, and `run_install_codeunits`
-  (`al-testrun/src/runtime/blocked.rs`) treats it as an install routine that could not run: a test that touches a table
-  the subscriber writes is not run, with the reason. This turns the two PeV tests and
-  `ExtensionTriggers_PerDatabaseAndPerCompany_Order` (`install/lt-av-install-order/AvInstallOrder.al:71`) from a wrong
-  answer (no rows) into not run. Step A replaces it.
+- **Interim, until step A (2026-10-20):** replaced by step A as built (section "Step A as built" below).
 - **Not in this ADR:** `EventLog_RowsWrittenBeforeTheTestSessionStarted` also needs Company Triggers `OnCompanyOpen`
   and `OnCompanyOpenCompleted` raised at the start of the test session (`PeVTests.al:297`). No code raises them today.
   That is an additive change with its own pins.
@@ -642,3 +637,40 @@ New subscribers need no allow-list change; a new install codeunit does.
 - `tools/baseline_rule_check.sh run`: 0 differences. `tools/demand_vs_eager.sh run`: no difference.
 - Microsoft buckets before and after step B (at least Tests-Bank and one of the five test apps with install code): the
   changed outcomes are listed in the pull request.
+
+## Step A as built (2026-10-20, branch `lane-adr046-install`)
+
+- `al-testrun/src/install.rs` lists the install code of every app per part (`plan`): install codeunit triggers and
+  "Extension Triggers" subscribers, in program order (the runtime's own order, A2). The dependency apps' lists are the
+  baseline's step 2; the apps under test run through `run_apps_under_test` (decision 7: the baseline and the run without a
+  baseline call the same function), one app after the other, each with its own install session id (A4 item 1: any
+  positive id other than the test session's), SingleInstance state dropped at the start of each part and at the end
+  (A4 item 2, fact 6), and the app's own Company Triggers `OnCompanyOpen`/`OnCompanyOpenCompleted` subscribers run before
+  the per-company part (A4 item 4, the pinned half). PR 334's interim refusal is gone.
+- `install::facts` (once per engine, from the sources only) gives `al_vm::InstallFacts`: the tables of decision 4c and of
+  A2 items a to c for the apps under test, whose reads outside install code are refused with the reason, as for
+  `Engine::unseeded`; and the tables of A2 item d, whose `SystemRowVersion`, `SystemCreatedAt` and `SystemModifiedAt` are
+  refused for rows at or below the row version install code ended at (`Session::mark_install_end`). `AL_INSTALL_FACTS=1`
+  prints them, the same lists for the dependency apps (not applied, below), and the shared tables the dependency apps'
+  per-company install code writes ("Not decided": counted, not refused; BC 29: Onboarding Signal, Upgrade Tags).
+- A5: `IsEmpty` and `FindFirst` of a per-company table without a Caption fail in the per-database part with the pinned
+  text and an unpinned code (a read of `GetLastErrorCode` is refused); every other access stays refused.
+- Demand: a dependency app's "Extension Triggers" install subscribers are baseline roots; the dependency apps' Company
+  Triggers `OnCompanyOpen`/`OnCompanyOpenCompleted` subscribers are roots when an app under test has install code (so the
+  refusal below reads complete closures in both compile modes). Impact selection lists an extension's "Extension
+  Triggers" install subscribers as install code.
+- Not built: A4 item 5 (Company Triggers in the test session) and step B.
+
+### Decided without owner review (2026-10-20)
+
+1. **A4 item 4, other apps' subscribers: not raised.** Raising Company Triggers to every installed app's subscribers
+   runs System Application's "System Initialization" (`Init`, `InitCompany`), which reaches a refused DotNet call
+   (`NavUserAccountHelper`); every per-company install routine of the corpus app then could not run, and 25 baseline cases
+   on BC 29 stopped passing. So only the installed app's own subscribers run (pinned, fact 9). A per-company install
+   routine that reads a table those other subscribers write, or shares a SingleInstance codeunit with them, has its
+   tables refused. The assumption `install_company_triggers_all_apps` is not registered. Probe Q3 still decides.
+2. **A2 for dependency apps: worked out, not applied.** Applied, it loses the baseline case 60293
+   `RetenPolAllowedTables_IsAllowedTable_UnregisteredTable_IsFalse` (System Application's "Email Installer" and
+   "Retention Policy Installer" both write Retention Policy Allowed Table; also Upgrade Tags, read and written by every
+   installer). Counts, tables of System Application and Base Application: BC 29 13 (A2 a to c) and 14 (A2 d); BC 27 10
+   and 12.

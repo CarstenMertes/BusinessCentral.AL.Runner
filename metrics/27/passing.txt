@@ -1762,6 +1762,9 @@
 60192 StrSubstNo_MultiplePlaceholders
 60192 StrSubstNo_SinglePlaceholder
 60193 BN_Ternary_CharAndTextLiterals
+60193 BN_Ternary_Code20TrueBranch
+60193 BN_Ternary_IntegerAndDecimalBranches
+60193 BN_Ternary_VariantBranch
 60193 Ternary_BothBranches_Differ
 60193 Ternary_FalseCondition_ReturnsSecondBranch
 60193 Ternary_FlipBoolean
@@ -7301,6 +7304,7 @@
 70512 MaxStrLenVariables
 70513 CodeNAssign
 70513 CodeTrimUpper
+70513 LT_BU_TextAssign_LongTextToCode20Parameter
 70513 TextNAssign
 70513 TextNtoCodeAndBack
 70514 EvaluateCode
@@ -12908,3 +12912,5 @@
 83550 LT_BU_Literal_MultilineTextCrlfSource
 83553 LT_BU_DecimalPlaces_StoredAndShown
 83761 LocalProcedure_CharVariableToInteger_Control
+83761 PlainReport_CharVariableToInteger
+83761 ReportWithExtension_CharVariableToIntegerOverload

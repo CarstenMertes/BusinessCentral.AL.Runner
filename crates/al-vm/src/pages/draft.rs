@@ -57,6 +57,7 @@ impl Session {
                 PageMethod::New | PageMethod::Next | PageMethod::Last => {
                     let key_ctl = self.key_control(st);
                     let mut s = st.borrow_mut();
+                    al_builtins::native::refuse_unpinned_text(&e, "The error list of a page row")?;
                     if !s.refused {
                         s.errors.push((key_ctl, e.message));
                         s.refused = true;
@@ -230,6 +231,7 @@ impl Session {
         }
         let existed = self.stored_row(&rec)?.is_some();
         st.borrow_mut().draft_stored = existed;
+        st.borrow_mut().typed_before_key = false;
         if let Some(last) = last_held {
             self.set_xrec_fields(st, last);
         }

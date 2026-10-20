@@ -428,6 +428,16 @@ pub(crate) fn run_codeunit_core(
                                 unexecuted.join(", ")
                             ))
                         }
+                        // An uncaught error whose text is not pinned would put a made-up text in the result: the test is not run.
+                        Err(Signal::Error(e)) if al_builtins::native::text_unpinned(&e) => {
+                            session.rollback_transaction();
+                            let Err(Signal::Unsupported(r)) =
+                                al_builtins::native::refuse_unpinned_text(&e, "The test result")
+                            else {
+                                unreachable!("an unpinned error is refused")
+                            };
+                            Outcome::NotRun(r)
+                        }
                         Err(Signal::Error(e)) => {
                             session.rollback_transaction();
                             let message = e.message.clone();

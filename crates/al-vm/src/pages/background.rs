@@ -221,6 +221,7 @@ impl Session {
         else {
             return Ok(false);
         };
+        al_builtins::native::refuse_unpinned(e, "OnPageBackgroundTaskError")?;
         let inst = st.borrow().instance.clone().expect("open page");
         let args = vec![
             Value::Integer(id),

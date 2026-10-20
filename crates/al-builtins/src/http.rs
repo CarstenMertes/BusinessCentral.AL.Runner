@@ -112,6 +112,7 @@ fn fresh_response() -> HttpResponseState {
     HttpResponseState {
         status: 200,
         reason: "OK".into(),
+        reason_unpinned: false,
         content: lib("HttpContent", LibraryValue::HttpContent(content)),
         headers: new_header_list(HeaderKind::Response),
         blocked: false,
@@ -135,8 +136,11 @@ fn with_response<R>(r: Option<&mut Value>, f: impl FnOnce(&mut HttpResponseState
 pub fn fresh_test_response() -> TestHttpResponseState {
     TestHttpResponseState {
         request_failed: false,
+        failure: None,
         status: 200,
         reason: "OK".into(),
+        reason_set: false,
+        reason_unpinned: false,
         success: true,
         blocked: false,
         content: new_content(),
@@ -185,6 +189,9 @@ fn hand_out_headers(arg: Option<&Value>, list: &HttpHeaderList) -> Result<(), Si
     *cell.borrow_mut() = LibraryValue::HttpHeaders(list.clone());
     Ok(())
 }
+
+/// The Content-Length value a WriteFrom of another length left after a read put the header in: `GetValues` of it is refused.
+const UNPINNED_LENGTH: &str = "\u{1}unmeasured Content-Length";
 
 // ------------------------------------------------------------------------------------------------ uri
 
@@ -334,14 +341,19 @@ fn percent_decode(s: &str) -> String {
 }
 
 /// Resolves `path` against the client's base address the way `new Uri(base, path)` does for the forms in use. The second
-/// value says the uri was joined to the base address. A relative path with no base address stays as written: such a
-/// request raises the blocked-request error with no handler bound, and a handler refuses it (`http_send_impl`); the
-/// corpus pins that `orders`, `/orders` and `https://...` all reach the policy check (HttpRelativeRequestPath.al:P168_Get_NoBaseAddress).
+/// value says the join is one the corpus does not pin (assumption http-relative-request-path). A relative path with no base
+/// address stays as written for the forms the corpus pins as reaching the request policy (`is_pinned_relative`); the
+/// session then raises the policy error, or the empty-uri error once a handler is reached (`http_send_impl`).
 fn resolve_request_path(base: &str, path: &str) -> Result<(String, bool), Signal> {
     if path.contains("://") || base.is_empty() {
         return match normalize_uri(path) {
             Ok(u) => Ok((u, false)),
             Err(_) if is_pinned_relative(path) => Ok((path.to_string(), false)),
+            // Another relative path with no base address: whether it reaches the policy, the empty-uri error or the
+            // invalid-url error is not measured (docs/probes-needed.md).
+            Err(false) if !path.is_empty() && !path.contains(':') => unsupported(format!(
+                "HttpClient with the relative request path `{path}` and no base address: which error it raises is not measured (docs/probes-needed.md)"
+            )),
             Err(true) => unsupported(format!(
                 "HttpClient with the request path `{path}` and no base address: whether it is valid is not measured"
             )),
@@ -353,20 +365,71 @@ fn resolve_request_path(base: &str, path: &str) -> Result<(String, bool), Signal
     };
     let path_start = base[after..].find('/').map_or(base.len(), |i| after + i);
     let (origin, base_path) = base.split_at(path_start);
-    let joined = if let Some(rooted) = path.strip_prefix('/') {
-        format!("{origin}/{rooted}")
+    let (rel_path, rest) = path.split_at(path.find(['?', '#']).unwrap_or(path.len()));
+    let merged = if let Some(rooted) = rel_path.strip_prefix('/') {
+        format!("/{rooted}")
+    } else if rel_path.is_empty() {
+        base_path.to_string()
     } else {
         let dir = &base_path[..base_path.rfind('/').map_or(0, |i| i + 1)];
-        format!("{origin}{dir}{path}")
+        format!("{}{rel_path}", if dir.is_empty() { "/" } else { dir })
     };
-    normalize_uri(&joined).map(|u| (u, true)).or_else(|_| invalid_url())
+    let joined = format!("{origin}{}{rest}", remove_dot_segments(&merged));
+    normalize_uri(&joined)
+        .map(|u| (u, !is_pinned_join(base_path, path)))
+        .or_else(|_| invalid_url())
+}
+
+/// The joins al-language-onprem/network/lt-ay-http-handler/AyHttpHandler.al:BaseAddress_RelativePaths_1 and _2 pin (BC 29, a
+/// base address `https://example.invalid/api/v1/`): a plain word, a rooted word, `../` and a word, and a query alone.
+fn is_pinned_join(base_path: &str, path: &str) -> bool {
+    let word = |w: &str| !w.is_empty() && w.chars().all(|c| c.is_ascii_alphanumeric());
+    base_path.ends_with('/')
+        && (word(path)
+            || path.strip_prefix('/').is_some_and(word)
+            || path.strip_prefix("../").is_some_and(word)
+            || path
+                .strip_prefix('?')
+                .is_some_and(|q| q.split_once('=').is_some_and(|(k, v)| word(k) && word(v))))
+}
+
+/// RFC 3986 section 5.2.4: `.` and `..` segments of a merged path are removed, as `System.Uri` does.
+fn remove_dot_segments(path: &str) -> String {
+    let mut out: Vec<&str> = Vec::new();
+    let segments: Vec<&str> = path.split('/').skip(1).collect();
+    for (i, seg) in segments.iter().enumerate() {
+        let last = i + 1 == segments.len();
+        match *seg {
+            "." => {
+                if last {
+                    out.push("");
+                }
+            }
+            ".." => {
+                out.pop();
+                if last {
+                    out.push("");
+                }
+            }
+            s => out.push(s),
+        }
+    }
+    format!("/{}", out.join("/"))
 }
 
 /// The relative paths the corpus pins as reaching the request policy with no base address: a plain word and a rooted path
-/// (HttpRelativeRequestPath.al:P168_Get_NoBaseAddress `orders`, `/orders`).
+/// (network/lt-http-relative-request/HttpRelativeRequestPath.al:P168_Get_NoBaseAddress `orders`, `/orders`), and `a/b`, `a.b`
+/// and `?q=1` (al-language-onprem/network/lt-ay-http-handler/AyHttpHandler.al:NoBaseAddress_RelativePaths_1 and _2: the
+/// unhandled-request error on BC 27 and 28, where the handler is not reached).
 fn is_pinned_relative(path: &str) -> bool {
     let word = path.strip_prefix('/').unwrap_or(path);
-    !word.is_empty() && word.chars().all(|c| c.is_ascii_alphanumeric())
+    (!word.is_empty() && word.chars().all(|c| c.is_ascii_alphanumeric())) || is_empty_uri_form(path)
+}
+
+/// The no-base-address forms that raise "Invalid URI: The URI is empty." when they reach a handler on BC 29, exactly as pinned
+/// (AyHttpHandler.al:NoBaseAddress_RelativePaths_1 `a/b`, `a.b`; _2 `?q=1`). Any other form is not measured.
+pub fn is_empty_uri_form(path: &str) -> bool {
+    matches!(path, "a/b" | "a.b" | "?q=1")
 }
 
 fn invalid_url<T>() -> Result<T, Signal> {
@@ -459,6 +522,8 @@ pub fn copy_content(v: &Value) -> Result<Value, Signal> {
 // ------------------------------------------------------------------------------------------------ headers
 
 const INVALID_HEADER: &str = "Invalid HTTP header. Please, make sure the format of the header is correct.";
+const GET_VALUES_MISSING: &str =
+    "Exception of type 'Microsoft.Dynamics.Nav.Types.Exceptions.NavNclInvalidHeaderException' was thrown.";
 const INVALID_OPERATION: &str = "The requested operation cannot be performed in this context.";
 
 fn is_token_char(c: char) -> bool {
@@ -508,7 +573,13 @@ fn is_media_type(v: &str) -> bool {
     let token = |s: &str| !s.is_empty() && s.chars().all(is_token_char);
     token(t)
         && token(st)
-        && parts.all(|p| matches!(p.split_once('='), Some((n, v)) if token(n.trim()) && !v.trim().is_empty()))
+        && parts.all(|p| matches!(p.split_once('='), Some((n, v)) if token(n.trim()) && param_value(v.trim())))
+}
+
+/// A parameter value: not empty, and a value that opens a quote closes it (network/lt-ay-http/AyHeaderAddResult.al:101 refuses
+/// `a/b; q="`).
+fn param_value(v: &str) -> bool {
+    !v.is_empty() && (!v.starts_with('"') || (v.len() >= 2 && v.ends_with('"')))
 }
 
 /// An RFC 1123 date (`Tue, 15 Nov 1994 08:12:31 GMT`).
@@ -919,6 +990,188 @@ fn typed_add(bag: &HeaderBag, name: &str, value: &str) -> Result<Option<Typed>, 
     }
 }
 
+/// A whole number as .NET writes it back: digits with no leading zero, at most nine of them (so it fits an Int32). A number with a
+/// leading zero or more digits is not measured.
+fn plain_number(v: &str) -> Result<bool, Signal> {
+    if v.is_empty() || !v.chars().all(|c| c.is_ascii_digit()) {
+        return Ok(false);
+    }
+    if (v.len() > 1 && v.starts_with('0')) || v.len() > 9 {
+        return unsupported(format!(
+            "HttpHeaders.Add of the number '{v}': its stored form is not measured"
+        ));
+    }
+    Ok(true)
+}
+
+/// A uri header (Referer, Location, Content-Location): a relative uri is stored with its spaces as `%20`
+/// (network/lt-ay-http/AyHeaderAddResult.al:256, :311, :355 `a%20b`); an absolute one as written when it is already in its normal form
+/// (:255, :354 `https://a.example/x`). Other characters of a relative uri, and an absolute uri .NET would rewrite, are not measured.
+fn uri_header(v: &str) -> Result<String, Signal> {
+    let has_scheme = v.split_once(':').is_some_and(|(s, _)| {
+        s.starts_with(|c: char| c.is_ascii_alphabetic())
+            && s.chars().all(|c| c.is_ascii_alphanumeric() || "+.-".contains(c))
+    });
+    if has_scheme {
+        return match normalize_uri(v) {
+            Ok(n) if n == v => Ok(n),
+            _ => unsupported(format!(
+                "HttpHeaders.Add of the uri '{v}': its stored form is not measured"
+            )),
+        };
+    }
+    if v.chars()
+        .all(|c| c == ' ' || c.is_ascii_alphanumeric() || "-._~/?#[]@!$&'()*+,;=%".contains(c))
+    {
+        return Ok(v.replace(' ', "%20"));
+    }
+    unsupported(format!(
+        "HttpHeaders.Add of the relative uri '{v}': its stored form is not measured"
+    ))
+}
+
+/// `bytes 0-9/10` (AyHeaderAddResult.al:285; lt-http-header-names-cache-control/Hdr198Helper.al `bytes 0-1/2`): a unit, one space, a
+/// range `first-last` and `/length`. `abc` is refused (AyHeaderAddResult.al:297). `*` forms are not measured.
+fn content_range(v: &str) -> Result<bool, Signal> {
+    let Some((unit, rest)) = v.split_once(' ') else {
+        return Ok(false);
+    };
+    let digits = |s: &str| !s.is_empty() && s.chars().all(|c| c.is_ascii_digit());
+    let ok = is_token(unit)
+        && rest
+            .split_once('/')
+            .is_some_and(|(r, len)| digits(len) && r.split_once('-').is_some_and(|(a, b)| digits(a) && digits(b)));
+    if !ok && rest.contains('*') {
+        return unsupported(format!("HttpHeaders.Add of the Content-Range '{v}': not measured"));
+    }
+    Ok(ok)
+}
+
+/// The typed headers `typed_add` leaves alone, measured by network/lt-ay-http/AyHeaderAddResult.al (codeunit 80507) on the collection
+/// it used: the request headers If-Range, Max-Forwards, Referer and Expect; the content headers Content-Range, Content-MD5,
+/// Content-Location and Allow; the response headers Age, ETag, Location, Retry-After, Vary, WWW-Authenticate and Accept-Ranges.
+/// `None` is a header with no value rule here.
+fn typed_add_more(bag: &HeaderBag, name: &str, value: &str) -> Result<Option<Typed>, Signal> {
+    let lower = name.to_ascii_lowercase();
+    let v = value.trim();
+    let one = |s: String| {
+        Ok(Some(Typed {
+            values: vec![s],
+            replace: false,
+        }))
+    };
+    let fail = || header_error::<Option<Typed>>("Format");
+    let request = ["if-range", "max-forwards", "referer", "expect"];
+    let content = ["content-range", "content-md5", "content-location", "allow"];
+    let response = [
+        "age",
+        "etag",
+        "location",
+        "retry-after",
+        "vary",
+        "www-authenticate",
+        "accept-ranges",
+    ];
+    let probed_here = match bag.kind {
+        HeaderKind::Request => request.contains(&lower.as_str()),
+        HeaderKind::Content => content.contains(&lower.as_str()),
+        HeaderKind::Response => response.contains(&lower.as_str()),
+        HeaderKind::Default => false,
+    };
+    // On another collection the header keeps the earlier rule, stored as written (the HeaderNameCase*.al probes add valid values of
+    // these names to every collection; assumption http-header-rules).
+    if !probed_here {
+        return Ok(None);
+    }
+    let existing = find(&bag.items, name).is_some();
+    let single_unmeasured = || unsupported(format!("HttpHeaders.Add of {name} a second time: not measured"));
+    let token_list = |v: &str| {
+        let items = split_list(v);
+        if !items.is_empty() && items.iter().all(|i| is_token(i)) {
+            Ok(Some(Typed {
+                values: items,
+                replace: false,
+            }))
+        } else {
+            fail()
+        }
+    };
+    match lower.as_str() {
+        // `abc` refused (:241); `"a"` accepted (Hdr198Helper.al); an HTTP date is not measured here.
+        "if-range" => match () {
+            _ if existing => single_unmeasured(),
+            _ if is_entity_tag(v) && v != "*" => one(v.to_string()),
+            _ if is_http_date(v) => unsupported("HttpHeaders.Add of If-Range with a date: not measured"),
+            _ => fail(),
+        },
+        // `5` accepted, `five` refused (:242-243).
+        "max-forwards" | "age" => match () {
+            _ if existing => single_unmeasured(),
+            _ if plain_number(v)? => one(v.to_string()),
+            _ => fail(),
+        },
+        // `120` accepted, `later` refused (:367-368); a date is not measured here.
+        "retry-after" => match () {
+            _ if existing => single_unmeasured(),
+            _ if plain_number(v)? => one(v.to_string()),
+            _ if is_http_date(v) => unsupported("HttpHeaders.Add of Retry-After with a date: not measured"),
+            _ => fail(),
+        },
+        "referer" | "location" | "content-location" => match () {
+            _ if existing => single_unmeasured(),
+            _ => one(uri_header(v)?),
+        },
+        // `=` refused (:257); `100-continue` accepted (Hdr198Helper.al). A value or parameters are not measured.
+        "expect" => {
+            let items = split_list(v);
+            if items.iter().any(|i| i.contains(['=', ';']))
+                && items
+                    .iter()
+                    .all(|i| is_token(i.split(['=', ';']).next().unwrap_or("").trim()))
+            {
+                return unsupported("HttpHeaders.Add of Expect with a value or parameters: not measured");
+            }
+            token_list(v)
+        }
+        // A base-64 text (:298) read back as written; `not base64!` refused (:299). Base 64 that .NET would write another way is not
+        // measured.
+        "content-md5" => match crate::platform_native::b64_decode(v) {
+            _ if existing => single_unmeasured(),
+            Ok(bytes) if crate::platform_native::b64_encode(&bytes, false) == v => one(v.to_string()),
+            Ok(_) => unsupported(format!(
+                "HttpHeaders.Add of the Content-MD5 '{v}': its stored form is not measured"
+            )),
+            Err(_) => fail(),
+        },
+        "content-range" => match () {
+            _ if existing => single_unmeasured(),
+            _ if content_range(v)? => one(v.to_string()),
+            _ => fail(),
+        },
+        // `"abc"` accepted, `abc` refused (:339-341, :353).
+        "etag" => match () {
+            _ if existing => single_unmeasured(),
+            _ if is_entity_tag(v) && v != "*" => one(v.to_string()),
+            _ => fail(),
+        },
+        // Token lists: `G E T`, `a b` refused (:327, :369, :382); `GET` accepted (Hdr198Helper.al).
+        "allow" | "vary" | "accept-ranges" => token_list(v),
+        // A lone comma is an empty list: Add answers true and nothing is stored, so GetValues raises (:381, :384). A challenge is
+        // not measured.
+        "www-authenticate" => {
+            if split_list(v).is_empty() && !v.is_empty() {
+                Ok(Some(Typed {
+                    values: Vec::new(),
+                    replace: false,
+                }))
+            } else {
+                unsupported("HttpHeaders.Add of a WWW-Authenticate challenge: not measured")
+            }
+        }
+        _ => Ok(None),
+    }
+}
+
 fn find<'a>(items: &'a [(String, Vec<String>)], name: &str) -> Option<&'a (String, Vec<String>)> {
     items.iter().find(|(n, _)| n.eq_ignore_ascii_case(name))
 }
@@ -949,7 +1202,10 @@ fn add_header(bag: &mut HeaderBag, name: &str, value: &str, secret: bool) -> Res
         return Ok(());
     }
     let stored = stored_name(&bag.items, name)?;
-    let typed = typed_add(bag, name, value)?;
+    let typed = match typed_add(bag, name, value)? {
+        Some(t) => Some(t),
+        None => typed_add_more(bag, name, value)?,
+    };
     // The value rules of a typed header other than Cache-Control (pinned by network/lt-http-header-names-cache-control/CacheControl*.al) rest
     // on the probes measured so far (assumption http-header-rules).
     if typed.is_some() && !name.eq_ignore_ascii_case("cache-control") {
@@ -1010,10 +1266,18 @@ fn headers_add(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
     let added = with_bag(r.as_deref(), |b| add_header(b, &name, &value, secret))?;
     match added {
         Ok(()) => Ok(Value::Boolean(true)),
-        // A statement raises the invalid header; `Format(H.Add(...))` answers false instead, as a Boolean method does when its
-        // result is used (HttpWriteFromStream.al:P100_PresetContentType_ThenWrite, `add_type` No on a Content-Type that is there;
-        // lt-http-header-rules/P87Twice.al raises it for the statement). Assumption http-headers-add-used-result.
-        Err(Signal::Error(e)) if ret_used && e.code == "InvalidHeader:Format" => {
+        // A statement raises the invalid header; an Add whose result is used answers false instead, for a refused value
+        // (network/lt-ay-http/AyHeaderAddResult.al:88-89, :115-116, :129-130 and the typed headers below them), a name that is no
+        // token (:157-158, :171-173, :185), an empty name (:159, InvalidHeader:Argument) and a name the collection refuses (:186-187,
+        // :383, InvalidOperation). lt-http-header-rules/P87Twice.al raises it for the statement. What the last error holds after the
+        // false is not measured (assumption http-headers-add-used-result).
+        Err(Signal::Error(e))
+            if ret_used
+                && matches!(
+                    e.code.as_str(),
+                    "InvalidHeader:Format" | "InvalidHeader:Argument" | "InvalidOperation"
+                ) =>
+        {
             assume(crate::assumptions::Assumption::HttpHeadersAddUsedResult);
             Ok(Value::Boolean(false))
         }
@@ -1080,20 +1344,49 @@ fn headers_keys(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Out 
     Ok(Value::List(Rc::new(RefCell::new(keys.into()))))
 }
 
-/// `GetValues(Name, var Values)` fills an array or a list with the values in order and answers true; a name that is
-/// not there answers false and leaves the target as it was.
-fn headers_get_values(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
+/// `GetValues(Name, var Values)` fills an array or a list with the values in order and answers true. For a name that is not
+/// there it answers false, leaves the target as it was and puts the error in GetLastErrorText when its result is used, and raises
+/// that error as a statement (network/lt-http/HttpContent.al:OldHeadersHandle_AfterWriteFrom, :226 with :281-283 and :270 with
+/// :290-291, on content headers; network/lt-http/HttpHeaders.al:GetValuesOnMissingLeavesArray for the result).
+fn headers_get_values(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
     let name = text(a, 0)?;
     // A content header name asked of request, response or client headers is no header there: GetValues answers false
     // (lt-http-header-rules/P87Matrix.al `get=No/n=0`), where Contains raises.
-    let values = with_bag(r.as_deref(), |b| {
+    let (values, kind) = with_bag(r.as_deref(), |b| {
         if restricted_lookup(b, &name).is_err() {
-            return Ok::<_, Signal>(None);
+            return Ok::<_, Signal>((None, b.kind));
         }
-        Ok(find(&b.items, &name).map(|(_, v)| v.clone()))
+        Ok((find(&b.items, &name).map(|(_, v)| v.clone()), b.kind))
     })??;
+    if values.as_ref().is_some_and(|v| v.iter().any(|x| x == UNPINNED_LENGTH)) {
+        return unsupported(
+            "the Content-Length of an HttpContent that a read measured and a WriteFrom of another length rewrote: what it shows is not measured (docs/probes-needed.md)",
+        );
+    }
     let Some(values) = values else {
-        return Ok(Value::Boolean(false));
+        let error = crate::native::AlError {
+            message: GET_VALUES_MISSING.into(),
+            code: "InvalidHeader".into(),
+            ..Default::default()
+        };
+        if kind != HeaderKind::Content {
+            // On request, response and client headers a statement raises too, for a name that is not there, no token or a content
+            // header (network/lt-ay-http/AyHeaderAddResult.al `get=E` after every refused Add, :88 to :383). The text and code are
+            // measured on content headers only: the error carries none, and any read of them is refused (probe
+            // http-get-values-missing-error in docs/probes-needed.md). With the result used nothing about the last error is
+            // measured there; it is left as it was.
+            if c.ret_used() {
+                return Ok(Value::Boolean(false));
+            }
+            return Err(Signal::Error(Box::new(crate::native::unpinned_error_for(
+                "http-get-values-missing-error",
+            ))));
+        }
+        if c.ret_used() {
+            c.set_last_error(error);
+            return Ok(Value::Boolean(false));
+        }
+        return Err(Signal::Error(Box::new(error)));
     };
     match a.get(1) {
         Some(Value::Array(arr)) => {
@@ -1352,23 +1645,44 @@ fn send(c: &mut dyn Ctx, method: &str, url: (String, bool), response: Option<&Va
         method: method.to_ascii_uppercase(),
         url: url.0,
         has_secret_uri: false,
-        joined_with_base: url.1,
+        unpinned_join: url.1,
     })?;
     let Some(Value::Library(_, cell)) = response else {
         return unsupported("HttpClient call without a response variable");
     };
-    // A request that failed (a handler answered true: the real send, to an unresolvable host) answers false and leaves
-    // the response a call that got no answer has: status 0 (network/PZHttpHandler.al:HandlerAnsweringTrue_SendsTheRealRequest
-    // pins only that the status is not the one the handler set).
-    let failed = state.request_failed;
+    // A request that failed (a handler answered true and BC asked whether to allow the real send) answers false, sets the
+    // last error and leaves the response as it was: a fresh one reads status 200 OK (al-language-onprem/network/lt-ay-http-handler/
+    // AyHttpHandler.al:Handler_FallThrough_ConnectionRefused, session/PZHttpHandler.al:HandlerAnsweringTrue_SendsTheRealRequest).
+    // Pinned only with the result used and a response variable nothing was written to: anything else is refused.
+    if state.request_failed {
+        if !c.ret_used() {
+            return unsupported(
+                "a failed HttpClient call whose result is not used: whether it raises is not measured (docs/probes-needed.md)",
+            );
+        }
+        if !matches!(&*cell.borrow(), LibraryValue::Empty) {
+            return unsupported(
+                "a failed HttpClient call into a response variable that already holds a response: what it keeps is not measured",
+            );
+        }
+        if let Some((message, code)) = state.failure {
+            c.set_last_error(crate::native::AlError {
+                message,
+                code,
+                ..Default::default()
+            });
+        }
+        return Ok(Value::Boolean(false));
+    }
     *cell.borrow_mut() = LibraryValue::HttpResponse(HttpResponseState {
         status: state.status,
         reason: state.reason,
+        reason_unpinned: state.reason_unpinned,
         content: state.content,
         headers: state.headers,
         blocked: state.blocked,
     });
-    Ok(Value::Boolean(!failed))
+    Ok(Value::Boolean(true))
 }
 
 macro_rules! verb {
@@ -1414,7 +1728,14 @@ fn response_status(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> O
 }
 
 fn response_reason(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Out {
-    with_response(r, |s| Value::Text(s.reason.clone().into()))
+    match with_response(r, |s| {
+        (!s.reason_unpinned).then(|| Value::Text(s.reason.clone().into()))
+    })? {
+        Some(v) => Ok(v),
+        None => unsupported(
+            "ReasonPhrase of a response whose [HttpClientHandler] set a status and no ReasonPhrase: the phrase BC gives is pinned for 200 and 404 only (docs/probes-needed.md)",
+        ),
+    }
 }
 
 fn response_blocked(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Out {
@@ -1470,7 +1791,11 @@ fn test_response_reason(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value])
         return with_test_response(r, |s| Value::Text(s.reason.clone().into()));
     }
     let t = text(a, 0)?;
-    with_test_response(r, |s| s.reason = t).map(|()| Value::Null)
+    with_test_response(r, |s| {
+        s.reason = t;
+        s.reason_set = true;
+    })
+    .map(|()| Value::Null)
 }
 
 fn test_response_blocked(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
@@ -1668,6 +1993,10 @@ fn cookie_name(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
     if new.is_some() && c.ret_used() {
         crate::assumptions::assume(crate::assumptions::Assumption::CookieSetterResult);
     }
+    // An empty name raises and keeps the old one (network/lt-ay-http/AyCookieSetterExpression.al:CookieSetter_EmptyName, BC 27-29).
+    if new.as_deref() == Some("") {
+        return raise("The 'Name'='' part of the cookie is invalid.", "AL:Cookie");
+    }
     with_cookie(r, |s| {
         if let Some(n) = new {
             s.name = n;
@@ -1835,8 +2164,10 @@ impl HttpContentState {
     /// `WriteFrom` of text or a stream: the body is replaced, the header collection stays the one every `HttpHeaders` handed out
     /// shows, with its Content-Type set to `text/plain; charset=utf-8` (put first when it was removed) and the other headers kept
     /// (lt-http-header-rules/P87Content.al:AddThenWrite_Text, WriteThenAdd_Text, RewriteKeepsHeader, P87ContentType.al:HeaderBeforeWrite,
-    /// P87ContentStream.al, HttpWriteFromStream.al:P100_*). A Content-Length the headers already hold (see `read_as`) shows the new
-    /// body's length (P100_SecondWrite_ReplacesBody; assumption http-content-length-after-read).
+    /// P87ContentStream.al, HttpWriteFromStream.al:P100_*). A Content-Length the headers already hold (see `read_as`) is not
+    /// rewritten: it stays for an empty body (network/lt-ay-http/AyContentLength.al:ContentLength_SecondWriteFrom `empty`
+    /// `Yes[13]`) and for a body of the same length (P100_SecondWrite_ReplacesBody, 5 bytes twice); after a body of another
+    /// length the value is not measured: reading it is refused (`UNPINNED_LENGTH`).
     fn write_body(&mut self, data: Vec<u8>) {
         {
             let mut bag = self.headers.borrow_mut();
@@ -1856,7 +2187,9 @@ impl HttpContentState {
                 .find(|(n, _)| n.eq_ignore_ascii_case("Content-Length"))
             {
                 assume(crate::assumptions::Assumption::HttpContentLengthAfterRead);
-                *v = vec![data.len().to_string()];
+                if !data.is_empty() && v.first() != Some(&data.len().to_string()) {
+                    *v = vec![UNPINNED_LENGTH.into()];
+                }
             }
         }
         self.data = data;

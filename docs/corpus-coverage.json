@@ -2,7 +2,7 @@
   "corpus_commit": "c8d38887926f749df975996c1820bdde7c999836",
   "language": {
     "bc": "27-29",
-    "implemented": 1498,
+    "implemented": 1499,
     "methods": [
       {
         "bc": [
@@ -13430,7 +13430,7 @@
         "scope": "",
         "sig": "()",
         "site": "must-not-compile/cases/0998-bc29-methods-runtime-16.al:39",
-        "state": "refused",
+        "state": "implemented",
         "type": "Record"
       },
       {
@@ -27947,7 +27947,7 @@
     ],
     "overloads": 1750,
     "pinned": 1703,
-    "refused": 224,
+    "refused": 223,
     "runtime_only": [
       "ErrorInfo.Create#3",
       "FieldRef.FieldError#2",

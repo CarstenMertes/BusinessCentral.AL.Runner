@@ -236,25 +236,52 @@ impl Lowerer<'_> {
     /// caption, not the member name (corpus fieldref/TestPrecompiledFieldOptionCaption.al:47-55,
     /// a Base Application table whose caption differs from its member). The value keeps its
     /// ordinal and takes the caption list. Other Format forms on such a field are not pinned.
-    pub(crate) fn format_option_field(&mut self, plain: bool, arg: &SyntaxNode) -> L<ir::Expr> {
+    /// `number9`: the call is `Format(x, 0, 9)`.
+    ///
+    /// A member named through the field, `Format(Row.Opt::Two)`, shows its caption too (misc/lt-probes-needed-2/
+    /// PnBRecordMisc.al:96, :113: `Dos`).
+    pub(crate) fn format_option_field(&mut self, plain: bool, number9: bool, arg: &SyntaxNode) -> L<ir::Expr> {
         let value = self.expr(arg)?;
-        let Some(Res::Field { table, id: field }) = self.res(arg).cloned() else {
+        let member = arg.kind() == SyntaxKind::ScopeExpr;
+        let field_node = if member {
+            match arg.children().next() {
+                Some(lhs) => lhs,
+                None => return Ok(value),
+            }
+        } else {
+            arg.clone()
+        };
+        let Some(Res::Field { table, id: field }) = self.res(&field_node).cloned() else {
             return Ok(value);
         };
         let Some(f) = self.members[table].fields.iter().find(|f| f.id == field) else {
             return Ok(value);
         };
-        // OptionCaptionML gives the captions of the session language (record/lt-x-table-props/XTablePropsTests.al:219-228);
-        // it is not read, so Format of such a field is refused rather than formatted from another list.
-        if matches!(f.ty, Ty::Option(_))
-            && f.properties
+        // OptionCaptionML gives the captions of the session language (record/lt-x-table-props/XTablePropsTests.al:219-228):
+        // the value takes them when it runs.
+        if let (Ty::Option(_), Some((_, ml))) = (
+            &f.ty,
+            f.properties
                 .iter()
-                .any(|(k, _)| k.eq_ignore_ascii_case("OptionCaptionML"))
-        {
-            return Err(format!(
-                "Format of option field {} with OptionCaptionML is not supported",
-                f.name
-            ));
+                .find(|(k, _)| k.eq_ignore_ascii_case("OptionCaptionML")),
+        ) {
+            if member && !plain && !number9 {
+                return Err(format!(
+                    "Format of member {} of option field {} with a length or format number (only the plain form and `0, 9` are pinned)",
+                    arg.text(),
+                    f.name
+                ));
+            }
+            let ml = ml.clone();
+            return Ok(ir::Expr::Builtin {
+                id: super::call::builtin_id("System.OptionCaptionML#1")?,
+                receiver: None,
+                args: vec![
+                    ir::Arg::Value(value),
+                    ir::Arg::Value(ir::Expr::Const(ir::Const::Text(ml))),
+                ],
+                ret_used: true,
+            });
         }
         let (Ty::Option(names), Some((_, text))) = (
             &f.ty,
@@ -264,6 +291,12 @@ impl Lowerer<'_> {
         ) else {
             return Ok(value);
         };
+        if al_syntax::ast::text_over_max_length(text) {
+            return Err(format!(
+                "Format of option field {} whose OptionCaption is longer than its MaxLength (whether it is cut is not pinned)",
+                f.name
+            ));
+        }
         let captions: Vec<String> = match crate::members::first_string_literal(text) {
             Some(list) => list.split(',').map(str::to_string).collect(),
             None => return Err(format!("Format of option field {} with OptionCaption `{text}`", f.name)),
@@ -273,7 +306,15 @@ impl Lowerer<'_> {
         }
         // Every form of Format reads the caption list (text/TestProbeTextDateFormatContracts.al:
         // Format_OptionFieldAndOptionVariable): standard formats 2 and 9 the ordinal, a length cuts or pads the caption.
-        let _ = plain;
+        // A member named through the field is pinned in the plain form (PnBRecordMisc.al:96) and with format number 9, which
+        // gives the ordinal (misc/lt-probes-needed-5/PnE10Formats.al:96-97, :127).
+        if member && !plain && !number9 {
+            return Err(format!(
+                "Format of member {} of option field {} with a length or format number (only the plain form and `0, 9` are pinned)",
+                arg.text(),
+                f.name
+            ));
+        }
         if captions.len() != names.len() {
             return Err(format!(
                 "Format of option field {} whose OptionCaption has another number of entries than its members is not pinned",
@@ -281,6 +322,37 @@ impl Lowerer<'_> {
             ));
         }
         Ok(ir::Expr::Convert(RtType::Option(captions), Box::new(value)))
+    }
+
+    /// Evaluate into an Option field with OptionCaptionML: which captions it accepts is not pinned, so it is refused.
+    pub(crate) fn refuse_evaluate_option_caption_ml(&mut self, arg: &SyntaxNode) -> L<()> {
+        let Some(Res::Field { table, id: field }) = self.res(arg).cloned() else {
+            return Ok(());
+        };
+        let Some(f) = self.members[table].fields.iter().find(|f| f.id == field) else {
+            return Ok(());
+        };
+        if matches!(f.ty, Ty::Option(_))
+            && f.properties
+                .iter()
+                .any(|(k, _)| k.eq_ignore_ascii_case("OptionCaptionML"))
+        {
+            return Err(format!(
+                "Evaluate into option field {} with OptionCaptionML (which captions it takes is not pinned)",
+                f.name
+            ));
+        }
+        if matches!(f.ty, Ty::Option(_))
+            && f.properties
+                .iter()
+                .any(|(k, v)| k.eq_ignore_ascii_case("OptionCaption") && al_syntax::ast::text_over_max_length(v))
+        {
+            return Err(format!(
+                "Evaluate into option field {} whose OptionCaption is longer than its MaxLength (not pinned)",
+                f.name
+            ));
+        }
+        Ok(())
     }
 
     /// The OptionCaption entries of an Option table field passed as `arg`, as a comma list, when the field has a literal
@@ -1049,6 +1121,14 @@ impl Lowerer<'_> {
 
     pub(crate) fn case(&mut self, kids: &[SyntaxNode]) -> L<ir::Stmt> {
         let scrutinee = self.operand(&kids[0], ir::OperandUse::Value)?;
+        // A text literal label of a Code selector is converted to the selector's Code: `'abc'` matches the Code `ABC` before the
+        // label `'ABC'` does, and a label longer than the Code raises StringLengthExceeded with its text in upper case
+        // (types/TestCaseContracts.al:441-466, BN_Case_CodeSelectorAndLabels). A Text selector compares by case (:445-448). A label
+        // that is no literal, and a range, keep the plain comparison.
+        let code_selector = match self.ty_of(&kids[0]) {
+            t @ Ty::Code(_) => Some(t),
+            _ => None,
+        };
         let mut branches = Vec::new();
         let mut otherwise = Vec::new();
         for k in &kids[1..] {
@@ -1060,6 +1140,9 @@ impl Lowerer<'_> {
                     for p in &parts {
                         if is_stmt(p.kind()) {
                             body.extend(self.stmt(p));
+                        } else if let (Some(code), true) = (&code_selector, super::expr::is_string_literal(p)) {
+                            let label = self.expr(p)?;
+                            labels.push(ir::SetElem::One(self.convert_to(code, &Ty::Text(None), label)?));
                         } else {
                             labels.push(self.set_elem(p)?);
                         }

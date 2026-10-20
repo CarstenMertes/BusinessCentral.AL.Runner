@@ -880,12 +880,17 @@ pub fn evaluate_option_field(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Va
         return unsupported("Evaluate into an Option field with a format number (not pinned)");
     }
     let t = text.trim();
-    let by_caption = (!t.is_empty())
-        .then(|| captions.as_str().split(',').position(|n| n.eq_ignore_ascii_case(t)))
-        .flatten();
-    let by_name = (!t.is_empty())
-        .then(|| names.iter().position(|n| n.eq_ignore_ascii_case(t)))
-        .flatten();
+    // An empty or blank text names a blank member (errors/lt-ms-refusals-131/P131EvalOption.al:107-108: `''` and `' '` give the
+    // member `" "` of caption `' '`, :146: a field without a blank member rejects `''`).
+    let same = |n: &str| {
+        if t.is_empty() {
+            n.trim().is_empty()
+        } else {
+            n.eq_ignore_ascii_case(t)
+        }
+    };
+    let by_caption = captions.as_str().split(',').position(same);
+    let by_name = names.iter().position(|n| same(n));
     let digits = t.strip_prefix('+').unwrap_or(t);
     let ordinal = (!digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()))
         .then(|| digits.parse::<i32>().ok())

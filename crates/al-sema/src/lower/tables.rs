@@ -13,14 +13,54 @@ impl Lowerer<'_> {
         f: &crate::members::FieldInfo,
         with_filters: bool,
     ) -> Vec<ir::RelationArm> {
-        let Some(text) = f
+        let texts: Vec<&String> = f
             .properties
             .iter()
-            .find(|(k, _)| k.eq_ignore_ascii_case("TableRelation"))
+            .filter(|(k, _)| k.eq_ignore_ascii_case("TableRelation"))
             .map(|(_, v)| v)
-        else {
+            .collect();
+        if texts.len() > 1 {
+            return self.joined_relation_arms(oi, f, with_filters, &texts);
+        }
+        let Some(text) = texts.first().copied() else {
             return Vec::new();
         };
+        self.relation_arms_of(oi, f, with_filters, text)
+    }
+
+    /// The arms of a field whose relation a table extension's `modify` extended: the base's arms, then the extension's
+    /// (tableextension/TestTableExtFieldTableRelation.al:241-298). Pinned when every relation is one unconditional arm
+    /// (the first decides, :241-268) or every arm has a condition (:270-298). Any other combination is not understood
+    /// (no arms), so validating the field is refused.
+    fn joined_relation_arms(
+        &self,
+        oi: usize,
+        f: &crate::members::FieldInfo,
+        with_filters: bool,
+        texts: &[&String],
+    ) -> Vec<ir::RelationArm> {
+        let parts: Vec<Vec<ir::RelationArm>> = texts
+            .iter()
+            .map(|t| self.relation_arms_of(oi, f, with_filters, t))
+            .collect();
+        if parts.iter().any(Vec::is_empty) {
+            return Vec::new();
+        }
+        let all_unconditional = parts.iter().all(|p| p.len() == 1 && p[0].conditions.is_empty());
+        let all_conditional = parts.iter().flatten().all(|a| !a.conditions.is_empty());
+        if !all_unconditional && !all_conditional {
+            return Vec::new();
+        }
+        parts.into_iter().flatten().collect()
+    }
+
+    fn relation_arms_of(
+        &self,
+        oi: usize,
+        f: &crate::members::FieldInfo,
+        with_filters: bool,
+        text: &str,
+    ) -> Vec<ir::RelationArm> {
         let Some(parsed) = (if with_filters {
             crate::relation::parse_lenient(text)
         } else {
@@ -488,6 +528,7 @@ impl Lowerer<'_> {
                 key_props,
                 per_company,
                 extensions,
+                unsupported: super::shared::over_max_length(obj),
             },
             key_owners,
         )

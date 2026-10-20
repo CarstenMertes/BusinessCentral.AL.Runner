@@ -105,12 +105,32 @@ impl Lowerer<'_> {
                     )),
                     None => return Err("implicit calls into another object are not lowered yet".into()),
                 };
+                // The routine node is the one `routine_at` numbered, so no search by offset.
+                let try_call = self
+                    .routine_nodes
+                    .get(object)
+                    .get(routine)
+                    .is_some_and(|r| r.attributes().any(|a| a.name().eq_ignore_ascii_case("tryfunction")));
+                let receiver_kind = match &receiver_node {
+                    Some(r) if instance.is_some() => match self.ty_of(r) {
+                        Ty::Object(k, _) => Some(k),
+                        Ty::Record { .. } => Some(ObjKind::Table),
+                        _ => None,
+                    },
+                    _ => None,
+                };
                 let mut out = Vec::new();
                 for (i, a) in args.iter().enumerate() {
                     let p = sig.params.get(i).ok_or("too many arguments")?;
                     if p.by_var {
                         out.push(self.by_var_arg(a)?);
                     } else {
+                        if let Some(kind) = receiver_kind {
+                            if let Some(fail) = self.char_into_number_of_other_object(kind, &p.ty, a)? {
+                                out.push(ir::Arg::Value(fail));
+                                continue;
+                            }
+                        }
                         let value = self.expr(a)?;
                         // A Variant handed to a by-value Text or Code parameter goes in as it is: the callee's binding converts it, and
                         // raises TypeConversion for a number, Boolean, Date, Enum or Option (types/lt-variant-to-text-fields/
@@ -127,16 +147,21 @@ impl Lowerer<'_> {
                             continue;
                         }
                         self.refuse_textconst_into_variant(&p.ty, a)?;
+                        // A Text or Code handed to a by-value Text or Code parameter of a TryFunction is converted by the callee's
+                        // binding, inside the try: a text too long for a Code[20] parameter makes the TryFunction answer false
+                        // (text/lt-text-functions/TextAssign.Codeunit.al:240-281, LT_BU_TextAssign_LongTextToCode20Parameter). The other
+                        // types keep the conversion at the call: whether theirs runs inside the try is not pinned.
+                        if try_call
+                            && matches!(p.ty, Ty::Text(_) | Ty::Code(_))
+                            && matches!(self.ty_ref(a), Ty::Text(_) | Ty::Code(_))
+                        {
+                            out.push(ir::Arg::Value(value));
+                            continue;
+                        }
                         out.push(ir::Arg::Value(self.convert_to(&p.ty, self.ty_ref(a), value)?));
                     }
                 }
                 self.calls.push((object, routine));
-                // The routine node is the one `routine_at` numbered, so no search by offset.
-                let try_call = self
-                    .routine_nodes
-                    .get(object)
-                    .get(routine)
-                    .is_some_and(|r| r.attributes().any(|a| a.name().eq_ignore_ascii_case("tryfunction")));
                 Ok(ir::Expr::Call {
                     object,
                     routine,
@@ -232,6 +257,9 @@ impl Lowerer<'_> {
                     None
                 };
                 let option_captions = if id == "System.Evaluate#1" {
+                    if let Some(a) = args.first() {
+                        self.refuse_evaluate_option_caption_ml(a)?;
+                    }
                     args.first().and_then(|a| self.option_field_captions(a))
                 } else {
                     None
@@ -492,7 +520,13 @@ impl Lowerer<'_> {
                     // 'Variant' (corpus types/lt-scalars/ScT70052.al): `System.FormatVariant#1` checks the number when it runs,
                     // a literal, a variable or an expression alike.
                     } else if id.starts_with("System.Format#") && i == 0 {
-                        ir::Arg::Value(self.format_option_field(args.len() == 1, a)?)
+                        ir::Arg::Value(self.format_option_field(
+                            args.len() == 1,
+                            args.len() == 3
+                                && args[1].text().to_string().trim() == "0"
+                                && args[2].text().to_string().trim() == "9",
+                            a,
+                        )?)
                     // The substituted values of StrSubstNo, Message and Error are `Format`ted: an Option
                     // field shows its caption (corpus xmlport/PWXmlPortFormatEvaluate.al:Import_Xml_Option,
                     // `%3` of a field with OptionCaption).
@@ -501,7 +535,7 @@ impl Lowerer<'_> {
                             || id.starts_with("Dialog.Message#")
                             || id.starts_with("Dialog.Error#"))
                     {
-                        ir::Arg::Value(self.format_option_field(true, a)?)
+                        ir::Arg::Value(self.format_option_field(true, false, a)?)
                     } else {
                         ir::Arg::Value(self.expr(a)?)
                     });
@@ -563,6 +597,38 @@ impl Lowerer<'_> {
                     Res::ObjectId(_) => "an object id",
                     _ => "this kind of callee",
                 }
+            )),
+        }
+    }
+
+    /// A Char argument for a by-value number parameter of a procedure called on a variable of another object (`receiver`
+    /// is its kind). A Char variable handed to an Integer parameter of a report procedure fails with 'Unable to convert from
+    /// System.Char to System.Int32.' (code Conversion), with and without a report extension that adds an overload, measured on
+    /// Windows too (report/lt-bv-report-char-arg/BvReportCharArg.al:87-131); a local procedure converts it (:160-170, the
+    /// runtime's usual conversion). The same call on another codeunit was measured on the Linux tiers only (:140-158), so it
+    /// is refused until the Windows check; other receivers, other number types and other Char expressions are not pinned and
+    /// are refused. `None`: not such an argument.
+    fn char_into_number_of_other_object(&self, receiver: ObjKind, param: &Ty, arg: &SyntaxNode) -> L<Option<ir::Expr>> {
+        if !matches!(self.ty_ref(arg), Ty::Char)
+            || !matches!(
+                param,
+                Ty::Integer | Ty::BigInteger | Ty::Decimal | Ty::Byte | Ty::Duration
+            )
+        {
+            return Ok(None);
+        }
+        let variable =
+            arg.kind() == SyntaxKind::NameRef && matches!(self.res(arg), Some(Res::Local(_) | Res::Global(_)));
+        match receiver {
+            ObjKind::Report if variable && matches!(param, Ty::Integer) => Ok(Some(ir::Expr::Fail {
+                message: "Unable to convert from System.Char to System.Int32.".into(),
+                code: "Conversion".into(),
+            })),
+            ObjKind::Codeunit if variable && matches!(param, Ty::Integer) => Err(
+                "a Char variable into an Integer parameter of another codeunit (measured on Linux only, Windows check queued)".into(),
+            ),
+            _ => Err(format!(
+                "a Char into a {param} parameter of a {receiver} procedure called on a variable: the conversion is not pinned"
             )),
         }
     }

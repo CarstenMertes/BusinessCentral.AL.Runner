@@ -64,6 +64,27 @@ impl Session {
         // first because the focus leaves the key control (corpus record/PWTableGlobals.al:392-405,
         // PageInsert_NewThenSetTxtThenClose_ValidationBeforeInsert: OnInsert reads Counter 0 though
         // OnNewRecord set 9).
+        if st.borrow().host.is_some() {
+            self.save_unsaved_host_first(st)?;
+            self.save_sibling_parts(st)?;
+        } else if let ir::Binding::Field(pos) = page_of(&self.engine(), st).controls[idx].binding
+            && st.borrow().draft
+            && self.has_source(st)
+        {
+            let rec = self.page_rec(st);
+            let table = self.table(&rec)?;
+            let key = &table.keys[0];
+            let key_blank = key.iter().all(|k| {
+                let v = &rec.borrow().fields[*k];
+                Self::same_values(
+                    std::slice::from_ref(v),
+                    std::slice::from_ref(&Value::default_for(&table.fields[*k].ty)),
+                )
+            });
+            if !key.contains(&pos) && key_blank {
+                st.borrow_mut().typed_before_key = true;
+            }
+        }
         if matches!(page_of(&self.engine(), st).controls[idx].binding, ir::Binding::Field(_)) && self.has_source(st) {
             let rec = self.page_rec(st);
             self.reset_table_globals(&rec);
@@ -613,6 +634,8 @@ impl Session {
                 }
                 // An error of the write through an expression source (a text too long for the field) is a TestValidation
                 // error, as for a variable (misc/lt-probes-needed-7/PnGTempControl.al:SetValueTooLongAndInvalid).
+                // The text goes into a TestValidation error or the page's error list.
+                al_builtins::native::refuse_unpinned_text(&e, "A page validation error built from an error")?;
                 if matches!(ctl.binding, ir::Binding::Expr(_)) {
                     return Err(refuse_bound(e.message));
                 }
@@ -668,6 +691,7 @@ impl Session {
         args: &mut [Value],
     ) -> Result<Value, Signal> {
         self.require_open(&c.page)?;
+        self.refuse_unpinned_state(&c.page)?;
         let st = &c.page;
         let m = method.method();
         let idx = match &c.target {
@@ -766,7 +790,16 @@ impl Session {
             let kind = page_of(&self.engine(), st).controls[idx].kind.clone();
             match kind {
                 ir::ControlKind::DataItem => return self.request_item_op(method, st, idx, args),
-                ir::ControlKind::Action if m == PageMethod::Invoke => return self.request_action_invoke(st, idx),
+                // Visible and Enabled do not find the action either, whatever its own Visible and Enabled say
+                // (report/W3ReportActions.al:186); the other members of an action are not pinned.
+                ir::ControlKind::Action
+                    if matches!(m, PageMethod::Invoke | PageMethod::Visible | PageMethod::Enabled) =>
+                {
+                    return self.request_action_not_found(st, idx);
+                }
+                ir::ControlKind::Action => {
+                    return unsupported(format!("TestAction.{m} on an action of a request page (not pinned)"));
+                }
                 _ => {}
             }
         }

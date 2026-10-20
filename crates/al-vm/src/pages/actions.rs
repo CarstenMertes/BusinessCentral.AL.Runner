@@ -103,6 +103,14 @@ impl Session {
                 if let Some(target) = drill_page {
                     return self.drill_down_page(st, idx, &target);
                 }
+                // A FlowField opens the DrillDownPageId of its CalcFormula's table (record/lt-x-table-props/XTablePropsTests.al:
+                // 646-658); the view that page gets is not pinned, so it is refused.
+                if self.control_field(st, idx).is_some_and(|f| !f.stored) {
+                    return unsupported(format!(
+                        "TestField.DrillDown on FlowField control {} (the CalcFormula table's page opens; its view is not pinned)",
+                        ctl.name
+                    ));
+                }
                 // No trigger and no page: a fixed platform error with the code MethodNotSupported
                 // (report/lt-bj-request-drilldown/BjRequestDrillDown.al:226-227, UPageProps.al:122-123).
                 return Err(error_code(
@@ -597,6 +605,23 @@ impl Session {
     /// does nothing and raises nothing (corpus handlers/TestPageActionEnabledSourceField_Tests.al,
     /// TPAE_ActionEnabledBoolField_FalseRow_IsDisabledAndItsTriggerIsSkipped).
     pub(super) fn action_invoke(&mut self, st: &St, idx: usize) -> Result<Value, Signal> {
+        // A duplicate-key Insert the action made comes out at the page's next read of the table, still inside Invoke, with the
+        // wrapped code (errors/lt-az-error-texts/AzErrorTexts.al:167-185 PageAction_DuplicateInsert: `TestWrapped:CSideDuplicateKey`).
+        // One that was pending before the action is not pinned and keeps its code.
+        let pending_before = self.tx.deferred_insert.is_some();
+        let raised_before = self.tx.deferred_raised;
+        match self.action_invoke_body(st, idx) {
+            Err(Signal::Error(mut e))
+                if !pending_before && self.tx.deferred_raised > raised_before && e.code == "DB:RecordExists" =>
+            {
+                e.code = action_error_code(&e.code, &e.message);
+                Err(Signal::Error(e))
+            }
+            other => other,
+        }
+    }
+
+    fn action_invoke_body(&mut self, st: &St, idx: usize) -> Result<Value, Signal> {
         // An actionref invokes the action it stands for.
         let idx = match page_of(&self.engine(), st).controls[idx].action_ref.clone() {
             None => idx,
@@ -736,12 +761,10 @@ impl Session {
                 Ok(v) => self.page_action_event(st, "onafteractionevent", &element).map(|()| v),
                 err => err,
             };
-            // An error an action raises comes out of the test page's Invoke with the test framework's prefix on its code
-            // (pages/lt-page-runtime/P82CurrPage.al:431 ActionError_Surfaces: `P82 action error B`, `TestWrapped:Dialog`). Only the codes Dialog (Error()) and MissingUIHandler (errors/lt-ms-refusals-133/P133MessageInHandlers.al:241) are pinned; other codes keep the
-            // code they had before (docs/probes-needed.md).
+            // An error an action raises comes out of the test page's Invoke with the test framework's prefix on its code.
             let r = match r {
-                Err(Signal::Error(mut e)) if matches!(e.code.as_str(), "Dialog" | "MissingUIHandler") => {
-                    e.code = format!("TestWrapped:{}", e.code);
+                Err(Signal::Error(mut e)) => {
+                    e.code = action_error_code(&e.code, &e.message);
                     Err(Signal::Error(e))
                 }
                 other => other,
@@ -1390,5 +1413,25 @@ fn simple_relation(text: &str) -> Option<(String, Option<String>)> {
         [t] => Some((t.clone(), None)),
         [t, f] => Some((t.clone(), Some(f.clone()))),
         _ => None,
+    }
+}
+
+/// The code an error of an action's OnAction carries after the test page's Invoke. Pinned:
+/// - `Dialog` (Error()): pages/lt-page-runtime/P82CurrPage.al:431 ActionError_Surfaces, errors/lt-az-error-texts/AzErrorTexts.al:162.
+/// - `MissingUIHandler`: errors/lt-ms-refusals-133/P133MessageInHandlers.al:241.
+/// - `TestField`: AzErrorTexts.al:160 (`TestWrapped:TestField`).
+/// - `DB:RecordNotFound` (Get): AzErrorTexts.al:158 (`TestWrapped:CSideRecordNotFound`).
+/// - `DB:RecordExists` of an Insert of a duplicate primary key ("The record in table ... already exists."): AzErrorTexts.al:181
+///   (`TestWrapped:CSideDuplicateKey`). The same code of a unique index violation is not pinned.
+///
+/// A code that is already wrapped, or already unpinned, stays. Every other code has no pinned wrapped form: it becomes the
+/// unpinned mark, so a read of it refuses the test (docs/probes-needed.md, "TestPage action error codes").
+fn action_error_code(code: &str, message: &str) -> String {
+    match code {
+        "Dialog" | "MissingUIHandler" | "TestField" => format!("TestWrapped:{code}"),
+        "DB:RecordNotFound" => "TestWrapped:CSideRecordNotFound".into(),
+        "DB:RecordExists" if message.starts_with("The record in table ") => "TestWrapped:CSideDuplicateKey".into(),
+        c if c.starts_with("TestWrapped") || c == al_builtins::native::UNPINNED_ERROR => c.into(),
+        _ => al_builtins::native::UNPINNED_ERROR.into(),
     }
 }

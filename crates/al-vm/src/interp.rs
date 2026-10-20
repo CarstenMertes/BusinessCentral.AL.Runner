@@ -855,8 +855,11 @@ impl Session {
                             })
                             .collect();
                         let load = src.borrow().load.clone();
+                        // `:=` copies what Record.IsDirty compares with (lt-ac/ACRecordIsDirty.al:63-64 `copy_dirty`).
+                        let dirty_base = src.borrow().is_dirty_base.copy();
                         let mut d = dst.borrow_mut();
                         d.fields = fields;
+                        d.is_dirty_base = dirty_base;
                         // The copy holds what the source's buffer held, if that is known.
                         d.load.buffer = load.buffer;
                         d.load.partial = load.partial;
@@ -884,6 +887,7 @@ impl Session {
                 Value::Record(rc) => {
                     self.connection_check(&rc)?;
                     let mut r = rc.borrow_mut();
+                    r.before_field_write();
                     r.fields[*pos] = v;
                     r.touched = true;
                     r.assigned = true;

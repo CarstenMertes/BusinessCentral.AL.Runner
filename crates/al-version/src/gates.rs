@@ -148,6 +148,10 @@ pub enum Gate {
     /// the request raises the unhandled-request error as if no handler were bound, and the unused handler does not fail the test
     /// (al-language-onprem/session/PZHttpBlock.al:43-58 passes on BC 27 and 28: oracle/27/junit-onprem.xml:430, oracle/28/junit-onprem.xml:445).
     HttpHandlerUnderBlockOutboundFrom29,
+    /// Under `TestHttpRequestPolicy = AllowOutboundFromHandler` an `[HttpClientHandler]` answers the request from BC 29; before,
+    /// the request raises the unhandled-request error, the handler is not called and the unused handler does not fail the test
+    /// (al-language-onprem/network/lt-ay-http-handler/AyHttpHandler.al, the BC 27 and 28 legs of every test).
+    HttpHandlerUnderAllowFromHandlerFrom29,
     /// `HttpHeaders.Add` with a name of blanks raises `InvalidHeader:Format` from BC 29 and `InvalidHeader:Argument` on BC 28
     /// (network/lt-http/HttpHeaders.al:304-308).
     HttpBlankHeaderNameIsFormatFrom29,
@@ -213,6 +217,7 @@ impl Gate {
         Gate::TestFieldTypedValueTexts,
         Gate::FileDownloadWithoutClientFrom28,
         Gate::HttpHandlerUnderBlockOutboundFrom29,
+        Gate::HttpHandlerUnderAllowFromHandlerFrom29,
         Gate::HttpBlankHeaderNameIsFormatFrom29,
         Gate::HttpHeaderNameRulesProbedFrom28,
     ];
@@ -244,6 +249,7 @@ impl Gate {
             | Gate::IsolatedStorageIsolationLevelOverloadsFrom29
             | Gate::RecordIsDirtyFrom29
             | Gate::HttpHandlerUnderBlockOutboundFrom29
+            | Gate::HttpHandlerUnderAllowFromHandlerFrom29
             | Gate::CaseTimeZeroLabelFrom29
             | Gate::FlowFieldCountFilterBigIntegerFromIntegerFrom29
             | Gate::HttpBlankHeaderNameIsFormatFrom29 => 29,
@@ -739,6 +745,10 @@ impl Gate {
             Gate::HttpHandlerUnderBlockOutboundFrom29 => &[Evidence {
                 file: "../al-language-onprem/session/PZHttpBlock.al",
                 lines: "54-57",
+            }],
+            Gate::HttpHandlerUnderAllowFromHandlerFrom29 => &[Evidence {
+                file: "../al-language-onprem/network/lt-ay-http-handler/AyHttpHandler.al",
+                lines: "185-202",
             }],
             Gate::HttpBlankHeaderNameIsFormatFrom29 => &[Evidence {
                 file: "network/lt-http/HttpHeaders.al",

@@ -108,8 +108,9 @@ pub struct HttpOutgoing {
     /// written, which only a request that no handler sees can carry (network/lt-http-relative-request/HttpRelativeRequestPath.al).
     pub url: String,
     pub has_secret_uri: bool,
-    /// The uri came from joining a path to the client's base address (registry entry http-relative-request-path).
-    pub joined_with_base: bool,
+    /// The uri came from joining a path to the client's base address in a form the corpus does not pin (registry entry
+    /// http-relative-request-path).
+    pub unpinned_join: bool,
 }
 
 /// The field an `Evaluate` into a `FieldRef` writes (see [`Ctx::evaluate_field_target`]).
@@ -367,6 +368,7 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("TextBuilder.AppendVariant#1", crate::textfns::tb_append_variant),
     ("TextBuilder.AppendFieldValue#1", crate::textfns::tb_append_field_value),
     ("System.FormatDecimalField#1", format_decimal_field),
+    ("System.OptionCaptionML#1", option_caption_ml),
     ("System.Evaluate#1", crate::evaluate::evaluate),
     (
         "System.EvaluateVariableOption#1",
@@ -910,6 +912,49 @@ pub fn unpinned_error() -> AlError {
     }
 }
 
+/// An error BC raises whose text and code the corpus does not pin, naming the probe that would pin them (its row in
+/// docs/probes-needed.md). It is the same marker as [`unpinned_error`], with the probe after the mark in the text.
+pub fn unpinned_error_for(probe: &str) -> AlError {
+    AlError {
+        message: format!("{UNPINNED_ERROR}{probe}"),
+        ..unpinned_error()
+    }
+}
+
+/// Whether the text of `e` is not pinned ([`unpinned_error`], [`unpinned_error_for`]). Some errors have a pinned text and an
+/// unpinned code (the code alone is the mark).
+pub fn text_unpinned(e: &AlError) -> bool {
+    e.message.starts_with(UNPINNED_ERROR)
+}
+
+fn unpinned_refusal(e: &AlError, what: &str) -> Signal {
+    match e.message.strip_prefix(UNPINNED_ERROR).filter(|p| !p.is_empty()) {
+        Some(probe) => Signal::Unsupported(format!(
+            "{what} of an error whose text is not pinned (probe wanted: {probe}, docs/probes-needed.md)"
+        )),
+        None => Signal::Unsupported(format!("{what} of an error whose text is not pinned")),
+    }
+}
+
+/// Refuses a read of the text of an error whose text is not pinned: `what` is the read; the reason names the probe when the
+/// error carries one. Every place that hands an error's text to AL code or to the test result calls it.
+pub fn refuse_unpinned_text(e: &AlError, what: &str) -> Result<(), Signal> {
+    if text_unpinned(e) {
+        Err(unpinned_refusal(e, what))
+    } else {
+        Ok(())
+    }
+}
+
+/// Refuses a read of the text or the code of an error when either is not pinned.
+pub fn refuse_unpinned(e: &AlError, what: &str) -> Result<(), Signal> {
+    if text_unpinned(e) || e.code == UNPINNED_ERROR {
+        Err(unpinned_refusal(e, what))
+    } else {
+        Ok(())
+    }
+}
+
 /// Text of a Text/Code/Char argument (Text parameters accept all three). Text that holds the
 /// untracked call stack marker is refused, so its content is never silently wrong.
 /// `Database.SID(UserName)`: a Windows-style security identifier as Text. Probed on BC 27.5 (corpus
@@ -970,6 +1015,22 @@ fn format_variant(ctx: &mut dyn Ctx, r: Option<&mut Value>, args: &mut [Value]) 
         })));
     }
     format_1(ctx, r, args)
+}
+
+/// An Option value with the OptionCaptionML captions of the session language (the lowering passes the property text):
+/// `Format` then shows the caption (record/lt-x-table-props/XTablePropsTests.al:219-228). See
+/// [`crate::format::ml_text_in_language`] for what is pinned.
+fn option_caption_ml(ctx: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Result<Value, Signal> {
+    let (Some(Value::Option(o, names)), Some(ml)) = (a.first(), a.get(1).and_then(text_of)) else {
+        return unsupported("OptionCaptionML without an Option value and its property text");
+    };
+    let list = crate::format::ml_text_in_language(ml.as_str(), ctx.language())
+        .map_err(|e| Signal::Unsupported(format!("OptionCaptionML {e}")))?;
+    let captions: Vec<String> = list.split(',').map(str::to_string).collect();
+    if captions.len() != names.len() {
+        return unsupported("OptionCaptionML with another number of entries than the members (not pinned)");
+    }
+    Ok(Value::Option(*o, captions.into()))
 }
 
 /// `Format(Rec.Field)` of a Decimal field that declares its places (`DecimalPlaces` or an `AutoFormatExpression` precision;
@@ -1112,9 +1173,7 @@ fn abs_other(v: &Value) -> Result<Value, Signal> {
 
 fn get_last_error_text(ctx: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
     let e = ctx.last_error();
-    if e.message == UNPINNED_ERROR {
-        return unsupported("GetLastErrorText of an error whose text is not pinned");
-    }
+    refuse_unpinned_text(&e, "GetLastErrorText")?;
     Ok(Value::Text(e.message.into()))
 }
 
@@ -1130,6 +1189,7 @@ fn get_last_error_text_without_customer_content(
         return get_last_error_text(ctx, r, &mut []);
     }
     let e = ctx.last_error();
+    refuse_unpinned_text(&e, "GetLastErrorText(true)")?;
     if e.message.is_empty() {
         return Ok(Value::Text(String::new().into()));
     }
@@ -1145,9 +1205,7 @@ fn get_last_error_text_without_customer_content(
 
 fn get_last_error_code(ctx: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
     let e = ctx.last_error();
-    if e.code == UNPINNED_ERROR {
-        return unsupported("GetLastErrorCode of an error whose text is not pinned");
-    }
+    refuse_unpinned(&e, "GetLastErrorCode")?;
     Ok(Value::Text(e.code.into()))
 }
 
@@ -1165,6 +1223,7 @@ fn get_last_error_object(ctx: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Valu
         AL_EXCEPTION, NCL_DIALOG_EXCEPTION, NCL_EVALUATE_EXCEPTION, RECORD_NOT_FOUND_EXCEPTION, TEST_FIELD_EXCEPTION,
     };
     let e = ctx.last_error();
+    refuse_unpinned(&e, "GetLastErrorObject")?;
     if e.message.is_empty() && e.code.is_empty() {
         if e.exception != ExceptionKind::Cleared {
             return unsupported(
@@ -1372,7 +1431,17 @@ fn error_text_not_literal(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [
 
 fn error_text_with(ctx: &mut dyn Ctx, args: &mut [Value], literal: bool) -> Result<Value, Signal> {
     let template = text_arg(args, 0)?;
-    let message = substitute(&template, &args[1..], ctx)?;
+    let mut message = substitute(&template, &args[1..], ctx)?;
+    // The error text of `Error(Text)` without arguments shows a CR LF as one backslash (misc/lt-system-functions/ErrorMessage.al:
+    // 606-618, LT_BU_Message_BackslashAndAppendLine: 17 characters). With arguments no corpus test pins it.
+    if message.contains("\r\n") {
+        if args.len() > 1 {
+            return unsupported(
+                "Error with arguments whose text holds a CR LF: the error text is not pinned (docs/probes-needed.md)",
+            );
+        }
+        message = message.replace("\r\n", "\\");
+    }
     let (origin, exception) = if literal {
         (
             ErrorOrigin::Redacted(USE_ERROR_WITH_A_TEXT_CONSTANT.into()),
@@ -1394,7 +1463,12 @@ fn error_text_with(ctx: &mut dyn Ctx, args: &mut [Value], literal: bool) -> Resu
 /// before it reaches the UI (corpus handlers/TestMessageHandler.al
 /// Message_FormattedString_HandlerGetsFormatted).
 fn message(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
-    let text = substitute(&text_arg(args, 0)?, &args[1..], ctx)?;
+    let mut text = substitute(&text_arg(args, 0)?, &args[1..], ctx)?;
+    // A CR LF in the text or in an argument reaches the handler as one backslash (misc/lt-system-functions/ErrorMessage.al:598-616,
+    // LT_BU_Message_BackslashAndAppendLine).
+    if text.contains("\r\n") {
+        text = text.replace("\r\n", "\\");
+    }
     ctx.ui_message(text)?;
     Ok(Value::Null)
 }
@@ -1753,12 +1827,25 @@ fn strsubstno(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> R
     Ok(Value::Text(substitute_fields(&template, &args[1..], ctx)?.into()))
 }
 
-fn uppercase(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
-    Ok(Value::Text(simple_upper(&text_arg(args, 0)?).into()))
+/// `UpperCase` and `LowerCase` follow `GlobalLanguage` for Turkish (1055): `i` becomes the dotted `İ` and `I` the dotless `ı`; every
+/// other letter maps as in the default language, and Greek (1032) maps as the default too
+/// (text/lt-text-functions/CaseConv.Codeunit.al:145-180, LT_BU_CaseConv_TurkishGreekLanguage). `ToUpper`/`ToLower` do not follow it.
+const TURKISH: i32 = 1055;
+
+fn uppercase(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
+    let t = text_arg(args, 0)?;
+    if ctx.language() == TURKISH {
+        return Ok(Value::Text(simple_upper(&t.replace('i', "İ")).into()));
+    }
+    Ok(Value::Text(simple_upper(&t).into()))
 }
 
-fn lowercase(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
-    Ok(Value::Text(simple_lower(&text_arg(args, 0)?).into()))
+fn lowercase(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
+    let t = text_arg(args, 0)?;
+    if ctx.language() == TURKISH {
+        return Ok(Value::Text(simple_lower(&t.replace('I', "ı")).into()));
+    }
+    Ok(Value::Text(simple_lower(&t).into()))
 }
 
 /// `ArrayLen(Array)` of a one-dimensional array: the length of the array the variable holds. A `var` or value
@@ -2294,6 +2381,7 @@ pub(crate) mod tests {
             "System.FormatVariant#1",
             "TextBuilder.AppendVariant#1",
             "System.FormatDecimalField#1",
+            "System.OptionCaptionML#1",
             "Dialog.ErrorNotLiteral#1",
             "TextBuilder.AppendFieldValue#1",
             "Media.ToVariant#1",

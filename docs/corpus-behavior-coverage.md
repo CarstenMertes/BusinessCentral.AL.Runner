@@ -12,7 +12,7 @@ The catalog of each area is what the AL language server offers in probe files (`
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
 | attributes | 42 | 32 | 76.2% | 28 | 66.7% | 0 | 14 | 2 |
 | events | 23 | 16 | 69.6% | 22 | 95.7% | 0 | 1 | 0 |
-| properties | 720 | 669 | 92.9% | 562 | 78.1% | 18 | 140 | 3 |
+| properties | 720 | 669 | 92.9% | 563 | 78.2% | 18 | 139 | 3 |
 | syntax | 16 | 16 | 100.0% | 16 | 100.0% | 0 | 0 | 0 |
 | triggers | 128 | 128 | 100.0% | 116 | 90.6% | 3 | 9 | 0 |
 
@@ -93,7 +93,7 @@ Left out: 293 presentation-only properties (Caption, ToolTip, ApplicationArea, .
 | ReportExtensionModify | 2 | 2 | 100.0% | 2 | 100.0% | 0 | 0 | 0 |
 | ReportLayout | 12 | 9 | 75.0% | 12 | 100.0% | 0 | 0 | 0 |
 | RequestPage | 22 | 20 | 90.9% | 22 | 100.0% | 0 | 0 | 1 |
-| Table | 24 | 23 | 95.8% | 17 | 70.8% | 0 | 7 | 1 |
+| Table | 24 | 23 | 95.8% | 18 | 75.0% | 0 | 6 | 1 |
 | TableExtension | 4 | 4 | 100.0% | 3 | 75.0% | 0 | 1 | 0 |
 | XmlPort | 26 | 26 | 100.0% | 24 | 92.3% | 2 | 0 | 0 |
 | XmlPortFieldAttribute | 7 | 7 | 100.0% | 5 | 71.4% | 2 | 0 | 0 |
@@ -177,7 +177,7 @@ An item is **pinned** when it occurs in a corpus file in a routine that static r
 | Platform and system events | 123 | 37 | 17 | 0 | 0 |
 | Statements and expressions | 64 | 60 | 58 | 0 | 0 |
 | Method attributes | 34 | 32 | 13 | 2 | 1 |
-| Runtime error sites (text pinned) | 72 | 72 | - | 0 | - |
+| Runtime error sites (text pinned) | 74 | 73 | - | 1 | - |
 
 Presentation-only properties (Caption, ToolTip, ApplicationArea, ... ) are left out of the property catalog.
 
@@ -554,7 +554,8 @@ Presentation-only properties (Caption, ToolTip, ApplicationArea, ... ) are left 
 | procedure | `InherentPermissions` | 100 | yes | 0 |
 | procedure | `Native` | 25 | no | 0 |
 
-## Runtime error sites without a corpus test (0 of 72; 0 have too little fixed text to match)
+## Runtime error sites without a corpus test (1 of 74; 0 have too little fixed text to match)
 
 A site is pinned when a corpus string literal holds the message text. Codes are not matched. Sites with a computed message are not listed.
 
+- crates/al-vm/src/http.rs:107 `Invalid URI: The URI is empty.` code `AL:UriFormat`

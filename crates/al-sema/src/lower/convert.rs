@@ -297,6 +297,40 @@ impl<'a> Lowerer<'a> {
         Ok(e)
     }
 
+    /// The false branch `value` (of type `f`) of a conditional expression whose true branch has type `t`. The true branch sets
+    /// the type of the expression and the false branch is converted to it when it is taken (corpus types/TestTernaryContracts.al:
+    /// BN_Ternary_IntegerAndDecimalBranches :236-280, an Integer true branch makes a Decimal 0.25 overflow; BN_Ternary_Code20TrueBranch
+    /// :289-337, a Code[20] true branch makes a 30-character Text fail StringLengthExceeded, a Text true branch takes a Code as it is;
+    /// BN_Ternary_VariantBranch :173-233, a Text true branch makes a Variant holding an Integer fail TypeConversion, a Variant true
+    /// branch keeps the Text). Other pairs of different types are refused: their conversion is not pinned.
+    pub(crate) fn ternary_false_branch(&mut self, t: &Ty, f: &Ty, value: ir::Expr) -> L<ir::Expr> {
+        if t == f || matches!(t, Ty::Unknown) || matches!(f, Ty::Unknown) {
+            return Ok(value);
+        }
+        // A text literal that fits a Text of any length is the same value in it.
+        let literal_fits = |n: &Option<u32>| match &value {
+            ir::Expr::Const(ir::Const::Text(s)) => n.is_none_or(|n| s.encode_utf16().count() as u64 <= u64::from(n)),
+            _ => false,
+        };
+        let pinned = match (t, f) {
+            (Ty::Integer, Ty::Decimal) | (Ty::Decimal, Ty::Integer) => true,
+            (Ty::Code(_), Ty::Text(_) | Ty::Code(_)) => true,
+            (Ty::Text(None), Ty::Text(_) | Ty::Code(_)) => true,
+            (Ty::Text(n), Ty::Text(_)) if literal_fits(n) => true,
+            // A Text or Code no longer than the Text true branch fits it: its conversion cannot fail.
+            (Ty::Text(Some(n)), Ty::Text(Some(m)) | Ty::Code(Some(m))) if m <= n => true,
+            (Ty::Text(_), Ty::Variant) => true,
+            (Ty::Variant, _) => true,
+            _ => false,
+        };
+        if !pinned {
+            return Err(format!(
+                "a conditional expression whose branches have different types ({t} and {f}): the conversion of the false branch is not pinned"
+            ));
+        }
+        self.convert_to(t, f, value)
+    }
+
     fn convert_raw(&self, target: &Ty, src: &Ty, value: ir::Expr) -> L<ir::Expr> {
         let slot = self.rt(target)?;
         // A number variable into a Text or Code is AL0122 (must-not-compile 0069 for an Integer; the other numbers are not judged by

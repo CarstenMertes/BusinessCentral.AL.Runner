@@ -49,6 +49,7 @@ pub enum RecordOp {
     HasLinks,
     Init,
     Insert,
+    IsDirty,
     IsEmpty,
     IsTemporary,
     LoadFields,
@@ -87,7 +88,7 @@ pub enum RecordOp {
 }
 
 impl RecordOp {
-    pub const ALL: [RecordOp; 80] = [
+    pub const ALL: [RecordOp; 81] = [
         RecordOp::AddLink,
         RecordOp::AddLoadFields,
         RecordOp::AreFieldsLoaded,
@@ -133,6 +134,7 @@ impl RecordOp {
         RecordOp::HasLinks,
         RecordOp::Init,
         RecordOp::Insert,
+        RecordOp::IsDirty,
         RecordOp::IsEmpty,
         RecordOp::IsTemporary,
         RecordOp::LoadFields,
@@ -232,6 +234,7 @@ impl RecordOp {
             RecordOp::Init => "Init",
             RecordOp::Insert => "Insert",
             RecordOp::IsEmpty => "IsEmpty",
+            RecordOp::IsDirty => "IsDirty",
             RecordOp::IsTemporary => "IsTemporary",
             RecordOp::LoadFields => "LoadFields",
             RecordOp::LockTable => "LockTable",

@@ -108,10 +108,8 @@ codeunit 60953 C
 #[test]
 fn a_bare_is_dirty_in_on_run_of_a_table_no_codeunit_is_the_record_method_on_bc_29() {
     // events/lt-with-statement-scopes/WithStatementAmbiguous.al:277-279 (BN_With_ImplicitWithInTableNoCodeunit, codeunit
-    // 82156 at :412-434): Record.IsDirty wins over the codeunit's own local IsDirty. Record.IsDirty itself is not built
-    // yet, so the call is refused instead of running the local procedure.
-    let m = refused(run_on("29.0", DIRTY, "Bare"));
-    assert!(m.contains("Record.IsDirty"), "{m}");
+    // 82156 at :412-434): Record.IsDirty wins over the codeunit's own local IsDirty, so the local procedure never runs.
+    assert_eq!(text(run_on("29.0", DIRTY, "Bare")), "IsDirty()=true");
 }
 
 #[test]

@@ -218,7 +218,7 @@ fn decode_bytes(b: &[u8], enc: Enc) -> Result<String, Signal> {
 
 const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
-fn b64_encode(bytes: &[u8], line_breaks: bool) -> String {
+pub(crate) fn b64_encode(bytes: &[u8], line_breaks: bool) -> String {
     let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4 + 8);
     for chunk in bytes.chunks(3) {
         let n = (u32::from(chunk[0]) << 16)
@@ -262,7 +262,7 @@ fn invalid() -> Signal {
 
 /// Decodes like .NET's `Convert.FromBase64String`: space, tab, CR and LF are ignored; the length is a
 /// multiple of four; `=` only as the last one or two characters.
-fn b64_decode(text: &str) -> Result<Vec<u8>, Signal> {
+pub(crate) fn b64_decode(text: &str) -> Result<Vec<u8>, Signal> {
     let chars: Vec<u8> = text
         .bytes()
         .filter(|b| !matches!(b, b' ' | b'\t' | b'\r' | b'\n'))

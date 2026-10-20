@@ -240,6 +240,7 @@ record_methods! {
     "Record.SecurityFiltering#1" => SecurityFiltering,
     "Record.ModifyAll#1" => ModifyAll,
     "Record.IsTemporary#1" => IsTemporary,
+    "Record.IsDirty#1" => IsDirty,
     "Record.Ascending#1" => Ascending,
     "Record.ChangeCompany#1" => ChangeCompany,
     "Record.SetAscending#1" => SetAscending,

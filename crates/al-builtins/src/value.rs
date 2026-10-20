@@ -295,6 +295,15 @@ pub enum Cursor {
     NewLine,
 }
 
+/// Why a part reads its rows last to first (see `PageState::read_backwards`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReadBackwards {
+    /// The host opens and the part's SubPageView names its linked field with `const`: 2 or 3 rows are pinned.
+    AtOpen,
+    /// The host moved back with Previous or First: 1, 2 and 3 rows are pinned.
+    AfterMove,
+}
+
 /// The test client's state for one page (ADR-012). Fields grow with the
 /// behaviours the corpus pins.
 pub struct PageState {
@@ -318,6 +327,10 @@ pub struct PageState {
     /// `Visible` of each control as it was when the page opened (the property is frozen then,
     /// corpus handlers/TestPageControlPropertyLiveness_Tests.al:56).
     pub frozen_visible: Vec<bool>,
+    /// The session language when the page opened: OptionCaptionML shows the captions of that language, whatever
+    /// `GlobalLanguage` says later (pages/lt-page-controls-aa/AaFieldProps.al:179-219, pageext/lt-z-modify-controls/
+    /// ZModifyControls.al:322-360). `None` before the first open.
+    pub open_language: Option<i32>,
     /// The caption each control's CaptionClass resolved to when the page filled: (control index, class text, caption).
     /// `Caption()` reads it without raising OnResolveCaptionClass again (corpus misc/W2CaptionClass.al:113-116).
     pub control_captions: Vec<(usize, String, String)>,
@@ -342,8 +355,9 @@ pub struct PageState {
     /// The page opened for edit over an empty view and ran its new-record triggers on a blank record; it shows no row and its
     /// field controls are not editable.
     pub blank_on_open: bool,
-    /// The part opens with its host and reads its rows last to first, once each (see `view_names_link_field`).
-    pub read_backwards: bool,
+    /// The part reads its rows last to first, once each, at its next fill: as it opens with its host (see
+    /// `view_names_link_field`), or after its host moved back (see `sync_parts_after_move`).
+    pub read_backwards: Option<ReadBackwards>,
     /// `CurrPage.SetSelectionFilter(Rec)` ran on this page while it stood on no row: the part's next refresh with its host
     /// drops the filter (pages/lt-hidden-part-selection-filter/HiddenPartSelectionFilter.al).
     pub selection_on_rec: bool,
@@ -388,6 +402,11 @@ pub struct PageState {
     pub caption_assigned_closed: bool,
     /// A row with the new record's starting key was already stored when the draft started.
     pub draft_stored: bool,
+    /// On a new row whose key fields were still blank, a field outside the key was typed.
+    pub typed_before_key: bool,
+    /// The page reached a state whose behavior is not pinned: every later call on it or its parts except Close is refused
+    /// with this reason.
+    pub unpinned_state: Option<String>,
     /// The row a new line was started below (`New()` on a stored row of a list): after the new row
     /// is saved, `Next()` goes to the row below that one, as the client's own row order has it.
     pub after_new: Option<Vec<Value>>,
@@ -471,6 +490,7 @@ impl PageState {
             draft: false,
             dirty: false,
             frozen_visible: Vec::new(),
+            open_language: None,
             control_captions: Vec::new(),
             window: Vec::new(),
             window_from_start: false,
@@ -480,7 +500,7 @@ impl PageState {
             window_read_up: false,
             landing_first: false,
             blank_on_open: false,
-            read_backwards: false,
+            read_backwards: None,
             selection_on_rec: false,
             focus: None,
             focus_in_row: false,
@@ -501,6 +521,8 @@ impl PageState {
             view_left: false,
             caption_assigned_closed: false,
             draft_stored: false,
+            typed_before_key: false,
+            unpinned_state: None,
             after_new: None,
             opening: false,
             editable_off: false,
@@ -634,11 +656,84 @@ pub struct RecordState {
     /// (recordref/lt-recordref-fieldref-members/RecordRefIsDirtyEdges.al:IsDirty_TwoRefs_OtherModifies). `None` when the
     /// buffer came from elsewhere (GetTable, Init).
     pub dirty_base: Option<Vec<Value>>,
+    /// What `Record.IsDirty` compares the buffer with (lt-ac/ACRecordIsDirty.al). A clone of the state starts unknown.
+    pub is_dirty_base: DirtyBase,
     /// The row this variable's last Modify wrote. A later Modify of the unchanged buffer, after a rollback undid that write,
     /// writes nothing (record/lt-record-conversion-assumptions/StaleBuffer.al:76-86).
     pub last_modify: Option<Vec<Value>>,
     /// The table's and its extensions' global variables of this record variable (ADR-021).
     pub globals: TableGlobals,
+}
+
+/// What `Record.IsDirty` compares a record variable's buffer with: a copy of the fields the variable last read or wrote
+/// (lt-ac/ACRecordIsDirty.al). BC compares values, not writes: a field set back to what was read is not dirty
+/// (ACRecordIsDirty.al:54-56, `after_value_restored`).
+///
+/// `Clone` gives `Unknown`: whether a copy of a record state (a record passed by value, xRec, a row image,
+/// `RecordRef.GetTable`) keeps the snapshot is not pinned. `:=` copies it with [`DirtyBase::copy`]
+/// (ACRecordIsDirty.al:63-64, `copy_dirty`).
+#[derive(Debug)]
+pub enum DirtyBase {
+    /// Nothing pins what IsDirty answers; the text says why.
+    Unknown(&'static str),
+    /// A declared variable nothing was read into: compared with a fresh buffer (ACRecordIsDirty.al:38-43).
+    Fresh,
+    /// The variable read or wrote its buffer and no field was written since: the snapshot is the buffer itself. A write
+    /// copies it first ([`RecordState::before_field_write`]), so a read costs no copy.
+    Synced,
+    /// The fields the variable last read or wrote. `alt` is a second candidate where the corpus does not tell which one BC
+    /// keeps (after TransferFields and Delete): IsDirty answers only where both give the same answer.
+    Row { base: Vec<Value>, alt: Option<Vec<Value>> },
+}
+
+impl Default for DirtyBase {
+    fn default() -> Self {
+        DirtyBase::Unknown("a record state that is not a declared variable")
+    }
+}
+
+impl Clone for DirtyBase {
+    fn clone(&self) -> Self {
+        DirtyBase::Unknown("a copy of a record variable (passed by value, xRec, a row image, a RecordRef)")
+    }
+}
+
+impl DirtyBase {
+    /// A real copy, for `:=` between record variables.
+    pub fn copy(&self) -> DirtyBase {
+        match self {
+            DirtyBase::Unknown(why) => DirtyBase::Unknown(why),
+            DirtyBase::Fresh => DirtyBase::Fresh,
+            DirtyBase::Synced => DirtyBase::Synced,
+            DirtyBase::Row { base, alt } => DirtyBase::Row {
+                base: base.clone(),
+                alt: alt.clone(),
+            },
+        }
+    }
+
+    /// `Synced` becomes a copy of `fields`, before something writes them.
+    pub fn materialize(&mut self, fields: &[Value]) {
+        if matches!(self, DirtyBase::Synced) {
+            *self = DirtyBase::Row {
+                base: fields.to_vec(),
+                alt: None,
+            };
+        }
+    }
+}
+
+impl RecordState {
+    /// A field of the buffer is about to be written: a snapshot that is the buffer itself becomes a copy.
+    #[inline]
+    pub fn before_field_write(&mut self) {
+        if matches!(self.is_dirty_base, DirtyBase::Synced) {
+            let RecordState {
+                is_dirty_base, fields, ..
+            } = self;
+            is_dirty_base.materialize(fields);
+        }
+    }
 }
 
 /// The global variables of a table and of its table extensions, as one record variable holds
@@ -960,6 +1055,8 @@ pub struct CookieState {
 pub struct HttpResponseState {
     pub status: i32,
     pub reason: String,
+    /// A handler set a status whose reason phrase BC gives is not measured: reading `ReasonPhrase` is refused.
+    pub reason_unpinned: bool,
     /// The `HttpContent` handle, shared with `Content`.
     pub content: Value,
     pub headers: HttpHeaderList,
@@ -1002,8 +1099,14 @@ pub struct TestHttpResponseState {
     /// The handler answered true and the request, which the runtime never sends, failed like one to an unresolvable
     /// host: the call answers false and the response keeps nothing of the handler's.
     pub request_failed: bool,
+    /// The error a failed request leaves as the last error (text, code) when the call's result is used.
+    pub failure: Option<(String, String)>,
     pub status: i32,
     pub reason: String,
+    /// The handler set `ReasonPhrase`; when it did not, BC gives the reason phrase of the status.
+    pub reason_set: bool,
+    /// See [`HttpResponseState::reason_unpinned`].
+    pub reason_unpinned: bool,
     pub success: bool,
     pub blocked: bool,
     pub content: Value,

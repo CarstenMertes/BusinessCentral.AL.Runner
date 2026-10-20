@@ -66,6 +66,13 @@ impl Session {
         let t = self.engine.tables[r.table as usize]
             .clone()
             .map_or_else(|| unsupported("record of a table without a schema"), Ok)?;
+        if let Some(why) = self.engine.program.objects[t.object as usize]
+            .table
+            .as_ref()
+            .and_then(|x| x.unsupported.first())
+        {
+            return unsupported(format!("table {}: {why}", t.name));
+        }
         // A key set on fields no key starts with is one more key, as far as ordering goes.
         if let Some((index, fields)) = &r.adhoc {
             if r.key == *index && *index == t.keys.len() {
@@ -1209,6 +1216,55 @@ impl Session {
         }
     }
 
+    /// A `LinkedObject = true` table has no SQL table behind it in a test database: Insert and Count raise the SQL error
+    /// (record/lt-x-table-props/XTablePropsTests.al:720-737, text and code). The other database operations are not pinned.
+    fn linked_object_check(&self, t: &TableDef, rec: &Rec, method: RecordOp) -> Result<(), Signal> {
+        if rec.borrow().temporary {
+            return Ok(());
+        }
+        let linked = self.engine.program.objects[t.object as usize]
+            .properties
+            .iter()
+            .any(|(k, v)| k.eq_ignore_ascii_case("LinkedObject") && v.trim().eq_ignore_ascii_case("true"));
+        if !linked {
+            return Ok(());
+        }
+        match method {
+            RecordOp::Insert if self.ret_used => unsupported(format!(
+                "Insert with its result used on LinkedObject table {} (only the statement form is pinned)",
+                t.name
+            )),
+            RecordOp::Insert | RecordOp::Count => Err(crate::transactions::al_error_code(
+                "An unexpected error occurred after a database command was cancelled.",
+                "Sql:Sql",
+            )),
+            m if m.writes()
+                || matches!(
+                    m,
+                    RecordOp::Find
+                        | RecordOp::FindFirst
+                        | RecordOp::FindLast
+                        | RecordOp::FindSet
+                        | RecordOp::Next
+                        | RecordOp::Get
+                        | RecordOp::GetBySystemId
+                        | RecordOp::IsEmpty
+                        | RecordOp::CountApprox
+                        | RecordOp::CalcSums
+                        | RecordOp::CalcFields
+                        | RecordOp::LockTable
+                ) =>
+            {
+                unsupported(format!(
+                    "{} on LinkedObject table {} (only Insert and Count are pinned)",
+                    m.name(),
+                    t.name
+                ))
+            }
+            _ => Ok(()),
+        }
+    }
+
     /// The first use of a record of a `TableType = CRM` table fails while no CRM table connection is
     /// registered, whatever the use (Init, TableCaption, a field, IsEmpty): text and code from
     /// session/TestCrmTableNoConnectionContracts.al:15-17,111-118. With a connection registered what
@@ -1229,9 +1285,16 @@ impl Session {
         ))
     }
 
+    /// A record method: [`Session::record_op_inner`], with what it does to the snapshot `Record.IsDirty` compares with
+    /// (isdirty.rs).
     pub(crate) fn record_op(&mut self, method: RecordOp, rec: &Rec, args: &mut [Value]) -> Result<Value, Signal> {
+        self.record_op_tracked(method, rec, args)
+    }
+
+    pub(crate) fn record_op_inner(&mut self, method: RecordOp, rec: &Rec, args: &mut [Value]) -> Result<Value, Signal> {
         self.connection_check(rec)?;
         let t = self.table(rec)?;
+        self.linked_object_check(&t, rec, method)?;
         self.note_table(t.object, method.writes());
         if matches!(
             method,
@@ -1286,6 +1349,7 @@ impl Session {
                 .is_some_and(|(o, _)| *o == t.object as usize)
         {
             let (_, e) = self.tx.deferred_insert.take().expect("checked");
+            self.tx.deferred_raised += 1;
             return Err(Signal::Error(Box::new(e)));
         }
         if let Some(schema) = self.engine.program.objects[t.object as usize]
@@ -1401,6 +1465,17 @@ impl Session {
                 let mut r = rec.borrow_mut();
                 r.assigned = false;
                 r.inserted = false;
+                if matches!(r.is_dirty_base, al_builtins::value::DirtyBase::Synced) {
+                    // The buffer is the snapshot Record.IsDirty compares with, and Init keeps it (isdirty.rs): the old
+                    // buffer becomes the snapshot instead of being copied.
+                    let mut fresh = fresh;
+                    for &i in &t.keys[0] {
+                        fresh[i] = r.fields[i].clone();
+                    }
+                    let old = std::mem::replace(&mut r.fields, fresh);
+                    r.is_dirty_base = al_builtins::value::DirtyBase::Row { base: old, alt: None };
+                    return Ok(Value::Null);
+                }
                 for (i, v) in fresh.into_iter().enumerate() {
                     // Doc (Record.Init): primary key fields keep their values.
                     if !t.keys[0].contains(&i) {

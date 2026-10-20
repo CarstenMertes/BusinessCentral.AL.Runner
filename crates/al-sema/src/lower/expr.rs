@@ -421,7 +421,52 @@ impl Lowerer<'_> {
                     if set.kind() != SetExpr {
                         return Err("`in` with a non-literal set is not lowered yet".into());
                     }
-                    let elems = set.children().map(|e| self.set_elem(&e)).collect::<L<Vec<_>>>()?;
+                    let mut elems = set.children().map(|e| self.set_elem(&e)).collect::<L<Vec<_>>>()?;
+                    let mut l = l;
+                    // A text literal on the left of a range: the ends of the range compare in the culture order when the value is a
+                    // Text (types/lt-ax-text-format-dates/AxCodeCompare.al:193-213), but a one-character literal in a range of
+                    // one-character literals compares as a Char (`'K' in ['a' .. 'z']` is No:
+                    // types/lt-expression-operators-literals/ExpressionBinaryOperators.al:288, :303). Another literal on the left of a
+                    // range is not pinned.
+                    let ranged = set.children().any(|e| e.kind() == SyntaxKind::RangeExpr);
+                    if ranged && is_string_literal(&kids[0]) {
+                        let ends: Vec<SyntaxNode> = set
+                            .children()
+                            .flat_map(|e| {
+                                if e.kind() == SyntaxKind::RangeExpr {
+                                    e.children().collect::<Vec<_>>()
+                                } else {
+                                    vec![e]
+                                }
+                            })
+                            .collect();
+                        if !crate::check::one_char_literal(&kids[0]) || !ends.iter().all(crate::check::one_char_literal)
+                        {
+                            return Err("a text literal on the left of `in` with a range: the order of the range ends is not pinned (docs/probes-needed.md)".into());
+                        }
+                        let text = Ty::Text(None);
+                        l = self.convert_to(&Ty::Char, &text, l)?;
+                        for e in &mut elems {
+                            match e {
+                                ir::SetElem::One(x) => {
+                                    *x = self.convert_to(
+                                        &Ty::Char,
+                                        &text,
+                                        std::mem::replace(x, ir::Expr::Const(ir::Const::Boolean(false))),
+                                    )?
+                                }
+                                ir::SetElem::Range(lo, hi) => {
+                                    for x in [lo, hi].into_iter().flatten() {
+                                        *x = self.convert_to(
+                                            &Ty::Char,
+                                            &text,
+                                            std::mem::replace(x, ir::Expr::Const(ir::Const::Boolean(false))),
+                                        )?;
+                                    }
+                                }
+                            }
+                        }
+                    }
                     return Ok(ir::Expr::In(Box::new(l), elems));
                 }
                 let r = self.operand(&kids[1], operand_use)?;
@@ -487,11 +532,14 @@ impl Lowerer<'_> {
             IndexExpr if matches!(kids.first().map(|k| self.ty_ref(k)), Some(Ty::DotNet(_))) => {
                 Err("indexing a DotNet value is not lowered yet (call get_Item / GetValue instead)".into())
             }
-            TernaryExpr => Ok(ir::Expr::Ternary(
-                Box::new(self.expr(&kids[0])?),
-                Box::new(self.expr(&kids[1])?),
-                Box::new(self.expr(&kids[2])?),
-            )),
+            TernaryExpr => {
+                let cond = self.expr(&kids[0])?;
+                let yes = self.expr(&kids[1])?;
+                let no = self.expr(&kids[2])?;
+                let (t, f) = (self.ty_of(&kids[1]), self.ty_of(&kids[2]));
+                let no = self.ternary_false_branch(&t, &f, no)?;
+                Ok(ir::Expr::Ternary(Box::new(cond), Box::new(yes), Box::new(no)))
+            }
             CallExpr => {
                 let args: Vec<SyntaxNode> = kids.get(1).map(|a| a.children().collect()).unwrap_or_default();
                 self.call(n, &kids[0], &args)
@@ -842,4 +890,13 @@ impl Lowerer<'_> {
             _ => e,
         })
     }
+}
+
+/// A string literal (`'K'`, `'abc'`).
+pub(crate) fn is_string_literal(node: &SyntaxNode) -> bool {
+    node.kind() == SyntaxKind::Literal
+        && node
+            .children_with_tokens()
+            .filter_map(|e| e.into_token())
+            .any(|t| t.kind() == SyntaxKind::StringLit)
 }

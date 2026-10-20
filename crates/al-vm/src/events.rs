@@ -58,6 +58,11 @@ pub struct Registry {
     /// (lower-case platform codeunit, lower-case event) -> subscribers of platform events the runtime does not raise:
     /// `UI Helper Triggers`. Where BC raises such an event, the runtime refuses (`Registry::unraised_subscriber`).
     pub unraised: HashMap<(String, String), Vec<Unraised>>,
+    /// Subscribers (object, routine, lower-case event) to `OnInstallAppPerCompany` and `OnInstallAppPerDatabase` of the
+    /// platform codeunit `Extension Triggers` (2000000010), in program order. BC raises them when the subscriber's app is
+    /// installed (events/lt-platform-events-v/PeVFixtures.al:395-407, PeVTests.al:284); the runtime does not yet (ADR-046
+    /// steps A and B), so the install run refuses the tests that read what they write (`al-testrun`, `run_install_codeunits`).
+    pub install_subscribers: Vec<(usize, usize, String)>,
     /// Publisher object -> (object, routine) of every subscriber of any of its events: `subscribers` grouped by
     /// object, built at the first [`Registry::subscribers_of`]. The registry does not change once the engine holds it
     /// (ADR-001).
@@ -94,6 +99,7 @@ impl Default for Registry {
             unavailable_global: Default::default(),
             missing: HashMap::new(),
             unraised: HashMap::new(),
+            install_subscribers: Vec::new(),
             by_publisher: Default::default(),
         }
     }
@@ -258,6 +264,12 @@ impl Registry {
                                         manual: is_manual(o),
                                         element: String::new(),
                                     });
+                            }
+                            if kind == ObjKind::Codeunit
+                                && (target.eq_ignore_ascii_case("Extension Triggers") || target == "2000000010")
+                                && (event == "oninstallapppercompany" || event == "oninstallappperdatabase")
+                            {
+                                reg.install_subscribers.push((oi, ri, event.clone()));
                             }
                             if kind == ObjKind::Codeunit && target.eq_ignore_ascii_case("UI Helper Triggers") {
                                 let mut witnesses = vec![oi];

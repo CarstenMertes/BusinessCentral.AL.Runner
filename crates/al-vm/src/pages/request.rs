@@ -10,7 +10,7 @@
 
 use super::*;
 use al_builtins::describe::Describe;
-use al_builtins::filter::FieldFilter;
+use al_builtins::filter::{FieldFilter, FilterExpr};
 use al_builtins::page_op::PageOp;
 
 type Inst = Rc<RefCell<al_builtins::value::Instance>>;
@@ -180,6 +180,11 @@ impl Session {
         self.report.request_only_page = outer;
         self.ui_state.page_handler_depth -= 1;
         if let Err(e) = handled {
+            if matches!(e, Signal::Error(_)) && st.borrow().open {
+                let closed = self.close_after_handler_error(&st);
+                self.mark_closed(&st);
+                closed?;
+            }
             self.mark_closed(&st);
             return Err(e);
         }
@@ -200,6 +205,62 @@ impl Session {
             Some("Cancel") => Ok((RequestClosed::Cancel, None)),
             Some("SaveAsXml" | "SaveAsPdf" | "SaveAsExcel") => Ok((RequestClosed::SavedAsXml, None)),
             other => unsupported(format!("a request page closed with {} (not pinned)", other.describe())),
+        }
+    }
+
+    /// An AL error the handler does not catch closes the still open request page with Cancel before it leaves the run:
+    /// OnQueryClosePage(Cancel), then OnClosePage, and the handler's error is the one raised
+    /// (report/lt-report-requestpage/RptRequestPage.al:304, :413, :453). The corpus pins this for a page without a
+    /// source table, parts, close triggers of an extension or refused entries; any other shape, an answer or an error of
+    /// those triggers, and the page events are not pinned and are refused. With SaveValues the values are not stored,
+    /// as after a Cancel action (handlers/TestPageSaveValues.al); whether BC stores them here is not pinned, and the
+    /// earlier behavior is kept for handlers/TestReportMultiLineDataItemView.al:GetDemandToReserve_HandlerError_ReachesTheTest.
+    fn close_after_handler_error(&mut self, st: &St) -> Result<(), Signal> {
+        let object = st.borrow().object as usize;
+        let refuse = |what: &str| unsupported(format!("a request page handler error with {what} (close not pinned)"));
+        let ext_closes = page_of(&self.engine(), st)
+            .ext_triggers
+            .iter()
+            .any(|(n, _, _)| n == "onqueryclosepage" || n == "onclosepage");
+        if ext_closes {
+            return refuse("close triggers in a request page extension");
+        }
+        if self.has_source(st) {
+            return refuse("a request page with a source table");
+        }
+        if !st.borrow().parts.is_empty() {
+            return refuse("a request page with parts");
+        }
+        if !st.borrow().errors.is_empty() || st.borrow().dirty {
+            return refuse("a refused or unsaved entry on the request page");
+        }
+        if self.declares(st, "onaftergetcurrrecord") {
+            return refuse("OnAfterGetCurrRecord on the request page");
+        }
+        let engine = self.engine();
+        if engine.events.is_subscribed(object, "onqueryclosepageevent")
+            || engine.events.is_subscribed(object, "onclosepageevent")
+        {
+            return refuse("subscribers to the request page's close events");
+        }
+        let members: std::sync::Arc<[String]> = al_builtins::value::ACTION_MEMBERS
+            .iter()
+            .map(|m| m.to_string())
+            .collect();
+        let cancel = al_builtins::value::ACTION_MEMBERS
+            .iter()
+            .position(|m| *m == "Cancel")
+            .expect("Cancel is an Action member") as i32;
+        match self.query_close_answer(st, vec![Value::Option(cancel, members)]) {
+            Ok(Some(false)) => return refuse("an OnQueryClosePage that answers false"),
+            Ok(_) => {}
+            Err(Signal::Error(_)) => return refuse("an error in OnQueryClosePage"),
+            Err(other) => return Err(other),
+        }
+        match self.page_trigger(st, "onclosepage", vec![]) {
+            Ok(_) => Ok(()),
+            Err(Signal::Error(_)) => refuse("an error in OnClosePage"),
+            Err(other) => Err(other),
         }
     }
 
@@ -460,8 +521,9 @@ impl Session {
     /// `Invoke` of an action of the request page. BC's test client does not find it: the error
     /// names the action by an id the compiler derives from the report id and the action name
     /// (handlers/TestReportRequestPageAction.al:RequestPageAction_Invoke_IsNotFoundOnThePage_AndOnActionDoesNotRun
-    /// and the two tests after it), and no trigger runs.
-    pub(super) fn request_action_invoke(&mut self, st: &St, idx: usize) -> Result<Value, Signal> {
+    /// and the two tests after it), and no trigger runs. `Visible` and `Enabled` raise the same error
+    /// (report/W3ReportActions.al:186).
+    pub(super) fn request_action_not_found(&mut self, st: &St, idx: usize) -> Result<Value, Signal> {
         let engine = self.engine();
         let object = st.borrow().object as usize;
         let o = &engine.program.objects[object];
@@ -506,11 +568,17 @@ impl Session {
                         .globals
                         .get(slot)
                         .map_or_else(|| c.name.clone(), |g| g.name.clone());
-                    options.push_str(&format!(
-                        "<Field name=\"{}\">{}</Field>",
-                        xml_escape(&var_name),
-                        xml_escape(&text)
-                    ));
+                    // An empty value is an empty element, `<Field name="TxtVal" />`, for Text, Code, Date, Time and DateTime
+                    // alike (report/W3ReportParametersText.al:255).
+                    if text.is_empty() {
+                        options.push_str(&format!("<Field name=\"{}\" />", xml_escape(&var_name)));
+                    } else {
+                        options.push_str(&format!(
+                            "<Field name=\"{}\">{}</Field>",
+                            xml_escape(&var_name),
+                            xml_text(&text)
+                        ));
+                    }
                 }
                 (ir::ControlKind::DataItem, ir::Binding::Var(slot)) => {
                     // ShowFilter = false still writes the data item with its view (report/TestProbeReportContracts.al:
@@ -529,7 +597,7 @@ impl Session {
                     items.push_str(&format!(
                         "<DataItem name=\"{}\">{}</DataItem>",
                         xml_escape(&c.name),
-                        xml_escape(&view)
+                        xml_text(&view)
                     ));
                 }
                 _ => {}
@@ -739,14 +807,28 @@ impl Session {
 
     /// A record's view the way the parameters spell it: field numbers, not captions, and each
     /// filter as `<n>(<filter>)` (the corpus pins `WHERE(Field1=1(1))` for `SetFilter("Entry No.",
-    /// '1')`: handlers/TestReportRunRequestPage.al:81-86). The leading `VERSION(1)` and the key and
-    /// order clauses are docs/probes-needed.md.
+    /// '1')`: handlers/TestReportRunRequestPage.al:81-86). A descending view is `ORDER(1)` and a Boolean
+    /// filter on Yes is `1` (report/W3ReportParametersText.al:256, :306). Only the filters the page holds
+    /// in filter group 0 are written: those of the item's DataItemTableView are not
+    /// (report/W3ReportSaveAsExecute.al:209). The leading `VERSION(1)` and the key clause are docs/probes-needed.md.
+    /// Not pinned, and refused: a filter in another group, a Boolean filter on No, a direction per key field.
     fn parameter_view(&mut self, rec: &Rec) -> Result<String, Signal> {
         let t = self.table(rec)?;
-        let (key, ascending, mut filters) = {
+        let (key, ascending, field_descending, mut filters) = {
             let r = rec.borrow();
-            (r.key, r.ascending, r.filters.clone())
+            (r.key, r.ascending, r.field_descending, r.filters.clone())
         };
+        if field_descending != 0 {
+            return unsupported(
+                "a data item view with a direction per key field in the request page parameters (not pinned)",
+            );
+        }
+        filters.retain(|f| f.group != crate::reports::ITEM_VIEW_GROUP);
+        if filters.iter().any(|f| f.group != 0) {
+            return unsupported(
+                "a data item filter in a filter group other than 0 in the request page parameters (not pinned)",
+            );
+        }
         filters.sort_by_key(|f| f.field);
         let field = |pos: usize| format!("Field{}", t.fields[pos].id);
         let mut out = format!(
@@ -754,17 +836,44 @@ impl Session {
             t.keys[key].iter().map(|&p| field(p)).collect::<Vec<_>>().join(",")
         );
         if !ascending {
-            out.push_str(" ORDER(Descending)");
+            out.push_str(" ORDER(1)");
         }
         if !filters.is_empty() {
             let mut parts = Vec::new();
             for f in &filters {
-                parts.push(format!("{}=1({})", field(f.field), self.filter_text(&f.expr)?));
+                let expr = boolean_as_number(&f.expr)?;
+                parts.push(format!("{}=1({})", field(f.field), self.filter_text(&expr)?));
             }
             out.push_str(&format!(" WHERE({})", parts.join(",")));
         }
         Ok(out)
     }
+}
+
+/// `e` with a Boolean Yes written as `1` (report/W3ReportParametersText.al:306 `Field4=1(1)` for `SetFilter(Flag, 'Yes')`).
+/// No is not pinned and refused.
+fn boolean_as_number(e: &FilterExpr) -> Result<FilterExpr, Signal> {
+    let map = |v: &Value| -> Result<Value, Signal> {
+        match v {
+            Value::Boolean(true) => Ok(Value::Integer(1)),
+            Value::Boolean(false) => unsupported("a Boolean filter on No in the request page parameters (not pinned)"),
+            other => Ok(other.clone()),
+        }
+    };
+    let opt = |v: &Option<Value>| -> Result<Option<Value>, Signal> { v.as_ref().map(map).transpose() };
+    Ok(match e {
+        FilterExpr::Range(a, b) => FilterExpr::Range(opt(a)?, opt(b)?),
+        FilterExpr::Eq(v) => FilterExpr::Eq(map(v)?),
+        FilterExpr::RangeSame(v) => FilterExpr::RangeSame(map(v)?),
+        FilterExpr::Ne(v) => FilterExpr::Ne(map(v)?),
+        FilterExpr::Lt(v) => FilterExpr::Lt(map(v)?),
+        FilterExpr::Le(v) => FilterExpr::Le(map(v)?),
+        FilterExpr::Gt(v) => FilterExpr::Gt(map(v)?),
+        FilterExpr::Ge(v) => FilterExpr::Ge(map(v)?),
+        FilterExpr::Or(xs) => FilterExpr::Or(xs.iter().map(boolean_as_number).collect::<Result<_, _>>()?),
+        FilterExpr::And(xs) => FilterExpr::And(xs.iter().map(boolean_as_number).collect::<Result<_, _>>()?),
+        other => other.clone(),
+    })
 }
 
 /// The instance that holds the variables of a control: the report's, or its extension's.
@@ -836,6 +945,12 @@ pub(crate) fn action_id(report_id: u32, name: &str) -> i64 {
         }
     }
     i64::from(h as i32).abs()
+}
+
+/// Element text as BC writes it: `&`, `<` and `>` escaped, a double quote kept (report/W3ReportParametersText.al:272
+/// `a&lt;b&amp;"c"`, :306 `Field3=1(&gt;10)`).
+fn xml_text(s: &str) -> String {
+    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
 }
 
 fn xml_escape(s: &str) -> String {

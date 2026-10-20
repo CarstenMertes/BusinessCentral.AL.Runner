@@ -277,12 +277,6 @@ registry! {
         tests: "ERM Base Calendar (BaseCalendarEntriesShowCorrespondingRecords): Base Calendar Entries Subform keeps its position on the Date table in a global that OnAfterGetRecord sets.",
         probe: "A temporary ListPart whose OnFindRecord and OnNextRecord walk a position global (rows on every day, inserted on demand) and whose OnAfterGetRecord sets that global from Rec, logging each call; the host card refills it from its OnAfterGetRecord (DeleteAll, CurrPage.Update). Log the reads at open and after the host moves with Next, and read a part field before and after. The same list as a page of its own, opened on day 10 of 40.",
     },
-    PageRunRecordOnFindRecordCard => {
-        id: "page-run-record-onfindrecord-card",
-        assumed: "A card (a page without a repeater) with OnFindRecord, run with a record (Page.Run(id, Rec)), is asked OnFindRecord('=>') for that record as the page holds it after OnOpenPage, without reading the row again from the table, as a list is (pinned for a list: AiListOrderTests.al PageRun_RecordOnFifthRow).",
-        tests: "ERM Accounts (AnalysisViewWithUpdate): Analysis by Dimensions (page 554) sets Rec.\"Account Filter\" in OnOpenPage without Modify; the matrix it opens must see that filter.",
-        probe: "A card over a temporary table, run with Page.Run(id, TempRec) for a row inserted with one field set; OnOpenPage sets a second field on Rec without Modify; OnFindRecord logs Which and exits true without touching Rec. Log the Which strings, read the second field from a control, and from an action's OnAction. The same card without OnFindRecord.",
-    },
     SetValueWholeNumberIntoTextControl => {
         id: "setvalue-whole-number-into-text-control",
         assumed: "TestPage SetValue of an Integer, BigInteger or whole Decimal (below 1000 in size) on a Text or Code control enters the number's digits.",

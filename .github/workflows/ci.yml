@@ -286,6 +286,17 @@ jobs:
       # allows no hardware counter it falls back to CPU time with wider limits). #[ignore]d in plain `cargo test` because they only mean something in release.
       # This job runs nothing else at the same time, so the numbers are not disturbed.
       # CI has no instruction counter, so the CPU-time fallback only warns here (owner, 2026-10-20); with a counter the budgets fail.
+      # Ubuntu's kernel blocks perf_event_open for normal users by default (perf_event_paranoid above 2). The counter in
+      # tests/support/meter.rs counts user space only, so level 1 is enough. The step prints what the VM offers, so a run
+      # that still falls back to CPU time says why (no hardware PMU in the VM, or a blocked syscall).
+      - name: Allow the hardware instruction counter
+        run: |
+          echo "perf_event_paranoid before: $(cat /proc/sys/kernel/perf_event_paranoid)"
+          sudo sysctl -w kernel.perf_event_paranoid=1
+          sudo sysctl -w kernel.kptr_restrict=0
+          echo "event sources: $(ls /sys/bus/event_source/devices | tr '\n' ' ')"
+          grep -m1 'model name' /proc/cpuinfo || true
+          sudo dmesg 2>/dev/null | grep -iE 'perf|pmu' | head -5 || true
       - name: Perf budgets
         run: |
           cargo test --release --no-fail-fast \

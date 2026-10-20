@@ -1324,9 +1324,9 @@ fn the_session_rows_name_the_cronus_database() {
 }
 
 /// A table the app declares with `ObsoleteState = Moved` is not in the runtime app: AllObj has no row for it and
-/// `RecordRef.Open` fails with AL:MetadataNotFound (platform/lt-aw-fresh-tenant/AwTests.al:413-442). The text of that
-/// error is not pinned on Linux (AwTests.al:434-439), so a read of it is refused; a record operation on the table is not
-/// pinned and is refused.
+/// `RecordRef.Open` fails with AL:MetadataNotFound (platform/lt-aw-fresh-tenant/AwTests.al:413-442). Issued by the test
+/// method itself, the text names the test runner (AwTests.al:434-438, corpus bump 34); issued from a helper it is not
+/// pinned and a read of it is refused. A record operation on the table is not pinned and is refused.
 #[test]
 fn a_moved_table_has_no_all_obj_row_and_does_not_open() {
     let o = outcomes(
@@ -1334,12 +1334,15 @@ fn a_moved_table_has_no_all_obj_row_and_does_not_open() {
 codeunit 50000 "T" { Subtype = Test;
   [Test] procedure NoAllObjRow() var A: Record AllObj; begin A.SetRange("Object Type", A."Object Type"::Table); A.SetRange("Object ID", 50001); if A.Count() <> 0 then Error('rows %1', A.Count()); end;
   [Test] procedure OpenFails() var RR: RecordRef; begin asserterror RR.Open(50001); if GetLastErrorCode() <> 'AL:MetadataNotFound' then Error('code %1', GetLastErrorCode()); end;
-  [Test] procedure OpenText() var RR: RecordRef; begin asserterror RR.Open(50001); if GetLastErrorText() = '' then; end;
-  [Test] procedure RecordUse() var M: Record "Moved"; begin if M.IsEmpty() then; end; }"#,
+  [Test] procedure OpenText() var RR: RecordRef; begin asserterror RR.Open(50001); if GetLastErrorText() <> 'You tried to invoke the Table object with the ID 50001 from the object Test Runner - Mgt. An object with that ID does not exist in the current application compiled with emit version 27024.' then Error('%1', GetLastErrorText()); end;
+  [Test] procedure OpenTextViaHelper() var H: Codeunit "H"; begin asserterror H.Open(50001); if GetLastErrorText() = '' then; end;
+  [Test] procedure RecordUse() var M: Record "Moved"; begin if M.IsEmpty() then; end; }
+codeunit 50002 "H" { procedure Open(No: Integer) var RR: RecordRef; begin RR.Open(No); end; }"#,
     );
     passes(&o, "NoAllObjRow");
     passes(&o, "OpenFails");
-    assert!(not_run(&o, "OpenText").contains("not pinned"));
+    passes(&o, "OpenText");
+    assert!(not_run(&o, "OpenTextViaHelper").contains("not pinned"));
     assert!(not_run(&o, "RecordUse").contains("ObsoleteState = Moved"));
 }
 

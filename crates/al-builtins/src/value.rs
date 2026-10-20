@@ -492,6 +492,9 @@ pub struct PageState {
     /// `Page.RunModal(Id, Rec)` called as a statement: not a lookup (pages/lt-be-runmodal-onlookup/BeRunModalOnLookup.al:916),
     /// but the row the page closed on still goes back to `Rec`, as it did before that pin (not pinned either way).
     pub statement_run: bool,
+    /// The refresh about to run follows an action on a card with OnFindRecord, without CurrPage.Update: pinned
+    /// (pages/lt-be-card-onfindrecord/BeCardOnFindRecord.al), so it marks no assumption.
+    pub refresh_pinned: bool,
     /// Page background tasks the page enqueued and the client has not run yet: (task id, codeunit id,
     /// parameters), and the next task id.
     pub bg_tasks: std::collections::VecDeque<(i32, i32, Value)>,
@@ -586,6 +589,7 @@ impl PageState {
             stale: false,
             lookup_set: false,
             statement_run: false,
+            refresh_pinned: false,
             bg_tasks: Default::default(),
             bg_next_id: 1,
         }

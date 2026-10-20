@@ -270,6 +270,19 @@ impl Session {
         // record's own group 2, the view's SORTING replaces the record's key and the record's direction stays (types/lt-code-digits-page-run-view/
         // P145PageRunView.al:P145_A_RecFilterSameFieldAsView, _RecFilterOverlappingView, _RecFilterOtherField, _RecKeyDescending,
         // _RecKeyPrimary, _RecFilterInGroup1, _RecFilterInGroup2). A view that names an ORDER is an assumption (page-run-record-view-order-applies).
+        // A stored record handed to a card whose source table is temporary: BC shows the row (OnAfterGetRecord reads it,
+        // pages/lt-be-card-onfindrecord/BeCardOnFindRecord.al:374 CardTemp_PageRun_StoredRec `O:1/stored/;R:1/stored/`), but
+        // whether the row is copied into the page's temporary table or read from the database (which decides what the page
+        // writes, counts and steps to) is not pinned: refused (docs/probes-needed.md).
+        if let (Some(r), true) = (&record, has_source) {
+            let page_temp = self.page_rec(st).borrow().temporary;
+            if page_temp && !r.borrow().temporary && !self.is_list(st) && self.stored_row(r)?.is_some() {
+                self.mark_closed(st);
+                return unsupported(
+                    "a stored record handed to a card whose source table is temporary (whether the row is copied into the temporary table is not pinned)",
+                );
+            }
+        }
         if let (Some(r), true) = (&record, has_source) {
             let rec = self.page_rec(st);
             let src = r.borrow();
@@ -639,15 +652,12 @@ impl Session {
             // A list that serves its rows from OnFindRecord is asked `=>` for the record it was handed, as the page holds it,
             // and reads on from there as when it opens (pages/lt-ai-list-order/AiListOrderTests.al:871 PageRun_RecordOnFifthRow
             // `F:=>=Yes;R:R1005;...;R:R1012;N:1=0;R:R1005;N:-1=-1;R:R1004;...;R:R1001;N:-1=0`, :890 PageRun_RecordWithFilterOnFifthRow).
-            // A card in that shape is assumed to be asked the same (Microsoft's ERM Accounts AnalysisViewWithUpdate, codeunit
-            // 134020: "Analysis by Dimensions", page 554, sets its Account Filter on Rec in OnOpenPage and never stores it).
+            // A card is asked `=` once, after OnOpenPage, with Rec as OnOpenPage left it, over a temporary or a database
+            // table (pages/lt-be-card-onfindrecord/BeCardOnFindRecord.al:292 CardTempFind_PageRun_TempRec `F:=:1/passed/in memory`,
+            // :309 CardTempFind_PageRun_StoredRec, and the CardDbFind_* tests).
             if self.declares(st, "onfindrecord") && self.stored_row(&rec)?.is_some() {
-                if !self.is_list(st) {
-                    al_builtins::assumptions::assume(
-                        al_builtins::assumptions::Assumption::PageRunRecordOnFindRecordCard,
-                    );
-                }
-                if !self.nav_find(st, "=>")? {
+                let which = if self.is_list(st) { "=>" } else { "=" };
+                if !self.nav_find(st, which)? {
                     return unsupported("OnFindRecord finds no row for the record handed to the page (not pinned)");
                 }
                 st.borrow_mut().cursor = Cursor::Row;

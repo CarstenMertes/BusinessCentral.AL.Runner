@@ -207,15 +207,43 @@ impl Session {
             Some((n, k)) => (n.trim(), Some(k)),
             None => (text.trim(), None),
         };
+        // `[<namespace>.<name>]` is what Format(RecordId, 0, 9) writes for a table in a namespace, and Evaluate reads it back
+        // (misc/lt-inferred-behaviors/P69NsConsumers.al:198, :215, a name with spaces); the same text without the brackets
+        // names no table (:202, :216).
+        let qualified = name.strip_prefix('[').and_then(|n| n.strip_suffix(']'));
         let tables: Vec<usize> = self
             .engine
             .program
             .objects
             .iter()
             .enumerate()
-            .filter(|(_, o)| o.table.is_some() && o.name.eq_ignore_ascii_case(name))
+            .filter(|(_, o)| {
+                o.table.is_some()
+                    && match (qualified, &o.namespace) {
+                        (None, _) => o.name.eq_ignore_ascii_case(name),
+                        (Some(q), Some(ns)) => {
+                            q.get(..ns.len()).is_some_and(|p| p.eq_ignore_ascii_case(ns))
+                                && q[ns.len()..]
+                                    .strip_prefix('.')
+                                    .is_some_and(|n| n.eq_ignore_ascii_case(&o.name))
+                        }
+                        (Some(_), None) => false,
+                    }
+            })
             .map(|(i, _)| i)
             .collect();
+        if let (Some(q), [one]) = (qualified, tables.as_slice()) {
+            if !self.engine.program.objects[*one].name.contains(' ') {
+                return unsupported(format!(
+                    "Evaluate into a RecordId of `[{q}]`, a table in a namespace whose name has no space (not pinned)"
+                ));
+            }
+        }
+        if qualified.is_some() && tables.is_empty() {
+            return unsupported(format!(
+                "Evaluate into a RecordId of the bracketed name `{name}`, which names no table in a namespace (not pinned)"
+            ));
+        }
         let object = match tables.as_slice() {
             [] => return Ok(None),
             [one] => *one,
@@ -738,7 +766,7 @@ impl Session {
                 self.engine.program.objects[t.object as usize].id.unwrap_or(0) as i32,
             )),
             "Name" => Ok(Value::Text(t.name.clone().into())),
-            "Caption" => Ok(Value::Text(self.caption(&t).into())),
+            "Caption" => self.caption_checked(&t).map(|c| Value::Text(c.into())),
             // corpus recordref/TestRecordRefGetSet.al:16-30 pins only that it is not empty.
             "CurrentCompany" => Ok(Value::Text(self.current_company_of(&rec).into())),
             "ChangeCompany" => self.change_company(&rec, args),

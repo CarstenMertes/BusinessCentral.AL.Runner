@@ -655,6 +655,42 @@ pub(crate) fn lower_object<'a>(
             properties.push((name, p.value_text()));
         }
     }
+    // A tableextension's Caption is the caption of a table that declares none (tableextension/TestTableExtFieldModify.al:
+    // 168-178: TableCaption, RecordRef.Caption and AllObjWithCaption of the table). With a Caption on the table too, or on
+    // two extensions, which one wins is not pinned: the reads of the caption refuse (`CAPTION_REFUSED`).
+    if o.kind == ObjKind::Table {
+        let ext_captions: Vec<(String, String)> = extensions
+            .get(&oi)
+            .into_iter()
+            .flatten()
+            .flat_map(|&e| {
+                ws.object_ast(e)
+                    .properties()
+                    .filter(|p| p.name().eq_ignore_ascii_case("Caption") || p.name().eq_ignore_ascii_case("CaptionML"))
+                    .map(move |p| (p.name(), p.value_text()))
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        let own = properties
+            .iter()
+            .any(|(k, _)| k.eq_ignore_ascii_case("Caption") || k.eq_ignore_ascii_case("CaptionML"));
+        match ext_captions.as_slice() {
+            [] => {}
+            [(k, v)] if !own && k.eq_ignore_ascii_case("Caption") => properties.push((k.clone(), v.clone())),
+            _ => properties.push((
+                ir::CAPTION_REFUSED.into(),
+                format!(
+                    "the caption of table {}, which a tableextension sets {} (which caption BC shows is not pinned)",
+                    o.name,
+                    if own {
+                        "over its own"
+                    } else {
+                        "with CaptionML or more than once"
+                    }
+                ),
+            )),
+        }
+    }
     let (table, key_owners) = if o.kind == ObjKind::Table && ws.usable(oi) {
         let (t, owners) = lw.table_schema(oi, &obj, extensions.get(&oi).cloned().unwrap_or_default(), routine_at);
         (Some(t), owners)

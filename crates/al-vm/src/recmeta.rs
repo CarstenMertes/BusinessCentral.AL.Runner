@@ -192,10 +192,17 @@ impl Session {
         // or an empty area reads as the class text as written (pages/lt-page-report-events/P84Captions.al:
         // Table_NoSubscriber f01..f14, Table_Log_* and Table_Resolve_* with no event call, BC 29). A non-numeric area is
         // the platform's event and not pinned for FieldCaption: refused.
-        if let Some(class) = self
-            .field_property(t, pos, "CaptionClass")
-            .and_then(|v| string_literal(&v))
-        {
+        let declared = self.field_property(t, pos, "CaptionClass");
+        // A CaptionClass that is an expression (a procedure call of a tableextension, pageext/lt-page-ext-properties/
+        // TableExtCaptionClass.al:56-74, :124-134) is not evaluated yet.
+        if let Some(v) = declared.as_ref().filter(|v| string_literal(v).is_none()) {
+            return unsupported(format!(
+                "the caption of field {} whose CaptionClass is the expression `{}` (table field property expressions are not evaluated yet)",
+                t.fields[pos].name,
+                v.trim()
+            ));
+        }
+        if let Some(class) = declared.and_then(|v| string_literal(&v)) {
             return match class.split_once(',') {
                 Some(("3", "")) => Ok(self.field_caption(t, pos)),
                 Some(("3", rest)) => Ok(rest.to_string()),
@@ -289,7 +296,7 @@ impl Session {
             | RecordOp::HasLinks
             | RecordOp::CopyLinks => self.record_links(method, rec, t, args),
             RecordOp::TableName => Ok(Value::Text(t.name.clone().into())),
-            RecordOp::TableCaption => Ok(Value::Text(self.caption(t).into())),
+            RecordOp::TableCaption => self.caption_checked(t).map(|c| Value::Text(c.into())),
             RecordOp::FieldName => Ok(Value::Text(t.fields[arg_pos(args, 0)?].name.clone().into())),
             RecordOp::FieldCaption => self
                 .field_caption_checked(t, arg_pos(args, 0)?)

@@ -102,6 +102,23 @@ fn table_of<'a>(c: &'a Catalog, i: usize) -> Option<(&'a Object, &'a al_ir::Tabl
     o.table.as_ref().map(|t| (o, t))
 }
 
+/// A `Get` of a Field row of a table of the app under test gives null App Package ID and App Runtime Package ID; a `Get` of a
+/// Base Application table, and FindFirst and Next of either, give the AllObj ones
+/// (metadata/lt-platform-metadata-columns/PlatformMetadataColumnValues.al:287-311). The app under test is the app whose two
+/// ids are equal (`ids::runtime_package_id`).
+pub(super) fn field_get(t: &TableDef, mut r: al_data::Row) -> al_data::Row {
+    let col = |name: &str| t.fields.iter().position(|x| x.name == name);
+    if let (Some(p), Some(rt)) = (col("App Package ID"), col("App Runtime Package ID")) {
+        if let (Value::Guid(a), Value::Guid(b)) = (&r[p], &r[rt]) {
+            if a == b {
+                r[p] = Value::Guid([0; 16]);
+                r[rt] = Value::Guid([0; 16]);
+            }
+        }
+    }
+    r
+}
+
 pub(super) fn field_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
     let engine = p.engine();
     let c = Catalog::new(&engine);
@@ -224,11 +241,30 @@ fn field_row(
             .map(|(_, v)| v.trim())
     };
     // SystemId is named `$systemId` (record/TestFieldLenAndFeatureKeyContracts.al:107-112).
+    // FieldName is cut to its 30 characters; a tableextension field may have a longer name
+    // (tableextension/TestTableExtFieldModify.al:204-216).
     r[pos(t, 4)] = Value::Text(if f.id == 2_000_000_000 {
         "$systemId".into()
     } else {
-        f.name.clone().into()
+        f.name.chars().take(30).collect::<String>().into()
     });
+    // App Package ID and App Runtime Package ID: the table's AllObj ones (PlatformMetadataColumnValues.al:283-311, after
+    // FindFirst and Next; `Get` of a table of the app under test leaves them null, see `field_get`). For a platform table they
+    // are not pinned.
+    for (name, which) in [("App Package ID", 0), ("App Runtime Package ID", 1)] {
+        if let Some(col) = t.fields.iter().position(|x| x.name == name) {
+            r[col] = if super::objects::platform_object(table) {
+                super::unknown(
+                    t,
+                    t.fields[col].id,
+                    &format!("table '{}', a platform table", table.name),
+                )
+            } else {
+                let ids = super::objects::package_ids(c, table);
+                Value::Guid(if which == 0 { ids.0 } else { ids.1 })
+            };
+        }
+    }
     r[pos(t, 5)] = blank.option(
         t,
         5,

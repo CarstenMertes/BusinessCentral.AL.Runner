@@ -442,9 +442,13 @@ impl Session {
             )));
         }
         let Some(table) = self.table_object(no) else {
-            // A moved table: the open fails with AL:MetadataNotFound (AwTests.al:440). The text names the test runner on
-            // Windows and the test codeunit on Linux (AwTests.al:434-438, held): not pinned here.
+            // A moved table: the open fails with AL:MetadataNotFound (AwTests.al:440). Opened by the test method itself, the
+            // text names the test runner (platform/lt-aw-fresh-tenant/AwTests.al:434-438 MovedTable_OwnApp_ReadAndWrite).
+            // Opened from a helper or inside a try function it is not pinned.
             if self.only_moved_table(no) {
+                if self.in_test_method_itself() {
+                    return Err(self.missing_object_from("Table", no, "Test Runner - Mgt"));
+                }
                 return Err(Signal::Error(Box::new(al_builtins::native::unpinned_text_error(
                     "AL:MetadataNotFound",
                     "the text of RecordRef.Open on a table declared ObsoleteState = Moved (AwTests.al:434-439)",

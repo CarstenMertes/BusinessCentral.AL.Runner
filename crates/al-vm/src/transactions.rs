@@ -180,19 +180,30 @@ impl Session {
         // A codeunit the test method runs itself, outside a try function, names the test runner too
         // (errors/lt-az-error-texts/AzErrorTexts.al:110-134 CodeunitRun_MissingId_RawText). Deeper calls from the test codeunit
         // keep the outermost object: only a helper codeunit is pinned (MissingCodeunit_FromHelperCodeunit above).
-        let test_method_itself = kind == "CodeUnit"
+        let caller =
+            if (kind == "Page" && self.tx.try_depth == 0) || (kind == "CodeUnit" && self.in_test_method_itself()) {
+                "Test Runner - Mgt"
+            } else {
+                caller
+            };
+        self.missing_object_from(kind, id, caller)
+    }
+
+    /// Whether the running code is the test method itself, outside a try function: the call stack holds only a
+    /// test codeunit.
+    pub(crate) fn in_test_method_itself(&self) -> bool {
+        self.tx.try_depth == 0
             && self.frames.len() == 1
             && self.frames.first().is_some_and(|&o| {
                 self.engine.program.objects[o]
                     .properties
                     .iter()
                     .any(|(k, v)| k.eq_ignore_ascii_case("Subtype") && v.trim().eq_ignore_ascii_case("Test"))
-            });
-        let caller = if (kind == "Page" || test_method_itself) && self.tx.try_depth == 0 {
-            "Test Runner - Mgt"
-        } else {
-            caller
-        };
+            })
+    }
+
+    /// The missing-object error with the object it names as the caller.
+    pub(crate) fn missing_object_from(&self, kind: &str, id: i64, caller: &str) -> Signal {
         let major = self.engine.target.as_ref().map_or(29, |t| t.bc.major);
         al_error_code(
             &format!(

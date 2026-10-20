@@ -8,16 +8,16 @@ pass rate is measured against: every `<testcase>` in it passed on real BC.
 | Field | Value |
 |---|---|
 | Corpus repo | StefanMaron/BusinessCentral.AL.Language.Tests, branch `master` (the default branch; until 2026-10-19 the side branch `al-runtime-rs`, whose commits are all on `master`) |
-| Corpus pin | `e4ae96398ebbbcbb996de2fe241f281f9415ef2d` (the `corpus` submodule, master merge of corpus PR 689; must equal `corpus_commit` in `oracle.toml`) |
+| Corpus pin | `4990f3f348e9d3550321f2940b8c83b62f08b823` (the `corpus` submodule, master merge of corpus PR 691; must equal `corpus_commit` in `oracle.toml`) |
 
 | Major | Oracle leg | Corpus commit of the run | Workflow run | Artifact | Artifact id | Cases |
 |---|---|---|---|---|---|---|
-| 27 | 27.5 | `e4ae963` (the pin) | 39458361130 | `junit-test-results-27.5` | 12282439141 | 16801 |
-| 28 | 28.5 | `e4ae963` (the pin) | 39458361130 | `junit-test-results-28.5` | 12282259197 | 16893 (+26 `OnRun`) |
-| 29 | 29.0 | `e4ae963` (the pin) | 39458361130 | `junit-test-results-29.0` | 12284082793 | 16987 (+26 `OnRun`) |
+| 27 | 27.5 | `4990f3f` (the pin) | 39484019125 | `junit-test-results-27.5` | 12296606163 | 16854 |
+| 28 | 28.5 | `4990f3f` (the pin) | 39484019125 | `junit-test-results-28.5` | 12294644248 | 16943 (+26 `OnRun`) |
+| 29 | 29.0 | `4990f3f` (the pin) | 39484019125 | `junit-test-results-29.0` | 12294548738 | 17037 (+26 `OnRun`) |
 
-The files come from the green pull request run of PR 689, whose head `11b7367` has the same tree as the pin.
-The master push run of the pin (39464363332) was still running when the pin was set.
+The files come from the green pull request run of PR 691, whose head `fdfe3d8` has the same tree as the pin `4990f3f`.
+The master push run of the pin (39492219467) was still running when the pin was set.
 Every file has 0 failures. Each run published two artifacts with the same name; the
 oracle is the large one (the main suite, `junit-al-language.xml`). The small one is
 the OnPrem suite (`junit-al-language-onprem.xml`, 72 cases): it is the oracle of the

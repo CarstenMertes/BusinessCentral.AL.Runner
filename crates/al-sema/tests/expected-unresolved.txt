@@ -1,2 +1,2 @@
    1 unresolved codeunit `Azure AD Plan Test Library`
-  59 unresolved codeunit `Permissions Mock`
+  64 unresolved codeunit `Permissions Mock`

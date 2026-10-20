@@ -12584,7 +12584,6 @@
 76360 ZLookupPageId_OpensTargetPage
 76360 ZLookupPageId_PlainControlHasNoLookup
 76360 ZPresentationControls_Read
-76360 ZShowMandatory_NotEnforced
 76510 AA_CharAllowed_PageField
 76510 AA_CharAllowed_TableField
 76510 AA_DateFormula_PageField

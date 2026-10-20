@@ -90,6 +90,11 @@ fn dmy2date(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
             "DMY2Date({d}, {m}, {y}) is not a calendar date (error text not pinned)"
         ));
     }
+    // DMY2Date(1, 1, 1) is the undefined date, not the 00010101D literal (types/lt-datetime/DateFuncs.al:213, :227: Format(.., 0, 9)
+    // is ''; errors/lt-ms-refusals-130/P130DateFilters.al:261-262).
+    if (d, m, y) == (1, 1, 1) {
+        return Ok(Value::Date(0, false));
+    }
     Ok(Value::Date(day_from_civil(y, m as u32, d as u32), false))
 }
 
@@ -1036,6 +1041,10 @@ mod tests {
         is_date(d(31, 12, 9999), 9999, 12, 31);
         is_date(d(3, 1, 1), 1, 1, 3);
         is_date(d(29, 2, 2024), 2024, 2, 29);
+        // DMY2Date(1, 1, 1) is the undefined date: Format(.., 0, 9) gives '' (types/lt-datetime/DateFuncs.al:213, :227), which
+        // the 00010101D literal does not (it raises), and a Date field stored with it reads back equal and blank
+        // (errors/lt-ms-refusals-130/P130DateFilters.al:261-262).
+        assert!(matches!(d(1, 1, 1), Ok(Value::Date(0, false))), "{:?}", d(1, 1, 1));
     }
 
     #[test]

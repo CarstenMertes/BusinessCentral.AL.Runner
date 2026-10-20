@@ -57,7 +57,7 @@ codeunit 130301 "Reset State Before Test Run"
         Randomize(1);
         L.Add('130301');
         if L.TakeRefuse() then
-            R.LockTable(false);
+            R.LockTable(true, true);
     end;
 }
 

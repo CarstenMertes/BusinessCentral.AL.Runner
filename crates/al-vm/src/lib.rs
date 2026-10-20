@@ -6,6 +6,9 @@ use al_builtins::native::{AlError, Signal};
 use al_builtins::ops;
 use al_builtins::value::{Instance, RecordState, RtType, Value};
 use al_ir as ir;
+
+/// A media object a Modify or Delete removed from Tenant Media, kept so a rollback can put it back.
+type RemovedMedia = (al_builtins::media::Id, al_builtins::media::MediaObject);
 use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::rc::Rc;
@@ -55,6 +58,7 @@ mod relations;
 mod rename;
 mod reports;
 mod sessionops;
+mod sqltime;
 mod testdata;
 mod transactions;
 mod ui;
@@ -543,6 +547,12 @@ pub struct Session {
     pub(crate) adhoc_tables: RefCell<AdhocTables>,
     /// Imported media objects and media sets (the platform tables behind Media fields).
     pub(crate) media: al_builtins::media::MediaStore,
+    /// Media objects a Modify or Delete removed from Tenant Media: `.0` since the last commit (a rollback puts them back),
+    /// `.1` committed since the test runner's checkpoint (its restore puts them back). See `Session::release_media`.
+    pub(crate) media_removed: (Vec<RemovedMedia>, Vec<RemovedMedia>),
+    /// Records a TransferFields from another table wrote into, with that row's version: the next Modify refuses when the stale
+    /// check would answer differently with it (records.rs `take_foreign_transfer`).
+    pub(crate) foreign_transfers: Vec<(std::rc::Weak<RefCell<RecordState>>, Value)>,
     /// The host session behind `DotNet` values; ends with the session (ADR-014 section 6).
     pub(crate) dotnet: dotnet::DotNetState,
     /// The session's application areas as `ApplicationArea()` reads them: `#Basic,#Suite`, or the
@@ -722,6 +732,8 @@ impl Session {
             initial_cache: Default::default(),
             adhoc_tables: Default::default(),
             media,
+            media_removed: Default::default(),
+            foreign_transfers: Vec::new(),
             dotnet: Default::default(),
             application_areas: String::new(),
             tx: TxState {
@@ -814,7 +826,20 @@ impl Session {
         self.tx.committed_row_version = self.next_row_version;
         self.tx.last_commit_wrote = self.tx.tx_phase == crate::transactions::TX_WRITE;
         self.isolated_committed = self.isolated_storage.clone();
+        let removed = std::mem::take(&mut self.media_removed.0);
+        self.media_removed.1.extend(removed);
         self.end_write_phase();
+    }
+
+    /// The test runner took a checkpoint of the committed data: what was removed before it stays removed.
+    pub fn media_checkpoint(&mut self) {
+        self.media_removed.1.clear();
+    }
+
+    /// The test runner went back to its checkpoint: the media removed since come back, as the rows that held them do.
+    pub fn restore_media_checkpoint(&mut self) {
+        let removed = std::mem::take(&mut self.media_removed.1);
+        self.media.objects.borrow_mut().extend(removed);
     }
 
     /// The transaction a write call started has ended (record/TestProbeRecordRefContracts.al:WriteTransaction_State starts
@@ -831,10 +856,26 @@ impl Session {
     /// Discards every change since the last commit. The AutoIncrement counters are not
     /// part of the data and stay (corpus record/TestAutoIncrementExplicitKey.al:154), except
     /// those a Truncate of this transaction changed.
+    /// A rollback inside the run (asserterror, a guarded `Codeunit.Run`): refused while a Feature Key change of this
+    /// transaction is pending, since whether BC undoes it is not settled (platform/lt-aw-fresh-tenant/AwTests.al:557-576
+    /// says it does not, on the Linux CI only).
+    pub(crate) fn rollback_in_run(&mut self) -> Result<(), Signal> {
+        if self.store.virtual_write_pending() {
+            return Err(Signal::Unsupported(
+                "a rollback of an uncommitted Feature Key change (whether it is undone is a Linux suspect, not settled)".into(),
+            ));
+        }
+        self.rollback_transaction();
+        Ok(())
+    }
+
     pub fn rollback_transaction(&mut self) {
         self.tx.deferred_insert = None;
         al_data::Store::rollback(&mut self.store);
         self.isolated_storage = self.isolated_committed.clone();
+        // The Tenant Media rows a Modify or Delete of this transaction removed come back with the rows.
+        let removed = std::mem::take(&mut self.media_removed.0);
+        self.media.objects.borrow_mut().extend(removed);
         // The code coverage tables keep their rows through a rollback (codeunit/PWCodeCoverageRows.al:
         // Rollback_RowsReadBeforeAnAsserterror, Rollback_RowsFirstReadInsideFailingScope): what was
         // recorded is written into them again at the next read.

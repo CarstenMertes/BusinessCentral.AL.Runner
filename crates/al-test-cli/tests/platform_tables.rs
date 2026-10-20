@@ -222,6 +222,23 @@ fn a_feature_key_enabled_can_be_modified_and_reads_back_and_another_column_is_re
     assert!(why.contains("virtual table 'Feature Key'"), "{why}");
 }
 
+// platform/lt-aw-fresh-tenant/AwTests.al:557-576: on the corpus CI (Linux) a Feature Key change survives the rollback of an
+// asserterror. That is a Linux suspect until the Windows nightly confirms it: the rollback of an uncommitted change is refused.
+#[test]
+fn a_rollback_of_an_uncommitted_feature_key_change_is_refused() {
+    let o = outcomes(
+        r#"codeunit 50000 "T" { Subtype = Test;
+  [Test] procedure RolledBack() var K: Record "Feature Key"; begin
+    asserterror begin K.FindFirst(); if K.Enabled = K.Enabled::None then K.Enabled := K.Enabled::"All Users" else K.Enabled := K.Enabled::None;
+      K.Modify(); Error('undo'); end; end;
+  [Test] procedure UnchangedRolledBack() var K: Record "Feature Key"; begin
+    asserterror begin K.FindFirst(); K.Modify(); Error('undo'); end; end; }"#,
+    );
+    let why = not_run(&o, "RolledBack");
+    assert!(why.contains("Feature Key"), "{why}");
+    passes(&o, "UnchangedRolledBack");
+}
+
 #[test]
 fn a_column_nothing_pins_is_refused_where_code_reads_it() {
     let o = outcomes(

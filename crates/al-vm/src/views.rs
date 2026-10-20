@@ -91,6 +91,17 @@ impl Session {
             }
             return unsupported("the filter text of an undefined Time or one with milliseconds (not pinned)");
         }
+        // A DateTime with milliseconds shows its seconds and milliseconds, as standard format 1 writes them
+        // (errors/lt-ms-refusals-130/P130DateFilters.al:211, `03/24/24 11:59:59.999 PM`; a whole minute stays `12:00 AM`).
+        if let Value::DateTime(d) = v {
+            if *d != 0 && (d - 1) % 1000 != 0 {
+                return al_builtins::format::try_format(v, 0, 1, self).map_err(Signal::Unsupported);
+            }
+            // Seconds without milliseconds: not pinned.
+            if *d != 0 && (d - 1) / 1000 % 60 != 0 {
+                return unsupported("the filter text of a DateTime with seconds and no milliseconds (not pinned)");
+            }
+        }
         let text = self.message_value(v)?;
         // A value that is only blank space is shown in single quotes (corpus
         // record/TestRecordRuntimeTextsAndViews.al:Record_GetView_And_GetFilters_Texts, the blank

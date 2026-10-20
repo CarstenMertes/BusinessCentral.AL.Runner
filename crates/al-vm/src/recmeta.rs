@@ -466,10 +466,18 @@ impl Session {
             }
             // Locking and permissions are not observable in one session: only the answers the corpus pins.
             RecordOp::LockTable => {
-                // corpus record/TestRecordLock.al:33-41 expects an error mentioning 'not supported' for Wait = false.
+                // Wait = false fails, with or without VersionCheck (record/lt-record-write/RcBMeta.al:415-419,
+                // record/TestRecordLock.al:38, session/TestBCLockingContracts.al:124; the RecordRef forms in
+                // recordref/lt-refs/RfTViews.al:332-360). The text names the table by its name (RcBMeta.al:418).
                 if matches!(args.first(), Some(Value::Boolean(false))) {
-                    return unsupported("LockTable(false) is rejected in the cloud (error text not pinned)");
+                    return Err(lock_table_bad_parm(t));
                 }
+                // Record.LockTable(true, true): only the RecordRef form is pinned (RfTViews.al:314-315, handled in refs.rs).
+                if matches!(args.get(1), Some(Value::Boolean(true))) {
+                    return unsupported("Record.LockTable(true, true) (only the RecordRef form is pinned)");
+                }
+                // LockTable sets ReadIsolation back to Default (misc/lt-cv-odd-leads/CvReadIsolationState.al:47-48, :59).
+                rec.borrow_mut().read_isolation = 0;
                 Ok(Value::Null)
             }
             RecordOp::Consistent => {
@@ -815,6 +823,8 @@ impl Session {
                 d.ascending = s.ascending;
                 d.field_descending = s.field_descending;
                 d.position = s.position;
+                // ReadIsolation comes over with Copy (misc/lt-cv-odd-leads/CvReadIsolationState.al:49-51, :61).
+                d.read_isolation = s.read_isolation;
                 // The marks come over with Copy, not with an assignment (record/lt-record-read/RcAMisc.al:
                 // Mark_Separate_Variables_Do_Not_Share `copied`).
                 d.marks = s.marks;
@@ -1238,6 +1248,24 @@ impl Session {
             }
             updates.push((dp, ops::convert(src_fields[sp].clone(), &df.ty)?));
         }
+        // From a row of the same table with the primary key (the default), the buffer takes the source's row version: a Modify of a
+        // stale buffer then succeeds; without the key it does not (record/lt-cn-transferfields-modify/CnTransferFieldsModify.al:133-150,
+        // :153-173). From another table the version stays (only a current buffer is pinned there, :194-214).
+        if init_pk && src_table == t.object as usize {
+            if let Some(i) = t.fields.iter().position(|f| f.id == 2_000_000_005) {
+                updates.push((i, src_fields[i].clone()));
+            }
+        }
+        // From another table the version stays, which is not pinned beyond a current buffer: the next Modify checks whether the
+        // source row's version would have answered differently (records.rs `take_foreign_transfer`).
+        self.foreign_transfers
+            .retain(|(w, _)| w.upgrade().is_some_and(|r| !Rc::ptr_eq(&r, rec)));
+        if src_table != t.object as usize {
+            if let Some(sp) = from.fields.iter().position(|f| f.id == 2_000_000_005) {
+                self.foreign_transfers
+                    .push((Rc::downgrade(rec), src_fields[sp].clone()));
+            }
+        }
         let mut r = rec.borrow_mut();
         for (dp, v) in updates {
             r.fields[dp] = v;
@@ -1608,4 +1636,15 @@ impl Session {
             None => Err(error(full, "NCLCSRTS:TableErrorStr")),
         }
     }
+}
+
+/// The error of `LockTable` with Wait = false (record/lt-record-write/RcBMeta.al:418-419).
+pub(crate) fn lock_table_bad_parm(t: &TableDef) -> Signal {
+    error(
+        format!(
+            "The request to lock the {} table with a Wait parameter of FALSE is not supported.",
+            t.name
+        ),
+        "AL:LockTableBadParm",
+    )
 }

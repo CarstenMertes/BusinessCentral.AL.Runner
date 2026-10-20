@@ -835,6 +835,9 @@ impl Session {
                 if let Value::Unknown(why) = &v {
                     return Err(Signal::Unsupported(why.to_string()));
                 }
+                if let Some(why) = self.install_row_order(r.table, r.temporary, *pos, &r.fields) {
+                    return Err(Signal::Unsupported(why));
+                }
                 if r.load.partial {
                     drop(r);
                     rc.borrow_mut().load.touch(*pos);

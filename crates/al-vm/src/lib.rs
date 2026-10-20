@@ -116,6 +116,23 @@ pub struct Engine {
     pub(crate) served_tables: std::sync::OnceLock<Arc<[Option<al_builtins::platform::Virtual>]>>,
     /// What crates above the VM work out from this engine's program once, by type (see [`Engine::derived`]).
     derived: std::sync::Mutex<std::collections::HashMap<std::any::TypeId, Arc<dyn std::any::Any + Send + Sync>>>,
+    /// What the install code of the program leaves that this runtime cannot know (ADR-046), worked out from the program
+    /// once by the runner (`al-testrun` `install.rs`) before the first install routine runs.
+    pub install_facts: std::sync::OnceLock<InstallFacts>,
+}
+
+/// The tables whose install rows a test may not read (ADR-046), found from the static closures of the install routines.
+#[derive(Debug, Default, Clone)]
+pub struct InstallFacts {
+    /// Table object -> why its rows are not known: a shared table that per-company install code of an app under test
+    /// writes (BC writes it once in each company of the database, decision 4c), or a table whose rows depend on the order
+    /// of the install routines of one app and part (amendment 1, A2 items a to c). A read whose answer depends on the rows
+    /// is refused outside install code, as for `Engine::unseeded`.
+    pub unknown: std::collections::HashMap<usize, String>,
+    /// Table object -> why the order of its install rows is not known: tables an app with two or more install routines
+    /// in one part writes (A2 item d). A read of `SystemRowVersion`, `SystemCreatedAt` or `SystemModifiedAt` of a row
+    /// install code wrote is refused.
+    pub row_order: std::collections::HashMap<usize, String>,
 }
 
 /// The codeunit objects with one id, first in program order.
@@ -336,6 +353,7 @@ impl Engine {
             codeunits,
             served_tables: Default::default(),
             derived: Default::default(),
+            install_facts: Default::default(),
         })
     }
 
@@ -466,6 +484,11 @@ pub struct Session {
     /// How many `Randomize()` calls without a seed the session has seen.
     pub(crate) unseeded_randomizes: i32,
     pub(crate) next_row_version: i64,
+    /// The highest SystemRowVersion install code gave a row (`Session::mark_install_end`): a row at or below it was
+    /// written by install code (ADR-046 amendment 1, A2 item d).
+    pub(crate) install_row_version: i64,
+    /// `SessionId()` of an install session, which is not the test session (ADR-046 amendment 1, A4 item 1).
+    session_id_override: Option<i32>,
     /// Last AutoIncrement value handed out per table (and company). It is not part of the
     /// store: a rollback undoes rows but not the counter (corpus
     /// record/TestAutoIncrementExplicitKey.al:154).
@@ -661,6 +684,8 @@ impl Session {
             inherited_draws: 0,
             unseeded_randomizes: 0,
             next_row_version: 0,
+            install_row_version: 0,
+            session_id_override: None,
             autoinc: Default::default(),
             truncate_undo: Default::default(),
             validating: Vec::new(),
@@ -966,6 +991,55 @@ impl Session {
     pub fn set_install_scope(&mut self, on: bool) {
         self.install_scope = on;
         self.store.record_restored_changes(on);
+    }
+
+    /// Whether an install routine runs (`set_install_scope`).
+    pub fn in_install_scope(&self) -> bool {
+        self.install_scope
+    }
+
+    /// Install code has ended: every row whose SystemRowVersion is at or below the current one was written by it, or
+    /// before it (ADR-046 amendment 1, A2 item d).
+    pub fn mark_install_end(&mut self) {
+        self.install_row_version = self.next_row_version;
+    }
+
+    /// The `SessionId()` this session answers: an install session's own id, else the host's.
+    pub(crate) fn session_id(&self) -> i32 {
+        self.session_id_override
+            .unwrap_or_else(|| self.host.identity.session_id())
+    }
+
+    /// The session runs as an install session with id `id`, or again as the host's session (`None`). BC installs each
+    /// app in a session of its own, which is not the test session (install/lt-bf-install-probes/BfInstallTests.al:142-144,
+    /// :168; ADR-046 amendment 1, A4 item 1).
+    pub fn set_install_session_id(&mut self, id: Option<i32>) {
+        self.session_id_override = id;
+    }
+
+    /// Drops the session's SingleInstance codeunit instances: the next use starts from the initial state. BC's install
+    /// session does this at the start of each company and of the per-database part
+    /// (install/lt-bf-install-probes/BfInstallTests.al:125-140; ADR-046 amendment 1, A4 item 2).
+    pub fn reset_single_instances(&mut self) {
+        self.singletons.clear();
+    }
+
+    /// Runs one subscriber of a platform event that has no parameters (the install events of `Extension Triggers`) on
+    /// the instance the event would give it: the session's one instance of a SingleInstance codeunit, else a fresh one.
+    pub fn call_parameterless_subscriber(&mut self, object: usize, routine: usize) -> Result<(), Signal> {
+        let r = &self.engine.program.objects[object].routines[routine];
+        if r.params != 0 {
+            return Err(Signal::Unsupported(format!(
+                "subscriber {}.{} declares parameters, and the event it subscribes to has none",
+                self.engine.program.objects[object].name, r.name
+            )));
+        }
+        let fresh = Rc::new(RefCell::new(Instance {
+            object: object as u32,
+            ..Default::default()
+        }));
+        let inst = self.shared_instance(fresh);
+        self.call(object, routine, inst, Vec::new()).map(|_| ())
     }
 
     /// The changes made to restored rows since install scope was last entered.

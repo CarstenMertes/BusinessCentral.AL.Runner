@@ -1311,6 +1311,11 @@ impl Session {
             }
             // As for Get (records.rs `fail`): a miss on a table whose seeded rows could not be
             // created is not BC's answer (ADR-013 decision 5).
+            None if !rec.borrow().temporary && self.install_unknown(t.object).is_some() => unsupported(format!(
+                "{} row not found by GetBySystemId: {}",
+                t.name,
+                self.install_unknown(t.object).unwrap_or_default()
+            )),
             None if self.is_unseeded(t.object) && !rec.borrow().temporary => unsupported(format!(
                 "{} row not found by GetBySystemId: the rows a dependency app's install and Company-Initialize create could not be created (ADR-013 decision 5)",
                 t.name

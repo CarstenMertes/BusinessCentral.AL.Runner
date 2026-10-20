@@ -221,7 +221,7 @@ al-deps        dependency apps: .alpackages, Microsoft artifact feed, cache, pac
 
 ### al-testrun
 
-- `baseline.rs` (336): The install baseline (ADR-013 decision 5), mirroring AL Runner (`InstallTriggerRunner`, `CompanyInitializer`, `TestExecu. Entry: `BaselineRun` 22, `run` 51, `tables_written` 152.
+- `baseline.rs` (440): The install baseline (ADR-013 decision 5, ADR-046): the dependency apps' install code (`install::plan`), Company-Initialize, then the apps under test (`install::run_apps_under_test`), captured once. Entry: `BaselineRun` 23, `run` 99, `tables_written` 238.
 - `compile_cache.rs` (220): The OS side of the compile cache (ADR-022): the key of a run (hash of the executable and of each app's source), reading, writing (temporary file, rename) and building the entry file. Entry: `CompileCache` 14, `key_for` 83, `read_entry` 108, `write_entry` 128, `open_or_build` 170.
 - `cache_gc.rs` (412): Cleanup of the compile cache folder (ADR-022 amendment): other-build entries after 7 days, any entry after 30, old temp files after 1 day; automatic once a day within 200 ms (`alrunner test`), by hand with `alrunner cache prune|info`. Stat only, never reads an entry. Entry: `prune`, `auto_prune`, `info`.
 - `deps.rs` (158): Dependency apps for a corpus run (ADR-013). Entry: `Dependencies` 11, `Provision` 26, `load` 46, `load_with` 54.
@@ -230,6 +230,7 @@ al-deps        dependency apps: .alpackages, Microsoft artifact feed, cache, pac
 - `explain.rs` (137): --explain: where a test was refused or failed, with file and line. Entry: `describe` 38, `detail` 77, `render` 90, `TestDetail` 27.
 - `host.rs` (112): The host the command line gives a session (ADR-006). Entry: `SystemClock` 10, `set_files_dir` 26, `system_host` 32, `DirFileSystem` 43.
 - `impact_trace.rs` (370): The impact index's keys (`event <kind> <id> <event>[/<element>]`, `table`, `write`, `page`, `report`, `enum` by object id), their numbering, and the impact points of an extension from the compiled program (subscribers, table/page/report/enum extensions, install code by the tables it can write; uncovered events and kinds are `Unsupported`), each with its `Matcher` (index) and `Site` (static graph). Entry: `keys`, `Interner`, `impact_points`, `ImpactPoint`, `Matcher`, `Site`.
+- `install.rs` (495): The install code of each app (ADR-046 step A): install codeunit triggers and `Extension Triggers` subscribers per app and part (`plan`), the tables whose install rows tests may not read (`facts`: decision 4c, amendment 1 A2; `AL_INSTALL_FACTS=1` prints them), and the run of the apps under test one after the other (`run_apps_under_test`: install session id, SingleInstance reset, the app's own Company Triggers subscribers). Entry: `plan` 84, `facts` 186, `ensure_facts` 305, `run_apps_under_test` 352.
 - `impact_static.rs` (900): Static selection (ADR-043 step 5): the graph of routines, objects, tables' written nodes, events and the nodes for what the program does not name (`Graph::build`), one reverse search per impact point with the verdicts reaches / cannot rule out (`select`), the install rule over the baseline's trace (`Install`), the index-key-to-node map for the cross-check (`key_node`), test roots, and `path`/`describe` for `AL_IMPACT_WHY`. Entry: `Graph`, `select`, `Install`, `Verdict`, `key_node`, `test_roots`, `baseline_roots`.
 - `isolation.rs` (171): TestIsolation of the runner codeunit; Checkpoint for Function isolation. Entry: `TestIsolation` 27, `runner_isolation` 65, `Checkpoint` 99.
 - `lib.rs` (32): Running test codeunits and reading the result, shared by `al-test-cli` and `alrunner-cli` (ADR-016 section 2). `Outcome` and `CaseId` live here. Entry: `Outcome`, `CaseId`.
@@ -244,7 +245,7 @@ al-deps        dependency apps: .alpackages, Microsoft artifact feed, cache, pac
 - `runtime/written.rs` (824): What a test that did not run to its end can change that a later test of the codeunit reads (static reach: tables, codeunit globals, session state; `unknown` for a refused construct or a run by a run-time id), for the trust of later failures. Entry: `ReachFacts`, `changes_read_by`, `ReachIndex`, `reach_facts`, `settled_flags`.
 - `runtime/runner_reset.rs` (130): What BC's AL test runner does around each test method: runs codeunits 131006, 130301, 130302 (TestPermissions not Disabled) and 132553 when loaded, in Microsoft's order. Entry: `RunnerReset::of`, `before`, `after`, `test_permissions`.
 - `runtime/handlers.rs` (92): The handler functions a test declares, bound for the length of the test. Entry: `resolve_handlers` 8, `bind_handlers` 77.
-- `runtime/blocked.rs` (201): What a test cannot run for: install codeunits, tables a test touches, blocked routines. Entry: `blocked_site` 161, `run_install_codeunits` 8.
+- `runtime/blocked.rs` (159): What a test cannot run for: install routines that could not run, tables a test touches, blocked routines. Entry: `blocked_site` 114, `run_install_codeunits` 11.
 - `target.rs` (99): Reads the version fields of an app.json (ADR-015 step 4). Entry: `build_query` 13, `read_app_versions` 19, `app_versions_from_json` 25.
 
 ### alrunner-cli

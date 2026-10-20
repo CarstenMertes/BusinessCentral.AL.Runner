@@ -270,6 +270,19 @@ impl Session {
         // record's own group 2, the view's SORTING replaces the record's key and the record's direction stays (types/lt-code-digits-page-run-view/
         // P145PageRunView.al:P145_A_RecFilterSameFieldAsView, _RecFilterOverlappingView, _RecFilterOtherField, _RecKeyDescending,
         // _RecKeyPrimary, _RecFilterInGroup1, _RecFilterInGroup2). A view that names an ORDER is an assumption (page-run-record-view-order-applies).
+        // A stored record handed to a card whose source table is temporary: BC shows the row (OnAfterGetRecord reads it,
+        // pages/lt-be-card-onfindrecord/BeCardOnFindRecord.al:374 CardTemp_PageRun_StoredRec `O:1/stored/;R:1/stored/`), but
+        // whether the row is copied into the page's temporary table or read from the database (which decides what the page
+        // writes, counts and steps to) is not pinned: refused (docs/probes-needed.md).
+        if let (Some(r), true) = (&record, has_source) {
+            let page_temp = self.page_rec(st).borrow().temporary;
+            if page_temp && !r.borrow().temporary && !self.is_list(st) && self.stored_row(r)?.is_some() {
+                self.mark_closed(st);
+                return unsupported(
+                    "a stored record handed to a card whose source table is temporary (whether the row is copied into the temporary table is not pinned)",
+                );
+            }
+        }
         if let (Some(r), true) = (&record, has_source) {
             let rec = self.page_rec(st);
             let src = r.borrow();
@@ -639,15 +652,12 @@ impl Session {
             // A list that serves its rows from OnFindRecord is asked `=>` for the record it was handed, as the page holds it,
             // and reads on from there as when it opens (pages/lt-ai-list-order/AiListOrderTests.al:871 PageRun_RecordOnFifthRow
             // `F:=>=Yes;R:R1005;...;R:R1012;N:1=0;R:R1005;N:-1=-1;R:R1004;...;R:R1001;N:-1=0`, :890 PageRun_RecordWithFilterOnFifthRow).
-            // A card in that shape is assumed to be asked the same (Microsoft's ERM Accounts AnalysisViewWithUpdate, codeunit
-            // 134020: "Analysis by Dimensions", page 554, sets its Account Filter on Rec in OnOpenPage and never stores it).
+            // A card is asked `=` once, after OnOpenPage, with Rec as OnOpenPage left it, over a temporary or a database
+            // table (pages/lt-be-card-onfindrecord/BeCardOnFindRecord.al:292 CardTempFind_PageRun_TempRec `F:=:1/passed/in memory`,
+            // :309 CardTempFind_PageRun_StoredRec, and the CardDbFind_* tests).
             if self.declares(st, "onfindrecord") && self.stored_row(&rec)?.is_some() {
-                if !self.is_list(st) {
-                    al_builtins::assumptions::assume(
-                        al_builtins::assumptions::Assumption::PageRunRecordOnFindRecordCard,
-                    );
-                }
-                if !self.nav_find(st, "=>")? {
+                let which = if self.is_list(st) { "=>" } else { "=" };
+                if !self.nav_find(st, which)? {
                     return unsupported("OnFindRecord finds no row for the record handed to the page (not pinned)");
                 }
                 st.borrow_mut().cursor = Cursor::Row;
@@ -890,11 +900,17 @@ impl Session {
         // ClientValidateField:NSValidateField. The trigger is not run again here: whether its other effects happen again at
         // Close is not pinned (docs/probes-needed.md). With two such refusals which error is left last is not pinned: the last
         // error then refuses to be read (pages/lt-f3-pages/F3ValidationAddinFilter.al:253 closes such a page and reads nothing).
-        // On a list the edits are kept (the earlier behavior; what BC does is not pinned: docs/probes-needed.md, Close after a refused entry).
-        if !st.borrow().errors.is_empty() && !self.is_list(st) {
+        // A list drops its row the same way after a refusal of an OnValidate trigger, a new row included (pages/lt-ah-pages/
+        // PwCloseRevalidate.al:247 PW_List_RefusedOnValidate_ThenClose, :303 PW_List_NewRow_RefusedOnValidate_ThenClose: Close
+        // answers ok, runs no OnModify, stores nothing); the last error it leaves is not pinned. After other refusals a list keeps
+        // its edits (the earlier behavior; not pinned: docs/probes-needed.md, Close after a refused entry).
+        let list = self.is_list(st);
+        let list_trigger_refusal = list && !st.borrow().trigger_errors.is_empty();
+        if !st.borrow().errors.is_empty() && (!list || list_trigger_refusal) {
             let trigger_errors = st.borrow().trigger_errors.clone();
             match trigger_errors.as_slice() {
                 [] => {}
+                _ if list => self.last_error = al_builtins::native::unpinned_error(),
                 [(_, message)] => {
                     self.last_error = al_builtins::native::AlError {
                         message: message.clone(),
@@ -1057,7 +1073,14 @@ impl Session {
         let on_new = st.borrow().draft && st.borrow().new_by_call;
         // A page the platform closes after the handler returned hands back nothing on Cancel (handlers/
         // TestPageActionRunObjectPageRec_Tests.al:PageRunModalTargetMovingItsRecAndTheCallersRecord).
-        let hands_back = action == "LookupOK" || (action == "LookupCancel" && via_action);
+        // `Page.RunModal(Id, Rec)` called as a statement closes with OK and Cancel. When the handler invoked one, the row is kept
+        // to tell whether Rec would change (`hand_back_selection` refuses a later use of Rec then). A page the platform closes
+        // leaves Rec as it was (handlers/TestPageActionRunObjectPageRec_Tests.al:296
+        // PageRunModalTargetMovingItsRecAndTheCallersRecord, called as a statement: `Row` stays on B).
+        let statement = st.borrow().statement_run;
+        let hands_back = action == "LookupOK"
+            || (action == "LookupCancel" && via_action)
+            || (statement && via_action && (action == "OK" || action == "Cancel"));
         if hands_back && self.has_source(st) && (on_row || on_new) {
             let fields = self.page_rec(st).borrow().fields.clone();
             st.borrow_mut().selection = Some(fields);
@@ -1271,8 +1294,9 @@ impl Session {
             && !tree
             && st.borrow().mode == PageMode::Edit
             // A list handed over in lookup mode has no new-row line (corpus
-            // handlers/TestPageModalNewRowLine_Tests.al:209 Plain_LookupModeTrue_HasNoNewRowLine). Only a
-            // LookupMode(true) call does that: Page.RunModal(id, Rec) keeps the line (:180).
+            // handlers/TestPageModalNewRowLine_Tests.al:209 Plain_LookupModeTrue_HasNoNewRowLine). A LookupMode(true) call
+            // does that, and so does Page.RunModal(id, Rec) whose return value is used; called as a statement it keeps the
+            // line (:180; pages/lt-be-runmodal-onlookup/BeRunModalOnLookup.al:616, :916).
             && !(st.borrow().lookup_set && st.borrow().lookup && self.is_list_page(st))
             && !prop_false("Editable")
             && !flag_denied(&engine, object, "InsertAllowed")?)

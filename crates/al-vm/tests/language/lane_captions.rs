@@ -106,18 +106,57 @@ fn caption_class_translate_after_a_language_change_is_refused() {
     refused(al_testkit::run_in(&src, "C", "F"), "GlobalLanguage");
 }
 
-/// A table field whose CaptionClass is an expression (a procedure call, pageext/lt-page-ext-properties/TableExtCaptionClass.al:
-/// 56-74, 124-134) is not evaluated by the runtime yet: FieldCaption and the page control's Caption refuse.
+/// A table field whose CaptionClass is an expression (a procedure call) is evaluated in the record's context, and its
+/// `3,<text>` result reads as <text> for FieldCaption and for the caption of a page control over the field: a `modify`
+/// block with FieldNo as the argument and a new field whose expression is a procedure without parentheses
+/// (pageext/lt-page-ext-properties/TableExtCaptionClass.al:56-74, BP_TableExtCaptionClass_ProcedureCall :124-149).
+const EXPR_CAPTION_CLASS: &str = "table 50100 Base { fields { field(1; Id; Integer) { } } keys { key(PK; Id) { } } } \
+    tableextension 50101 BaseExt extends Base { fields { modify(Id) { CaptionClass = Cc(FieldNo(Id)); } \
+    field(50101; Style; Code[20]) { CaptionClass = Cc50101; } } \
+    procedure Cc(No: Integer): Text[80] begin exit('3,Stand in ' + Format(No)); end; \
+    procedure Cc50101(): Text begin exit(Cc(50101)); end; } \
+    page 50102 P { PageType = Card; SourceTable = Base; layout { area(Content) { field(Id; Rec.Id) { } field(StyleCtl; Rec.Style) { } } } } \
+    codeunit 50100 C { procedure F(): Text var R: Record Base; begin exit(R.FieldCaption(Id) + '|' + R.FieldCaption(Style)); end; \
+    procedure G(): Text var R: Record Base; P: TestPage P; begin R.Id := 1; R.Insert(); P.OpenView(); exit(P.Id.Caption() + '|' + P.StyleCtl.Caption()); end; \
+    procedure H(): Text var Ref: RecordRef; begin Ref.Open(Database::Base); exit(Ref.Field(1).Caption()); end; }";
+
 #[test]
-fn a_caption_class_expression_on_a_table_field_is_refused() {
-    let src = "table 50100 Base { fields { field(1; Id; Integer) { } } keys { key(PK; Id) { } } } \
-        tableextension 50101 BaseExt extends Base { fields { modify(Id) { CaptionClass = Cc(FieldNo(Id)); } } \
-        procedure Cc(No: Integer): Text begin exit('3,Stand in ' + Format(No)); end; } \
-        page 50102 P { PageType = Card; SourceTable = Base; layout { area(Content) { field(Id; Rec.Id) { } } } } \
-        codeunit 50100 C { procedure F(): Text var R: Record Base; begin exit(R.FieldCaption(Id)); end; \
-        procedure G(): Text var R: Record Base; P: TestPage P; begin R.Id := 1; R.Insert(); P.OpenView(); exit(P.Id.Caption()); end; }";
+fn a_caption_class_expression_on_a_table_field_is_evaluated() {
+    assert_eq!(
+        text(al_testkit::run_in(EXPR_CAPTION_CLASS, "C", "F")),
+        "Stand in 1|Stand in 50101"
+    );
+    assert_eq!(
+        text(al_testkit::run_in(EXPR_CAPTION_CLASS, "C", "G")),
+        "Stand in 1|Stand in 50101"
+    );
+    assert_eq!(text(al_testkit::run_in(EXPR_CAPTION_CLASS, "C", "H")), "Stand in 1");
+}
+
+/// The expression of a table's own field runs with the record that reads the caption as Rec (Base Application's
+/// `Sales Line`.`No.`: `CaptionClass = GetCaptionClass(FieldNo("No."))`).
+#[test]
+fn a_caption_class_expression_of_a_tables_own_field_sees_the_record() {
+    let src = "table 50100 T { fields { field(1; Id; Integer) { } field(2; \"No.\"; Code[20]) { Caption = 'No.'; CaptionClass = GetCaptionClass(FieldNo(\"No.\")); } } \
+        keys { key(PK; Id) { } } \
+        procedure GetCaptionClass(FieldNumber: Integer): Text[80] begin exit('3,' + Format(Id) + '/' + Format(FieldNumber)); end; } \
+        codeunit 50100 C { procedure F(): Text var R: Record T; begin R.Id := 7; exit(R.FieldCaption(\"No.\")); end; }";
+    assert_eq!(text(al_testkit::run_in(src, "C", "F")), "7/2");
+}
+
+/// What a caption reads when the expression gives another area, or `3,` with nothing after the comma, is not pinned for an
+/// expression: refused where the caption is read.
+#[test]
+fn a_caption_class_expression_with_another_area_is_refused() {
+    let src = "table 50100 T { fields { field(1; Id; Integer) { } field(2; Amt; Decimal) { CaptionClass = Cc(); } \
+        field(3; Empty; Decimal) { CaptionClass = Blank(); } } keys { key(PK; Id) { } } \
+        procedure Cc(): Text begin exit('2,0,Amount'); end; procedure Blank(): Text begin exit('3,'); end; } \
+        codeunit 50100 C { procedure F(): Text var R: Record T; begin exit(R.FieldCaption(Amt)); end; \
+        procedure G(): Text var R: Record T; begin exit(R.FieldCaption(Empty)); end; \
+        procedure H(): Text var R: Record T; begin exit(R.FieldCaption(Id)); end; }";
     refused(al_testkit::run_in(src, "C", "F"), "CaptionClass");
     refused(al_testkit::run_in(src, "C", "G"), "CaptionClass");
+    assert_eq!(text(al_testkit::run_in(src, "C", "H")), "Id");
 }
 
 /// An error text that names a table whose caption is refused (a tableextension sets one over the table's own) is not pinned:
@@ -132,4 +171,23 @@ fn an_error_that_names_a_refused_table_caption_is_unpinned() {
     refused(al_testkit::run_in(src, "C", "F"), "not pinned");
     refused(al_testkit::run_in(src, "C", "G"), "not pinned");
     assert!(matches!(al_testkit::run_in(src, "C", "H"), Ok(Value::Boolean(false))));
+}
+
+/// Which CaptionClass BC reads when two table extensions set one on the same field, or an extension sets one over the
+/// base field's expression, is not pinned: refused where the caption is read.
+#[test]
+fn a_caption_class_set_twice_with_an_expression_is_refused() {
+    let two_exts = "table 50100 Base { fields { field(1; Id; Integer) { } } keys { key(PK; Id) { } } } \
+        tableextension 50101 E1 extends Base { fields { modify(Id) { CaptionClass = A(); } } procedure A(): Text begin exit('3,A'); end; } \
+        tableextension 50102 E2 extends Base { fields { modify(Id) { CaptionClass = B(); } } procedure B(): Text begin exit('3,B'); end; } \
+        page 50103 P { PageType = Card; SourceTable = Base; layout { area(Content) { field(Id; Rec.Id) { } } } } \
+        codeunit 50100 C { procedure F(): Text var R: Record Base; begin exit(R.FieldCaption(Id)); end; \
+        procedure G(): Text var R: Record Base; P: TestPage P; begin R.Id := 1; R.Insert(); P.OpenView(); exit(P.Id.Caption()); end; }";
+    refused(al_testkit::run_in(two_exts, "C", "F"), "CaptionClass");
+    refused(al_testkit::run_in(two_exts, "C", "G"), "CaptionClass");
+    let over_base = "table 50100 Base { fields { field(1; Id; Integer) { CaptionClass = A(); } } keys { key(PK; Id) { } } \
+        procedure A(): Text begin exit('3,A'); end; } \
+        tableextension 50101 E1 extends Base { fields { modify(Id) { CaptionClass = '3,Lit'; } } } \
+        codeunit 50100 C { procedure F(): Text var R: Record Base; begin exit(R.FieldCaption(Id)); end; }";
+    refused(al_testkit::run_in(over_base, "C", "F"), "CaptionClass");
 }

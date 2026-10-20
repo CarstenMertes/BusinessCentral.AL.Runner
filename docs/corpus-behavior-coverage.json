@@ -14940,9 +14940,9 @@
       "dimension": "syntax",
       "items": [
         {
-          "corpus_uses": 770969,
+          "corpus_uses": 770975,
           "group": "expression",
-          "ms_uses": 1807854,
+          "ms_uses": 1808198,
           "name": "NameRef",
           "pinned": true,
           "runtime_reads": true,
@@ -14958,9 +14958,9 @@
           "site": "ALTCallstackModuleInfos.al:9"
         },
         {
-          "corpus_uses": 334852,
+          "corpus_uses": 334856,
           "group": "expression",
-          "ms_uses": 389287,
+          "ms_uses": 389440,
           "name": "CallExpr",
           "pinned": true,
           "runtime_reads": true,
@@ -14976,9 +14976,9 @@
           "site": "ALTCallstackModuleInfos.al:26"
         },
         {
-          "corpus_uses": 36970,
+          "corpus_uses": 36974,
           "group": "statement",
-          "ms_uses": 187733,
+          "ms_uses": 187979,
           "name": "Block",
           "pinned": true,
           "runtime_reads": true,
@@ -15003,9 +15003,9 @@
           "site": "ALTIsolatedStorageOwner.al:25"
         },
         {
-          "corpus_uses": 6508,
+          "corpus_uses": 6512,
           "group": "statement",
-          "ms_uses": 80071,
+          "ms_uses": 80317,
           "name": "ExitStmt",
           "pinned": true,
           "runtime_reads": true,
@@ -15014,7 +15014,7 @@
         {
           "corpus_uses": 52523,
           "group": "expression",
-          "ms_uses": 77689,
+          "ms_uses": 77744,
           "name": "Literal:Integer",
           "pinned": true,
           "runtime_reads": true,
@@ -15030,9 +15030,9 @@
           "site": "ALTIsolatedStorageOwner.al:41"
         },
         {
-          "corpus_uses": 297613,
+          "corpus_uses": 297615,
           "group": "expression",
-          "ms_uses": 54237,
+          "ms_uses": 54387,
           "name": "Literal:StringLit",
           "pinned": true,
           "runtime_reads": false,
@@ -15113,7 +15113,7 @@
         {
           "corpus_uses": 27458,
           "group": "expression",
-          "ms_uses": 15738,
+          "ms_uses": 15888,
           "name": "BinExpr +",
           "pinned": true,
           "runtime_reads": true,
@@ -16279,7 +16279,7 @@
         "code": "NotSupportedOperation",
         "file": "crates/al-vm/src/interp.rs",
         "generic": false,
-        "line": 932,
+        "line": 935,
         "pinned": true,
         "site": "collections/lt-cs-odd-leads/CsCollections.al:220",
         "template": "The requested operation is not supported."
@@ -16288,7 +16288,7 @@
         "code": "IndexOutOfBounds",
         "file": "crates/al-vm/src/interp.rs",
         "generic": false,
-        "line": 1189,
+        "line": 1192,
         "pinned": true,
         "site": "collections/lt-array-rows/ArrayRows.al:185",
         "template": "Index out of bounds."
@@ -16297,7 +16297,7 @@
         "code": "IndexOutOfBounds",
         "file": "crates/al-vm/src/interp.rs",
         "generic": false,
-        "line": 1266,
+        "line": 1269,
         "pinned": true,
         "site": "collections/lt-array-rows/ArrayRows.al:185",
         "template": "Index out of bounds."
@@ -16306,7 +16306,7 @@
         "code": "IndexOutOfBounds",
         "file": "crates/al-vm/src/interp.rs",
         "generic": false,
-        "line": 1276,
+        "line": 1279,
         "pinned": true,
         "site": "collections/lt-array-rows/ArrayRows.al:185",
         "template": "Index out of bounds."
@@ -16315,7 +16315,7 @@
         "code": "StackOverflow",
         "file": "crates/al-vm/src/lib.rs",
         "generic": false,
-        "line": 1227,
+        "line": 1228,
         "pinned": true,
         "site": "record/TestCalcFieldsTruncateUniqueContracts.al:179",
         "template": "There is insufficient memory to execute this function. This can be caused by recursive function calls. Contact your system administrator."
@@ -16351,7 +16351,7 @@
         "code": "QueryNoDataSet",
         "file": "crates/al-vm/src/queries.rs",
         "generic": false,
-        "line": 698,
+        "line": 705,
         "pinned": true,
         "site": "xmlport/lt-xmlport-query-datatransfer/XpTQueryBasic.al:84",
         "template": "You have not yet retrieved a dataset for this query. The READ function can only be called after the dataset is retrieved with a call to the OPEN function."
@@ -16360,7 +16360,7 @@
         "code": "Query",
         "file": "crates/al-vm/src/queries.rs",
         "generic": false,
-        "line": 706,
+        "line": 713,
         "pinned": true,
         "site": "errors/lt-ms-refusals-131/P131QuerySetRangeAfterRead.al:111",
         "template": "The READ function is called on a query after query metadata has been changed by one of the following: SETFILTER, SETRANGE, SECURITYFILTERING, or TOPNUMBEROFROWS. After metadata changes, you must reopen the query by calling the OPEN function before calling the READ function."
@@ -16369,7 +16369,7 @@
         "code": "DB:NoFilter",
         "file": "crates/al-vm/src/recmeta.rs",
         "generic": false,
-        "line": 369,
+        "line": 426,
         "pinned": true,
         "site": "fieldref/lt-range-min-max-types/RangeMinMaxTypes.al:204",
         "template": "Specify a filter for the % field in the % table."
@@ -16387,7 +16387,7 @@
         "code": "RenameArgument",
         "file": "crates/al-vm/src/records.rs",
         "generic": false,
-        "line": 3099,
+        "line": 3150,
         "pinned": true,
         "site": "recordref/lt-refs/RfTWrite.al:223",
         "template": "The number of field arguments does not match the primary key size."
@@ -29609,7 +29609,7 @@
           28,
           29
         ],
-        "ms_uses": 187733,
+        "ms_uses": 187979,
         "name": "begin",
         "owner": "keyword",
         "pinned": true,
@@ -29669,7 +29669,7 @@
           28,
           29
         ],
-        "ms_uses": 80071,
+        "ms_uses": 80317,
         "name": "exit",
         "owner": "keyword",
         "pinned": true,

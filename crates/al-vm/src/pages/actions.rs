@@ -677,9 +677,13 @@ impl Session {
         // declare OnAfterGetCurrRecord: `AGR:2;act:Update(false)` first.)
         let find_list =
             self.declares(st, "onfindrecord") && (self.is_list(st) || self.declares(st, "onaftergetcurrrecord"));
+        // A card with OnFindRecord and no OnNextRecord reads its row before the action, again after it, then asks `=` and reads
+        // it once more (pages/lt-be-card-onfindrecord/BeCardOnFindRecord.al:292 CardTempFind_PageRun_TempRec `action`
+        // `R;A;R;F:=;R`, and the CardTempFind_* and CardDbFind_* tests).
+        let find_card = self.declares(st, "onfindrecord") && !self.declares(st, "onnextrecord") && !self.is_list(st);
         let reads_rows = (!was_dirty || dirty_reread_only)
             && self.declares(st, "onaftergetrecord")
-            && (find_list || !self.declares(st, "onnextrecord") && !self.declares(st, "onfindrecord"))
+            && (find_list || find_card || !self.declares(st, "onnextrecord") && !self.declares(st, "onfindrecord"))
             && self.has_source(st)
             && st.borrow().open
             && st.borrow().cursor == Cursor::Row
@@ -807,13 +811,18 @@ impl Session {
                 && reads_rows
                 && self.declares(st, "onfindrecord")
                 && !self.is_list(st)
-                && self.declares(st, "onaftergetcurrrecord");
+                && (self.declares(st, "onaftergetcurrrecord") || find_card);
             if find_pinned {
                 // pages/lt-update-on-find/UpdateOnFindRecord.al:P168_List_Update*, P168_Card_Update*: the reads come before
-                // the refresh's `Find:=`.
+                // the refresh's `Find:=`. Without CurrPage.Update and without OnAfterGetCurrRecord the refresh is pinned
+                // by BeCardOnFindRecord.al (above), not assumed.
                 self.read_page_again(st)?;
+                let pinned = !refresh_asked && !self.declares(st, "onaftergetcurrrecord");
                 st.borrow_mut().refresh = true;
-                self.run_refresh(st)?;
+                st.borrow_mut().refresh_pinned = pinned;
+                let r = self.run_refresh(st);
+                st.borrow_mut().refresh_pinned = false;
+                r?;
             } else if !find_page {
                 // The reads the page does when it opens come first, then the refresh's own: a card
                 // reads its row twice, a list the rows of its window as it opens plus one (corpus
@@ -1055,7 +1064,9 @@ impl Session {
                         "CurrPage.Update on a page with OnFindRecord and row triggers (re-anchoring not pinned; {why})"
                     ));
                 }
-                al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::UpdateRefreshOnFindRecord);
+                if !st.borrow().refresh_pinned {
+                    al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::UpdateRefreshOnFindRecord);
+                }
                 if !self.nav_find(st, "=")? {
                     return unsupported(
                         "OnFindRecord does not find the current row after CurrPage.Update (not pinned)",

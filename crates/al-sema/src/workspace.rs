@@ -95,7 +95,8 @@ pub struct SourceFileData {
     problem: OnceLock<Option<String>>,
     /// Whether the file was only scanned at load (a dependency app's file).
     pub lazy: bool,
-    /// Whether the file declares a page or report, the only objects `pages::expand_ranges` changes.
+    /// Whether the file declares a page, report, table or one of their extensions, the only objects `pages::expand_ranges`
+    /// changes.
     has_page: bool,
     pub namespace: Option<String>,
     pub usings: Vec<String>,
@@ -349,7 +350,12 @@ impl Workspace {
                 has_page: file.objects.iter().any(|o| {
                     matches!(
                         o.kind,
-                        ObjKind::Page | ObjKind::PageExtension | ObjKind::Report | ObjKind::ReportExtension
+                        ObjKind::Page
+                            | ObjKind::PageExtension
+                            | ObjKind::Report
+                            | ObjKind::ReportExtension
+                            | ObjKind::Table
+                            | ObjKind::TableExtension
                     )
                 }),
                 namespace: file.namespace.clone(),
@@ -716,7 +722,7 @@ impl Workspace {
     /// parse error if there is one. `fresh` starts from an empty token cache.
     fn parse_lazy(&self, fi: usize, f: &SourceFileData, fresh: bool) -> Attempt<(rowan::GreenNode, Vec<ByteRange>)> {
         let src = self.text(fi);
-        // Only a page can have properties to turn into routines; skip the extra parse otherwise. When there is nothing to
+        // Only a page, report or table can have properties to turn into routines; skip the extra parse otherwise. When there is nothing to
         // add, the parse that looked is the file's parse; a `fresh` parse (the second one, of a file whose first parse had
         // a problem) is made anew.
         let (expanded, reused) = match f

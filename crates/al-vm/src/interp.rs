@@ -856,6 +856,9 @@ impl Session {
         match record {
             Value::Record(rc) => {
                 self.connection_check(&rc)?;
+                if let Some(why) = rc.borrow().unpinned_buffer {
+                    return Err(Signal::Unsupported(why.into()));
+                }
                 let r = rc.borrow();
                 if !self.engine.unevaluable_init.is_empty() && !r.touched {
                     // The buffer of a record nothing has written is built by this read, which

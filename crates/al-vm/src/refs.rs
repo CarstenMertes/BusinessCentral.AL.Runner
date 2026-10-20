@@ -1188,7 +1188,9 @@ impl Session {
             "Name" if field.id == SYSTEM_FIELD_BASE => Ok(Value::Text("$systemId".into())),
             "Name" if field.id == SYSTEM_ROW_VERSION_ID => Ok(Value::Text("timestamp".into())),
             "Name" => Ok(Value::Text(field.name.clone().into())),
-            "Caption" => self.field_caption_checked(&t, pos).map(|s| Value::Text(s.into())),
+            "Caption" => self
+                .field_caption_checked(&t, pos, Some(&rec))
+                .map(|s| Value::Text(s.into())),
             "Type" => self.field_type(&t, pos),
             "Class" => {
                 let class = self

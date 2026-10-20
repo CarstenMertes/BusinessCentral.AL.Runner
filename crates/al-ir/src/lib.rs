@@ -977,6 +977,14 @@ pub struct Field {
     pub ext_after_validate: Vec<(usize, usize)>,
     /// (object, routine) of the field's table-side OnLookup trigger, if any.
     pub on_lookup: Option<(usize, usize)>,
+    /// (object, routine) of the routine that evaluates the field's `CaptionClass` when it is an expression: in the table
+    /// or table extension whose declaration or `modify` block writes it last (`pages::field_caption_class_routines`).
+    #[serde(default)]
+    pub caption_class: Option<(usize, usize)>,
+    /// Why a read of the field's caption is refused: two or more of the table and its extensions set its
+    /// `CaptionClass` and one of them is an expression (which one BC reads is not pinned).
+    #[serde(default)]
+    pub caption_class_refusal: Option<String>,
     /// Every property of the field as written (`Caption`, `OptionCaption`, ...).
     pub properties: Vec<(String, String)>,
     /// The `TableRelation` arms in written order; empty when the field has none or its shape is

@@ -533,6 +533,26 @@ impl Session {
         }
     }
 
+    /// A write into part `child` moves the focus out of its sibling parts: a row typed into one of them is saved first
+    /// (pages/lt-part-link-unsaved-host/PagePartLinkUnsavedHost.al:242, the line typed into LinesG is stored once LinesH is
+    /// written, LinesH's own line is not).
+    pub(super) fn save_sibling_parts(&mut self, child: &St) -> Result<(), Signal> {
+        let Some(host) = child.borrow().host.as_ref().and_then(|(h, _)| h.upgrade()) else {
+            return Ok(());
+        };
+        let siblings: Vec<St> = host
+            .borrow()
+            .parts
+            .iter()
+            .map(|(_, c)| c.clone())
+            .filter(|c| !Rc::ptr_eq(c, child) && c.borrow().open && c.borrow().dirty)
+            .collect();
+        for sibling in siblings {
+            self.save_row(&sibling)?;
+        }
+        Ok(())
+    }
+
     /// A write into part `child` (SetValue, New) while its host stands on a typed row that is not stored yet: the host row is
     /// saved first, and the parts link to it (pages/lt-part-line-before-host-key/PartLineBeforeHostKey.al:406
     /// `HP.OnInsertRecord:D2 | H.OnInsert:D2 | L.OnValidate(Document No.):D2 | ...` for New(); handlers/

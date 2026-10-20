@@ -326,3 +326,33 @@ fn a_new_card_with_two_parts_linked_on_its_key_stores_the_row_when_the_key_is_ty
     let r = al_testkit::run_in(TWO_PARTS_SRC, "TP Test", "KeyThenRead");
     assert!(matches!(r, Err(al_builtins::native::Signal::Unsupported(_))), "{r:?}");
 }
+
+const SIBLING_SRC: &str = r#"
+table 51450 "SB Host" { fields { field(1; "Code"; Code[10]) { } } keys { key(PK; "Code") { } } }
+table 51451 "SB Line" { fields { field(1; "Host Code"; Code[10]) { } field(2; "Line No."; Integer) { } field(3; Descr; Text[30]) { } } keys { key(PK; "Host Code", "Line No.") { } } }
+page 51452 "SB Lines" { PageType = ListPart; SourceTable = "SB Line"; AutoSplitKey = true; layout { area(Content) { repeater(R) { field(Descr; Rec.Descr) { } } } } }
+page 51453 "SB Card"
+{
+    PageType = Card;
+    SourceTable = "SB Host";
+    layout { area(Content) { part(A; "SB Lines") { SubPageLink = "Host Code" = field(Code); } part(B; "SB Lines") { SubPageLink = "Host Code" = field(Code); } } }
+}
+codeunit 51454 "SB Test"
+{
+    procedure Run(): Integer
+    var H: Record "SB Host"; L: Record "SB Line"; C: TestPage "SB Card";
+    begin
+        H.Code := 'G1'; H.Insert();
+        C.OpenEdit(); C.GoToKey('G1');
+        C.A.Descr.SetValue('a'); C.B.Descr.SetValue('b');
+        exit(L.Count());
+    end;
+}
+"#;
+
+/// A write into one part saves the row typed into its sibling part (pages/lt-part-link-unsaved-host/
+/// PagePartLinkUnsavedHost.al:242: `a_lines_g = 1`, `a_lines_h = 0`).
+#[test]
+fn a_write_into_a_part_saves_the_sibling_parts_row() {
+    assert_eq!(al_testkit::int(al_testkit::run_in(SIBLING_SRC, "SB Test", "Run")), 1);
+}

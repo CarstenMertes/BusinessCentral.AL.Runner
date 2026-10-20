@@ -66,6 +66,7 @@ impl Session {
         // OnNewRecord set 9).
         if st.borrow().host.is_some() {
             self.save_unsaved_host_first(st)?;
+            self.save_sibling_parts(st)?;
         } else if let ir::Binding::Field(pos) = page_of(&self.engine(), st).controls[idx].binding
             && st.borrow().draft
             && self.has_source(st)

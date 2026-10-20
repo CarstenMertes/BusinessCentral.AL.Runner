@@ -613,6 +613,9 @@ impl Session {
         // The source field's CaptionClass beats its Caption (pageext/lt-page-ext-properties/TableExtCaptionClass.al:69) and is
         // resolved when the caption is read, not when the page opens (record/lt-x-table-props/XTablePropsTests.al:483-487).
         // Whether a Caption on the control beats it is not pinned.
+        if let Some(why) = field.as_ref().and_then(|f| f.caption_class_refusal.clone()) {
+            return unsupported(why);
+        }
         // A CaptionClass of the source field that is an expression runs with the page's record, and its `3,<text>` reads as
         // <text> (pageext/lt-page-ext-properties/TableExtCaptionClass.al:124-149, the page captions).
         if let Some(raw) = field.as_ref().and_then(|f| {

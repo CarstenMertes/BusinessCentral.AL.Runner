@@ -392,6 +392,28 @@ pub fn field_caption_class_routines(obj: &ast::Object) -> Vec<(String, String, S
     out
 }
 
+/// The names of the fields whose `CaptionClass` a `field` section or `modify` block of a table or table extension sets,
+/// literal or expression, once per section that sets it.
+pub fn field_caption_class_settings(obj: &ast::Object) -> Vec<String> {
+    let mut out = Vec::new();
+    for sec in ast::sections_in(obj.syntax()) {
+        let at = if sec.name().eq_ignore_ascii_case("field") {
+            1
+        } else if sec.name().eq_ignore_ascii_case("modify") {
+            0
+        } else {
+            continue;
+        };
+        let Some(field) = sec.args().get(at).cloned() else {
+            continue;
+        };
+        if sec.properties().any(|p| p.name().eq_ignore_ascii_case("CaptionClass")) {
+            out.push(field);
+        }
+    }
+    out
+}
+
 /// Every control section of a page object, in source order.
 pub fn control_sections(obj: &ast::Object) -> Vec<ast::Section> {
     // Sections are object structure: a routine body never holds one, so the walk skips the routines.

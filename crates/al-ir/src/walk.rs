@@ -630,6 +630,7 @@ fn walk_field<V: RefVisitor>(f: &mut Field, v: &mut V) {
         ext_after_validate,
         on_lookup,
         caption_class,
+        caption_class_refusal: _,
         properties: _,
         relation_arms,
         relation_meta,

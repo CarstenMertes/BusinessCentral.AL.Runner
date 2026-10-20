@@ -172,3 +172,22 @@ fn an_error_that_names_a_refused_table_caption_is_unpinned() {
     refused(al_testkit::run_in(src, "C", "G"), "not pinned");
     assert!(matches!(al_testkit::run_in(src, "C", "H"), Ok(Value::Boolean(false))));
 }
+
+/// Which CaptionClass BC reads when two table extensions set one on the same field, or an extension sets one over the
+/// base field's expression, is not pinned: refused where the caption is read.
+#[test]
+fn a_caption_class_set_twice_with_an_expression_is_refused() {
+    let two_exts = "table 50100 Base { fields { field(1; Id; Integer) { } } keys { key(PK; Id) { } } } \
+        tableextension 50101 E1 extends Base { fields { modify(Id) { CaptionClass = A(); } } procedure A(): Text begin exit('3,A'); end; } \
+        tableextension 50102 E2 extends Base { fields { modify(Id) { CaptionClass = B(); } } procedure B(): Text begin exit('3,B'); end; } \
+        page 50103 P { PageType = Card; SourceTable = Base; layout { area(Content) { field(Id; Rec.Id) { } } } } \
+        codeunit 50100 C { procedure F(): Text var R: Record Base; begin exit(R.FieldCaption(Id)); end; \
+        procedure G(): Text var R: Record Base; P: TestPage P; begin R.Id := 1; R.Insert(); P.OpenView(); exit(P.Id.Caption()); end; }";
+    refused(al_testkit::run_in(two_exts, "C", "F"), "CaptionClass");
+    refused(al_testkit::run_in(two_exts, "C", "G"), "CaptionClass");
+    let over_base = "table 50100 Base { fields { field(1; Id; Integer) { CaptionClass = A(); } } keys { key(PK; Id) { } } \
+        procedure A(): Text begin exit('3,A'); end; } \
+        tableextension 50101 E1 extends Base { fields { modify(Id) { CaptionClass = '3,Lit'; } } } \
+        codeunit 50100 C { procedure F(): Text var R: Record Base; begin exit(R.FieldCaption(Id)); end; }";
+    refused(al_testkit::run_in(over_base, "C", "F"), "CaptionClass");
+}

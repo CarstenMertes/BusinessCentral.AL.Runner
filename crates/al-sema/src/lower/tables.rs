@@ -399,6 +399,39 @@ impl Lowerer<'_> {
         found
     }
 
+    /// Why the caption of field `f` is refused: the table or table extension that declares it and the `modify` blocks of
+    /// its `extensions` set its `CaptionClass` two or more times, and one is an expression. Which one BC reads is not
+    /// pinned (the corpus pins one expression, pageext/lt-page-ext-properties/TableExtCaptionClass.al:124-149).
+    fn field_caption_class_refusal(
+        &self,
+        oi: usize,
+        f: &crate::members::FieldInfo,
+        extensions: &[usize],
+    ) -> Option<String> {
+        let declared = f.declared_in.unwrap_or(oi);
+        let (mut settings, mut expressions) = (0, 0);
+        for o in std::iter::once(declared).chain(extensions.iter().copied().filter(|&e| e != declared)) {
+            if !self.ws.usable(o) {
+                continue;
+            }
+            let obj = self.ws.object_ast(o);
+            settings += crate::pages::field_caption_class_settings(&obj)
+                .iter()
+                .filter(|n| n.eq_ignore_ascii_case(&f.name))
+                .count();
+            expressions += crate::pages::field_caption_class_routines(&obj)
+                .iter()
+                .filter(|(n, _, _)| n.eq_ignore_ascii_case(&f.name))
+                .count();
+        }
+        (settings >= 2 && expressions >= 1).then(|| {
+            format!(
+                "the caption of field {}, whose CaptionClass is set {settings} times by the table and its extensions, one of them an expression (which one BC reads is not pinned)",
+                f.name
+            )
+        })
+    }
+
     /// What a field's `TableRelation` gives the runtime: the arms, the arms of a relation with filter
     /// conditions, and the metadata of a relation the runtime does not understand. They read the properties of the
     /// field as the table and its extensions leave them (a `modify` block can change `TableRelation`).
@@ -493,6 +526,7 @@ impl Lowerer<'_> {
                         _ => None,
                     },
                     caption_class: self.field_caption_class(oi, f, &extensions, routine_at),
+                    caption_class_refusal: self.field_caption_class_refusal(oi, f, &extensions),
                     flow_filter: f.class == crate::members::FieldClass::FlowFilter,
                     calc,
                     calc_refusal: refusal,

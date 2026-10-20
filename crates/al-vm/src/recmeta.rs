@@ -203,6 +203,9 @@ impl Session {
 
     /// The caption of field `pos` that its declaration gives, or `Err` with its CaptionClass when that is an expression.
     pub(crate) fn field_caption_written(&self, t: &TableDef, pos: usize) -> Result<Result<String, String>, Signal> {
+        if let Some(why) = self.field_caption_class_refusal(t, pos) {
+            return unsupported(why);
+        }
         let has_caption = self.field_property(t, pos, "Caption").is_some();
         if t.fields[pos].id >= 2_000_000_000 && !has_caption {
             return unsupported(format!("the caption of system field {}", t.fields[pos].name));
@@ -226,6 +229,15 @@ impl Session {
             };
         }
         Ok(Ok(self.field_caption(t, pos)))
+    }
+
+    /// Why a read of field `pos`'s caption is refused (see `ir::Field::caption_class_refusal`).
+    pub(crate) fn field_caption_class_refusal(&self, t: &TableDef, pos: usize) -> Option<String> {
+        self.engine.program.objects[t.object as usize]
+            .table
+            .as_ref()
+            .and_then(|s| s.fields.get(pos))
+            .and_then(|f| f.caption_class_refusal.clone())
     }
 
     /// The text field `pos`'s CaptionClass expression `expr` gives, run with `rec` as Rec (see `field_caption_checked`).

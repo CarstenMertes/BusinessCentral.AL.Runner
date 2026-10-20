@@ -102,6 +102,18 @@ impl<'a> Checker<'a> {
         if sc.self_obj != sc.oi {
             c.extend(self.members[sc.oi].procedures_named(n).iter().map(|p| proc_cand(p)));
         }
+        // In the OnRun of a codeunit with TableNo a bare IsDirty() is Record.IsDirty (runtime 18.0), not the codeunit's own
+        // IsDirty (events/lt-with-statement-scopes/WithStatementAmbiguous.al:277-279, codeunit 82156 at :412-434; on runtime
+        // 16.1 and 17.1 BC refuses the call, must-not-compile case 1407). Only IsDirty and only OnRun are pinned: another
+        // procedure of the codeunit is refused by the lowering (`Lowerer::bare_is_dirty_unpinned`).
+        if !c.is_empty() && sc.codeunit_on_run && sc.rec_unqualified && n.eq_ignore_ascii_case("isdirty") {
+            if let Some(rec) = sc.rec.clone() {
+                let record = self.catalog_cands("Record", n, true, &rec);
+                if record.iter().any(|r| r.hidden.is_none()) {
+                    c = record;
+                }
+            }
+        }
         if c.is_empty() && sc.rec_unqualified {
             if let Some(rec) = sc.rec.clone() {
                 if let Some(recv) = receiver_of(&rec) {

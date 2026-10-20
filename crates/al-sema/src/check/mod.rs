@@ -646,6 +646,8 @@ pub(crate) struct Scope {
     /// The `with` statements around the code being checked, the innermost last: the record's type and the
     /// start offset of the statement.
     withs: Vec<(Ty, usize)>,
+    /// Whether the routine being checked is the `OnRun` trigger of a codeunit.
+    codeunit_on_run: bool,
 }
 
 /// A section with its first argument (its name, for controls and data items).

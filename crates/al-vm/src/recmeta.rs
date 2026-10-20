@@ -933,10 +933,11 @@ impl Session {
                 // an Enum on an Integer field shows its member (`One`, RecordTestFieldWrongTypeEnumOnInteger.al); a Byte is written as an
                 // escaped character from BC 28 (`\u0008`, FieldRefTestFieldTypedNumeric.al:P189_FldRef_Byte_Value; a number before);
                 // a Guid on a Text field is never equal and is written with braces from BC 28 (RecordTestFieldWrongTypeGuidOnText.al).
-                // A Byte above 9 and a Guid against another field type are not pinned.
+                // Other Byte values and a Guid against another field type are not pinned.
                 let from28 = self.has(al_version::Gate::TestFieldTypedValueTexts);
                 let mut shown: Option<String> = None;
                 let mut never_equal = false;
+                let mut byte_unpinned = false;
                 match (&current, want) {
                     (Value::Integer(_), Value::Enum(id, o)) => {
                         shown = Some(al_builtins::format::FormatCtx::enum_name(self, *id, *o))
@@ -956,12 +957,16 @@ impl Session {
                     (Value::Guid(_), Value::Guid(g)) if !from28 => {
                         shown = Some(al_builtins::format::format_guid(g).trim_matches(['{', '}']).to_string());
                     }
-                    (_, Value::Byte(b)) if from28 && matches!(current, Value::Integer(_)) => {
-                        if *b > 9 {
-                            return unsupported("TestField against a Byte above 9 (the escaped form is not pinned)");
-                        }
-                        shown = Some(format!("\\u{:04X}", b));
-                    }
+                    // Only the pinned values: 6 and 8 as `\u000N` (fieldref/lt-testfield-value-types/FieldRefTestFieldGroupA.al:254-260,
+                    // record/lt-testfield-typed-values/FieldRefTestFieldTypedNumeric.al:166), 10 as `\n` (record/lt-as-records/
+                    // AsTestFieldTexts.al:41-42) and 200 as U+02DC small tilde (:60-62). An equal value shows nothing, so only a
+                    // mismatch of another value is refused (below).
+                    (_, Value::Byte(b)) if from28 && matches!(current, Value::Integer(_)) => match *b {
+                        6 | 8 => shown = Some(format!("\\u{:04X}", b)),
+                        10 => shown = Some("\\n".to_string()),
+                        200 => shown = Some("\u{02DC}".to_string()),
+                        _ => byte_unpinned = true,
+                    },
                     (Value::Guid(_), Value::Guid(_)) => {}
                     (_, Value::Guid(_)) => {
                         return unsupported("TestField against a Guid on a field that is not Text (not pinned)");
@@ -988,6 +993,9 @@ impl Session {
                     ops::compare(&current, &want)? == Ordering::Equal
                 };
                 if !equal {
+                    if byte_unpinned {
+                        return unsupported("TestField against a Byte whose escaped form is not pinned");
+                    }
                     let key = self.key_text(t, &row)?;
                     // record/TestRecordRuntimeTextsAndViews.al:Record_TestField_MismatchTexts: the
                     // wanted and the current value are quoted, and two spaces precede "in".

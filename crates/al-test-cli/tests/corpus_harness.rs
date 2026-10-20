@@ -91,10 +91,10 @@ impl AllVersions {
 fn every_oracle_case_is_reported_and_attributed_to_an_area() {
     // BC 29: the version a run without `--bc-version` picks.
     let r = all_versions().json("29");
-    assert_eq!(r["overall"]["total"], 15714);
+    assert_eq!(r["overall"]["total"], 16382);
     assert_eq!(r["unmapped"].as_array().unwrap().len(), 0, "{}", r["unmapped"]);
-    assert_eq!(r["areas"]["json"]["total"], 442);
-    assert_eq!(r["areas"]["record"]["total"], 2080);
+    assert_eq!(r["areas"]["json"]["total"], 464);
+    assert_eq!(r["areas"]["record"]["total"], 2105);
 }
 
 #[test]
@@ -106,7 +106,7 @@ fn oracle_pinned_to_a_different_corpus_commit_is_refused() {
     std::fs::write(
         &bad,
         t.replace(
-            "8b505c65999a82d2034ad84b25a68d8b442418c1",
+            "c8d38887926f749df975996c1820bdde7c999836",
             "0000000000000000000000000000000000000000",
         ),
     )
@@ -347,7 +347,7 @@ fn markdown_summary_is_written() {
     let shared = all_versions();
     assert_eq!(shared.code, 0, "{}", shared.err);
     let md = std::fs::read_to_string(shared.file("pass-rate", "29", "md")).unwrap();
-    assert!(md.starts_with("- BC 29.0: ") && md.contains(" of 15714 ("), "{md}");
+    assert!(md.starts_with("- BC 29.0: ") && md.contains(" of 16382 ("), "{md}");
     assert_eq!(md.lines().count(), 1, "one line per version: {md}");
     // ... and `--markdown` of a single-version run writes the file it is given.
     let dir = tempfile::tempdir().unwrap();
@@ -412,7 +412,7 @@ fn every_bc_major_has_an_oracle_with_the_same_cases() {
     // 28 and 29 come from the hybrid runner: its OnRun pseudo-cases must be skipped, or the
     // run stops with exit 2 (ADR-015 1.6).
     // All three are recorded for the pinned corpus commit.
-    for (v, total) in [("27", 15562), ("28", 15647), ("29", 15714)] {
+    for (v, total) in [("27", 16220), ("28", 16313), ("29", 16382)] {
         let r = all_versions().json(v);
         assert_eq!(r["overall"]["total"], total, "BC {v}");
         assert_eq!(r["unmapped"].as_array().unwrap().len(), 0, "BC {v}");
@@ -450,7 +450,8 @@ fn all_versions_runs_each_oracle_writes_per_version_files_and_compares() {
     // BigInteger FlowField and query aggregate tests, the Base64 and conversion error texts that differ on 27.0 and 27.3,
     // and the interface collection codeunit).
     // Corpus bump 28 adds 31 more (the BC28PLUS and BC29PLUS guards that al-version/src/gates.rs cites for bump 28), which make it 154.
-    assert!(out.contains("oracle: 154 case(s) differ between versions"), "{out}");
+    // Corpus bump 29 adds 10 more (the BC28PLUS and BC29PLUS guards that al-version/src/gates.rs cites for bump 29), which make it 164.
+    assert!(out.contains("oracle: 164 case(s) differ between versions"), "{out}");
     // The known BC 29 differences are gated (ADR-015 3.4), so the runtime passes the same cases on every version, among the
     // cases every oracle has. One difference is known and open (corpus bump 10, backlog): the runtime passes
     // 71500 Get_Uses_Primary_Key_Not_Current_Key on BC 27 only. A new difference would be listed here.
@@ -458,7 +459,10 @@ fn all_versions_runs_each_oracle_writes_per_version_files_and_compares() {
     // BC 29 (Record.IsDirty under implicit with, gate RecordIsDirtyFrom29 not consumed); 79926 Byte10 and Byte200 are refused
     // from BC 28 (the escaped Byte form of TestFieldTypedValueTexts is not built); 81959 BM_CalcFormula_IntegerFilterFromBigInteger
     // is refused on BC 29 (a BigInteger above the Integer range in an Integer filter).
-    assert!(out.contains("runtime: 5 case(s) differ between versions"), "{out}");
+    // Corpus bump 29 adds one, a new case: 84275 Expr_BigIntegerLiteral_Enabled (pages/lt-cc-page-leads/CcPageLeads.al:801) passes
+    // from BC 28; on BC 27 real BC fails to compile the dynamic control expression `0L <> Big`, which the runtime does not do
+    // (gate ProbedValuesDifferFrom28 not consumed).
+    assert!(out.contains("runtime: 6 case(s) differ between versions"), "{out}");
     assert!(out.contains("71500 Get_Uses_Primary_Key_Not_Current_Key: 27"), "{out}");
 }
 
@@ -496,7 +500,7 @@ fn require_dotnet_turns_an_unusable_dotnet_into_a_setup_error() {
 #[test]
 fn the_other_test_apps_are_reported_apart_from_the_main_one() {
     let r = all_versions().json("28");
-    assert_eq!(r["overall"]["total"], 15647);
+    assert_eq!(r["overall"]["total"], 16313);
     let suites = r["suites"].as_array().unwrap();
     let get = |n: &str| {
         suites
@@ -504,7 +508,7 @@ fn the_other_test_apps_are_reported_apart_from_the_main_one() {
             .find(|s| s["name"] == n)
             .unwrap_or_else(|| panic!("no suite {n}"))
     };
-    assert_eq!(get("onprem")["counts"]["total"], 304);
+    assert_eq!(get("onprem")["counts"]["total"], 305);
     assert_eq!(get("isolation-function")["counts"]["total"], 7);
     assert_eq!(get("isolation-function")["counts"]["pass"], 7);
     // The control: real BC fails T5 under Codeunit isolation, and the runtime fails it too.

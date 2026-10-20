@@ -104,3 +104,6 @@
 98453 McpConfiguration_Rows
 98550 BaseAddress_RelativePaths_1
 98550 Handler_RaisesError
+98940 Handler_BaseAddressAbsoluteUrlBearer
+98940 Handler_BlockedByEnvironment
+98940 Handler_RaisesError

@@ -817,6 +817,7 @@ pub const INVENTED_IDS: &[&str] = &[
     "TextBuilder.AppendFieldValue#1",
     "Interface.AssertAssigned#1",
     "Variant.IntoInteger#1",
+    "Text.MaxStrLenOfVarParameter#1",
 ];
 
 /// Every name that gets a [`BuiltinId`]: the catalog's overloads of every version, the registered natives

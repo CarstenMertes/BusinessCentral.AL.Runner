@@ -49,6 +49,7 @@ impl Lowerer<'_> {
             add(self, p.name(), ty, &mut locals);
         }
         let params = locals.len();
+        self.var_params.clone_from(&by_var);
         let ret_ty = r.return_type().map(|t| Ty::from_type_ref(&t));
         self.ret_decl = ret_ty.clone();
         let ret = match &ret_ty {
@@ -526,6 +527,42 @@ impl Lowerer<'_> {
 
     /// A call or other expression used as a statement. A try function called as a statement behaves like a normal method
     /// (doc: TryFunction attribute), so its errors propagate.
+    /// `continue;` in an object that declares a procedure named Continue calls the procedure; the loop goes on with the
+    /// rest of the body (corpus types/PUContinue.al:166-180, Continue_WithProcedureNamedContinue, codeunit 82150 at
+    /// :221-272: `123|calls=1`). Only a procedure of the object itself without parameters or return value is pinned.
+    fn continue_stmt(&mut self) -> L<ir::Stmt> {
+        let found = self.members[self.oi]
+            .procedures
+            .iter()
+            .filter(|p| p.name.eq_ignore_ascii_case("continue"))
+            .map(|p| (p.offset, p.declared_in, p.params.is_empty() && p.ret.is_none()))
+            .collect::<Vec<_>>();
+        match found.as_slice() {
+            [] => Ok(ir::Stmt::Continue),
+            [(offset, declared_in, true)] if *declared_in == self.oi => {
+                let routine = self.routine_at.get(&(self.oi, *offset)).ok_or("procedure not found")?;
+                let try_call = self
+                    .routine_nodes
+                    .get(self.oi)
+                    .get(routine)
+                    .is_some_and(|r| r.attributes().any(|a| a.name().eq_ignore_ascii_case("tryfunction")));
+                if try_call {
+                    return Err("`continue;` with a TryFunction named Continue (not pinned)".into());
+                }
+                self.declared_in_both_proc(self.oi, *offset)?;
+                self.calls.push((self.oi, routine));
+                Ok(ir::Stmt::Expr(ir::Expr::Call {
+                    object: self.oi,
+                    routine,
+                    instance: None,
+                    args: Vec::new(),
+                    try_call: false,
+                }))
+            }
+            _ => Err("`continue;` where a procedure named Continue takes parameters, returns a value, is overloaded or comes from another object (not pinned)".into()),
+        }
+    }
+
     fn expr_stmt(&mut self, e: &SyntaxNode) -> L<ir::Stmt> {
         self.expr(e).map(|e| match e {
             ir::Expr::Builtin { id, receiver, args, .. } => ir::Stmt::Expr(ir::Expr::Builtin {
@@ -603,6 +640,10 @@ impl Lowerer<'_> {
                 }
             }
             AssignStmt => self.assign(n, &kids),
+            // See ForeachStmt: in a foreach nested in another loop the shape is refused.
+            IfStmt if self.loops.last() == Some(&true) && continue_else(n) => {
+                Err("`if ... then continue else ...` in a foreach nested in another loop (microsoft/AL issue 8339, not pinned)".into())
+            }
             IfStmt => {
                 let else_at = sig_tokens(n)
                     .iter()
@@ -622,15 +663,19 @@ impl Lowerer<'_> {
             }
             WhileStmt => {
                 let cond = self.condition(&kids[0]);
+                self.loops.push(false);
                 let body = self.stmt_or_empty(kids.get(1));
+                self.loops.pop();
                 cond.map(|c| ir::Stmt::While(c, body))
             }
             RepeatStmt => {
                 let (until, body_nodes) = kids.split_last().expect("repeat has until");
                 let mut body = Vec::new();
+                self.loops.push(false);
                 for b in body_nodes {
                     body.extend(self.stmt(b));
                 }
+                self.loops.pop();
                 self.condition(until).map(|u| ir::Stmt::Repeat(body, u))
             }
             ForStmt => {
@@ -638,7 +683,9 @@ impl Lowerer<'_> {
                 let var = self.place(&kids[0]);
                 let from = self.operand(&kids[1], ir::OperandUse::Value);
                 let to = self.operand(&kids[2], ir::OperandUse::Value);
+                self.loops.push(false);
                 let body = self.stmt_or_empty(kids.get(3));
+                self.loops.pop();
                 (|| {
                     Ok(ir::Stmt::For {
                         var: var?,
@@ -652,8 +699,20 @@ impl Lowerer<'_> {
             ForeachStmt => {
                 let var = self.place(&kids[0]);
                 let coll = self.expr(&kids[1]);
+                // `if ... then continue else ...` as the body of a foreach, or anywhere in a foreach nested in another loop: BC
+                // skips the else branch in the nested shape (corpus types/PUContinue.al:182-218, Continue_ForeachInFor_IfContinueElse:
+                // `seen` is empty; microsoft/AL issue 8339), which no rule explains yet. Only a block in a foreach that is not
+                // nested is pinned to behave as continue does elsewhere (:206-212, `A.C.`). Refused until a probe pins it.
+                // `loops` notes per enclosing loop whether it is such a nested foreach.
+                let nested = !self.loops.is_empty();
+                let direct = kids.get(2).is_some_and(continue_else);
+                self.loops.push(nested);
                 let body = self.stmt_or_empty(kids.get(2));
+                self.loops.pop();
                 (|| {
+                    if direct {
+                        return Err("`if ... then continue else ...` as the body of a foreach (microsoft/AL issue 8339, not pinned)".into());
+                    }
                     Ok(ir::Stmt::Foreach {
                         var: var?,
                         collection: coll?,
@@ -705,7 +764,7 @@ impl Lowerer<'_> {
                 }),
             },
             BreakStmt => Ok(ir::Stmt::Break),
-            ContinueStmt => Ok(ir::Stmt::Continue),
+            ContinueStmt => self.continue_stmt(),
             AssertErrorStmt => Ok(ir::Stmt::AssertError(self.stmt_or_empty(kids.first()))),
             other => Err(format!("statement {other:?} is not lowered yet")),
         };
@@ -1479,5 +1538,27 @@ fn cleared_or_assigned(body: &str, name: &str) -> bool {
                 || ["reset(", "copy(", "transferfields("]
                     .iter()
                     .any(|m| body.contains(&format!("{v}.{m}")))
+        })
+}
+
+/// `if <cond> then continue else <stmt>`, the then branch a bare `continue` or a block with a `continue` of its own.
+fn continue_else(n: &SyntaxNode) -> bool {
+    if n.kind() != SyntaxKind::IfStmt {
+        return false;
+    }
+    let Some(else_at) = sig_tokens(n)
+        .iter()
+        .find(|t| t.text().eq_ignore_ascii_case("else"))
+        .map(|t| t.text_range().start())
+    else {
+        return false;
+    };
+    n.children()
+        .skip(1)
+        .filter(|k| k.text_range().start() < else_at)
+        .any(|k| match k.kind() {
+            SyntaxKind::ContinueStmt => true,
+            SyntaxKind::Block => k.children().any(|c| c.kind() == SyntaxKind::ContinueStmt),
+            _ => false,
         })
 }

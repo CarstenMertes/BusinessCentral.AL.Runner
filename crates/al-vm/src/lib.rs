@@ -728,6 +728,7 @@ impl Session {
                 sender_refused: None,
                 var_origins: Vec::new(),
                 next_aliases: Vec::new(),
+                next_var_lens: Vec::new(),
                 unpinned_event_depth: 0,
                 skip_dependency_subscribers: false,
                 global_setups: Default::default(),
@@ -1118,6 +1119,7 @@ impl Session {
         args: Vec<Value>,
     ) -> Result<(Value, Vec<Value>), Signal> {
         let aliases = std::mem::take(&mut self.events.next_aliases);
+        let var_lens = std::mem::take(&mut self.events.next_var_lens);
         self.first_use(&instance)?;
         let engine = self.engine.clone();
         let r = &engine.program.objects[object].routines[routine];
@@ -1215,6 +1217,7 @@ impl Session {
             instance,
             locals,
             aliases,
+            var_lens,
         };
         let facts = engine.facts[object][routine];
         let is_try = facts.is_try;
@@ -1437,6 +1440,9 @@ struct Frame {
     /// slot). Kept in step with the global around every call the frame makes (`finish_call`), so a change the sender makes to
     /// the global shows in the parameter and the other way round (corpus events/lt-event-var-through-sender).
     aliases: Vec<(usize, Rc<RefCell<Instance>>, usize)>,
+    /// Per parameter: what `MaxStrLen` of a `var` Text or Code parameter answers, the declared length of the variable or
+    /// field the caller passed (set by `finish_call`; `None`: not known, and `MaxStrLen` refuses).
+    var_lens: Vec<Option<i32>>,
 }
 
 fn int(v: &Value) -> Result<i64, Signal> {

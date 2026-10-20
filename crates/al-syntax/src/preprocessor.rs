@@ -19,9 +19,10 @@ pub struct Preprocessed {
     pub diagnostics: Vec<Diagnostic>,
 }
 
-/// Symbols are matched case-insensitively.
+/// Symbols are matched case-sensitively: corpus misc/lt-bm-preprocessor-scope/BmPreprocessorDefine.al:83
+/// (`#if ltbmdefined` after `#define LTBMDEFINED` is false; BmPreprocessorScope.al:35).
 pub fn preprocess(src: &str, tokens: &[Token], symbols: &BTreeSet<String>) -> Preprocessed {
-    let mut syms: BTreeSet<String> = symbols.iter().map(|s| s.to_ascii_uppercase()).collect();
+    let mut syms: BTreeSet<String> = symbols.clone();
     let mut frames: Vec<Frame> = Vec::new();
     let mut out: Vec<Token> = Vec::with_capacity(tokens.len());
     let mut diagnostics = Vec::new();
@@ -82,10 +83,10 @@ pub fn preprocess(src: &str, tokens: &[Token], symbols: &BTreeSet<String>) -> Pr
                     }
                 }
                 "define" if active => {
-                    syms.insert(rest.trim().to_ascii_uppercase());
+                    syms.insert(rest.trim().to_string());
                 }
                 "undef" if active => {
-                    syms.remove(&rest.trim().to_ascii_uppercase());
+                    syms.remove(rest.trim());
                 }
                 _ => {}
             }
@@ -130,7 +131,14 @@ struct Frame {
 /// atom := SYMBOL | '(' or ')'`
 fn eval(expr: &str, syms: &BTreeSet<String>) -> Result<bool, String> {
     let spaced = expr.replace('(', " ( ").replace(')', " ) ");
-    let toks: Vec<String> = spaced.split_whitespace().map(|w| w.to_ascii_uppercase()).collect();
+    // The keywords `not`, `and` and `or` are matched in any case; symbols keep their case.
+    let toks: Vec<String> = spaced
+        .split_whitespace()
+        .map(|w| match w.to_ascii_uppercase().as_str() {
+            k @ ("NOT" | "AND" | "OR") => k.to_string(),
+            _ => w.to_string(),
+        })
+        .collect();
     let mut i = 0;
     let v = or(&toks, &mut i, syms)?;
     if i != toks.len() {
@@ -222,8 +230,12 @@ mod tests {
     }
 
     #[test]
-    fn symbols_are_case_insensitive() {
-        assert_eq!(code(SRC, &["bc29plus"]), vec!["a", ";", "b", ";", "d", ";"]);
+    fn symbols_are_case_sensitive() {
+        // corpus misc/lt-bm-preprocessor-scope/BmPreprocessorDefine.al:83 (`#if ltbmdefined` after
+        // `#define LTBMDEFINED` takes the #else branch), read by BmPreprocessorScope.al:25, :35.
+        assert_eq!(code(SRC, &["bc29plus"]), vec!["a", ";", "c", ";", "d", ";"]);
+        let src = "#define LTBMDEFINED\n#if ltbmdefined\na\n#else\nb\n#endif\n";
+        assert_eq!(code(src, &[]), vec!["b"]);
     }
 
     #[test]

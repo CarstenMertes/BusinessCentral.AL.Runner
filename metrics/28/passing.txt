@@ -5665,6 +5665,7 @@
 69338 Continue_InForeach_AndNestedLoops
 69338 Continue_InRecordLoop_AndWithCase
 69338 Continue_InWhileAndRepeat
+69338 Continue_WithProcedureNamedContinue
 69339 Base64Url_Forms
 69339 Base64_Streams
 69339 FromBase64_Invalid_Text
@@ -7304,6 +7305,7 @@
 70511 SubstNoPercent
 70511 SubstNoTen
 70511 SubstNoTypes
+70512 LT_BU_MaxStrLen_TextParameters
 70512 MaxStrLenSubstTemp
 70512 MaxStrLenVariables
 70513 CodeNAssign
@@ -9859,6 +9861,7 @@
 72515 WhileRepeat_Semantics
 72516 Exit_DefaultValues
 72516 Exit_Forms
+72516 LT_BU_ForLoop_BigIntegerEndBoundOnInteger
 72516 Recursion_Values
 72518 Asserterror_RollsBackWrites
 72518 CodeunitRun_Error_RollsBack
@@ -12983,6 +12986,7 @@
 81959 BM_CalcFormula_BigIntegerFilterFromInteger
 81959 BM_CalcFormula_IntegerFilterFromBigInteger
 81959 BM_LookupFlowField_ShorterThanSource
+81961 BM_Preprocessor_DefineUndefScope
 83550 LT_BU_Literal_MultilineTextCrlfSource
 83553 LT_BU_DecimalPlaces_StoredAndShown
 83761 LocalProcedure_CharVariableToInteger_Control

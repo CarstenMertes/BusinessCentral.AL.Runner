@@ -213,6 +213,11 @@ pub(crate) struct Lowerer<'a> {
     /// While a call statement is lowered: the `CurrFieldNo` arguments it passes to `var` parameters, as (the local that
     /// stands in for it, the slot of the implicit Rec). `None` elsewhere.
     curr_field_args: Option<Vec<(usize, usize)>>,
+    /// One entry per loop around the statement being lowered, innermost last: whether it is a foreach nested in another
+    /// loop (`if ... then continue else ...` is refused there, see the ForeachStmt lowering).
+    loops: Vec<bool>,
+    /// `by_var` of the parameters of the routine being lowered.
+    var_params: Vec<bool>,
     /// The declared return type of the routine being lowered (an interface result converts in `exit`).
     ret_decl: Option<Ty>,
     /// The routine nodes of every object, numbered as `routine_at` numbers them.

@@ -4549,6 +4549,8 @@
 67755 Header_Values_ReportWithCaption
 67755 Identity_DataItemGuid_IsTheSystemIdOfTheRow
 67755 Names_ColumnsWithSpacesPunctuationAndLetters
+67755 PW_DumpPlain_Lines01To18
+67755 PW_DumpPlain_Lines19To36
 67755 Rows_NoRowsAtAll
 67755 Rows_OnlyTheSiblingItemHasRows
 67755 Rows_ParentsWithChildRowsAndSiblingItem
@@ -4604,7 +4606,10 @@
 67822 AutoInc_ZeroedKeyOnAReusedRecord_GetsTheNextValue
 67826 AutoInc_BigIntegerKey_ExplicitAboveInt32_NextZeroKeysFollowIt
 67826 AutoInc_DeleteAll_RefusedInsertRolledBack_ConsumesItsValueAndRollsBackTheRow
+67826 AutoInc_NonKeyField_ModifyAll_BQ
+67826 AutoInc_NonKeyField_ModifyChangedValue_BQ
 67826 AutoInc_NonKeyField_ModifyUnchangedAndOtherField_BQ
+67826 AutoInc_NonKeyField_TransferFieldsFromAnotherRow_BQ
 67826 AutoInc_RemovedField_InsertAndModify_BQ
 67826 AutoInc_Rename_OfAKeyFieldOtherThanTheAutoIncrementOne_IsAccepted
 67826 AutoInc_Rename_ThatChangesTheAutoIncrementValue_IsRefused
@@ -5156,6 +5161,7 @@
 68380 Randomize_NegativeSeed_IsItsAbsoluteValue_AndSomeSeedsCoincide
 68380 Randomize_Seed_GivesTheNetLegacySequence
 68391 ChangeCompany_KeepsFiltersKeyAndMarks_AndCopyDoesNotMoveTheTarget
+68391 ChangeCompany_TriggerCompany_VariantAndInsertIntoEmptyTable_BQ
 68393 ChangeCompany_EmptyNameIsTheSessionCompany_AndTheNameIsCaseSensitive
 68393 ChangeCompany_ToAMissingCompany_FalseOrAnError
 68393 RecordRefOpen_OnAMissingCompany_RaisesTheSameError
@@ -6195,6 +6201,7 @@
 69771 Import_Xml_DisplayTextOfDecimalBooleanDateTime
 69771 Import_Xml_Duration
 69771 Import_Xml_Enum
+69771 Import_Xml_Enum_Invalid
 69771 Import_Xml_Option
 69771 Import_Xml_Time
 69772 Copy_ShareTable_OfARealRecord_Error
@@ -6204,6 +6211,7 @@
 69772 TempRecord_ModifyAllDeleteAll_NoEvents
 69772 TempRecord_ThroughRecordRef_NoEvents
 69774 OrGroup_FieldFilteredInGroupZeroAndInOrGroup
+69774 OrGroup_FlowFieldFilter_BQ
 69774 OrGroup_OneFieldOnly
 69774 OrGroup_RecordRef
 69774 OrGroup_ResetAndCopyFilters
@@ -7433,11 +7441,19 @@
 70526 SetLoadFields_FindSetModify
 70526 SetLoadFields_ModifyKeepsOthers
 70526 SetLoadFields_ModifyOtherField
+70535 Header_Lines
+70535 Header_RawBytes
 70535 Names_SpacesAndParentheses
 70535 OtherFormats_NoLayout
+70535 PW_Dump_Lines001To016
+70535 PW_Dump_Lines017To032
+70535 PW_Dump_Lines081To096
+70535 PW_Dump_Lines097To112
+70535 PW_Dump_Lines113To128
 70535 Rows_BlockAfterHeader
 70535 Rows_ColumnBoundToVariable
 70535 Rows_SkipAndBreak
+70535 SecondSaveAs_OnOneVariable
 70535 StaticSaveAs_WithParametersString
 70535 TemporaryDataItem
 70535 TriggerError_InPreReport
@@ -9333,6 +9349,7 @@
 72001 Insert_DuplicateBoolean
 72001 Insert_Trigger
 72001 Insert_TriggerError
+72001 ModifyAll_Equal_Value_Rows_BQ
 72001 ModifyAll_Filtered_Empty
 72001 ModifyAll_FlowFilter_Field_BQ
 72001 ModifyAll_Triggers
@@ -10691,6 +10708,7 @@
 73242 P163_Truncate_SecurityFiltered_BQ
 73242 P163_Truncate_TableOtherRecordsRead
 73242 P163_Truncate_TemporaryAndMedia_WhichGuardFirst
+73242 P163_Truncate_Temporary_ReturnValueUsed_BQ
 73250 P163_SetTableView_OverSortingDescending
 73250 P163_SetTableView_OverWhere_KeyOfTheView
 73250 P163_SetTableView_OverWhere_SameAndOtherField
@@ -12380,6 +12398,7 @@
 74796 Duplicate_WithoutOnInsert_InsertTrue_Unused
 74796 Duplicate_WithoutOnInsert_InsertTrue_Used
 74799 Columns_Schema
+74799 PW_FieldIndex_FlowFilterAmongNormalFields
 74803 GetParent_GetDocument_States
 74803 Remove_FirstMiddleLast
 74806 GetDocument_ReturnsTheSameInstance
@@ -13348,6 +13367,7 @@
 84439 ApiPage_OnInsertRecordInsertsAndReturnsFalse
 84439 ApiPage_OnInsertRecordInsertsAndReturnsTrue
 84439 Card_OnNewRecordInserts_OpenNewSetClose
+84439 EditableFlowField_SetValue
 84439 FlowFieldRelation_OpenEditGoToRecord
 84439 FlowFieldRelation_OpenNew
 84439 FlowFilter_AssignValidateSetRange_InCode
@@ -13418,6 +13438,7 @@
 84790 Subscriber_NonAsciiParameterName
 84790 Subscriber_ParameterNamedFinalize
 84790 Subscriber_TemporaryRecordParameter
+84790 TableEvent_TemporaryRecord_SubscriberRecWithoutVar
 84830 Item31_TableExtension_AssignsCurrFieldNo
 84830 Item33_FieldRefValidate_BadRelation
 84830 Item33_Validate_BadRelation_TriggerRuns
@@ -13493,10 +13514,13 @@
 85120 Substring_StartAndLengthPastEnd
 85122 MultilineLiteral_Crlf
 85122 MultilineLiteral_Lf
+85180 DictionaryList_ContainsAndIndexOf
 85180 Dictionary_EnumValue_GetSetValuesContainsKey
 85180 Dictionary_JsonObjectValue_Uninitialized
 85180 EnumNames_AssignAndCount
 85180 EnumNames_LoopCopy
+85180 EnumNames_Mutations
+85180 EnumOrdinals_Mutations
 85180 InterfaceList_AddRange
 85180 JsonObject_ArrayElements_AreSeparate
 85180 JsonObject_ListElements_DifferentVariables
@@ -13585,6 +13609,7 @@
 85443 CW_ArrayOfFieldRef_Independent
 85443 CW_ArrayOfVariant_Independent
 85443 CW_CaseOnFieldTypeCommaList
+85446 CW_Variant_KeepsOrDropsChangeCompany
 85481 GuidText_ToCode20
 85481 MixedExpressions_TypeAndValue
 85481 OptionWithBlankMembers_IntegerAssignment
@@ -13610,7 +13635,12 @@
 85902 ToRecordRef_WithoutModify_FreshGet
 85903 Match_AfterEarlierError_LastError
 85903 Missing_BooleanUsed_LastError
+85906 ReadFromInStream_AfterWriteAndWriteText
 85907 WriteToText_EncodingNameCasing
+85908 XmlnsAttribute_OnElementWithOtherNamespace
+85908 XmlnsAttribute_OnElementWithSameNamespace
+85908 XmlnsAttribute_OnElementWithoutNamespace
+85908 XmlnsSetAttribute_OnElementWithoutNamespace
 85969 TextElement_Named_Like_Field
 86030 Item107_BoolExportByLanguage
 86030 Item111_ImportFromStoredBlob
@@ -13640,5 +13670,11 @@
 86264 DI_AssignThenModify
 86264 DI_AssignedValueLifetime
 86264 DI_CalcFieldsAfterAssign
+86264 DI_ExistAndLookupAssigned
+86264 DI_FieldRefWrite
 86264 DI_FlowFilterAssigned
 86264 DI_ModifyOnlyFlowFieldChanged
+86264 DI_TemporaryRecord
+86264 DI_TransferFieldsAndAssign
+86264 DI_ValidateFlowField
+86264 DI_ValidateSumFlowFieldSourceRow

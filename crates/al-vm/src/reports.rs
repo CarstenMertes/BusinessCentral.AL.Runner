@@ -1961,8 +1961,34 @@ impl Session {
             (inst, schema, quit)
         } else {
             let (mut inst, mut schema) = self.report_by_number(id, args.first())?;
+            // An Html SaveAs of a report with an RDLC layout raises SubstituteReport with the parameters as RequestPageXml before it
+            // fails for the layout, and nothing after (report/lt-am-rdlc-output/AMRdlcOutput.al:TextRdlc_SaveAsHtml_IsRefused,
+            // `SubstituteReport(79256,SaveAs,req=Yes);`). Only that RequestPageXml contains the parameters is pinned, not its
+            // text: the subscriber gets an unknown value, so a subscriber that reads it is refused where it reads it. A subscriber
+            // that substitutes another report is not pinned.
+            if format == "Html"
+                && record_ref.is_none()
+                && matches!(target, SaveTarget::Stream(_))
+                && schema.report().layout == ir::ReportLayout::Rdlc
+                && !schema.report().processing_only
+                && self
+                    .engine
+                    .events
+                    .is_subscribed(crate::events::REPORTING_TRIGGERS, "substitutereport")
+                && self
+                    .raise_substitute_report(
+                        &schema,
+                        Value::Unknown(
+                            "RequestPageXml of SubstituteReport for an Html SaveAs: only that it contains the parameters is pinned"
+                                .into(),
+                        ),
+                    )?
+                    .is_some()
+            {
+                return unsupported("SubstituteReport set another report for an Html SaveAs (not pinned)");
+            }
             if self.save_as_raises_events(&schema, &format, &parameters, record_ref, &target) {
-                if let Some(new_id) = self.raise_substitute_report(&schema)? {
+                if let Some(new_id) = self.raise_substitute_report(&schema, Value::Text(String::new().into()))? {
                     let (i, s) = self.report_by_number(id, Some(&Value::Integer(new_id)))?;
                     if !self.save_as_raises_events(&s, &format, &parameters, record_ref, &target) {
                         return unsupported(format!(
@@ -2242,7 +2268,7 @@ impl Session {
     /// answers the report a subscriber put in its place. Pinned (PeVTests.al:432, :483): ReportId, RunMode `SaveAs`,
     /// NewReportId -1 on entry, and a NewReportId a subscriber sets runs that report. Not pinned, and passed as BC most
     /// likely does (docs/probes-needed.md): RequestPageXml empty and RecordRef unopened.
-    fn raise_substitute_report(&mut self, schema: &Schema) -> Result<Option<i32>, Signal> {
+    fn raise_substitute_report(&mut self, schema: &Schema, request_page_xml: Value) -> Result<Option<i32>, Signal> {
         let report_id = self.object_id_of(schema.object as u32) as i32;
         let members: std::sync::Arc<[String]> = ["Normal", "ParametersOnly", "Execute", "Print", "SaveAs", "RunModal"]
             .iter()
@@ -2255,7 +2281,7 @@ impl Session {
         let mut args = vec![
             Value::Integer(report_id),
             Value::Option(4, members),
-            Value::Text(String::new().into()),
+            request_page_xml,
             Value::Library(
                 "RecordRef".into(),
                 Rc::new(RefCell::new(al_builtins::value::LibraryValue::Empty)),
@@ -2902,6 +2928,7 @@ impl Session {
         // pinned and stay empty (docs/probes-needed.md).
         let mut company_line1 = String::new();
         let mut company_line2 = String::new();
+        let mut company_values: Vec<(&'static str, String)> = Vec::new();
         if self.has(al_version::Gate::ReportSaveAsXmlHeaderHasCompanyBlock) {
             if let Some(obj) = self.compiled_table(79) {
                 let t = self.engine.tables[obj].clone().expect("a compiled table has a schema");
@@ -2929,6 +2956,26 @@ impl Session {
                                 OTHER.iter().any(|a| a.eq_ignore_ascii_case(&f.name))
                                     && value(*i).is_some_and(|v| !v.is_empty())
                             });
+                            // The other elements write the value of their field (misc/lt-probes-needed-2/PnBReportSaveAs.al:568-592).
+                            // The logo is the Picture field in base64; how BC encodes it is not built, so a picture is refused.
+                            for (element, field) in dataset::COMPANY_FIELDS {
+                                let Some(i) = t.fields.iter().position(|f| f.name.eq_ignore_ascii_case(field)) else {
+                                    continue;
+                                };
+                                if element == "CompanyLogo" {
+                                    self.load_blobs(&rec, &[i])?;
+                                    if !matches!(&rec.borrow().fields[i], Value::Blob(b) if b.borrow().bytes.is_empty())
+                                    {
+                                        return unsupported(
+                                            "the CompanyLogo of the dataset header (Company Information has a Picture; its encoding is not built)",
+                                        );
+                                    }
+                                    continue;
+                                }
+                                if let Some(v) = value(i).filter(|v| !v.is_empty()) {
+                                    company_values.push((element, v.to_string()));
+                                }
+                            }
                             if let Some((_, f)) = set {
                                 return unsupported(format!(
                                     "the company address lines of the dataset header (Company Information has \"{}\" set; \
@@ -2944,6 +2991,7 @@ impl Session {
         Ok(dataset::Header {
             company_line1,
             company_line2,
+            company_values,
             extension_id: app.map(|a| a.id.clone()).unwrap_or_default(),
             extension_name: app
                 .map(|a| header_extension_name(&a.name, &a.publisher))

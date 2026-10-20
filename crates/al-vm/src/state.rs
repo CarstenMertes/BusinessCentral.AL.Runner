@@ -102,6 +102,8 @@ pub(crate) struct EventState {
     pub(crate) var_origins: Vec<Option<(Rc<RefCell<crate::Instance>>, usize)>>,
     /// Set just before a subscriber is called, taken by its frame: (parameter slot, instance, global slot).
     pub(crate) next_aliases: Vec<(usize, Rc<RefCell<crate::Instance>>, usize)>,
+    /// Set just before a subscriber is called, taken by its frame: the call is an event subscriber dispatch.
+    pub(crate) next_is_subscriber: bool,
     /// Set by `finish_call` just before the call, taken by the callee's frame (`Frame::var_lens`).
     pub(crate) next_var_lens: Vec<Option<i32>>,
     /// The declared lengths of a publisher's `var` Text and Code arguments (`var_lens_of`), set by `finish_call` just before

@@ -12817,13 +12817,17 @@
 80500 ReadFrom_be_bom
 80500 ReadFrom_le_bom
 80500 ReadFrom_le_bom_decl16
+80500 ReadFrom_le_bom_decl8
 80500 ReadFrom_le_nobom
 80500 ReadFrom_utf8_bom
 80501 RemoveAttribute_ByName_LocalA
 80503 XPath_Axes_1
 80503 XPath_Axes_2
+80503 XPath_Axes_3
+80503 XPath_Axes_4
 80503 XPath_Axes_5
 80503 XPath_Axes_6
+80503 XPath_Axes_8
 80503 XPath_Axes_9
 80503 XPath_UnclosedCalls_1
 80503 XPath_UnclosedCalls_2

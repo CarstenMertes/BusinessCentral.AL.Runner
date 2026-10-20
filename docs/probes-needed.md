@@ -968,3 +968,10 @@ Refused in `al-vm/src/pages/format.rs` until a probe pins them:
 - A control `Caption` over a source field that has a `CaptionClass`: which one `Caption()` shows (field CaptionClass over field Caption: pageext/lt-page-ext-properties/TableExtCaptionClass.al:69).
 - A CaptionClass that gives the same text at a later fill, a `Caption()` read of an expression that changed since the fill, and a second `Caption()` of a field CaptionClass that raises OnResolveCaptionClass: whether BC raises the event again (misc/W2CaptionClass.al:174-178 pins a changed text after SetValue; XTablePropsTests.al:483-487 pins one read).
 - `SetValue('c12/31/2025')` with a lower-case closing mark on a ClosingDates control (`C` is pinned: P119ReportFields.al:174).
+
+## XPath axes and UTF-16 declarations (lane-xml-xpath, 2026-10-20)
+
+Refused in `al-builtins/src/xml.rs` until a probe pins them:
+- XPath `namespace::` axis. xml/lt-ay-xml/AyXPathAxesVariables.al:161 (XPath_Axes_7) pins only the names and order for one prefixed declaration on an ancestor (`@xmlns:p,@xmlns:xml`). Probe wanted: `Value`, `NamespaceUri`, parent and owner element of each node; whether the `xmlns:p` node is the declaring attribute itself (Remove it, read the document); order with several declarations and a default namespace; `namespace::p` by name; a predicate on the axis.
+- XPath `following::` and `preceding::` from an attribute context node (`@id/following::*`). Pinned only from elements (AyXPathAxesVariables.al:93-180). Probe wanted: whether the owner element's children are in `following::` and whether the owner is in `preceding::`.
+- `XmlDocument.ReadFrom(InStream)` of UTF-16 bytes whose declaration names an encoding other than UTF-16. Pinned only: UTF-16 LE byte order mark, exactly `<?xml version="1.0" encoding="utf-8"?>` then `<`, statement form (AyXmlReadFromStream.al:103-112). Probe wanted: no byte order mark, big endian, `UTF-8` in capitals, white space or a comment after the declaration, other encodings (iso-8859-1, windows-1252), and the form whose result is used (GetLastErrorText).

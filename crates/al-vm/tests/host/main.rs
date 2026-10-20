@@ -7,3 +7,4 @@ mod http_headers;
 mod last_error_object;
 mod media;
 mod streams;
+mod xml_read_bom;

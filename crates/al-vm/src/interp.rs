@@ -509,7 +509,8 @@ impl Session {
     ) -> Result<Value, Signal> {
         // A publisher's `var` argument that is a global of the caller's instance is that variable itself for its subscribers
         // (events/lt-event-var-through-sender/EventVarThroughSender.al): they alias it, see `Frame::aliases`.
-        if self.engine.facts[object][routine].publisher {
+        let facts = self.engine.facts[object][routine];
+        if facts.publisher {
             let by_var = &self.engine.program.objects[object].routines[routine].by_var;
             self.events.var_origins = args
                 .iter()
@@ -528,11 +529,15 @@ impl Session {
             inst.borrow_mut().globals[*g] = f.locals[*slot].clone();
         }
         // An event's subscribers do not get the lengths: what MaxStrLen answers there is not pinned.
-        if !self.engine.facts[object][routine].publisher {
+        // Only a routine that reads MaxStrLen of a `var` parameter gets them (known at lowering), so other calls pay nothing.
+        let var_lens = facts.var_lens;
+        if var_lens {
             self.events.next_var_lens = self.var_lens_of(object, routine, args, f);
         }
         let result = self.call(object, routine, inst, values);
-        self.events.next_var_lens.clear();
+        if var_lens {
+            self.events.next_var_lens.clear();
+        }
         for (slot, inst, g) in &f.aliases {
             f.locals[*slot] = inst.borrow().globals[*g].clone();
         }

@@ -182,6 +182,7 @@ impl Lowerer<'_> {
                     && let Ok(ir::Place::Local(i)) = self.place(arg)
                     && self.var_params.get(i).copied().unwrap_or(false)
                 {
+                    self.reads_var_max_len = true;
                     return Ok(ir::Expr::Builtin {
                         id: builtin_id("Text.MaxStrLenOfVarParameter#1")?,
                         receiver: None,

@@ -142,6 +142,9 @@ pub(crate) struct RoutineFacts {
     /// An attribute is declared that the runtime does not understand (`CommitBehavior` other than Ignore and Error,
     /// `ErrorBehavior` other than Collect, or more than one of either): the call takes the slow path, which reports it.
     pub odd_attributes: bool,
+    /// A call hands the routine the declared lengths of its `var` Text and Code arguments (`ir::Routine::reads_var_max_len`;
+    /// never for a publisher, whose subscribers would see them).
+    pub var_lens: bool,
 }
 
 fn routine_facts(r: &ir::Routine, publisher: bool) -> RoutineFacts {
@@ -165,6 +168,7 @@ fn routine_facts(r: &ir::Routine, publisher: bool) -> RoutineFacts {
         }
     }
     f.odd_attributes |= commits > 1 || collects > 1;
+    f.var_lens = r.reads_var_max_len && !publisher;
     f
 }
 
@@ -1119,7 +1123,6 @@ impl Session {
         args: Vec<Value>,
     ) -> Result<(Value, Vec<Value>), Signal> {
         let aliases = std::mem::take(&mut self.events.next_aliases);
-        let var_lens = std::mem::take(&mut self.events.next_var_lens);
         self.first_use(&instance)?;
         let engine = self.engine.clone();
         let r = &engine.program.objects[object].routines[routine];
@@ -1211,6 +1214,12 @@ impl Session {
             };
         }
         self.return_vec(args);
+        let facts = engine.facts[object][routine];
+        let var_lens = if facts.var_lens {
+            std::mem::take(&mut self.events.next_var_lens)
+        } else {
+            Vec::new()
+        };
         let mut frame = Frame {
             object,
             routine,
@@ -1219,7 +1228,6 @@ impl Session {
             aliases,
             var_lens,
         };
-        let facts = engine.facts[object][routine];
         let is_try = facts.is_try;
         // [CommitBehavior] governs the whole dynamic extent of the procedure and ends when it
         // returns (error-handling/TestCommitBehaviorAttribute.al:CommitBehavior_Ignore_ScopeIsPoppedOnReturn).

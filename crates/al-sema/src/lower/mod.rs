@@ -218,6 +218,8 @@ pub(crate) struct Lowerer<'a> {
     loops: Vec<bool>,
     /// `by_var` of the parameters of the routine being lowered.
     var_params: Vec<bool>,
+    /// The routine being lowered reads MaxStrLen of a `var` parameter (`ir::Routine::reads_var_max_len`).
+    reads_var_max_len: bool,
     /// The declared return type of the routine being lowered (an interface result converts in `exit`).
     ret_decl: Option<Ty>,
     /// The routine nodes of every object, numbered as `routine_at` numbers them.

@@ -50,6 +50,7 @@ impl Lowerer<'_> {
         }
         let params = locals.len();
         self.var_params.clone_from(&by_var);
+        self.reads_var_max_len = false;
         let ret_ty = r.return_type().map(|t| Ty::from_type_ref(&t));
         self.ret_decl = ret_ty.clone();
         let ret = match &ret_ty {
@@ -230,6 +231,7 @@ impl Lowerer<'_> {
             end_pos,
             begin_pos,
             expr_tys,
+            reads_var_max_len: self.reads_var_max_len,
         }
     }
 
@@ -453,6 +455,7 @@ impl Lowerer<'_> {
             end_pos: ir::NO_POS,
             begin_pos: ir::NO_POS,
             expr_tys: Vec::new(),
+            reads_var_max_len: false,
         }
     }
 

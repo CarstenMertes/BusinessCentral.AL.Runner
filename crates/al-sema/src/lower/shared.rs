@@ -209,6 +209,7 @@ pub(crate) fn make_lowerer<'a>(sh: &'a Shared<'a>, tl: &'a Local<'a>, seq: &'a S
         curr_field_args: None,
         loops: Vec::new(),
         var_params: Vec::new(),
+        reads_var_max_len: false,
         ret_decl: None,
         routine_nodes: &tl.nodes,
         ext_slots: &sh.ext_slots,

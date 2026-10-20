@@ -12781,6 +12781,8 @@
 79923 MarkedOnly_FilterExcludesMarked_DeleteAll
 79923 MarkedOnly_Filter_DeleteAllTrue_Trigger
 79924 TargetNeverOpened
+79926 Byte10
+79926 Byte200
 79926 Byte7Equal
 79926 EnumBlankTestField
 79926 EnumWithCaption
@@ -12919,6 +12921,7 @@
 81956 BM_LongFieldNames_ReadWriteFilter
 81959 BM_CalcFormula_BigIntegerFilterFromInteger
 81959 BM_CalcFormula_IntegerFilterFromBigInteger
+81959 BM_LookupFlowField_ShorterThanSource
 83550 LT_BU_Literal_MultilineTextCrlfSource
 83553 LT_BU_DecimalPlaces_StoredAndShown
 83761 LocalProcedure_CharVariableToInteger_Control

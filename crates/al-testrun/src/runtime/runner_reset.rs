@@ -68,11 +68,18 @@ impl RunnerReset {
             "ALTestRunnerResetEnvironment.Codeunit.al:48-52",
         )?;
         if !test_permissions(obj, routine).eq_ignore_ascii_case("Disabled") {
-            run(
+            // 130302 assigns the test's permission sets through Permissions Mock (Set State Test Run.OnRun ->
+            // Permission Test Catalog.InitializePermissionSetForTest -> Library - Lower Permissions
+            // .StartLoggingNAVPermissions('D365 Full Access')); they are not enforced (assumption
+            // `runner-permission-sets-grant-all`, server_classes.rs `permission_helper_add_set`).
+            session.runner_permission_step = true;
+            let r = run(
                 session,
                 &self.set_state,
                 "ALTestRunnerResetEnvironment.Codeunit.al:54-62",
-            )?;
+            );
+            session.runner_permission_step = false;
+            r?;
         }
         run(
             session,

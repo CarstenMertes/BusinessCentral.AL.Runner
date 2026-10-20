@@ -427,8 +427,14 @@ fn permission_helper_dispose(_: &mut Session, _: Option<&Rc<DotNetObject>>, args
 
 /// `AddEffectivePermissionSet(RoleId)` narrows the session to the assigned sets (enforced on BC: corpus
 /// permissions/TestPermissionsMockEnforcement.al:28-47). Permissions are not enforced here (ADR-027), so a test that
-/// lowers them is not run.
-fn permission_helper_add_set(_: &mut Session, _: Option<&Rc<DotNetObject>>, _: Args) -> Result<Value, Signal> {
+/// lowers them is not run. The sets BC's test runner assigns before each test method (Tests-TestLibraries codeunit 130302
+/// "Set State Test Run", every Microsoft test that does not disable TestPermissions) are assumed to grant all the test
+/// does (`runner-permission-sets-grant-all`): those tests pass in Microsoft's CI under them.
+fn permission_helper_add_set(s: &mut Session, _: Option<&Rc<DotNetObject>>, _: Args) -> Result<Value, Signal> {
+    if s.runner_permission_step {
+        al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::RunnerPermissionSetsGrantAll);
+        return Ok(Value::Null);
+    }
     Err(Signal::Unsupported(
         "DotNet PermissionTestHelper.AddEffectivePermissionSet lowers the permissions of the test session; \
          permissions are not enforced here (every access is granted, ADR-027), so the test is not run"

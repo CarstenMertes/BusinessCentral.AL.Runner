@@ -7,7 +7,7 @@
 //! with the load of the machine, so the budget can be tight (10 % over the value of the day it was set) and still not flap.
 //!
 //! Where the kernel does not allow the counter (a virtual machine without a PMU, `perf_event_paranoid` above 2) the test
-//! falls back to the CPU time of the thread, with limits three times as wide, and says so. A fast path that merges lowers
+//! falls back to the CPU time of the thread, with limits three times as wide, and says so. In that mode an excess only warns (owner, 2026-10-20). A fast path that merges lowers
 //! its limit in the same commit. `AL_VM_BENCH_CPU_TIME=1` forces the fallback (to set or check its limits).
 //!
 //! Ignored by default (a release build is needed):
@@ -138,6 +138,7 @@ fn the_interpreter_stays_within_its_instruction_budget() {
     }
     let meter = Meter::new(false);
     let counting = matches!(meter, Meter::Instructions(_));
+    meter::print_mode(counting);
     eprintln!("vm budget: counting {}", meter.name());
     let empty = least(&meter, EMPTY);
     let mut over = Vec::new();
@@ -153,10 +154,9 @@ fn the_interpreter_stays_within_its_instruction_budget() {
             over.push(format!("{} used {per} per iteration, limit {limit}", b.name));
         }
     }
-    assert!(
-        over.is_empty(),
-        "over the VM budget ({}): {}",
-        meter.name(),
-        over.join("; ")
+    meter::enforce(
+        counting,
+        !over.is_empty(),
+        &format!("over the VM budget ({}): {}", meter.name(), over.join("; ")),
     );
 }

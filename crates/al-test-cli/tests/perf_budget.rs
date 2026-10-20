@@ -110,6 +110,7 @@ fn cold_compile_of_the_pinned_corpus_stays_within_its_instruction_budget() {
     } else {
         LIMIT_CPU_NS_PER_KIB
     };
+    meter::print_mode(counting);
     eprintln!(
         "cold compile: {objects} objects, {} ({}), least of {RUNS} = {best}, {per_object} per object, {per_kib} per KiB of source ({bytes} bytes), limit {limit} per KiB; samples: {}",
         meter.name(),
@@ -120,10 +121,13 @@ fn cold_compile_of_the_pinned_corpus_stays_within_its_instruction_budget() {
         objects > 1500,
         "compiled only {objects} objects: the corpus was not loaded"
     );
-    assert!(
-        limit == 0 || per_kib <= limit,
-        "the cold compile used {per_kib} {} per KiB of corpus source, over the limit of {limit}",
-        meter.name()
+    meter::enforce(
+        counting,
+        limit != 0 && per_kib > limit,
+        &format!(
+            "the cold compile used {per_kib} {} per KiB of corpus source, over the limit of {limit}",
+            meter.name()
+        ),
     );
 }
 
@@ -206,6 +210,7 @@ fn run_source_bytes() -> u64 {
 /// the runtime phases moved with the load of a shared runner (13.6 s against 12 s on main with the same code), CPU time
 /// moves much less, but still varies between runners: main CI measured 25.8 s (53fcf0cc) and 34.7 s (4342a744). The
 /// limit catches a run several times slower or one that never ends, not a few percent: the instruction limit does that.
+/// Owner decision 2026-10-20: in this fallback mode an excess only warns (a GitHub Actions warning line); it does not fail.
 const WITH_APPS_LIMIT_CPU_NS: u64 = 45_000_000_000;
 const WITH_APPS_RUNS: usize = 3;
 /// No single test codeunit may take longer: one codeunit that walked 2.9 million computed Date
@@ -361,6 +366,7 @@ fn a_full_corpus_run_with_the_microsoft_apps_stays_within_its_budget() {
     } else {
         ("ns of child CPU time", WITH_APPS_LIMIT_CPU_NS)
     };
+    meter::print_mode(counting);
     eprintln!(
         "full run with the apps: {best} {unit} (limit {limit}; with the counter {WITH_APPS_LIMIT_FIXED_INSTRUCTIONS} + \
          {WITH_APPS_LIMIT_INSTRUCTIONS_PER_KIB} per KiB x {bytes} bytes of corpus source = {limit_instructions}), samples: {costs:?}"
@@ -414,9 +420,12 @@ fn a_full_corpus_run_with_the_microsoft_apps_stays_within_its_budget() {
             "a .NET sidecar took {max:.1} s to start, over {SIDECAR_START_SECS} s:\n{err}"
         );
     }
-    assert!(
-        best <= limit,
-        "the run used {best} {unit} at best of {WITH_APPS_RUNS}, over the limit of {limit} \
-         (runtime phases {runtime:.1} s, for information):\n{err}"
+    meter::enforce(
+        counting,
+        best > limit,
+        &format!(
+            "the run used {best} {unit} at best of {WITH_APPS_RUNS}, over the limit of {limit} \
+             (runtime phases {runtime:.1} s, for information):\n{err}"
+        ),
     );
 }

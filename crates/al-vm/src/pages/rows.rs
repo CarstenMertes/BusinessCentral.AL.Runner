@@ -750,9 +750,31 @@ impl Session {
         if self.open_new_list_untouched(st) {
             return self.move_on_open_new_list(how);
         }
+        let answer_used = self.ret_used;
         // Leaving a row saves it.
         let anchor = st.borrow_mut().after_new.take();
-        if let Left::Stay = self.leave_row(st, how)? {
+        let writes = self.next_row_version;
+        let (left, origin) = self.traced(st, |s| s.leave_row(st, how));
+        let left = match (left, origin.as_deref()) {
+            // corpus pages/lt-cc-page-leads/CcPageLeads.al:598-608 TriggerError_OnModifyRecord: Next() raises nothing. What it
+            // answers is not pinned: refused when the caller uses the answer.
+            (Err(Signal::Error(e)), Some("onmodifyrecord")) if how == PageMethod::Next => {
+                self.swallowed_trigger_error(st, "OnModifyRecord", "Next()", &e, writes)?;
+                // What GetLastErrorText reads after the swallowed error is not pinned.
+                self.last_error = al_builtins::native::unpinned_error();
+                if answer_used {
+                    return unsupported(
+                        "the answer of Next() after an error in OnModifyRecord (not pinned)",
+                    );
+                }
+                return Ok(Value::Boolean(false));
+            }
+            (Err(Signal::Error(_)), Some("onmodifyrecord")) => {
+                return unsupported(format!("an error in OnModifyRecord on {how}() (only Next() is pinned)"));
+            }
+            (left, _) => left?,
+        };
+        if let Left::Stay = left {
             return Ok(Value::Boolean(false));
         }
         // A new line saved in the middle of a list: Next() goes to the row below the one it was
@@ -778,8 +800,41 @@ impl Session {
                 return Ok(Value::Boolean(true));
             }
         }
-        let r = self.page_move_inner(st, how);
+        let before = self.page_rec(st).borrow().fields.clone();
+        let (r, origin) = self.traced(st, |s| s.page_move_inner(st, how));
+        if let (Err(Signal::Error(e)), Some(trigger @ ("onnextrecord" | "onfindrecord"))) = (&r, origin.as_deref()) {
+            let raised = self.move_trigger_error(st, how, trigger, e, before);
+            self.mark_closed(st);
+            return Err(raised?);
+        }
         self.torn_down_on_error(st, r).map(Value::Boolean)
+    }
+
+    /// An AL error of OnNextRecord on `Next()` of a card opened for editing: "Page <caption> has to close.", the caption with
+    /// the key of the row the page stood on (corpus pages/lt-cc-page-leads/CcPageLeads.al:559-569 TriggerError_OnNextRecord
+    /// `Page LT CC Err Card - 1 has to close.`), and the page is closed. The same error of another move, of OnFindRecord, on
+    /// another page type or mode, or after the trigger moved the record, is not pinned: its text and code cannot be read.
+    fn move_trigger_error(
+        &mut self,
+        st: &St,
+        how: PageMethod,
+        trigger: &str,
+        e: &al_builtins::native::AlError,
+        before: Vec<Value>,
+    ) -> Result<Signal, Signal> {
+        let unpinned = || Signal::Error(Box::new(al_builtins::native::unpinned_error()));
+        let pinned_shape = how == PageMethod::Next
+            && trigger == "onnextrecord"
+            && self.is_card(st)
+            && st.borrow().mode == PageMode::Edit
+            && !st.borrow().modal
+            && st.borrow().host.is_none()
+            && !self.is_request_page(st);
+        if !pinned_shape || !Self::same_values(&self.page_rec(st).borrow().fields, &before) {
+            return Ok(unpinned());
+        }
+        let caption = self.test_page_caption(st)?;
+        Ok(self.has_to_close(st, e, caption))
     }
 
     /// Whether the row the page stands on was saved by New() below `anchor` and is not the row after `anchor` in key order. The

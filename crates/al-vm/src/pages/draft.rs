@@ -40,10 +40,76 @@ impl Session {
                 "DB:ClientInsertDenied",
             ));
         }
-        match self.leave_row(st, PageMethod::New)? {
-            Left::Stay => Ok(Value::Null),
-            Left::Go => self.start_draft(st, true).map(|_| Value::Null),
+        let (left, origin) = self.traced(st, |s| s.leave_row(st, PageMethod::New));
+        if let (Err(Signal::Error(_)), Some("onmodifyrecord")) = (&left, origin.as_deref()) {
+            return unsupported("an error in OnModifyRecord on New() (only Next() is pinned)");
         }
+        match left? {
+            Left::Stay => Ok(Value::Null),
+            Left::Go => {
+                let writes = self.next_row_version;
+                let (r, origin) = self.traced(st, |s| s.start_draft(st, true));
+                match (r, origin.as_deref()) {
+                    (Err(Signal::Error(e)), Some("onnewrecord")) => {
+                        self.swallowed_trigger_error(st, "OnNewRecord", "New()", &e, writes)?;
+                        // What GetLastErrorText reads after the swallowed error is not pinned.
+                        self.last_error = al_builtins::native::unpinned_error();
+                        Ok(Value::Null)
+                    }
+                    (r, _) => r.map(|_| Value::Null),
+                }
+            }
+        }
+    }
+
+    /// An AL error of OnInsertRecord when SetValue on a non-key control inserts the new row of a card opened for editing: a
+    /// TestValidation error that names no field (corpus pages/lt-cc-page-leads/CcPageLeads.al:585-595 TriggerError_OnInsertRecord
+    /// `Validation error for Field: ,  Message = 'LT CC failure in OnInsertRecord'`). The page stays open; what it shows and
+    /// saves afterwards is not pinned, so every later call on it is refused (as for `swallowed_trigger_error`).
+    pub(super) fn insert_trigger_error(
+        &mut self,
+        st: &St,
+        e: &al_builtins::native::AlError,
+        writes: i64,
+    ) -> Result<Signal, Signal> {
+        self.swallowed_trigger_error(st, "OnInsertRecord", "SetValue", e, writes)?;
+        Ok(error_code(
+            format!("Validation error for Field: ,  Message = '{}'", e.message),
+            "TestValidation",
+        ))
+    }
+
+    /// An AL error of OnNewRecord on `New()`, or of OnModifyRecord when `Next()` saves the row, raises nothing on a card
+    /// opened for editing (corpus pages/lt-cc-page-leads/CcPageLeads.al:572-582 TriggerError_OnNewRecord and :598-608
+    /// TriggerError_OnModifyRecord, `step = ok`). Which row the page shows then, and what a later save or Close does, is not
+    /// pinned (docs/probes-needed.md): every later call on the page is refused. Another error, another page shape, or a trigger
+    /// that wrote to the database before it failed (whether the write survives is not pinned) is refused at once.
+    pub(super) fn swallowed_trigger_error(
+        &mut self,
+        st: &St,
+        trigger: &str,
+        call: &str,
+        e: &al_builtins::native::AlError,
+        writes: i64,
+    ) -> Result<(), Signal> {
+        let pinned_shape = e.code == "Dialog"
+            && self.is_card(st)
+            && st.borrow().mode == PageMode::Edit
+            && !st.borrow().modal
+            && st.borrow().host.is_none()
+            && st.borrow().parts.is_empty()
+            && !self.is_request_page(st)
+            && self.next_row_version == writes;
+        if !pinned_shape {
+            return unsupported(format!(
+                "an error in {trigger} on {call} of this page (only an Error of a card opened for editing that wrote nothing is pinned)"
+            ));
+        }
+        st.borrow_mut().unpinned_state = Some(format!(
+            "a page after an error in {trigger} on {call} (the row it shows and what it saves are not pinned)"
+        ));
+        st.borrow_mut().unpinned_close = true;
+        Ok(())
     }
 
     /// Saves the row the cursor is leaving. A started line whose insert fails does not raise:

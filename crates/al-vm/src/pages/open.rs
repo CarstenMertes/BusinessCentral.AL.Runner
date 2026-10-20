@@ -14,6 +14,7 @@ impl Session {
         st.borrow_mut().instance = None;
         st.borrow_mut().inited = false;
         st.borrow_mut().modal = false;
+        self.pages.test_open = true;
         self.open_page(st, mode, None, None).map(|_| Value::Null)
     }
 
@@ -150,6 +151,7 @@ impl Session {
         bind: Option<UiKind>,
         as_part: bool,
     ) -> Result<Option<Handler>, Signal> {
+        let test_open = std::mem::take(&mut self.pages.test_open);
         let mut handler = None;
         let engine = self.engine();
         let page = page_of(&engine, st);
@@ -368,7 +370,8 @@ impl Session {
                 return Ok(());
             }
             let waiting = self.parts_waiting_refresh(st);
-            self.load_first_row(st, mode, record.is_some())?;
+            let (loaded, origin) = self.traced(st, |s| s.load_first_row(st, mode, record.is_some()));
+            self.open_row_error(st, mode, test_open, loaded, origin)?;
             // A card over a table with no row to show stands on a blank Rec that was never stored: an action cannot have deleted it.
             if has_source && !self.is_list(st) && st.borrow().cursor == Cursor::Row && !st.borrow().draft {
                 let rec = self.page_rec(st);
@@ -385,6 +388,36 @@ impl Session {
             return Err(e);
         }
         Ok(handler)
+    }
+
+    /// An AL error escaping the first row a TestPage reads when it opens. OpenEdit of a card turns an error of OnFindRecord,
+    /// OnAfterGetRecord or OnAfterGetCurrRecord into "Page <caption> has to close." (corpus pages/lt-cc-page-leads/
+    /// CcPageLeads.al:520-557, TriggerError_OnFindRecord, _OnAfterGetRecord, _OnAfterGetCurrRecord). OpenView raises the error
+    /// itself (testpageteardown/TestPageTeardown.al:1130-1156, CardTrigger_FailedOpen_*), and an error of a control
+    /// expression comes out as it is at OpenEdit too (autoformat/TestAutoFormatExpressionTiming.al:499-506
+    /// FailingFormat_OpenEditRaisesTheExpressionError). What OpenEdit of another page type raises for such a trigger error is
+    /// not pinned: its text and code cannot be read. Pages opened any other way keep their own rules.
+    fn open_row_error(
+        &mut self,
+        st: &St,
+        mode: PageMode,
+        test_open: bool,
+        r: Result<(), Signal>,
+        origin: Option<String>,
+    ) -> Result<(), Signal> {
+        let row_trigger = matches!(
+            origin.as_deref(),
+            Some("onfindrecord" | "onaftergetrecord" | "onaftergetcurrrecord")
+        );
+        let e = match r {
+            Err(Signal::Error(e)) if test_open && mode == PageMode::Edit && row_trigger => e,
+            other => return other,
+        };
+        if self.is_card(st) && self.has_source(st) {
+            let caption = self.page_caption(st);
+            return Err(self.has_to_close(st, &e, caption));
+        }
+        Err(Signal::Error(Box::new(al_builtins::native::unpinned_error())))
     }
 
     /// The first row a page shows when it opens (or when a part is linked afresh).
@@ -583,9 +616,31 @@ impl Session {
             .as_ref()
             .is_some_and(al_ir::PageType::is_plain);
         let action = if ok_type && !st.borrow().modal { "OK" } else { "Cancel" };
-        let r = self.close_with(st, action, false, false);
+        st.borrow_mut().close_error = false;
+        let (r, origin) = self.traced(st, |s| s.close_with(st, action, false, false));
         // A refused TestPage.Close() leaves the variable not open all the same (corpus
-        // handlers/TestPageCloseVeto_Tests.al: PlainVeto_SecondCloseRaisesNotOpen).
+        // handlers/TestPageCloseVeto_Tests.al: PlainVeto_SecondCloseRaisesNotOpen), and so does an error of OnQueryClosePage
+        // shown as an unhandled message (pages/lt-cc-page-leads/CcPageLeads.al:611-621 TriggerError_OnQueryClosePage).
+        let r = match r {
+            Err(Signal::Error(e)) if st.borrow().close_error => {
+                self.mark_closed(st);
+                Err(Signal::Error(e))
+            }
+            // An error of OnClosePage comes wrapped, with the code TestWrapped, and the page is closed (CcPageLeads.al:624-633
+            // TriggerError_OnClosePage `One or more errors occurred while closing the page.\n\n<text>`). Pinned for an AL
+            // Error (code Dialog); another error's text and code cannot be read.
+            Err(Signal::Error(e)) if origin.as_deref() == Some("onclosepage") => {
+                self.mark_closed(st);
+                if e.code != "Dialog" {
+                    return Err(Signal::Error(Box::new(al_builtins::native::unpinned_error())));
+                }
+                Err(error_code(
+                    format!("One or more errors occurred while closing the page.\n\n{}", e.message),
+                    "TestWrapped",
+                ))
+            }
+            other => other,
+        };
         if r.is_ok() {
             self.mark_closed(st);
         }
@@ -759,8 +814,8 @@ impl Session {
         let veto = match self.query_close_answer(st, vec![Value::Option(ordinal, members)]) {
             Err(Signal::Error(e)) => {
                 al_builtins::native::refuse_unpinned_text(&e, "The message shown for an error of OnQueryClosePage")?;
-                self.ui_message(e.message)?;
                 st.borrow_mut().close_error = true;
+                self.ui_message(e.message)?;
                 return Ok(Value::Null);
             }
             other => other?,

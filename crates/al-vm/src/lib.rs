@@ -764,6 +764,8 @@ impl Session {
                 page_xrec: None,
                 curr_field_no: Vec::new(),
                 lenient_bind: false,
+                failed_trigger: None,
+                test_open: false,
             },
             events: EventState {
                 bindings: Vec::new(),

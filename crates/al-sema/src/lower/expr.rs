@@ -487,11 +487,14 @@ impl Lowerer<'_> {
             IndexExpr if matches!(kids.first().map(|k| self.ty_ref(k)), Some(Ty::DotNet(_))) => {
                 Err("indexing a DotNet value is not lowered yet (call get_Item / GetValue instead)".into())
             }
-            TernaryExpr => Ok(ir::Expr::Ternary(
-                Box::new(self.expr(&kids[0])?),
-                Box::new(self.expr(&kids[1])?),
-                Box::new(self.expr(&kids[2])?),
-            )),
+            TernaryExpr => {
+                let cond = self.expr(&kids[0])?;
+                let yes = self.expr(&kids[1])?;
+                let no = self.expr(&kids[2])?;
+                let (t, f) = (self.ty_of(&kids[1]), self.ty_of(&kids[2]));
+                let no = self.ternary_false_branch(&t, &f, no)?;
+                Ok(ir::Expr::Ternary(Box::new(cond), Box::new(yes), Box::new(no)))
+            }
             CallExpr => {
                 let args: Vec<SyntaxNode> = kids.get(1).map(|a| a.children().collect()).unwrap_or_default();
                 self.call(n, &kids[0], &args)

@@ -45,6 +45,7 @@ mod relation_blank_member;
 mod setter_call;
 mod table_ext_base_vars;
 mod temp_record_array;
+mod ternary_args;
 mod text_append;
 mod text_methods;
 mod text_scans;

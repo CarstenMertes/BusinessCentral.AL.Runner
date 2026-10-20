@@ -969,6 +969,14 @@ Refused in `al-vm/src/pages/format.rs` until a probe pins them:
 - A CaptionClass that gives the same text at a later fill, a `Caption()` read of an expression that changed since the fill, and a second `Caption()` of a field CaptionClass that raises OnResolveCaptionClass: whether BC raises the event again (misc/W2CaptionClass.al:174-178 pins a changed text after SetValue; XTablePropsTests.al:483-487 pins one read).
 - `SetValue('c12/31/2025')` with a lower-case closing mark on a ClosingDates control (`C` is pinned: P119ReportFields.al:174).
 
+## Ternary and call-argument conversion (lane T14, 2026-10-20)
+
+Refused or kept until a probe pins them:
+- A conditional expression whose branches have other different types than the pinned pairs (Integer/Decimal, Code true with Text or Code false, unbounded Text true with Text or Code false, Text true with Variant false, Variant true; types/TestTernaryContracts.al:173-337). Refused in `al-sema/src/lower/convert.rs` `ternary_false_branch`. Probe: Integer true with BigInteger false beyond Int32, Text[10] true with a 12-character Text false, Option or Enum true with Integer false, Date true with DateTime false.
+- A by-value argument of a TryFunction whose conversion fails, for types other than Text or Code into Text or Code (Decimal 2.5 into Integer, BigInteger beyond Int32 into Integer): whether the error is caught by the try. Kept at the call (outside the try) in `al-sema/src/lower/call.rs`. Pinned for Text into Code[20] only (text/lt-text-functions/TextAssign.Codeunit.al:240-281).
+- A Char variable into an Integer parameter of another codeunit: fails with Conversion on the Linux tiers (report/lt-bv-report-char-arg/BvReportCharArg.al:140-158), Windows check queued. Refused.
+- A Char into a BigInteger, Decimal, Byte or Duration parameter of a report or codeunit procedure, a Char into a number parameter of a page, query, xmlport or table procedure, and a Char expression that is not a variable (a call, `Text[i]`): refused. Probe: the same Bump(A: Integer) shape with these receivers and types.
+
 ## XPath axes and UTF-16 declarations (lane-xml-xpath, 2026-10-20)
 
 Refused in `al-builtins/src/xml.rs` until a probe pins them:

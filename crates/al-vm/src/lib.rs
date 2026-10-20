@@ -1306,6 +1306,17 @@ impl Session {
                     st.temp_id = None;
                     Value::Record(Rc::new(RefCell::new(st)))
                 }
+                // A record of the stored table handed by value to a parameter declared `temporary` gives the callee a temporary
+                // record with the record's values over an empty table of its own (events/lt-cl-event-leads/ClEventLeads.al:70
+                // `ins.temporary temp=Yes count=0 id=103`, an OnAfterInsertEvent subscriber).
+                (Value::Record(rc), false)
+                    if !rc.borrow().temporary && matches!(r.locals[i].ty, RtType::Record(_, true)) =>
+                {
+                    let mut st = rc.borrow().clone();
+                    st.temporary = true;
+                    st.temp_id = Some(self.new_temp_id());
+                    Value::Record(Rc::new(RefCell::new(st)))
+                }
                 (Value::Record(rc), false) => self.record_by_value(&rc),
                 // An array passed by value is a copy: the callee's writes and Clear do not reach the caller
                 // (misc/W5Clear.al:Clear_ArrayPassedByValue).

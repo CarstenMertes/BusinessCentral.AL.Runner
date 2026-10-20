@@ -355,3 +355,30 @@ codeunit 50371 T
 fn gettable_through_a_variant_drops_the_company_and_keeps_the_filters() {
     assert_eq!(text(run_in(VARIANT, "T", "F")), "Yes|Yes|Id: >=2");
 }
+
+const TEMP_PARAM: &str = r#"
+table 50380 TP { fields { field(1; Id; Integer) { } } keys { key(PK; Id) { } } }
+
+codeunit 50381 T
+{
+    local procedure Look(R: Record TP temporary): Text
+    begin
+        exit(Format(R.IsTemporary()) + ' ' + Format(R.Count()) + ' ' + Format(R.Id));
+    end;
+
+    procedure F(): Text
+    var
+        R: Record TP;
+    begin
+        R.Id := 1; R.Insert();
+        R.Id := 2; R.Insert();
+        exit(Look(R));
+    end;
+}
+"#;
+
+// events/lt-cl-event-leads/ClEventLeads.al:70: a stored record handed by value to a `temporary` parameter is a temporary copy.
+#[test]
+fn a_stored_record_handed_to_a_temporary_parameter_is_an_empty_temporary_copy() {
+    assert_eq!(text(run_in(TEMP_PARAM, "T", "F")), "Yes 0 2");
+}

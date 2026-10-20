@@ -1318,15 +1318,14 @@ impl Session {
                 // A record of the stored table handed by value to a parameter declared `temporary` gives the callee a temporary
                 // record with the record's values over an empty table of its own (events/lt-cl-event-leads/ClEventLeads.al:70
                 // `ins.temporary temp=Yes count=0 id=103`, an OnAfterInsertEvent subscriber). Pinned only for a subscriber; a plain
-                // procedure call is refused.
+                // procedure call does the same and marks the assumption stored-record-to-temporary-parameter (Tests-Bank needs it).
                 (Value::Record(rc), false)
                     if !rc.borrow().temporary && matches!(r.locals[i].ty, RtType::Record(_, true)) =>
                 {
                     if !subscriber_call {
-                        return Err(Signal::Unsupported(format!(
-                            "a stored record passed by value to the temporary parameter `{}` of a procedure (pinned only for an event subscriber)",
-                            r.locals[i].name
-                        )));
+                        al_builtins::assumptions::assume(
+                            al_builtins::assumptions::Assumption::StoredRecordToTemporaryParameter,
+                        );
                     }
                     let mut st = rc.borrow().clone();
                     st.temporary = true;

@@ -235,6 +235,12 @@ registry! {
         tests: "Tests-ERM Initialize (`FeatureKey.Enabled := FeatureKey.Enabled::None; FeatureKey.Modify()` for ReminderTermsCommunicationTexts): 243 tests.",
         probe: "FindFirst, Modify() with nothing changed; Enabled := Enabled then Modify; Enabled changed then Modify, then Get again and read Enabled; after a rollback. Asked in corpus #648.",
     },
+    StoredRecordToTemporaryParameter => {
+        id: "stored-record-to-temporary-parameter",
+        assumed: "A stored record passed by value to a parameter declared `temporary` of a normal procedure gives the callee a temporary record with the record's values over an empty table of its own, as for an event subscriber (pinned only there: events/lt-cl-event-leads/ClEventLeads.al:70).",
+        tests: "Tests-Bank 134141 AutomatchForCheckEntriesConsidersDocNo and others (a Gen. Journal Line passed to `TempGenJnlLine: Record \"Gen. Journal Line\" temporary`): about 400 Tests-Bank tests.",
+        probe: "A procedure with `R: Record T temporary` called with a stored record that has rows and a current row: IsTemporary, Count, the field values, Insert and Modify in the callee, then the caller's table and record after the call.",
+    },
     QueryColumnRecordId => {
         id: "query-column-record-id",
         assumed: "A query column over a RecordId field returns the stored RecordId, groups and orders by it like the field, and cannot carry a Method, a ColumnFilter or ReverseSign (refused).",

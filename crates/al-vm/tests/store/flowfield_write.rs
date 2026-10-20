@@ -1,7 +1,6 @@
 //! Writes into a FlowField: Validate, TransferFields and a temporary record
 //! (record/lt-flowfield-write/DiFwWriteTests.al).
 
-use al_builtins::native::Signal;
 use al_testkit::{run_in, text};
 
 const SRC: &str = r#"
@@ -379,13 +378,14 @@ codeunit 50381 T
 "#;
 
 // events/lt-cl-event-leads/ClEventLeads.al:70 pins a stored record handed by value to a `temporary` parameter only for an event
-// subscriber; a plain procedure call is not pinned and is refused.
+// subscriber; a plain procedure call does the same and marks the assumption stored-record-to-temporary-parameter.
 #[test]
-fn a_stored_record_handed_to_a_temporary_parameter_of_a_procedure_is_refused() {
-    let r = run_in(TEMP_PARAM, "T", "F");
-    assert!(
-        matches!(&r, Err(Signal::Unsupported(m)) if m.contains("temporary")),
-        "{r:?}"
+fn a_stored_record_handed_to_a_temporary_parameter_of_a_procedure_marks_its_assumption() {
+    al_builtins::assumptions::clear_hits();
+    assert_eq!(text(run_in(TEMP_PARAM, "T", "F")), "Yes 0 2");
+    assert_eq!(
+        al_builtins::assumptions::take_hits(),
+        vec![al_builtins::assumptions::Assumption::StoredRecordToTemporaryParameter]
     );
 }
 
@@ -419,7 +419,9 @@ codeunit 50385 T
 // is declared temporary gets a temporary copy of the stored record over an empty table.
 #[test]
 fn a_stored_record_handed_to_a_temporary_subscriber_parameter_is_an_empty_temporary_copy() {
+    al_builtins::assumptions::clear_hits();
     assert_eq!(text(run_in(TEMP_SUBSCRIBER, "T", "F")), "Yes 0 1Yes 0 2");
+    assert_eq!(al_builtins::assumptions::take_hits(), vec![]);
 }
 
 const SUM_TRIGGERS: &str = r#"

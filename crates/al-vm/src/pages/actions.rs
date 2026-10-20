@@ -680,8 +680,7 @@ impl Session {
         // A card with OnFindRecord and no OnNextRecord reads its row before the action, again after it, then asks `=` and reads
         // it once more (pages/lt-be-card-onfindrecord/BeCardOnFindRecord.al:292 CardTempFind_PageRun_TempRec `action`
         // `R;A;R;F:=;R`, and the CardTempFind_* and CardDbFind_* tests).
-        let find_card =
-            self.declares(st, "onfindrecord") && !self.declares(st, "onnextrecord") && !self.is_list(st);
+        let find_card = self.declares(st, "onfindrecord") && !self.declares(st, "onnextrecord") && !self.is_list(st);
         let reads_rows = (!was_dirty || dirty_reread_only)
             && self.declares(st, "onaftergetrecord")
             && (find_list || find_card || !self.declares(st, "onnextrecord") && !self.declares(st, "onfindrecord"))

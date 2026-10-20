@@ -815,8 +815,10 @@ impl Session {
             let mut s = st.borrow_mut();
             s.draft = false;
             s.dirty = false;
-            s.unpinned_state =
-                Some("a list after Next() dropped a row whose OnValidate refused an entry (where it stands is not pinned)".into());
+            s.unpinned_state = Some(
+                "a list after Next() dropped a row whose OnValidate refused an entry (where it stands is not pinned)"
+                    .into(),
+            );
             return Ok(Value::Boolean(false));
         }
         // Leaving a row saves it.

@@ -68,5 +68,8 @@ fn a_stored_record_handed_to_a_temporary_card_is_refused() {
     );
     let o = al_testkit::outcomes_in(&src, "T");
     assert_eq!(o.len(), 1);
-    assert!(matches!(&o[0].1, Outcome::NotRun(why) if why.contains("temporary")), "{o:?}");
+    assert!(
+        matches!(&o[0].1, Outcome::NotRun(why) if why.contains("temporary")),
+        "{o:?}"
+    );
 }

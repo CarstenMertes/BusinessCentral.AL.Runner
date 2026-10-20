@@ -7207,6 +7207,7 @@
 70356 P98_Stale_CommitThenErrorThenModify_Rec
 70356 P98_Stale_ModifyAfterRowDeleted
 70356 P98_Stale_RowChangedByOtherBuffer
+70361 Lines_Window1
 70361 Lines_Window2
 70366 AssignToProcedure_OneParameter
 70369 CalcDate_Spaces
@@ -9821,6 +9822,7 @@
 72506 WriteToText
 72506 WriteToTextVariants
 72507 Abs_Values
+72507 LT_BU_Power_LargeResultPrecision
 72507 LT_BU_Round_Default_FollowsGLSetup
 72507 LT_BU_Round_LearnExampleTable
 72507 Power_Values
@@ -13239,6 +13241,7 @@
 85060 Item37_DecimalPlacesAndStoredValue
 85060 Item38_BigIntegerSumIntoIntegerFlowField
 85060 Item39_IntegerProductAssignedToBigInteger
+85060 Item40_PowerPrecision
 85060 Item41_RoundLearnTable
 85060 Item42_OptionAndEnumNegatedByMultiplication
 85060 Item43_CodeVariableLengths

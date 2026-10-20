@@ -442,6 +442,8 @@ pub struct PageState {
     pub split_burned: bool,
     /// `OnOpenPage` left filters in `FilterGroup(-1)`: the page dropped them from the rows it shows.
     pub or_group_dropped: bool,
+    /// Fields whose page filter reads back as a text nothing pins (a SourceTableView `const(0D)`): a TestPage Filter read refuses.
+    pub unpinned_filter_fields: Vec<usize>,
     /// The record `Page.SetRecord` handed a page variable, shown when the page runs.
     pub set_record: Option<Rc<RefCell<RecordState>>>,
     /// `Page.SetTableView` gave `set_record` its filters and order: a later `SetRecord` moves the position only
@@ -552,6 +554,7 @@ impl PageState {
             placeholder_line: false,
             split_burned: false,
             or_group_dropped: false,
+            unpinned_filter_fields: Vec::new(),
             set_record: None,
             set_view: false,
             new_by_call: false,

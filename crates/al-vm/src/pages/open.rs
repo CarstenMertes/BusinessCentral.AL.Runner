@@ -202,6 +202,7 @@ impl Session {
             }
             s.opening = true;
             s.or_group_dropped = false;
+            s.unpinned_filter_fields = Vec::new();
             s.placeholder_line = false;
             s.parts = Vec::new();
             s.areas = self.application_areas.clone();
@@ -281,13 +282,24 @@ impl Session {
             } else {
                 Vec::new()
             };
-            let (view, enum_consts) = match crate::views::page_source_view(&table, &view) {
+            let (view, enum_consts, blank_dates) = match crate::views::page_source_view(&table, &view) {
                 Ok(v) => v,
                 Err(e) => {
                     self.mark_closed(st);
                     return Err(e);
                 }
             };
+            // The text a `0D` view filter reads back as is not pinned: a page with code that could read it is refused, and a
+            // TestPage Filter read of the field refuses (see `test_filter_op`).
+            if !blank_dates.is_empty() {
+                if self.page_code_runs(st, true) {
+                    self.mark_closed(st);
+                    return unsupported(
+                        "SourceTableView const(0D) or filter(0D) on a page with code that could read the filter (its text is not pinned)",
+                    );
+                }
+                st.borrow_mut().unpinned_filter_fields = blank_dates;
+            }
             self.set_view_in(&rec, &table, &view, Some(2), sub_view.is_some(), false)?;
             // A field the view filters itself keeps the view's filter alone (two equal filters of one field read as a doubled value
             // when a new line takes it: Purchase Price List's "Price Type").
@@ -389,8 +401,12 @@ impl Session {
             // A record handed to the page filtered to one Enum or Option value the blank row does not hold: no blank line shows
             // (pages/lt-ce-page-run/CePageRun.al RunModal_EnumFilter_RowsAndNewRowDefault, RunModal_OptionFilter_RowsAndNewRowDefault,
             // `[2][5]`; a Boolean filter the blank row matches keeps it, handlers/TestPageModalNewRowLine_Tests.al:180).
-            if new_line && record.as_ref().is_some_and(|r| self.enum_filter_excludes_blank(r)) {
-                new_line = false;
+            if new_line {
+                if let Some(r) = &record {
+                    if self.enum_filter_excludes_blank(st, r)? {
+                        new_line = false;
+                    }
+                }
             }
             st.borrow_mut().new_line = new_line;
             // Visible is evaluated once, at open.
@@ -436,20 +452,60 @@ impl Session {
             .is_some_and(|(_, v)| v.to_ascii_lowercase().contains("where"))
     }
 
-    /// Whether `rec` holds a single-value filter on an Enum or Option field that the field's initial value fails.
-    fn enum_filter_excludes_blank(&mut self, rec: &Rec) -> bool {
+    /// Whether the blank row of a page run on `rec` fails one of `rec`'s filters on a field the new row does not take from the
+    /// filter (a key field, or any field with PopulateAllFields, takes a single value): true for a single Enum or Option value
+    /// (pinned, see the caller); any other filter keeps the blank line.
+    fn enum_filter_excludes_blank(&mut self, st: &St, rec: &Rec) -> Result<bool, Signal> {
         let table = rec.borrow().table as usize;
         let fresh = self.initial_fields(table);
-        let r = rec.borrow();
+        let object = st.borrow().object as usize;
+        let populate_all = self.engine.program.objects[object]
+            .properties
+            .iter()
+            .any(|(k, v)| k.eq_ignore_ascii_case("PopulateAllFields") && is_true(v));
         let Some(t) = self.engine.program.objects[table].table.as_ref() else {
-            return false;
+            return Ok(false);
         };
-        r.filters.iter().any(|f| {
-            matches!(t.fields[f.field].ty, RtType::Enum(_) | RtType::Option(_))
-                && matches!(&f.expr, al_builtins::filter::FilterExpr::Range(Some(a), Some(b))
-                    if ops::compare(a, b).is_ok_and(|o| o.is_eq()))
-                && !f.expr.matches(&fresh[f.field])
-        })
+        let mut hidden = false;
+        for f in rec.borrow().filters.iter() {
+            let single = match &f.expr {
+                al_builtins::filter::FilterExpr::Range(Some(a), Some(b)) => ops::compare(a, b).is_ok_and(|o| o.is_eq()),
+                al_builtins::filter::FilterExpr::Eq(_) => true,
+                _ => false,
+            };
+            if single && (populate_all || t.keys[0].contains(&f.field)) {
+                continue;
+            }
+            if f.expr.matches(&fresh[f.field]) {
+                continue;
+            }
+            let typed_single = matches!(&f.expr, al_builtins::filter::FilterExpr::Range(Some(_), Some(_))) && single;
+            if typed_single && matches!(t.fields[f.field].ty, RtType::Enum(_) | RtType::Option(_)) {
+                hidden = true;
+                continue;
+            }
+            // Any other filter the blank row fails keeps the blank line: a Boolean (pages/lt-modal-list-new-row/
+            // ModalListNewRowKeyFilters.al P157_NonKeyFilter `[0///No/]` with Active = true), and the Text, Code and range shapes
+            // 63 baseline cases walk past (pages/W1Navigation.al, ModalListNewRowKeyFilters.al, P197, P157 and others; the
+            // lane-page-views PR lists them).
+        }
+        Ok(hidden)
+    }
+
+    /// Whether the page has code that runs after OnOpenPage and could read its `Rec`: another trigger, a control or action
+    /// trigger, an extension; with `open`, OnInit and OnOpenPage count too.
+    fn page_code_runs(&self, st: &St, open: bool) -> bool {
+        let engine = self.engine();
+        let page = page_of(&engine, st);
+        page.triggers
+            .iter()
+            .any(|(n, _)| open || (n != "oninit" && n != "onopenpage"))
+            || !page.extensions.is_empty()
+            || !page.ext_triggers.is_empty()
+            || page
+                .controls
+                .iter()
+                .any(|c| !c.triggers.is_empty() || !c.ext_triggers.is_empty())
     }
 
     /// Filters OnOpenPage left in `FilterGroup(-1)` do not limit the rows the page shows: the record counts the OR rows inside the
@@ -466,17 +522,7 @@ impl Session {
         {
             return Ok(());
         }
-        let reads_later = {
-            let engine = self.engine();
-            let page = page_of(&engine, st);
-            page.triggers.iter().any(|(n, _)| n != "oninit" && n != "onopenpage")
-                || !page.extensions.is_empty()
-                || !page.ext_triggers.is_empty()
-                || page
-                    .controls
-                    .iter()
-                    .any(|c| !c.triggers.is_empty() || !c.ext_triggers.is_empty())
-        };
+        let reads_later = self.page_code_runs(st, false);
         if reads_later {
             return unsupported(
                 "FilterGroup(-1) filters left by OnOpenPage on a page with code that runs later (what Rec holds then is not pinned)",

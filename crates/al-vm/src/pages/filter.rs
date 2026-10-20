@@ -28,6 +28,11 @@ impl Session {
             PageMethod::GetFilter => {
                 let pos = field_arg(args, 0)?;
                 let first = rec.borrow().filters.iter().find(|f| f.field == pos).cloned();
+                if st.borrow().unpinned_filter_fields.contains(&pos) {
+                    return unsupported(
+                        "TestFilter.GetFilter of a SourceTableView const(0D) or filter(0D) (the filter text is not pinned)",
+                    );
+                }
                 if st.borrow().or_group_dropped {
                     return unsupported(
                         "TestFilter.GetFilter on a page whose OnOpenPage left FilterGroup(-1) filters (not pinned)",

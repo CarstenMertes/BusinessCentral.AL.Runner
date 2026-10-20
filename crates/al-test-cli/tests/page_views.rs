@@ -92,6 +92,11 @@ page 62920 "PV List" { PageType = List; SourceTable = "PV Row";
   layout { area(Content) { repeater(R) { field(IdCtl; Rec.Id) { } field(KindCtl; Rec.Kind) { } field(OptCtl; Rec.Opt) { } } } } }
 page 62921 "PV View List" { PageType = List; SourceTable = "PV Row"; SourceTableView = where(Kind = const(First)); Editable = false;
   layout { area(Content) { repeater(R) { field(IdCtl; Rec.Id) { } field(KindCtl; Rec.Kind) { } } } } }
+page 62922 "PV Const0D Code" { PageType = List; SourceTable = "PV Row"; SourceTableView = where(D = const(0D));
+  layout { area(Content) { repeater(R) { field(IdCtl; Rec.Id) { } } } }
+  trigger OnOpenPage() begin end; }
+page 62923 "PV FilterKind" { PageType = List; SourceTable = "PV Row"; SourceTableView = where(Kind = filter(Second));
+  layout { area(Content) { repeater(R) { field(IdCtl; Rec.Id) { } } } } }
 "#;
 
 const HELPERS: &str = r#"
@@ -405,6 +410,51 @@ fn set_table_view_enum_filters_read_as_ordinals_in_the_test_page_filter() {
         FilterSeen := 'Kind=' + L.Filter.GetFilter(Kind) + ' Id=' + L.Filter.GetFilter(Id);
         if not L.First() then begin Seen := 'none'; exit; end;
         repeat Seen += '[' + L.IdCtl.Value() + ']'; until not L.Next();
+    end;
+"#,
+    );
+}
+
+// Review of PR 360: the text a `0D` view filter reads back is not pinned, so every read refuses: a TestPage Filter read, and a
+// page with code that could read it.
+#[test]
+fn a_source_table_view_0d_filter_read_back_is_refused() {
+    not_run_with(
+        r#"
+    [Test] procedure ReadFilter() var List: TestPage "PV Const0D";
+    begin Seed(); List.OpenView(); Error('read %1', List.Filter.GetFilter(D)); end;
+"#,
+        "const(0D)",
+    );
+    not_run_with(
+        r#"
+    [Test] procedure PageWithCode() var List: TestPage "PV Const0D Code";
+    begin Seed(); List.OpenView(); List.Close(); end;
+"#,
+        "const(0D)",
+    );
+}
+
+// Review of PR 360: an Enum filter given as text with one value is not a typed value: it reads back as the name, as a RunPageLink
+// const(Second) does (CdTestPageLeads.al:650 Item61_RunPageLinkEnumKey_ByConst_New `Second`), never as the ordinal.
+#[test]
+fn an_enum_filter_given_as_text_reads_as_the_name() {
+    passes(
+        r#"
+    [Test] procedure TestFilterText() var List: TestPage "PV List";
+    begin
+        SeedKinds();
+        List.OpenView();
+        List.Filter.SetFilter(Kind, 'Second');
+        Check('filter', List.Filter.GetFilter(Kind), 'Second');
+        List.Close();
+    end;
+    [Test] procedure ViewFilterText() var List: TestPage "PV FilterKind";
+    begin
+        SeedKinds();
+        List.OpenView();
+        Check('filter', List.Filter.GetFilter(Kind), 'Second');
+        List.Close();
     end;
 "#,
     );

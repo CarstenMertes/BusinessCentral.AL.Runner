@@ -113,3 +113,6 @@
 98550 Handler_RaisesError
 98550 NoBaseAddress_RelativePaths_1
 98550 NoBaseAddress_RelativePaths_2
+98940 Handler_BaseAddressAbsoluteUrlBearer
+98940 Handler_BlockedByEnvironment
+98940 Handler_RaisesError

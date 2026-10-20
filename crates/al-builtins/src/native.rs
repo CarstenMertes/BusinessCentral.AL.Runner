@@ -1430,7 +1430,17 @@ fn error_text_not_literal(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [
 
 fn error_text_with(ctx: &mut dyn Ctx, args: &mut [Value], literal: bool) -> Result<Value, Signal> {
     let template = text_arg(args, 0)?;
-    let message = substitute(&template, &args[1..], ctx)?;
+    let mut message = substitute(&template, &args[1..], ctx)?;
+    // The error text of `Error(Text)` without arguments shows a CR LF as one backslash (misc/lt-system-functions/ErrorMessage.al:
+    // 606-618, LT_BU_Message_BackslashAndAppendLine: 17 characters). With arguments no corpus test pins it.
+    if message.contains("\r\n") {
+        if args.len() > 1 {
+            return unsupported(
+                "Error with arguments whose text holds a CR LF: the error text is not pinned (docs/probes-needed.md)",
+            );
+        }
+        message = message.replace("\r\n", "\\");
+    }
     let (origin, exception) = if literal {
         (
             ErrorOrigin::Redacted(USE_ERROR_WITH_A_TEXT_CONSTANT.into()),
@@ -1452,7 +1462,12 @@ fn error_text_with(ctx: &mut dyn Ctx, args: &mut [Value], literal: bool) -> Resu
 /// before it reaches the UI (corpus handlers/TestMessageHandler.al
 /// Message_FormattedString_HandlerGetsFormatted).
 fn message(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
-    let text = substitute(&text_arg(args, 0)?, &args[1..], ctx)?;
+    let mut text = substitute(&text_arg(args, 0)?, &args[1..], ctx)?;
+    // A CR LF in the text or in an argument reaches the handler as one backslash (misc/lt-system-functions/ErrorMessage.al:598-616,
+    // LT_BU_Message_BackslashAndAppendLine).
+    if text.contains("\r\n") {
+        text = text.replace("\r\n", "\\");
+    }
     ctx.ui_message(text)?;
     Ok(Value::Null)
 }
@@ -1811,12 +1826,25 @@ fn strsubstno(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> R
     Ok(Value::Text(substitute_fields(&template, &args[1..], ctx)?.into()))
 }
 
-fn uppercase(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
-    Ok(Value::Text(simple_upper(&text_arg(args, 0)?).into()))
+/// `UpperCase` and `LowerCase` follow `GlobalLanguage` for Turkish (1055): `i` becomes the dotted `İ` and `I` the dotless `ı`; every
+/// other letter maps as in the default language, and Greek (1032) maps as the default too
+/// (text/lt-text-functions/CaseConv.Codeunit.al:145-180, LT_BU_CaseConv_TurkishGreekLanguage). `ToUpper`/`ToLower` do not follow it.
+const TURKISH: i32 = 1055;
+
+fn uppercase(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
+    let t = text_arg(args, 0)?;
+    if ctx.language() == TURKISH {
+        return Ok(Value::Text(simple_upper(&t.replace('i', "İ")).into()));
+    }
+    Ok(Value::Text(simple_upper(&t).into()))
 }
 
-fn lowercase(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
-    Ok(Value::Text(simple_lower(&text_arg(args, 0)?).into()))
+fn lowercase(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
+    let t = text_arg(args, 0)?;
+    if ctx.language() == TURKISH {
+        return Ok(Value::Text(simple_lower(&t.replace('I', "ı")).into()));
+    }
+    Ok(Value::Text(simple_lower(&t).into()))
 }
 
 /// `ArrayLen(Array)` of a one-dimensional array: the length of the array the variable holds. A `var` or value

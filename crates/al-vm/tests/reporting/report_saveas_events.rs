@@ -48,6 +48,8 @@ codeunit 50974 "SE Sub"
             NewReportId := Report::"SE Report B";
         if L.GetMode() = 'substitute unknown' then
             NewReportId := 50999;
+        if L.GetMode() = 'req' then
+            L.Add('req=' + RequestPageXml);
     end;
 
     [EventSubscriber(ObjectType::Codeunit, Codeunit::"Reporting Triggers", 'OnDocumentReady', '', false, false)]
@@ -91,6 +93,23 @@ codeunit 50975 "SE Tests"
         exit(Format(Ok) + '|' + Head + '|' + L.Take());
     end;
 
+    procedure Html(): Text
+    var
+        R: Record "SE Row";
+        L: Codeunit "SE Log";
+        OutS: OutStream;
+        Ok: Boolean;
+    begin
+        R.DeleteAll();
+        R.Id := 1;
+        R.Insert();
+        L.Take();
+        L.SetMode('req');
+        R.Data.CreateOutStream(OutS);
+        Ok := Report.SaveAs(Report::"SE Report A", 'MARK', ReportFormat::Html, OutS);
+        exit(Format(Ok) + '|' + GetLastErrorText() + '|' + L.Take());
+    end;
+
     procedure Plain(): Text begin exit(SaveAs('')); end;
     procedure Substituted(): Text begin exit(SaveAs('substitute')); end;
     procedure SubstitutedUnknown(): Text begin exit(SaveAs('substitute unknown')); end;
@@ -126,6 +145,15 @@ fn a_substitutereport_subscriber_changes_the_report() {
     assert_eq!(
         text(run("Substituted")),
         "Yes|<?xml ver|SubstituteReport(50972,SaveAs,in=-1);OnDocumentReady(50973,in=No);"
+    );
+}
+
+/// report/lt-am-rdlc-output/AMRdlcOutput.al:TextRdlc_SaveAsHtml_IsRefused: SubstituteReport, with the parameters, then the layout error.
+#[test]
+fn an_html_saveas_of_an_rdlc_report_raises_substitutereport_then_fails() {
+    assert_eq!(
+        text(run("Html")),
+        "No|The Html output format is not supported by the current report layout format.|SubstituteReport(50972,SaveAs,in=-1);req=MARK;"
     );
 }
 

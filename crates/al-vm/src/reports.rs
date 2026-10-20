@@ -1961,8 +1961,24 @@ impl Session {
             (inst, schema, quit)
         } else {
             let (mut inst, mut schema) = self.report_by_number(id, args.first())?;
+            // An Html SaveAs of a report with an RDLC layout raises SubstituteReport with the parameters as RequestPageXml before it
+            // fails for the layout, and nothing after (report/lt-am-rdlc-output/AMRdlcOutput.al:TextRdlc_SaveAsHtml_IsRefused,
+            // `SubstituteReport(79256,SaveAs,req=Yes);`). A subscriber that substitutes another report is not pinned.
+            if format == "Html"
+                && record_ref.is_none()
+                && matches!(target, SaveTarget::Stream(_))
+                && schema.report().layout == ir::ReportLayout::Rdlc
+                && !schema.report().processing_only
+                && self
+                    .engine
+                    .events
+                    .is_subscribed(crate::events::REPORTING_TRIGGERS, "substitutereport")
+                && self.raise_substitute_report(&schema, &parameters)?.is_some()
+            {
+                return unsupported("SubstituteReport set another report for an Html SaveAs (not pinned)");
+            }
             if self.save_as_raises_events(&schema, &format, &parameters, record_ref, &target) {
-                if let Some(new_id) = self.raise_substitute_report(&schema)? {
+                if let Some(new_id) = self.raise_substitute_report(&schema, "")? {
                     let (i, s) = self.report_by_number(id, Some(&Value::Integer(new_id)))?;
                     if !self.save_as_raises_events(&s, &format, &parameters, record_ref, &target) {
                         return unsupported(format!(
@@ -2242,7 +2258,7 @@ impl Session {
     /// answers the report a subscriber put in its place. Pinned (PeVTests.al:432, :483): ReportId, RunMode `SaveAs`,
     /// NewReportId -1 on entry, and a NewReportId a subscriber sets runs that report. Not pinned, and passed as BC most
     /// likely does (docs/probes-needed.md): RequestPageXml empty and RecordRef unopened.
-    fn raise_substitute_report(&mut self, schema: &Schema) -> Result<Option<i32>, Signal> {
+    fn raise_substitute_report(&mut self, schema: &Schema, request_page_xml: &str) -> Result<Option<i32>, Signal> {
         let report_id = self.object_id_of(schema.object as u32) as i32;
         let members: std::sync::Arc<[String]> = ["Normal", "ParametersOnly", "Execute", "Print", "SaveAs", "RunModal"]
             .iter()
@@ -2255,7 +2271,7 @@ impl Session {
         let mut args = vec![
             Value::Integer(report_id),
             Value::Option(4, members),
-            Value::Text(String::new().into()),
+            Value::Text(request_page_xml.into()),
             Value::Library(
                 "RecordRef".into(),
                 Rc::new(RefCell::new(al_builtins::value::LibraryValue::Empty)),

@@ -1161,7 +1161,7 @@ impl Session {
         let text = String::from_utf16(&units)
             .map_err(|_| Signal::Unsupported("a text that ends up with a lone surrogate".into()))?;
         if is_code {
-            return self.write(base, Value::Code(ops::upper_code(&text).into()), f);
+            return self.write(base, Value::Code(ops::upper_code_checked(&text)?.into()), f);
         }
         self.write(base, Value::Text(text.into()), f)
     }

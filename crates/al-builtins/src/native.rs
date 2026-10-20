@@ -1852,14 +1852,17 @@ fn strsubstno(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> R
     Ok(Value::Text(substitute_fields(&template, &args[1..], ctx)?.into()))
 }
 
-/// `UpperCase` and `LowerCase` follow `GlobalLanguage` for Turkish (1055): `i` becomes the dotted `İ` and `I` the dotless `ı`; every
-/// other letter maps as in the default language, and Greek (1032) maps as the default too
-/// (text/lt-text-functions/CaseConv.Codeunit.al:145-180, LT_BU_CaseConv_TurkishGreekLanguage). `ToUpper`/`ToLower` do not follow it.
-const TURKISH: i32 = 1055;
+/// `UpperCase` and `LowerCase` follow `GlobalLanguage` for Turkish (1055) and Azerbaijani (1068): `i` becomes the dotted `İ` and `I`
+/// the dotless `ı`; every other letter maps as in the default language, and Greek (1032), German (1031) and Lithuanian (1063) map as
+/// the default too (text/lt-text-functions/CaseConv.Codeunit.al:145-180, LT_BU_CaseConv_TurkishGreekLanguage; :218-276,
+/// PYC_CaseConv_OtherLanguages). `ToUpper`/`ToLower` do not follow it.
+pub fn is_turkic_language(language: i32) -> bool {
+    matches!(language, 1055 | 1068)
+}
 
 fn uppercase(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
     let t = text_arg(args, 0)?;
-    if ctx.language() == TURKISH {
+    if is_turkic_language(ctx.language()) {
         return Ok(Value::Text(simple_upper(&t.replace('i', "İ")).into()));
     }
     Ok(Value::Text(simple_upper(&t).into()))
@@ -1867,7 +1870,7 @@ fn uppercase(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Re
 
 fn lowercase(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
     let t = text_arg(args, 0)?;
-    if ctx.language() == TURKISH {
+    if is_turkic_language(ctx.language()) {
         return Ok(Value::Text(simple_lower(&t.replace('I', "ı")).into()));
     }
     Ok(Value::Text(simple_lower(&t).into()))
@@ -2036,12 +2039,14 @@ fn clear(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result
             ));
         }
         // A cleared stream is one that was never created again (streams/TestProbeStreamContracts.al:RecordAssign_CopiesBlobBytes).
+        // A cleared SecretText is an empty one and a copy taken before keeps its content
+        // (fieldref/lt-fieldref-testfield-types/SystemClearArraySecret.al:69-90, errorinfo/lt-errnotif/EnTSecret.al:15-26).
         // A cleared HttpClient is a new one: no base address, the default timeout, no default headers; the next call
         // starts it fresh (network/lt-http-relative-request/HttpRelativeRequestPath.al:NewClient clears, then sets the base address).
         Value::Library(name, _)
             if matches!(
                 name.as_str(),
-                "OutStream" | "InStream" | "FileUpload" | "HttpClient" | "HttpHeaders"
+                "OutStream" | "InStream" | "FileUpload" | "HttpClient" | "HttpHeaders" | "SecretText"
             ) =>
         {
             Value::Library(

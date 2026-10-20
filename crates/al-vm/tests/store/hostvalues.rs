@@ -850,6 +850,69 @@ fn geturl_with_a_company_or_an_object_builds_the_pinned_query() {
     }
 }
 
+// session/lt-geturl-shape/GetUrlShape.al:270 (QA_GetUrl_Web_NoArgument_Whole `default alone`): GetUrl(ClientType::Default)
+// alone is the web address with the scheme dynamicsnav and the path followed by `//`. Only an http address and only the
+// form without arguments are pinned; the rest is refused.
+#[test]
+fn geturl_default_alone_is_the_dynamicsnav_form_of_the_address() {
+    let r = get_url("exit(GetUrl(ClientType::Default));", None);
+    assert!(
+        matches!(&r, Ok(Value::Text(t)) if &**t == "dynamicsnav://localhost:8080/BC//"),
+        "{r:?}"
+    );
+    assert_eq!(
+        al_builtins::assumptions::take_hits(),
+        vec![al_builtins::assumptions::Assumption::GetUrlWebBaseAddress]
+    );
+    for (body, url) in [
+        (
+            "exit(GetUrl(ClientType::Default));",
+            Some("https://bc.example:7048/BC1"),
+        ),
+        ("exit(GetUrl(ClientType::Default, 'A&B'));", None),
+        ("exit(GetUrl(ClientType::Default, 'C', ObjectType::Table, 18));", None),
+        ("exit(GetUrl(ClientType::Default, 'C', ObjectType::Page, 0));", None),
+        (
+            "exit(GetUrl(ClientType::Default, 'C', ObjectType::Codeunit, 80));",
+            None,
+        ),
+    ] {
+        let r = get_url(body, url);
+        assert!(
+            matches!(&r, Err(Signal::Unsupported(w)) if w.contains("GetUrl")),
+            "{body}: {r:?}"
+        );
+    }
+}
+
+// platform/lt-t-geturl/TGetUrl.al:203-210 (GetUrl_ClientDefault): the Default forms with a company and a page or report are
+// `dynamicsnav://<address>/<company>/` followed by `runpage?page=N` or `runreport?report=N`; the company is percent-encoded
+// (only the space is pinned).
+#[test]
+fn geturl_default_with_a_company_or_an_object_builds_the_pinned_path() {
+    for (body, want) in [
+        (
+            "exit(GetUrl(ClientType::Default, 'My Company'));",
+            "dynamicsnav://localhost:8080/BC/My%20Company/",
+        ),
+        (
+            "exit(GetUrl(ClientType::Default, ''));",
+            "dynamicsnav://localhost:8080/BC//",
+        ),
+        (
+            "exit(GetUrl(ClientType::Default, '', ObjectType::Page, 21));",
+            "dynamicsnav://localhost:8080/BC//runpage?page=21",
+        ),
+        (
+            "exit(GetUrl(ClientType::Default, 'My Company', ObjectType::Report, 69367));",
+            "dynamicsnav://localhost:8080/BC/My%20Company/runreport?report=69367",
+        ),
+    ] {
+        let r = get_url(body, None);
+        assert!(matches!(&r, Ok(Value::Text(t)) if &**t == want), "{body}: {r:?}");
+    }
+}
+
 // The host part of the other client types, and a character the corpus does not pin in a company, are refused.
 #[test]
 fn geturl_of_another_client_type_or_an_unpinned_character_is_refused() {

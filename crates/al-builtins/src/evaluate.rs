@@ -939,7 +939,7 @@ fn text_or_code(c: &mut dyn Ctx, a: &Value, text: &str, number: i64, max: Option
             // `trailFits`, `leadFull`). A text that does not fit even without its blanks, and has blanks, is not pinned: the length
             // BC reports for it could be either one.
             if code && Value::text_len(kept) <= m as usize {
-                return Ok(Parsed::Value(Value::Code(crate::ops::upper_code(kept).into())));
+                return Ok(Parsed::Value(Value::Code(crate::ops::upper_code_checked(kept)?.into())));
             }
             if code && kept.len() != text.len() {
                 return unsupported(
@@ -965,7 +965,7 @@ fn text_or_code(c: &mut dyn Ctx, a: &Value, text: &str, number: i64, max: Option
         }
     }
     Ok(Parsed::Value(if code {
-        Value::Code(crate::ops::upper_code(kept).into())
+        Value::Code(crate::ops::upper_code_checked(kept)?.into())
     } else {
         Value::Text(text.to_string().into())
     }))

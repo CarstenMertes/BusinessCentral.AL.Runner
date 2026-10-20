@@ -372,10 +372,10 @@ impl Session {
                 "FlowFieldValidation",
             ));
         }
-        let Some(value) = value else {
-            return unsupported("Validate on a Sum FlowField without a value (not pinned)");
-        };
-        let new = ops::convert(value.clone(), &f.ty)?;
+        // The one-argument Validate takes the value the variable holds: 0 without CalcFields, the sum after it, or an assigned
+        // value (DiFwWriteTests.al:860-926, QB_ValidateOneArgFlowFieldWithOnValidate).
+        let held = rec.borrow().fields[pos].clone();
+        let new = ops::convert(value.cloned().unwrap_or(held), &f.ty)?;
         let refuse = |why: &str| unsupported(format!("Validate on the Sum FlowField {}: {why} (not pinned)", f.name));
         if calc.negate {
             return refuse("a negated sum");

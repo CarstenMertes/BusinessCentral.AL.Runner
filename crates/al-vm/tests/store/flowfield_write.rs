@@ -129,6 +129,25 @@ codeunit 50302 T
         exit(R + Src());
     end;
 
+    procedure ValidateSumOneArgument(): Text
+    var
+        P: Record P;
+        R: Text;
+    begin
+        Seed();
+        P.Get(1);
+        P.Validate("Child Amount");
+        R := Format(P."Child Amount") + '#' + Src() + '#';
+        P.Get(1);
+        P.CalcFields("Child Amount");
+        P.Validate("Child Amount");
+        R += Src() + '#';
+        P.Get(1);
+        P."Child Amount" := 100;
+        P.Validate("Child Amount");
+        exit(R + Format(P."Child Amount") + '#' + Src());
+    end;
+
     procedure TransferSameTable(): Text
     var
         S: Record P;
@@ -197,6 +216,19 @@ fn validate_on_a_sum_flowfield_writes_the_difference_into_the_source_table() {
     assert_eq!(
         text(run_in(SRC, "T", "ValidateSum")),
         format!("7#{p2}#{p1}#{p1}#{p1}6|3||-3|2026-01-01;")
+    );
+}
+
+// DiFwWriteTests.al:860-926 (QB_ValidateOneArgFlowFieldWithOnValidate): the one-argument Validate on a Sum FlowField takes the value
+// the variable holds (0 without CalcFields, the sum after it, an assigned value) and inserts the difference into the source table.
+#[test]
+fn validate_with_one_argument_on_a_sum_flowfield_uses_the_value_it_holds() {
+    let base = "1|1|A|10|2026-01-10;2|1|B|20|2026-02-10;3|3|D|5|2026-01-15;";
+    let neg = format!("{base}4|1||-30|;");
+    let back = format!("{neg}5|1||100|;");
+    assert_eq!(
+        text(run_in(SRC, "T", "ValidateSumOneArgument")),
+        format!("0#{neg}#{neg}#100#{back}")
     );
 }
 

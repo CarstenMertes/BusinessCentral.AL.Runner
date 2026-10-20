@@ -1273,23 +1273,8 @@ impl Session {
     /// a temporary table's rows hold the record's own Blob objects
     /// (TempBlob_UncommittedWrite_SameInstanceReGet_KeepsWrite).
     pub(crate) fn load(&mut self, rec: &Rec, mut row: Vec<Value>) -> Result<(), Signal> {
-        // Whether a temporary table keeps milliseconds that the SQL column of a database table rounds is not pinned
-        // (errors/lt-ms-refusals-130/P130DateFilters.al pins database tables only): reading such a row is refused.
-        if rec.borrow().temporary {
-            let table = rec.borrow().table as usize;
-            if let Some(t) = self.engine.tables[table].as_ref() {
-                let off_grid = t.fields.iter().zip(&row).any(|(f, v)| {
-                    f.id < 2_000_000_000
-                        && matches!(v, Value::Time(_) | Value::DateTime(_))
-                        && !ops::compare(&crate::sqltime::rounded(v), v).is_ok_and(|o| o.is_eq())
-                });
-                if off_grid {
-                    return unsupported(
-                        "reading a temporary row whose Time or DateTime holds milliseconds a database column would round (not pinned)",
-                    );
-                }
-            }
-        }
+        // A temporary table keeps whole milliseconds; only a write to a database table rounds them to 1/300 s
+        // (errors/lt-ms-refusals-130/P130DateFilters.al:324, :402).
         if rec.borrow().temp_id.is_none() {
             for v in &mut row {
                 if let Value::Blob(b) = v {
@@ -3179,7 +3164,7 @@ impl Session {
                 }
                 r?;
                 if sum_flowfield {
-                    let target = ops::convert(args[1].clone(), &field.ty)?;
+                    let target = ops::convert(args.get(1).cloned().unwrap_or(old_value), &field.ty)?;
                     if ops::compare(&rec.borrow().fields[pos], &target).ok() != Some(std::cmp::Ordering::Equal) {
                         return unsupported(
                             "an OnValidate that changes the value of the Sum FlowField it validates (not pinned)",

@@ -119,6 +119,15 @@ pub const FILTER_SYNTAX: &str = "invalid Date filter syntax: ";
 /// events/lt-platform-triggers/PtObserve.al:Bad_Int, Bad_Decimal, Bad_Time).
 pub const NOT_EVALUATED: &str = "filter value not evaluated: ";
 
+/// The upper case of a Code filter value. Under Turkish or Azerbaijani a value with `i` is not pinned (only an assignment to a Code
+/// is, text/lt-text-functions/CaseConv.Codeunit.al:280-310) and is refused.
+fn filter_upper(s: &str) -> Result<String, String> {
+    if crate::ops::turkic_code() && s.contains('i') {
+        return Err("a Code filter value with `i` under Turkish or Azerbaijani (not pinned)".into());
+    }
+    Ok(s.to_uppercase())
+}
+
 fn not_evaluated(ty: &str, text: &str) -> String {
     format!("{NOT_EVALUATED}{ty}\t{text}")
 }
@@ -422,7 +431,7 @@ impl Parser<'_> {
         };
         Ok(match self.ty {
             T::Text(_) => Value::Text(text.into()),
-            T::Code(_) => Value::Code(text.trim().to_uppercase().into()),
+            T::Code(_) => Value::Code(filter_upper(text.trim())?.into()),
             // Any text that is no Integer: letters, a range end `x`, `1.5`, a number past the range (RcAFilters.al:392-414, PtObserve.al:277).
             // A text with blank space in it is not pinned.
             T::Integer => Value::Integer(text.parse().map_err(|_| {
@@ -519,7 +528,7 @@ impl Parser<'_> {
             if body.contains(['*', '?']) || ci {
                 // A Code filter shows upper case with `@` too (types/TestProbeScalarContracts.al:SetFilter_CodeFieldUpperCases).
                 let body = if matches!(self.ty, T::Code(_)) {
-                    body.to_uppercase()
+                    filter_upper(body)?
                 } else {
                     body.to_string()
                 };
@@ -528,7 +537,7 @@ impl Parser<'_> {
         }
         if let (Tok::Raw(s), T::Text(_) | T::Code(_)) = (&t, self.ty) {
             let s = if matches!(self.ty, T::Code(_)) {
-                s.to_uppercase()
+                filter_upper(s)?
             } else {
                 s.clone()
             };

@@ -1766,6 +1766,55 @@ impl Session {
         }
     }
 
+    /// A routine ends while one of its locals holds the last reference to an open TestPage whose end of scope is not pinned
+    /// (see `PageClients::scope_unpinned`): the reason to refuse the call.
+    pub(crate) fn end_unpinned_page_scope(
+        &mut self,
+        frame: &crate::Frame,
+        params: usize,
+        by_var: &[bool],
+    ) -> Option<String> {
+        if self.pages.scope_unpinned.is_empty() {
+            return None;
+        }
+        self.pages.scope_unpinned.retain(|p| p.borrow().open);
+        for page in self.pages.scope_unpinned.clone() {
+            let mut local_holders = 0;
+            let mut handed_back = false;
+            for (i, v) in frame.locals.iter().enumerate() {
+                if let Value::TestPage(st) = v {
+                    if Rc::ptr_eq(st, &page) {
+                        local_holders += 1;
+                        if i < params && by_var.get(i).copied().unwrap_or(false) {
+                            handed_back = true;
+                        }
+                    }
+                }
+            }
+            if local_holders == 0 || handed_back {
+                continue;
+            }
+            // The list and the clone above hold one reference each, and the page's own instances hold it as CurrPage.
+            let own = {
+                let s = page.borrow();
+                let held = |i: &Rc<RefCell<al_builtins::value::Instance>>| {
+                    i.borrow()
+                        .globals
+                        .iter()
+                        .filter(|v| matches!(v, Value::TestPage(p) if Rc::ptr_eq(p, &page)))
+                        .count()
+                };
+                s.instance.iter().map(held).sum::<usize>() + s.ext_instances.iter().map(|(_, i)| held(i)).sum::<usize>()
+            };
+            if Rc::strong_count(&page).saturating_sub(2 + local_holders + own) == 0 {
+                self.pages.scope_unpinned.retain(|p| !Rc::ptr_eq(p, &page));
+                let why = page.borrow().unpinned_state.clone().unwrap_or_default();
+                return Some(format!("an open TestPage goes out of scope: {why}"));
+            }
+        }
+        None
+    }
+
     /// The `Trap()` waiting for page `object`, taken out of the list.
     pub(crate) fn take_trap(&mut self, object: u32) -> Option<Rc<RefCell<al_builtins::value::PageState>>> {
         let at = self.pages.traps.iter().position(|t| t.borrow().object == object)?;

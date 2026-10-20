@@ -171,6 +171,16 @@ impl Session {
         if name != PageMethod::Close || st.borrow().unpinned_close {
             self.refuse_unpinned_state(st)?;
         }
+        // A card whose OnNewRecord inserted its new row: only Close of the unchanged row is pinned (corpus
+        // pages/lt-cf-page-leads/CfPageLeads.al:241-289 Card_OnNewRecordInserts_OpenNewSetClose).
+        if st.borrow().new_row_inserted_by_trigger
+            && st.borrow().open
+            && (name != PageMethod::Close || st.borrow().dirty)
+        {
+            return unsupported(format!(
+                "TestPage.{name} on a card whose OnNewRecord inserted the new row itself (not pinned)"
+            ));
+        }
         // The row the host stands on before a First or Last, to tell a move from a stay (see below).
         let before = if matches!(name, PageMethod::First | PageMethod::Last)
             && st.borrow().host.is_none()

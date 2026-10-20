@@ -15829,7 +15829,7 @@
         "code": "DateInvalid",
         "file": "crates/al-builtins/src/datefns.rs",
         "generic": false,
-        "line": 107,
+        "line": 112,
         "pinned": true,
         "site": "errors/lt-ms-refusals-131/P131EvalScalars.al:376",
         "template": "The date is not valid."
@@ -15838,7 +15838,7 @@
         "code": "DateInvalid",
         "file": "crates/al-builtins/src/datefns.rs",
         "generic": false,
-        "line": 119,
+        "line": 124,
         "pinned": true,
         "site": "errors/lt-ms-refusals-131/P131EvalScalars.al:376",
         "template": "The date is not valid."
@@ -15847,7 +15847,7 @@
         "code": "DateInvalid",
         "file": "crates/al-builtins/src/datefns.rs",
         "generic": false,
-        "line": 189,
+        "line": 194,
         "pinned": true,
         "site": "errors/lt-ms-refusals-131/P131EvalScalars.al:376",
         "template": "The date is not valid."
@@ -15856,7 +15856,7 @@
         "code": "DateInvalid",
         "file": "crates/al-builtins/src/datefns.rs",
         "generic": false,
-        "line": 272,
+        "line": 277,
         "pinned": true,
         "site": "errors/lt-ms-refusals-131/P131EvalScalars.al:376",
         "template": "The date is not valid."
@@ -15865,7 +15865,7 @@
         "code": "DateInvalid",
         "file": "crates/al-builtins/src/datefns.rs",
         "generic": false,
-        "line": 346,
+        "line": 351,
         "pinned": true,
         "site": "errors/lt-ms-refusals-131/P131EvalScalars.al:376",
         "template": "The date is not valid."
@@ -15874,7 +15874,7 @@
         "code": "DateInvalid",
         "file": "crates/al-builtins/src/datefns.rs",
         "generic": false,
-        "line": 365,
+        "line": 370,
         "pinned": true,
         "site": "errors/lt-ms-refusals-131/P131EvalScalars.al:376",
         "template": "The date is not valid."
@@ -15883,7 +15883,7 @@
         "code": "DateInvalid",
         "file": "crates/al-builtins/src/datefns.rs",
         "generic": false,
-        "line": 390,
+        "line": 395,
         "pinned": true,
         "site": "errors/lt-ms-refusals-131/P131EvalScalars.al:376",
         "template": "The date is not valid."
@@ -16306,7 +16306,7 @@
         "code": "StackOverflow",
         "file": "crates/al-vm/src/lib.rs",
         "generic": false,
-        "line": 1163,
+        "line": 1200,
         "pinned": true,
         "site": "record/TestCalcFieldsTruncateUniqueContracts.al:179",
         "template": "There is insufficient memory to execute this function. This can be caused by recursive function calls. Contact your system administrator."
@@ -16360,7 +16360,7 @@
         "code": "RenameArgument",
         "file": "crates/al-vm/src/records.rs",
         "generic": false,
-        "line": 2839,
+        "line": 2988,
         "pinned": true,
         "site": "recordref/lt-refs/RfTWrite.al:223",
         "template": "The number of field arguments does not match the primary key size."
@@ -16405,7 +16405,7 @@
         "code": "IndexOutOfBounds",
         "file": "crates/al-vm/src/refs.rs",
         "generic": false,
-        "line": 877,
+        "line": 888,
         "pinned": true,
         "site": "collections/lt-array-rows/ArrayRows.al:185",
         "template": "Index out of bounds."
@@ -16414,7 +16414,7 @@
         "code": "DB:KeyNotFound",
         "file": "crates/al-vm/src/refs.rs",
         "generic": false,
-        "line": 897,
+        "line": 908,
         "pinned": true,
         "site": "recordref/TestRecordRefKeyIndexSetRecFilterContracts.al:103",
         "template": "The % table does not have an active key at index %."
@@ -16423,7 +16423,7 @@
         "code": "KeyRef.{other}",
         "file": "crates/al-vm/src/refs.rs",
         "generic": false,
-        "line": 992,
+        "line": 1003,
         "pinned": true,
         "site": "collections/lt-array-rows/ArrayRows.al:185",
         "template": "Index out of bounds"
@@ -16432,7 +16432,7 @@
         "code": "NotInitialized",
         "file": "crates/al-vm/src/refs.rs",
         "generic": false,
-        "line": 1012,
+        "line": 1023,
         "pinned": true,
         "site": "misc/lt-probes-needed-4/PnD05_UnassignedFieldRef.al:42",
         "template": "Microsoft.Dynamics.Nav.Runtime.NavFieldRef variable not initialized."
@@ -16486,7 +16486,7 @@
         "code": "DB:Ok",
         "file": "crates/al-vm/src/views.rs",
         "generic": false,
-        "line": 542,
+        "line": 549,
         "pinned": true,
         "site": "record/TestRecordViewCopyMarkContracts.al:145",
         "template": "Invalid expression of type: table view.%%"

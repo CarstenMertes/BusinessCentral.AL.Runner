@@ -18,6 +18,11 @@ enum Sync {
     Plain,
     /// The host moved with First, Last, Next or Previous: only the linked parts, hidden ones included.
     Move { backward: bool },
+    /// The host's GoToKey or GoToRecord stayed on its row: every visible part as `Plain`, except a list part with OnFindRecord, a
+    /// filtered SourceTableView and no row trigger, which is not asked again (corpus branch al-runtime-rs-staging-qc eca98051,
+    /// pagefindrecord/QcFindViewTests.al:505 DocPart_OpenEdit_LinesOfH1: OpenEdit, GoToKey('H1'), `part_log = find(=><)=Yes:10000;`
+    /// once).
+    Stayed,
 }
 
 impl Session {
@@ -319,6 +324,11 @@ impl Session {
         self.sync_parts_with(st, Sync::Move { backward })
     }
 
+    /// [`Self::sync_parts`] after a GoToKey or GoToRecord of the host that stayed on its row (`Sync::Stayed`).
+    pub(super) fn sync_parts_stayed(&mut self, st: &St) -> Result<(), Signal> {
+        self.sync_parts_with(st, Sync::Stayed)
+    }
+
     fn sync_parts_with(&mut self, st: &St, how: Sync) -> Result<(), Signal> {
         let engine = self.engine();
         let page = page_of(&engine, st);
@@ -365,6 +375,11 @@ impl Session {
         for pass in [false, true] {
             for (i, child) in &parts {
                 if has_provider(*i) == pass {
+                    if how == Sync::Stayed && child.borrow().open && self.filtered_find_list_without_row_triggers(child)
+                    {
+                        al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::FindRecordFilteredView);
+                        continue;
+                    }
                     if opening && self.view_names_link_field(st, *i, child)? {
                         child.borrow_mut().read_backwards = Some(al_builtins::value::ReadBackwards::AtOpen);
                     }

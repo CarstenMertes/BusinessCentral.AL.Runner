@@ -496,6 +496,42 @@ impl Session {
         Ok(handler)
     }
 
+    /// Whether the page declares OnFindRecord and its SourceTableView has a WHERE part: the shape writer QC's probe pins
+    /// (corpus branch al-runtime-rs-staging-qc eca98051, pagefindrecord/QcFindViewTests.al), assumed until corpus bump 33
+    /// (Assumption::FindRecordFilteredView).
+    pub(super) fn find_page_filtered_view(&self, st: &St) -> bool {
+        self.declares(st, "onfindrecord")
+            && self.engine.object_facts[st.borrow().object as usize].has_source_table_view
+            && self.source_view_filters(st)
+    }
+
+    /// `find_page_filtered_view` on a page with neither OnAfterGetRecord nor OnAfterGetCurrRecord, the pages of writer QC's probe:
+    /// moves inside the rows the client holds ask the page nothing (QcFindViewTests.al:97, :135, :236, :540).
+    /// Pinned for an ascending view; a descending one is refused by `refuse_descending_filtered_find_move`.
+    pub(super) fn filtered_find_list_without_row_triggers(&self, st: &St) -> bool {
+        self.find_page_filtered_view(st)
+            && !self.declares(st, "onaftergetrecord")
+            && !self.declares(st, "onaftergetcurrrecord")
+            && self.page_rec(st).borrow().ascending
+    }
+
+    /// A move (First, Last, Next, Previous, GoToKey) on a list with OnFindRecord, a descending filtered SourceTableView and no row
+    /// trigger: the rows it lands on are pinned (QcFindViewTests.al:257 DescList_OpenAndWalk `first = Yes:5`, `walk = 5,3,1`), whether
+    /// the page is asked for them is not: refused.
+    pub(super) fn refuse_descending_filtered_find_move(&self, st: &St) -> Result<(), Signal> {
+        if self.is_list(st)
+            && self.find_page_filtered_view(st)
+            && !self.declares(st, "onaftergetrecord")
+            && !self.declares(st, "onaftergetcurrrecord")
+            && !self.page_rec(st).borrow().ascending
+        {
+            return unsupported(
+                "a move on a list with OnFindRecord and a descending filtered SourceTableView (whether the page is asked is not pinned)",
+            );
+        }
+        Ok(())
+    }
+
     /// Whether the page's SourceTableView has a WHERE part.
     fn source_view_filters(&self, st: &St) -> bool {
         let object = st.borrow().object as usize;
@@ -657,8 +693,41 @@ impl Session {
             // :309 CardTempFind_PageRun_StoredRec, and the CardDbFind_* tests).
             if self.declares(st, "onfindrecord") && self.stored_row(&rec)?.is_some() {
                 let which = if self.is_list(st) { "=>" } else { "=" };
+                let filtered_view = self.find_page_filtered_view(st);
+                if filtered_view {
+                    al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::FindRecordFilteredView);
+                }
+                let handed = rec.borrow().clone();
+                let handed_row = self.row_key(&rec)?;
                 if !self.nav_find(st, which)? {
-                    return unsupported("OnFindRecord finds no row for the record handed to the page (not pinned)");
+                    // A card whose filtered view leaves out the handed row is asked `=` and then `=><`, and opens on what that
+                    // finds (corpus branch al-runtime-rs-staging-qc eca98051, pagefindrecord/QcFindViewTests.al:412
+                    // ViewCard_PageRunOnFilteredOutRow `find(=)=No:4;find(=><)=Yes:5;`, :457 FallbackCard_KeyFilterOnFilteredOutRow).
+                    // A list whose `=>` fails, a card that finds nothing with `=><` either, and a page without a filtered view are
+                    // not pinned.
+                    if !filtered_view || self.is_list(st) {
+                        return unsupported("OnFindRecord finds no row for the record handed to the page (not pinned)");
+                    }
+                    // The second call sees the handed record's filters again, whatever the first call did to them
+                    // (QcFindViewTests.al:457 FallbackCard_KeyFilterOnFilteredOutRow: the first call clears the key filter, the
+                    // second still fails before it clears it, `find(=><)=No,again=Yes:5`). A first call that moved the record
+                    // or changed its key or order is not pinned.
+                    let moved = !Self::same_key(&self.row_key(&rec)?, &handed_row);
+                    {
+                        let now = rec.borrow();
+                        if moved || now.key != handed.key || now.ascending != handed.ascending {
+                            drop(now);
+                            return unsupported(
+                                "OnFindRecord('=') moved the record handed to the card or changed its key (what the next call sees is not pinned)",
+                            );
+                        }
+                    }
+                    rec.borrow_mut().filters = handed.filters.clone();
+                    if !self.nav_find(st, "=><")? {
+                        return unsupported(
+                            "OnFindRecord finds no row for the record handed to the card, with `=` and `=><` (not pinned)",
+                        );
+                    }
                 }
                 st.borrow_mut().cursor = Cursor::Row;
                 st.borrow_mut().landing_first = true;
@@ -1352,14 +1421,15 @@ impl Session {
         // A page that serves its rows from OnFindRecord is asked `=><` when it opens (corpus
         // pageext/PCCurrRecordReads.al:FindList_OnFindRecordAndOnNextRecord, `open`).
         // A SourceTableView that sorts descending asks the same (pages/lt-ce-page-run/CePageRun.al
-        // OpenView_DescendingWithOnFindRecord_CurrentRow `find(=><)=1`). A view that filters is not pinned: refused.
+        // OpenView_DescendingWithOnFindRecord_CurrentRow `find(=><)=1`).
         let object = st.borrow().object as usize;
         let has_view = self.engine.object_facts[object].has_source_table_view;
         let which = if self.declares(st, "onfindrecord") {
+            // A view that filters asks the same `=><` once, list, card and list part alike (corpus branch al-runtime-rs-staging-qc
+            // eca98051, pagefindrecord/QcFindViewTests.al:78 ViewList_OpenView_FindStringAndRow, :361 ViewCard_OpenView_FindStringAndRow,
+            // :505 DocPart_OpenEdit_LinesOfH1). Not on corpus master before bump 33: assumed.
             if has_view && self.source_view_filters(st) {
-                return unsupported(
-                    "OnFindRecord on a page whose SourceTableView filters (the find string at open is not pinned)",
-                );
+                al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::FindRecordFilteredView);
             }
             "=><"
         } else {

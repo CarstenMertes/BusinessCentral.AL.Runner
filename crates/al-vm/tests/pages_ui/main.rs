@@ -7,6 +7,7 @@ mod control_text;
 mod control_values;
 mod curr_field_no_assign;
 mod filterpage;
+mod findrecord_view;
 mod flowfield_drilldown;
 mod gone_row;
 mod page_inserts;

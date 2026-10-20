@@ -1007,7 +1007,7 @@ impl Session {
     /// one of those.
     pub(super) fn move_in_client_rows(&mut self, st: &St, how: PageMethod) -> Result<Option<bool>, Signal> {
         let find_page = self.declares(st, "onfindrecord");
-        if !self.declares(st, "onaftergetrecord")
+        if !(self.declares(st, "onaftergetrecord") || self.filtered_find_list_without_row_triggers(st))
             || !self.is_list(st)
             || st.borrow().cursor != Cursor::Row
             || st.borrow().draft
@@ -1175,7 +1175,12 @@ impl Session {
         // ListRowsOpenAG.al:OpenView_OnlyRec5Rows_ReadsAtOpen `after-next-total = 0`).
         // The same holds with OnFindRecord and OnNextRecord declared: pages/lt-f3-pages/F3ListTests.al:24
         // Nav_TwelveRows_OpenLastPreviousFirstNext (`after_last`, `after_previous3`, `after_first`, `after_next2` all empty).
-        if !self.declares(st, "onaftergetcurrrecord") && self.declares(st, "onaftergetrecord") {
+        // A list (or list part) with OnFindRecord, a filtered SourceTableView and no row trigger asks the page nothing either
+        // (corpus branch al-runtime-rs-staging-qc eca98051, pagefindrecord/QcFindViewTests.al:97 ViewList_FirstNextLastPrevious,
+        // :236 NextList_NextLog, :540 DocPart_OpenEdit_LinesOfH2: the logs are empty).
+        if !self.declares(st, "onaftergetcurrrecord")
+            && (self.declares(st, "onaftergetrecord") || self.filtered_find_list_without_row_triggers(st))
+        {
             let shown = st.borrow().window[target].shown.clone();
             rec.borrow_mut().fields = shown;
             self.set_xrec(st);
@@ -1207,8 +1212,13 @@ impl Session {
     /// failing last call included). Pinned by pages/lt-testpage-list-rows/ListRowsOpenNone.al:OpenView_FindNext5Rows_ReadsAtOpen
     /// (`to-last-total = 0`) and OpenView_FindNext30Rows_ReadsAtOpen (`N21;...;N30;N30`). A key that is not there, and a block of 20 new
     /// rows, are not pinned. `None` when the page is not of that kind.
+    ///
+    /// A list with OnFindRecord only, a filtered SourceTableView and no row trigger reaches a row it holds the same way, and a key it
+    /// does not hold, with the whole view held, answers false and stays without asking the page (corpus branch
+    /// al-runtime-rs-staging-qc eca98051, pagefindrecord/QcFindViewTests.al:135 ViewList_GoToKey `gotokey_2 = No:1`, empty logs).
     fn go_to_key_find_without_row_triggers(&mut self, st: &St, want: &[Value]) -> Result<Option<bool>, Signal> {
-        if !(self.declares(st, "onfindrecord") && self.declares(st, "onnextrecord"))
+        let find_only_view = !self.declares(st, "onnextrecord") && self.filtered_find_list_without_row_triggers(st);
+        if !(self.declares(st, "onfindrecord") && self.declares(st, "onnextrecord") || find_only_view)
             || self.declares(st, "onaftergetrecord")
             || self.declares(st, "onaftergetcurrrecord")
             || !self.is_list(st)
@@ -1231,7 +1241,15 @@ impl Session {
             return Ok(Some(true));
         }
         if st.borrow().window.len() < Self::WINDOW || st.borrow().window_eof {
+            if find_only_view {
+                return Ok(Some(false));
+            }
             return Ok(None);
+        }
+        if find_only_view {
+            return unsupported(
+                "GoToKey past the rows held by a list with OnFindRecord and a filtered SourceTableView (not pinned)",
+            );
         }
         let last = st.borrow().window[Self::WINDOW - 1].stored.clone();
         rec.borrow_mut().fields = last;
@@ -1464,6 +1482,7 @@ impl Session {
     }
 
     pub(super) fn page_move_inner(&mut self, st: &St, how: PageMethod) -> Result<bool, Signal> {
+        self.refuse_descending_filtered_find_move(st)?;
         if let Some(r) = self.move_in_client_rows(st, how)? {
             return Ok(r);
         }
@@ -1603,6 +1622,7 @@ impl Session {
                 return Ok(Value::Boolean(true));
             }
         }
+        self.refuse_descending_filtered_find_move(st)?;
         if let Some(found) = self.go_to_key_find_without_row_triggers(st, &want)? {
             if !found && !result_used {
                 return Err(error_code("The row does not exist on the TestPage.", "TestRowNotFound"));

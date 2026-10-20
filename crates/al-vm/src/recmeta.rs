@@ -1509,24 +1509,18 @@ impl Session {
         // One fresh set of table globals for all rows, not the caller's (ADR-021 decision 6; corpus
         // probe TableGlobals_ModifyAll_WhatTheTriggersAndSubscribersSee).
         let shared = al_builtins::value::TableGlobals::new_shared();
-        // Without triggers, events and database triggers, ModifyAll writes every row, also a row that has the value already: its
-        // SystemModifiedAt changes (record/lt-record-write/RcBTriggers.al:ModifyAll_Equal_Value_Rows_BQ, `row1StampChangedFalse`),
-        // while ModifyAll(.., true) leaves such a row as a Modify does (`row1StampChanged`). With events or database triggers an
-        // unchanged row is not pinned.
+        // Without triggers run, modify-event subscribers and database triggers, ModifyAll writes every row, also a row that has the
+        // value already: its SystemModifiedAt changes (record/lt-record-write/RcBTriggers.al:682-722 ModifyAll_Equal_Value_Rows_BQ,
+        // `row1StampChangedFalse`), while ModifyAll(.., true) leaves such a row as a Modify does (`row1StampChanged`). A declared
+        // OnBeforeModifyEvent or OnAfterModifyEvent subscriber, bound or not, makes it write row by row: a row that has the value
+        // keeps SystemModifiedAt and SystemRowVersion (record/lt-modify-without-change/ModifyWithoutChange.al:318-365, a manual
+        // subscriber not bound in QD_ModifyAll_SameValue_NoSubscriber, bound in the After and Before cases).
+        let declared = |ev: &str| self.engine.events.is_subscribed(t.object as usize, ev);
         let bulk = !run_trigger
             && !rec.borrow().temporary
-            && !self.listened(t, "onbeforemodifyevent", None)?
-            && !self.listened(t, "onaftermodifyevent", None)?
+            && !declared("onbeforemodifyevent")
+            && !declared("onaftermodifyevent")
             && !self.global_enabled(t, crate::globaltriggers::GlobalOp::Modify)?;
-        if !run_trigger
-            && !bulk
-            && !rec.borrow().temporary
-            && rows
-                .iter()
-                .any(|row| ops::compare(&row[pos], &value).ok() == Some(std::cmp::Ordering::Equal))
-        {
-            al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::ModifyAllWithEventsUnchangedRow);
-        }
         let outer = std::mem::replace(&mut self.bulk_modify, bulk);
         let r = self.modify_all_rows(rec, rows, pos, &value, run_trigger, shared);
         self.bulk_modify = outer;

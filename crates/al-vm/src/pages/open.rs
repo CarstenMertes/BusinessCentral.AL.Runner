@@ -496,9 +496,8 @@ impl Session {
         Ok(handler)
     }
 
-    /// Whether the page declares OnFindRecord and its SourceTableView has a WHERE part: the shape writer QC's probe pins
-    /// (corpus branch al-runtime-rs-staging-qc eca98051, pagefindrecord/QcFindViewTests.al), assumed until corpus bump 33
-    /// (Assumption::FindRecordFilteredView).
+    /// Whether the page declares OnFindRecord and its SourceTableView has a WHERE part: the shape
+    /// pagefindrecord/QcFindViewTests.al pins (corpus bump 33).
     pub(super) fn find_page_filtered_view(&self, st: &St) -> bool {
         self.declares(st, "onfindrecord")
             && self.engine.object_facts[st.borrow().object as usize].has_source_table_view
@@ -693,10 +692,9 @@ impl Session {
             // :309 CardTempFind_PageRun_StoredRec, and the CardDbFind_* tests).
             if self.declares(st, "onfindrecord") && self.stored_row(&rec)?.is_some() {
                 let which = if self.is_list(st) { "=>" } else { "=" };
+                // A filtered view is asked the same (pagefindrecord/QcFindViewTests.al:157 ViewList_PageRunOnFilteredOutRow,
+                // :412 ViewCard_PageRunOnFilteredOutRow).
                 let filtered_view = self.find_page_filtered_view(st);
-                if filtered_view {
-                    al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::FindRecordFilteredView);
-                }
                 let handed = rec.borrow().clone();
                 let handed_row = self.row_key(&rec)?;
                 if !self.nav_find(st, which)? {
@@ -1422,15 +1420,10 @@ impl Session {
         // pageext/PCCurrRecordReads.al:FindList_OnFindRecordAndOnNextRecord, `open`).
         // A SourceTableView that sorts descending asks the same (pages/lt-ce-page-run/CePageRun.al
         // OpenView_DescendingWithOnFindRecord_CurrentRow `find(=><)=1`).
-        let object = st.borrow().object as usize;
-        let has_view = self.engine.object_facts[object].has_source_table_view;
         let which = if self.declares(st, "onfindrecord") {
-            // A view that filters asks the same `=><` once, list, card and list part alike (corpus branch al-runtime-rs-staging-qc
-            // eca98051, pagefindrecord/QcFindViewTests.al:78 ViewList_OpenView_FindStringAndRow, :361 ViewCard_OpenView_FindStringAndRow,
-            // :505 DocPart_OpenEdit_LinesOfH1). Not on corpus master before bump 33: assumed.
-            if has_view && self.source_view_filters(st) {
-                al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::FindRecordFilteredView);
-            }
+            // A view that filters asks the same `=><` once, list, card and list part alike
+            // (pagefindrecord/QcFindViewTests.al:78 ViewList_OpenView_FindStringAndRow, :361 ViewCard_OpenView_FindStringAndRow,
+            // :505 DocPart_OpenEdit_LinesOfH1).
             "=><"
         } else {
             "-"

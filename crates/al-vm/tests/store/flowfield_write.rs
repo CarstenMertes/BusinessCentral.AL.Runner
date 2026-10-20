@@ -395,7 +395,7 @@ codeunit 50381 T
 {
     local procedure Look(R: Record TP temporary): Text
     begin
-        exit(Format(R.IsTemporary()) + ' ' + Format(R.Count()) + ' ' + Format(R.Id));
+        exit(Format(R.IsTemporary()) + ' ' + Format(R.Count()) + ' ' + Format(R.Id) + ' [' + R.GetFilters() + ']');
     end;
 
     procedure F(): Text
@@ -404,21 +404,22 @@ codeunit 50381 T
     begin
         R.Id := 1; R.Insert();
         R.Id := 2; R.Insert();
-        exit(Look(R));
+        R.Id := 3; R.Insert();
+        R.SetRange(Id, 2, 3);
+        R.FindFirst();
+        exit(Look(R) + '|' + R.GetFilters());
     end;
 }
 "#;
 
-// events/lt-cl-event-leads/ClEventLeads.al:70 pins a stored record handed by value to a `temporary` parameter only for an event
-// subscriber; a plain procedure call does the same and marks the assumption stored-record-to-temporary-parameter.
+// record/lt-qd-temp-param/QdStoredToTempParam.al:90-119 StoredRecord_ToTemporaryParameter: a stored record handed by value
+// to a `temporary` parameter of a plain procedure gives the callee a temporary record with the record's values over an empty
+// table, without the caller's filters (`callee.filters` empty); the caller keeps its own (`caller.filters = Id: 2..3`).
 #[test]
-fn a_stored_record_handed_to_a_temporary_parameter_of_a_procedure_marks_its_assumption() {
+fn a_stored_record_handed_to_a_temporary_parameter_of_a_procedure_drops_the_filters() {
     al_builtins::assumptions::clear_hits();
-    assert_eq!(text(run_in(TEMP_PARAM, "T", "F")), "Yes 0 2");
-    assert_eq!(
-        al_builtins::assumptions::take_hits(),
-        vec![al_builtins::assumptions::Assumption::StoredRecordToTemporaryParameter]
-    );
+    assert_eq!(text(run_in(TEMP_PARAM, "T", "F")), "Yes 0 2 []|Id: 2..3");
+    assert_eq!(al_builtins::assumptions::take_hits(), vec![]);
 }
 
 const TEMP_SUBSCRIBER: &str = r#"

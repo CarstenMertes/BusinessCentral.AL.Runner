@@ -494,26 +494,18 @@ codeunit 50181 C
 "#;
 
 #[test]
-fn an_exported_png_is_not_pinned_before_bc_29() {
-    // types/W7Media.al:141-151 (ExportStream_OfAnImportedPicture): from BC 29 the imported bytes come back; before, BC re-encodes
-    // them into bytes the corpus does not pin. The export itself succeeds (streams/StTMedia.al:170, MediaExportStream passes on 27/28).
+fn the_bytes_of_an_exported_media_are_refused_on_every_major() {
+    // types/W7Media.al:141-145 (ExportStream_OfAnImportedPicture, corpus bump 34): Windows BC re-encodes the imported 68-byte PNG
+    // to 99 bytes on 27, 28 and 29 (bc-linux #161), bytes the corpus does not pin. The export itself succeeds
+    // (streams/StTMedia.al:170, MediaExportStream), so only a look at the exported bytes is refused.
     let r = |bc: &str, routine: &str| out(run_on(bc, MEDIA_EXPORT, routine));
-    assert_eq!(r("29.0", "ExportLength"), "8");
-    assert_eq!(r("27.5", "ExportOnly"), "exported");
-    assert_eq!(r("28.5", "ExportOnly"), "exported");
-    assert!(
-        r("27.5", "ExportLength").starts_with("refused:"),
-        "{}",
-        r("27.5", "ExportLength")
-    );
-    assert!(
-        r("28.5", "ExportLength").starts_with("refused:"),
-        "{}",
-        r("28.5", "ExportLength")
-    );
-    // What BC 27/28 export for content that is no PNG is not probed either; from BC 29 the bytes come back.
-    assert!(r("27.5", "ExportLengthNoPng").starts_with("refused:"));
-    assert_eq!(r("29.0", "ExportLengthNoPng"), "8");
+    for bc in ["27.5", "28.5", "29.0"] {
+        assert_eq!(r(bc, "ExportOnly"), "exported", "{bc}");
+        for routine in ["ExportLength", "ExportLengthNoPng"] {
+            let got = r(bc, routine);
+            assert!(got.starts_with("refused:"), "{bc} {routine}: {got}");
+        }
+    }
 }
 
 const BLOB_LENGTH: &str = r#"

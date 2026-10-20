@@ -1275,7 +1275,7 @@ impl Session {
         args: Vec<Value>,
     ) -> Result<(Value, Vec<Value>), Signal> {
         let aliases = std::mem::take(&mut self.events.next_aliases);
-        let subscriber_call = std::mem::take(&mut self.events.next_is_subscriber);
+        self.events.next_is_subscriber = false;
         self.first_use(&instance)?;
         let engine = self.engine.clone();
         let r = &engine.program.objects[object].routines[routine];
@@ -1322,17 +1322,26 @@ impl Session {
                 }
                 // A record of the stored table handed by value to a parameter declared `temporary` gives the callee a temporary
                 // record with the record's values over an empty table of its own (events/lt-cl-event-leads/ClEventLeads.al:70
-                // `ins.temporary temp=Yes count=0 id=103`, an OnAfterInsertEvent subscriber). Pinned only for a subscriber; a plain
-                // procedure call does the same and marks the assumption stored-record-to-temporary-parameter (Tests-Bank needs it).
+                // `ins.temporary temp=Yes count=0 id=103`, an OnAfterInsertEvent subscriber; record/lt-qd-temp-param/
+                // QdStoredToTempParam.al:90-119 for a plain procedure: `callee.count = 0`, `callee.current = 2=two`), without the
+                // caller's filters (`callee.filters` empty; the caller keeps `Id: 2..3`). What becomes of a current key other than
+                // the primary key and of marks is not pinned: refused.
                 (Value::Record(rc), false)
                     if !rc.borrow().temporary && matches!(r.locals[i].ty, RtType::Record(_, true)) =>
                 {
-                    if !subscriber_call {
-                        al_builtins::assumptions::assume(
-                            al_builtins::assumptions::Assumption::StoredRecordToTemporaryParameter,
-                        );
-                    }
                     let mut st = rc.borrow().clone();
+                    if st.key != 0 || st.adhoc.is_some() || !st.ascending || st.field_descending != 0 {
+                        return Err(Signal::Unsupported(
+                            "a stored record with a current key or sort order handed to a temporary parameter (whether the callee keeps it is not pinned)".into(),
+                        ));
+                    }
+                    if !st.marks.is_empty() || st.marked_only {
+                        return Err(Signal::Unsupported(
+                            "a stored record with marks handed to a temporary parameter (whether the callee keeps them is not pinned)".into(),
+                        ));
+                    }
+                    st.filters.clear();
+                    st.filter_group = 0;
                     st.temporary = true;
                     st.temp_id = Some(self.new_temp_id());
                     Value::Record(Rc::new(RefCell::new(st)))

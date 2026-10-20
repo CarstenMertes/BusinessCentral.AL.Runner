@@ -429,7 +429,11 @@ fn permission_helper_dispose(_: &mut Session, _: Option<&Rc<DotNetObject>>, args
 /// permissions/TestPermissionsMockEnforcement.al:28-47). Permissions are not enforced here (ADR-027), so a test that
 /// lowers them is not run. The sets BC's test runner assigns before each test method (Tests-TestLibraries codeunit 130302
 /// "Set State Test Run", every Microsoft test that does not disable TestPermissions) are assumed to grant all the test
-/// does (`runner-permission-sets-grant-all`): those tests pass in Microsoft's CI under them.
+/// does (`runner-permission-sets-grant-all`): those tests pass in Microsoft's CI under them. On BC they do not grant
+/// everything: they grant what D365 Full Access, D365 Basic and LOCAL name, plus Execute on every object (All Objects);
+/// a test app table no set names reads as ReadPermission false and fails with DB:ClientReadDenied, and Tenant Media has
+/// only indirect write (permissions/lt-qc-runner-sets/QcRunnerSets.al:1-24, :226-291). The corpus applies these sets only
+/// from test code, which is refused above, so no corpus case runs through this path.
 fn permission_helper_add_set(s: &mut Session, _: Option<&Rc<DotNetObject>>, _: Args) -> Result<Value, Signal> {
     if s.runner_permission_step {
         al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::RunnerPermissionSetsGrantAll);

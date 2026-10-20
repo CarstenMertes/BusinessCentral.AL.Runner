@@ -235,23 +235,17 @@ registry! {
         tests: "Tests-ERM Initialize (`FeatureKey.Enabled := FeatureKey.Enabled::None; FeatureKey.Modify()` for ReminderTermsCommunicationTexts): 243 tests.",
         probe: "FindFirst, Modify() with nothing changed; Enabled := Enabled then Modify; Enabled changed then Modify, then Get again and read Enabled; after a rollback. Asked in corpus #648.",
     },
-    StoredRecordToTemporaryParameter => {
-        id: "stored-record-to-temporary-parameter",
-        assumed: "A stored record passed by value to a parameter declared `temporary` of a normal procedure gives the callee a temporary record with the record's values over an empty table of its own, as for an event subscriber (pinned only there: events/lt-cl-event-leads/ClEventLeads.al:70).",
-        tests: "Tests-Bank 134141 AutomatchForCheckEntriesConsidersDocNo and others (a Gen. Journal Line passed to `TempGenJnlLine: Record \"Gen. Journal Line\" temporary`): about 400 Tests-Bank tests.",
-        probe: "A procedure with `R: Record T temporary` called with a stored record that has rows and a current row: IsTemporary, Count, the field values, Insert and Modify in the callee, then the caller's table and record after the call.",
-    },
     QueryColumnRecordId => {
         id: "query-column-record-id",
         assumed: "A query column over a RecordId field returns the stored RecordId, groups and orders by it like the field, and cannot carry a Method, a ColumnFilter or ReverseSign (refused).",
         tests: "Base Application's \"Workflow Instance\" query (column Record_ID), opened by Workflow Step Instance.SetTableRelationValues and Approvals Mgmt.; 142 Tests-Workflow tests.",
         probe: "A query with a column over a RecordId field of a table with rows: Open, Read, Format of the column, grouping and OrderBy on it, SetFilter on the column, SaveAsCsv. Asked in corpus #651.",
     },
-    ModifyAllWithEventsUnchangedRow => {
-        id: "modifyall-with-events-unchanged-row",
-        assumed: "ModifyAll(Field, Value, false) on a table with OnBeforeModifyEvent or OnAfterModifyEvent subscribers or a database trigger writes row by row: a row that has the value already keeps its SystemModifiedAt and row version, as a Modify that changes nothing does. Without subscribers every row is stamped (record/lt-record-write/RcBTriggers.al:ModifyAll_Equal_Value_Rows_BQ) and, not pinned, also gets a new SystemRowVersion.",
-        tests: "Tests-Bank 134141 DateCompressCheckLedgerEntries and others: about 220 Tests-Bank tests run a ModifyAll(.., false) over rows that have the value already.",
-        probe: "ModifyAll(Amount, 10, false) over a row whose Amount is 10, on a table with an OnAfterModifyEvent subscriber and on one without: SystemModifiedAt and SystemRowVersion of that row before and after.",
+    ModifyAllBulkUnchangedRowVersion => {
+        id: "modifyall-bulk-unchanged-row-version",
+        assumed: "ModifyAll(Field, Value, false) on a table no OnBeforeModifyEvent or OnAfterModifyEvent subscriber is declared for (bound or not) and without a database trigger writes in bulk: a row that has the value already gets a new SystemModifiedAt (record/lt-record-write/RcBTriggers.al:682-722 ModifyAll_Equal_Value_Rows_BQ, `row1StampChangedFalse`) and, not pinned, also a new SystemRowVersion. With a declared subscriber, bound or not, such a row keeps both (record/lt-modify-without-change/ModifyWithoutChange.al:318-365, pinned).",
+        tests: "Corpus record/lt-record-write/RcBTriggers.al:ModifyAll_Equal_Value_Rows_BQ needs the bulk write (kept); Tests-Bank and Tests-ERM run ModifyAll(.., false) over rows that have the value already on tables without modify-event subscribers.",
+        probe: "ModifyAll(Amount, 10, false) over a row whose Amount is 10, on a table with no modify-event subscriber declared: SystemRowVersion of that row before and after; the same on a table with an OnModify trigger and on one without.",
     },
     RecordRefGetTableOfRecordRef => {
         id: "recordref-gettable-of-recordref",
@@ -421,12 +415,6 @@ registry! {
         tests: "Service Credit Memo, Service Invoice and Service Order pages (OnFindRecord: Rec.Find(Which), else SetRange(\"No.\") and Find again): ServiceCreditMemoByPage, ServiceInvoiceByPage and about 30 more Tests-SCM-Service tests, and the 24 that follow them in their codeunits.",
         probe: "A list or card with OnFindRecord(Which) that notes Which in a trace, a source table with and without rows: OpenNew, then the trace, xRec of OnNewRecord and the first Rec. Asked in corpus #641.",
     },
-    FindRecordFilteredView => {
-        id: "findrecord-filtered-view",
-        assumed: "A page with OnFindRecord whose SourceTableView has a WHERE part reads its rows as writer QC's probe shows (corpus branch al-runtime-rs-staging-qc eca98051, tests/al-language/pagefindrecord/QcFindViewTests.al, green on all three BC majors the corpus runs): the view's filter in group 2, the open asks '=><' once, a list run on a record asks '=>', a card '=' and then '=><', the view does not filter the rows the triggers serve. Becomes pinned with corpus bump 33.",
-        tests: "Pages of Base Application with OnFindRecord and a filtered view (Sales Order Subform and the other document subforms, Service Invoice, Interaction Log Entries): about 939 Tests-ERM tests, e.g. ERM Sales Order tests that open Sales Order.",
-        probe: "Done on corpus branch al-runtime-rs-staging-qc (QcFindViewTests.al); delete this entry when corpus bump 33 lands.",
-    },
     NewLineStampsAllBeforeValidating => {
         id: "new-line-stamps-all-before-validating",
         assumed: "The blank line of a part (or list) takes every single-valued filter value (key fields, Document Type from SourceTableView and the SubPageLink fields) onto the record first, and only then runs the OnValidate and table relation of each, in field order; a link field declared before Document Type is validated with the Document Type already set.",
@@ -501,9 +489,9 @@ registry! {
     },
     RunnerPermissionSetsGrantAll => {
         id: "runner-permission-sets-grant-all",
-        assumed: "The permission sets BC's test runner assigns before each test method whose TestPermissions is not Disabled (codeunit 130302 \"Set State Test Run\": All Objects, D365 Full Access, TEST TABLES, D365 BASIC, LOCAL through Permissions Mock) grant every access and every permission answer the test then makes, as the unrestricted session does here (permissions are not enforced, ADR-027 owner decision 2). On BC they narrow the session (permissions/TestPermissionsMockEnforcement.al:28-47).",
+        assumed: "The permission sets BC's test runner assigns before each test method whose TestPermissions is not Disabled (codeunit 130302 \"Set State Test Run\": All Objects, D365 Full Access, TEST TABLES, D365 BASIC, LOCAL through Permissions Mock) grant every access and every permission answer the test then makes, as the unrestricted session does here (permissions are not enforced, ADR-027 owner decision 2). Known wrong in general: on BC they grant what D365 Full Access, D365 Basic and LOCAL name, plus Execute on every object; a test app table no set names gives ReadPermission false and DB:ClientReadDenied, Tenant Media has only indirect write, and TEST TABLES does not exist without Tests-TestLibraries (permissions/lt-qc-runner-sets/QcRunnerSets.al:1-24, :174-291).",
         tests: "Every Microsoft test method of a codeunit without TestPermissions = Disabled when Tests-TestLibraries is loaded (about 6500 tests of the Base Application buckets in the 2026-10-20 measurement); they pass in Microsoft's CI under these sets.",
-        probe: "Under Permissions Mock with D365 Full Access, TEST TABLES and D365 BASIC assigned: read, insert, modify and delete a Base Application table, a system table (User, Access Control) and a table of a test app; ReadPermission and WritePermission of each; NavUserAccountHelper.GetEffectivePermissionForObject on table data.",
+        probe: "Done for the corpus database (QcRunnerSets.al). Still wanted: the same reads and writes with Tests-TestLibraries installed, so TEST TABLES exists: a table of a Microsoft test app and of a test library under the runner sets.",
     },
 }
 

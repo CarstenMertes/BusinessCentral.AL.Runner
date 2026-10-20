@@ -235,11 +235,23 @@ registry! {
         tests: "Tests-ERM Initialize (`FeatureKey.Enabled := FeatureKey.Enabled::None; FeatureKey.Modify()` for ReminderTermsCommunicationTexts): 243 tests.",
         probe: "FindFirst, Modify() with nothing changed; Enabled := Enabled then Modify; Enabled changed then Modify, then Get again and read Enabled; after a rollback. Asked in corpus #648.",
     },
+    StoredRecordToTemporaryParameter => {
+        id: "stored-record-to-temporary-parameter",
+        assumed: "A stored record passed by value to a parameter declared `temporary` of a normal procedure gives the callee a temporary record with the record's values over an empty table of its own, as for an event subscriber (pinned only there: events/lt-cl-event-leads/ClEventLeads.al:70).",
+        tests: "Tests-Bank 134141 AutomatchForCheckEntriesConsidersDocNo and others (a Gen. Journal Line passed to `TempGenJnlLine: Record \"Gen. Journal Line\" temporary`): about 400 Tests-Bank tests.",
+        probe: "A procedure with `R: Record T temporary` called with a stored record that has rows and a current row: IsTemporary, Count, the field values, Insert and Modify in the callee, then the caller's table and record after the call.",
+    },
     QueryColumnRecordId => {
         id: "query-column-record-id",
         assumed: "A query column over a RecordId field returns the stored RecordId, groups and orders by it like the field, and cannot carry a Method, a ColumnFilter or ReverseSign (refused).",
         tests: "Base Application's \"Workflow Instance\" query (column Record_ID), opened by Workflow Step Instance.SetTableRelationValues and Approvals Mgmt.; 142 Tests-Workflow tests.",
         probe: "A query with a column over a RecordId field of a table with rows: Open, Read, Format of the column, grouping and OrderBy on it, SetFilter on the column, SaveAsCsv. Asked in corpus #651.",
+    },
+    ModifyAllWithEventsUnchangedRow => {
+        id: "modifyall-with-events-unchanged-row",
+        assumed: "ModifyAll(Field, Value, false) on a table with OnBeforeModifyEvent or OnAfterModifyEvent subscribers or a database trigger writes row by row: a row that has the value already keeps its SystemModifiedAt and row version, as a Modify that changes nothing does. Without subscribers every row is stamped (record/lt-record-write/RcBTriggers.al:ModifyAll_Equal_Value_Rows_BQ) and, not pinned, also gets a new SystemRowVersion.",
+        tests: "Tests-Bank 134141 DateCompressCheckLedgerEntries and others: about 220 Tests-Bank tests run a ModifyAll(.., false) over rows that have the value already.",
+        probe: "ModifyAll(Amount, 10, false) over a row whose Amount is 10, on a table with an OnAfterModifyEvent subscriber and on one without: SystemModifiedAt and SystemRowVersion of that row before and after.",
     },
     RecordRefGetTableOfRecordRef => {
         id: "recordref-gettable-of-recordref",

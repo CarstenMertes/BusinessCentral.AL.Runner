@@ -108,3 +108,16 @@
 98550 Handler_RaisesError
 98550 NoBaseAddress_RelativePaths_1
 98550 NoBaseAddress_RelativePaths_2
+98550 PY_BaseAddress_Joins_1
+98550 PY_BaseAddress_Joins_2
+98550 PY_BaseAddress_Joins_3
+98550 PY_FailedCall_IntoFilledResponse
+98550 PY_HandlerTrue_StrMenuAllowOnce
+98550 PY_HandlerTrue_StrMenuBlockOnce
+98550 PY_HandlerTrue_StrMenuCancel
+98550 PY_ReasonPhrase_1
+98550 PY_ReasonPhrase_2
+98550 PY_ReasonPhrase_3
+98550 PY_UnusedResult_AllowOnceRefused
+98550 PY_UnusedResult_BlockOnce
+98550 PY_UnusedResult_MockedAndErrors

@@ -334,7 +334,7 @@ impl Session {
     /// The table-level trigger `name` (`OnBeforeInsert`, `OnInsert`, ...) of every table extension that declares it,
     /// in the order of the extensions' object ids: two extensions run the same trigger one after the other
     /// (corpus events/TestProbeEventContracts.al:ExtensionTriggers_TwoExtensionsSameTrigger_Order, ids 69800 and 69801).
-    fn ext_triggers(&self, t: &TableDef, name: &str) -> Vec<(usize, usize)> {
+    pub(crate) fn ext_triggers(&self, t: &TableDef, name: &str) -> Vec<(usize, usize)> {
         let mut found = Vec::new();
         if let Some(schema) = &self.engine.program.objects[t.object as usize].table {
             for &e in &schema.extensions {
@@ -359,7 +359,7 @@ impl Session {
 
     /// Whether `event` of table `t` would reach a subscriber now (static ones, and
     /// manual ones with a bound instance).
-    fn listened(&mut self, t: &TableDef, event: &str, element: Option<&str>) -> Result<bool, Signal> {
+    pub(crate) fn listened(&mut self, t: &TableDef, event: &str, element: Option<&str>) -> Result<bool, Signal> {
         self.has_listeners(t.object as usize, event, element)
     }
 
@@ -766,7 +766,18 @@ impl Session {
         Ok(any)
     }
 
-    fn table_trigger(&self, t: &TableDef, name: &str) -> Option<usize> {
+    /// Whether field `pos` of `t` is a FlowField (not stored, not a FlowFilter, not a system field).
+    pub(crate) fn is_flowfield(&self, t: &TableDef, pos: usize) -> bool {
+        let f = &t.fields[pos];
+        !f.stored
+            && f.id < 2_000_000_000
+            && !self.engine.program.objects[t.object as usize]
+                .table
+                .as_ref()
+                .is_some_and(|s| s.fields[pos].flow_filter)
+    }
+
+    pub(crate) fn table_trigger(&self, t: &TableDef, name: &str) -> Option<usize> {
         self.engine.program.objects[t.object as usize]
             .routines
             .iter()
@@ -2148,6 +2159,9 @@ impl Session {
                 // same for the events). A row a page saves carries the page's own previous row
                 // (record/TestXRecDriverContracts.al:32-51 Record_Modify_FromPage_xRecHoldsPreviousValue).
                 let stored_row = stored.clone();
+                if let Some(old) = &stored {
+                    self.check_modify_auto_increment(&t, rec, old, run)?;
+                }
                 // A Modify loads every field of a partially loaded record: the subscribers' Rec and xRec and the caller's record
                 // report all fields loaded afterwards, for Modify(true) and Modify(false)
                 // (record/lt-af-record-events/AfModifyLoadFields.al:92, :112, :130). A record nothing was fetched into is not pinned
@@ -2180,14 +2194,30 @@ impl Session {
                 // other variable's Modify of a changed field is accepted, while a Modify that changed a field makes it fail with DB:RecordChanged).
                 self.check_code_storage(&t, &rec.borrow().fields, true)?;
                 self.sql_timestamp_before(&t, rec, stored_row.as_deref())?;
-                let old_version = match stored_row.as_deref() {
-                    Some(old) if !rec.borrow().temporary && Session::modify_changes_nothing(&t, old, rec) => {
+                // A bulk ModifyAll(.., false) without subscribers stamps SystemModifiedAt of a row that has the value already
+                // (RcBTriggers.al:ModifyAll_Equal_Value_Rows_BQ); that it also gives the row a new row version is not pinned and
+                // marks the assumption modifyall-with-events-unchanged-row.
+                let unchanged = match stored_row.as_deref() {
+                    Some(old) if !rec.borrow().temporary && Session::modify_changes_nothing(&t, old, rec) => Some(old),
+                    _ => None,
+                };
+                let old_version = match unchanged {
+                    Some(old) if !self.bulk_modify => {
                         if let Some(i) = t.fields.iter().position(|f| f.id == 2_000_000_005) {
                             rec.borrow_mut().fields[i] = old[i].clone();
                         }
                         None
                     }
-                    _ => self.bump_row_version(&t, rec),
+                    Some(_) => {
+                        let bumped = self.bump_row_version(&t, rec);
+                        if bumped.is_some() {
+                            al_builtins::assumptions::assume(
+                                al_builtins::assumptions::Assumption::ModifyAllWithEventsUnchangedRow,
+                            );
+                        }
+                        bumped
+                    }
+                    None => self.bump_row_version(&t, rec),
                 };
                 self.sql_timestamp_after(&t, rec);
                 let stamped = self.stamp_modify(&t, rec, stored_row.as_deref());
@@ -2202,7 +2232,20 @@ impl Session {
                     Self::unstamp(rec, stamped);
                     return self.fail_unique(&t, unique_key, &row);
                 }
-                let mut stored = Self::to_store(rec, self.stored_view(&t, &row));
+                let mut view = self.stored_view(&t, &row);
+                // A temporary row keeps the FlowField values a Modify wrote: a Get, a Find and a later CalcFields-free read show them
+                // (record/lt-flowfield-write/DiFwWriteTests.al:606-616, `after Modify`, `after Get`, `Get after CalcFields`).
+                // An Insert does not (`insert then Get` = 0).
+                if rec.borrow().temporary {
+                    let engine = self.engine.clone();
+                    let schema = engine.program.objects[t.object as usize].table.as_ref().expect("table");
+                    for (i, f) in t.fields.iter().enumerate() {
+                        if !f.stored && f.id < 2_000_000_000 && !schema.fields[i].flow_filter {
+                            view[i] = row[i].clone();
+                        }
+                    }
+                }
+                let mut stored = Self::to_store(rec, view);
                 // Only the Insert of a value the SQL column cannot hold is pinned (errors/lt-ms-refusals-130/P130DateFilters.al:234-275).
                 if self.sql_columns(rec, &t, &mut stored)?.is_some() {
                     return unsupported("a Modify of a value its SQL column cannot hold (not pinned)");
@@ -2728,10 +2771,16 @@ impl Session {
             RecordOp::SetRange => {
                 let pos = arg_pos(args, 0)?;
                 let ty = t.fields[pos].ty.clone();
+                let or_flowfield = self.is_flowfield(&t, pos);
                 let mut r = rec.borrow_mut();
                 r.position = None;
                 let group = r.filter_group;
                 r.filters.retain(|f| !(f.field == pos && f.group == group));
+                // A FlowField filter in the OR group is dropped: GetFilters does not show it and no row is filtered by it
+                // (record/PWFilterGroupOr.al:OrGroup_FlowFieldFilter_BQ, `getFilters`, `flowFieldOnly`, `nameOrFlowField`).
+                if group == al_builtins::filter::OR_GROUP && or_flowfield {
+                    return Ok(Value::Null);
+                }
                 if let Some(from) = args.get(1) {
                     let from = ops::convert(from.clone(), &ty)?;
                     let to = match args.get(2) {
@@ -2923,9 +2972,14 @@ impl Session {
                     }
                     Err(e) => return Err(Signal::Unsupported(format!("SetFilter: {e}"))),
                 };
+                let or_flowfield = self.is_flowfield(&t, pos);
                 let mut r = rec.borrow_mut();
                 let group = r.filter_group;
                 r.filters.retain(|f| !(f.field == pos && f.group == group));
+                // PWFilterGroupOr.al:OrGroup_FlowFieldFilter_BQ (`nameOrFlowField`: SetFilter too).
+                if group == al_builtins::filter::OR_GROUP && or_flowfield {
+                    return Ok(Value::Null);
+                }
                 r.filters.push(FieldFilter {
                     field: pos,
                     expr,
@@ -3084,6 +3138,13 @@ impl Session {
                 let engine = self.engine.clone();
                 let schema = engine.program.objects[t.object as usize].table.as_ref().expect("table");
                 let field = &schema.fields[pos];
+                // A FlowField (record/lt-flowfield-write/DiFwWriteTests.al): flowfields.rs `validate_flowfield` raises or refuses
+                // what is not a Decimal Sum; for that one the value goes in, OnValidate runs, then `write_sum_difference`.
+                let sum_flowfield = !field.stored && !field.flow_filter && field.id < 2_000_000_000;
+                if sum_flowfield {
+                    let value = args.get(1).cloned();
+                    self.validate_flowfield(rec, &t, pos, value.as_ref())?;
+                }
                 // A Validate nested in an OnValidate of the same record keeps the outer call's
                 // before-image as xRec (corpus record/TestXRecContracts.al:133).
                 // `handle` is the address of `rec`, which this call borrows for as long as the entry exists, and the
@@ -3117,6 +3178,15 @@ impl Session {
                     self.validating.pop();
                 }
                 r?;
+                if sum_flowfield {
+                    let target = ops::convert(args[1].clone(), &field.ty)?;
+                    if ops::compare(&rec.borrow().fields[pos], &target).ok() != Some(std::cmp::Ordering::Equal) {
+                        return unsupported(
+                            "an OnValidate that changes the value of the Sum FlowField it validates (not pinned)",
+                        );
+                    }
+                    self.write_sum_difference(rec, &t, pos, target)?;
+                }
                 Ok(Value::Null)
             }
             RecordOp::Rename => {

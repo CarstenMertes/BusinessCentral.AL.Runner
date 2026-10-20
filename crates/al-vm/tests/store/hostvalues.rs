@@ -932,3 +932,26 @@ fn calcfields_of_a_blob_of_a_rolled_back_row_empties_the_blob() {
         "empty"
     );
 }
+
+// Assumption modifyall-with-events-unchanged-row: ModifyAll(.., false) without subscribers stamps SystemModifiedAt of a row
+// that has the value already (record/lt-record-write/RcBTriggers.al:ModifyAll_Equal_Value_Rows_BQ, `row1StampChangedFalse`),
+// but whether it also gives that row a new SystemRowVersion is not pinned: the bump marks the assumption.
+#[test]
+fn bulk_modify_all_over_an_unchanged_row_marks_the_row_version_assumption() {
+    let marks = |seed: i32| {
+        let body = format!(
+            "procedure F(): Text var T: Record \"ALT T\"; V: BigInteger; begin T.\"No.\" := 1; T.Amount := {seed}; T.Insert(); \
+             T.Get(1); V := T.SystemRowVersion; T.ModifyAll(Amount, 10, false); T.Get(1); exit(Format(T.SystemRowVersion > V)); end;"
+        );
+        let (engine, oi) = compile(&body);
+        al_builtins::assumptions::clear_hits();
+        let r = call(&mut Session::new(engine), oi, "F");
+        assert!(matches!(r, Ok(Value::Text(_))), "{r:?}");
+        al_builtins::assumptions::take_hits()
+    };
+    assert_eq!(
+        marks(10),
+        vec![al_builtins::assumptions::Assumption::ModifyAllWithEventsUnchangedRow]
+    );
+    assert_eq!(marks(5), vec![]);
+}

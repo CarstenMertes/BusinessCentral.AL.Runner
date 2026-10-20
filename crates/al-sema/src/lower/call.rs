@@ -337,6 +337,12 @@ impl Lowerer<'_> {
                     // A Variant variable holding a number raises (types/lt-number-to-text/NumberToTextIsFormat.al:193-216);
                     // a `FieldRef.Value()` argument goes to `TextBuilder.AppendFieldValue#1`.
                     "TextBuilder.AppendVariant#1".to_string()
+                } else if id == "RecordRef.GetTable#1"
+                    && args.first().is_some_and(|a| matches!(self.ty_of(a), Ty::Variant))
+                {
+                    // A record that reaches GetTable through a Variant loses its ChangeCompany (types/lt-cw-variant-leads/
+                    // CwVariantChangeCompany.al:CW_Variant_KeepsOrDropsChangeCompany `variant to recordref`).
+                    "RecordRef.GetTableVariant#1".to_string()
                 } else if id == "System.Format#1" && decimal_field_places.is_some() {
                     "System.FormatDecimalField#1".to_string()
                 } else {

@@ -1256,7 +1256,15 @@ impl Session {
             std::mem::discriminant(a) == std::mem::discriminant(b)
         };
         let mut updates = Vec::new();
+        let engine = self.engine.clone();
+        let schema = engine.program.objects[t.object as usize].table.as_ref().expect("table");
         for (dp, df) in t.fields.iter().enumerate() {
+            // Within one table a FlowField's value moves too, assigned or calculated; from or into another table it does not
+            // (record/lt-flowfield-write/DiFwWriteTests.al:504-513, `assigned to normal`, `normal to flow`).
+            if df.id < 2_000_000_000 && !df.stored && !schema.fields[dp].flow_filter && src_table == t.object as usize {
+                updates.push((dp, src_fields[dp].clone()));
+                continue;
+            }
             if df.id >= 2_000_000_000 || !df.stored {
                 continue;
             }
@@ -1480,9 +1488,60 @@ impl Session {
                 "DB:Ok",
             ));
         }
+        // An AutoIncrement field outside the key cannot be changed (record/TestAutoIncrementEdges.al:569-580, two rows, names as
+        // captions). Over no rows, and for a name that differs from its caption, the text is not pinned.
+        if self.auto_increment_field(t)? == Some(pos) {
+            let (field, table) = (t.fields[pos].name.clone(), t.name.clone());
+            if rows.is_empty() || self.field_caption(t, pos) != field || self.caption(t) != table {
+                return unsupported(
+                    "ModifyAll on an AutoIncrement field with no rows or with a caption (error text not pinned)",
+                );
+            }
+            return Err(error(
+                format!(
+                    "You cannot change the value of the {field} field.{}{}Table: {table}",
+                    crate::records::BR,
+                    crate::records::BR
+                ),
+                "DB:Ok",
+            ));
+        }
         // One fresh set of table globals for all rows, not the caller's (ADR-021 decision 6; corpus
         // probe TableGlobals_ModifyAll_WhatTheTriggersAndSubscribersSee).
         let shared = al_builtins::value::TableGlobals::new_shared();
+        // Without triggers, events and database triggers, ModifyAll writes every row, also a row that has the value already: its
+        // SystemModifiedAt changes (record/lt-record-write/RcBTriggers.al:ModifyAll_Equal_Value_Rows_BQ, `row1StampChangedFalse`),
+        // while ModifyAll(.., true) leaves such a row as a Modify does (`row1StampChanged`). With events or database triggers an
+        // unchanged row is not pinned.
+        let bulk = !run_trigger
+            && !rec.borrow().temporary
+            && !self.listened(t, "onbeforemodifyevent", None)?
+            && !self.listened(t, "onaftermodifyevent", None)?
+            && !self.global_enabled(t, crate::globaltriggers::GlobalOp::Modify)?;
+        if !run_trigger
+            && !bulk
+            && !rec.borrow().temporary
+            && rows
+                .iter()
+                .any(|row| ops::compare(&row[pos], &value).ok() == Some(std::cmp::Ordering::Equal))
+        {
+            al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::ModifyAllWithEventsUnchangedRow);
+        }
+        let outer = std::mem::replace(&mut self.bulk_modify, bulk);
+        let r = self.modify_all_rows(rec, rows, pos, &value, run_trigger, shared);
+        self.bulk_modify = outer;
+        r
+    }
+
+    fn modify_all_rows(
+        &mut self,
+        rec: &Rec,
+        rows: Vec<Vec<Value>>,
+        pos: usize,
+        value: &Value,
+        run_trigger: bool,
+        shared: al_builtins::value::TableGlobals,
+    ) -> Result<Value, Signal> {
         for mut row in rows {
             row[pos] = value.clone();
             let copy = {

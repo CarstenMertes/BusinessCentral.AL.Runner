@@ -48,6 +48,8 @@ codeunit 50974 "SE Sub"
             NewReportId := Report::"SE Report B";
         if L.GetMode() = 'substitute unknown' then
             NewReportId := 50999;
+        if L.GetMode() = 'req' then
+            L.Add('req=' + RequestPageXml);
     end;
 
     [EventSubscriber(ObjectType::Codeunit, Codeunit::"Reporting Triggers", 'OnDocumentReady', '', false, false)]
@@ -91,6 +93,23 @@ codeunit 50975 "SE Tests"
         exit(Format(Ok) + '|' + Head + '|' + L.Take());
     end;
 
+    procedure Html(): Text
+    var
+        R: Record "SE Row";
+        L: Codeunit "SE Log";
+        OutS: OutStream;
+        Ok: Boolean;
+    begin
+        R.DeleteAll();
+        R.Id := 1;
+        R.Insert();
+        L.Take();
+        L.SetMode('req');
+        R.Data.CreateOutStream(OutS);
+        Ok := Report.SaveAs(Report::"SE Report A", 'MARK', ReportFormat::Html, OutS);
+        exit(Format(Ok) + '|' + GetLastErrorText() + '|' + L.Take());
+    end;
+
     procedure Plain(): Text begin exit(SaveAs('')); end;
     procedure Substituted(): Text begin exit(SaveAs('substitute')); end;
     procedure SubstitutedUnknown(): Text begin exit(SaveAs('substitute unknown')); end;
@@ -127,6 +146,33 @@ fn a_substitutereport_subscriber_changes_the_report() {
         text(run("Substituted")),
         "Yes|<?xml ver|SubstituteReport(50972,SaveAs,in=-1);OnDocumentReady(50973,in=No);"
     );
+}
+
+/// report/lt-am-rdlc-output/AMRdlcOutput.al:TextRdlc_SaveAsHtml_IsRefused: SubstituteReport, then the layout error. A subscriber
+/// that does not read RequestPageXml runs.
+#[test]
+fn an_html_saveas_of_an_rdlc_report_raises_substitutereport_then_fails() {
+    let fixture = FIXTURE.replace("L.Add('req=' + RequestPageXml);", "L.Add('req');");
+    assert_eq!(
+        text(al_testkit::run_in(&fixture, "SE Tests", "Html")),
+        "No|The Html output format is not supported by the current report layout format.|SubstituteReport(50972,SaveAs,in=-1);req;"
+    );
+}
+
+/// AMRdlcOutput.al:TextRdlc_SaveAsHtml_IsRefused pins only that RequestPageXml of an Html SaveAs contains the parameters, not
+/// its text: a SubstituteReport subscriber that reads it is refused.
+#[test]
+fn an_html_saveas_whose_substitutereport_subscriber_reads_requestpagexml_is_refused() {
+    assert_refused(run("Html"), "RequestPageXml");
+    for read in [
+        "Format(StrPos(RequestPageXml, 'MARK') > 0)",
+        "Format(StrLen(RequestPageXml))",
+        "Format(RequestPageXml.Contains('MARK'))",
+        "Format(RequestPageXml)",
+    ] {
+        let fixture = FIXTURE.replace("L.Add('req=' + RequestPageXml);", &format!("L.Add({read});"));
+        assert_refused(al_testkit::run_in(&fixture, "SE Tests", "Html"), "RequestPageXml");
+    }
 }
 
 /// A NewReportId no report declares: what BC does is not pinned.
@@ -222,7 +268,7 @@ codeunit 50978 "SE Header Tests"
         B.Data.CreateInStream(InS, TextEncoding::UTF8);
         while not InS.EOS() do begin
             InS.ReadText(Line);
-            if Line.Contains('CompanyAddressLine') then
+            if Line.Contains('CompanyAddressLine') and not Line.Contains('CompanyAddressLines') then
                 Result += Line.Trim();
         end;
         exit(Result);
@@ -273,5 +319,21 @@ fn the_address_alone_is_the_second_address_line() {
          <CompanyAddressLine3></CompanyAddressLine3><CompanyAddressLine4></CompanyAddressLine4>\
          <CompanyAddressLine5></CompanyAddressLine5><CompanyAddressLine6></CompanyAddressLine6>\
          <CompanyAddressLine7></CompanyAddressLine7><CompanyAddressLine8></CompanyAddressLine8>"
+    );
+}
+
+/// A SubstituteReport subscriber that passes RequestPageXml on to an event of its own (Base Application's ReportManagement
+/// does, OnAfterSubstituteReport) runs while nothing reads it (AMRdlcOutput.al:TextRdlc_SaveAsHtml_IsRefused).
+#[test]
+fn an_html_saveas_whose_subscriber_passes_requestpagexml_on_runs() {
+    let fixture = FIXTURE
+        .replace("L.Add('req=' + RequestPageXml);", "L.Add('req'); OnForward(RequestPageXml); Pass(RequestPageXml);")
+        .replace(
+            "    [EventSubscriber(ObjectType::Codeunit, Codeunit::\"Reporting Triggers\", 'OnDocumentReady'",
+            "    [IntegrationEvent(false, false)]\n    local procedure OnForward(RequestPageXml: Text) begin end;\n    local procedure Pass(Xml: Text) begin end;\n    [EventSubscriber(ObjectType::Codeunit, Codeunit::\"SE Sub\", 'OnForward', '', false, false)]\n    local procedure Forwarded(RequestPageXml: Text) var L: Codeunit \"SE Log\"; begin L.Add('fwd'); end;\n\n    [EventSubscriber(ObjectType::Codeunit, Codeunit::\"Reporting Triggers\", 'OnDocumentReady'",
+        );
+    assert_eq!(
+        text(al_testkit::run_in(&fixture, "SE Tests", "Html")),
+        "No|The Html output format is not supported by the current report layout format.|SubstituteReport(50972,SaveAs,in=-1);req;fwd;"
     );
 }

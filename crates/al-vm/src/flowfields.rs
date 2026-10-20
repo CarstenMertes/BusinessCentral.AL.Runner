@@ -323,6 +323,174 @@ impl Session {
         Ok(())
     }
 
+    /// `Validate` on the FlowField at `pos` (record/lt-flowfield-write/DiFwWriteTests.al). A Count, Exist or Lookup FlowField
+    /// raises FlowFieldValidation before OnValidate runs (DiFwWriteTests.al:284, :439, :693-694). A Decimal Sum FlowField
+    /// inserts the difference between `value` and the current sum into the source table, then holds `value`
+    /// (DiFwWriteTests.al:812-819, :293). Every other shape is refused: it is not pinned.
+    pub(crate) fn validate_flowfield(
+        &mut self,
+        rec: &Rec,
+        t: &TableDef,
+        pos: usize,
+        value: Option<&Value>,
+    ) -> Result<(), Signal> {
+        let engine = self.engine.clone();
+        let table = t.object as usize;
+        let schema = engine.program.objects[table].table.as_ref().expect("table");
+        let f = &schema.fields[pos];
+        let Some(calc) = f.calc.as_ref() else {
+            return unsupported(format!(
+                "Validate on the FlowField {} without a formula the runtime calculates",
+                f.name
+            ));
+        };
+        use ir::CalcMethod as M;
+        let decimal_sum = calc.method == M::Sum && f.ty == RtType::Decimal;
+        let typed_error = matches!(
+            (calc.method, &f.ty),
+            (M::Count, RtType::Integer) | (M::Exist, RtType::Boolean) | (M::Lookup, RtType::Text(_) | RtType::Code(_))
+        );
+        if !decimal_sum && !typed_error {
+            return unsupported(format!(
+                "Validate on the FlowField {} of type {} with this CalcFormula method (not pinned)",
+                f.name,
+                f.ty.describe()
+            ));
+        }
+        if typed_error {
+            // The text names the field and the table; whether by name or caption is not pinned where they differ.
+            let (field, caption) = (f.name.clone(), self.field_caption(t, pos));
+            let table_caption = self.caption(t);
+            if field != caption || t.name != table_caption {
+                return unsupported("the FlowFieldValidation error of a field or table with a caption (not pinned)");
+            }
+            return Err(crate::transactions::al_error_code(
+                &format!(
+                    "The type of the {field} FlowField in the {} table must be Decimal.",
+                    t.name
+                ),
+                "FlowFieldValidation",
+            ));
+        }
+        let Some(value) = value else {
+            return unsupported("Validate on a Sum FlowField without a value (not pinned)");
+        };
+        let new = ops::convert(value.clone(), &f.ty)?;
+        let refuse = |why: &str| unsupported(format!("Validate on the Sum FlowField {}: {why} (not pinned)", f.name));
+        if calc.negate {
+            return refuse("a negated sum");
+        }
+        if rec.borrow().temporary || rec.borrow().company.is_some() {
+            return refuse("a temporary record or another company");
+        }
+        if f.relation {
+            return refuse("a FlowField with a relation");
+        }
+        let src_t = self.engine.tables[calc.table].clone().expect("table");
+        if src_t.keys[0].len() != 1 || src_t.fields[src_t.keys[0][0]].ty != RtType::Integer {
+            return refuse("a source table whose key is not one Integer field");
+        }
+        let _ = new;
+        Ok(())
+    }
+
+    /// After the OnValidate of a Decimal Sum FlowField (`validate_flowfield` checked it): inserts the difference between
+    /// `target` and the current sum into the source table, with Insert(true): the source table's OnInsert runs after the
+    /// FlowField's OnValidate (pages/lt-cf-page-leads/CfPageLeads.al:EditableFlowField_SetValue, `Amount.OnValidate:50/30,Entry.OnInsert`).
+    pub(crate) fn write_sum_difference(
+        &mut self,
+        rec: &Rec,
+        t: &TableDef,
+        pos: usize,
+        target: Value,
+    ) -> Result<(), Signal> {
+        let engine = self.engine.clone();
+        let table = t.object as usize;
+        let schema = engine.program.objects[table].table.as_ref().expect("table");
+        let f = &schema.fields[pos];
+        let calc = f.calc.as_ref().expect("checked by validate_flowfield");
+        let refuse = |why: &str| unsupported(format!("Validate on the Sum FlowField {}: {why} (not pinned)", f.name));
+        let src_t = self.engine.tables[calc.table].clone().expect("table");
+        let new = target;
+        // The values of the new row: the where-fields that name a normal field of the record take its value; one that names a
+        // FlowFilter takes the filter's value or the start of its range, and nothing when no filter is set (DiFwWriteTests.al:812, :818).
+        let mut sets: Vec<(usize, Value)> = Vec::new();
+        for c in &calc.conds {
+            let sty = &src_t.fields[c.field].ty;
+            let ir::CalcValue::Field(q) = &c.value else {
+                return refuse("a where-condition other than field()");
+            };
+            let pf = &schema.fields[*q];
+            if pf.flow_filter {
+                let filter = rec
+                    .borrow()
+                    .filters
+                    .iter()
+                    .filter(|x| x.field == *q)
+                    .map(|x| x.expr.clone())
+                    .collect::<Vec<_>>();
+                match filter.as_slice() {
+                    [] => {}
+                    [FilterExpr::Eq(v)] | [FilterExpr::Range(Some(v), Some(_))] => {
+                        sets.push((c.field, ops::convert(v.clone(), sty)?))
+                    }
+                    _ => return refuse("a FlowFilter that is not one value or a closed range"),
+                }
+            } else if pf.stored {
+                sets.push((c.field, ops::convert(rec.borrow().fields[*q].clone(), sty)?));
+            } else {
+                return refuse("a where-condition on a FlowField");
+            }
+        }
+        let current = {
+            self.check_calc_field(table, pos)?;
+            self.calc_value(rec, pos, &mut Vec::new())?
+        };
+        let (Value::Decimal(cur), Value::Decimal(target)) = (&current, &new) else {
+            return refuse("a sum that is not a Decimal");
+        };
+        let diff = *target - *cur;
+        // No row when the value is the sum already (DiFwWriteTests.al:816 `p1 same src`).
+        if !diff.is_zero() {
+            let Some(at) = calc.field else {
+                return refuse("a sum without a field");
+            };
+            let cx = self.cx_for(rec, &src_t)?;
+            let key = src_t.keys[0][0];
+            let last = self
+                .store
+                .next(
+                    &cx,
+                    &src_t,
+                    &Scan {
+                        key: 0,
+                        filters: &[],
+                        ascending: false,
+                        after: None,
+                    },
+                )
+                .map_err(|e| Signal::Unsupported(format!("store error {e}")))?;
+            // The next entry number after the last row (DiFwWriteTests.al:812 `101` after `100`); an empty table is not pinned.
+            let Some(Value::Integer(last)) = last.map(|r| r[key].clone()) else {
+                return refuse("an empty source table");
+            };
+            let Value::Record(row) = self.default_value(&RtType::Record(calc.table as u32, false)) else {
+                return refuse("a source record");
+            };
+            {
+                let mut r = row.borrow_mut();
+                r.fields[key] = Value::Integer(last + 1);
+                for (p, v) in sets {
+                    r.fields[p] = v;
+                }
+                r.fields[at] = ops::convert(Value::Decimal(diff), &src_t.fields[at].ty)?;
+            }
+            self.record_op(RecordOp::Insert, &row, &mut [Value::Boolean(true)])?;
+        }
+        rec.borrow_mut().fields[pos] = new;
+        Ok(())
+    }
+
     /// Calculates the FlowField at `pos` of `rec` from the table as it is now.
     /// Whether the source table holds a row for the FlowField of `rec`, under the formula's filters. A sum, average, min or max
     /// over no row is NULL in SQL and `CalcFields` shows 0; a query that averages, takes the minimum or the maximum of such a

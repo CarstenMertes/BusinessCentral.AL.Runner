@@ -34,7 +34,11 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
     use RtType as T;
     // A column a platform row leaves unknown cannot be read, so it cannot be converted either (TransferFields, a field assigned
     // from it).
+    // An unknown event argument passed on to an unbounded Text parameter is not read (see `Value::Unknown`).
     if let Value::Unknown(why) = &v {
+        if matches!(t, T::Text(None)) {
+            return Ok(v);
+        }
         return Err(Signal::Unsupported(why.to_string()));
     }
     // The conversions between the plain numbers that cannot fail, without the Decimal detour.

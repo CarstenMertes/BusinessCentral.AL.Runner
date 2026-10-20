@@ -1349,6 +1349,7 @@ impl Session {
                 .is_some_and(|(o, _)| *o == t.object as usize)
         {
             let (_, e) = self.tx.deferred_insert.take().expect("checked");
+            self.tx.deferred_raised += 1;
             return Err(Signal::Error(Box::new(e)));
         }
         if let Some(schema) = self.engine.program.objects[t.object as usize]

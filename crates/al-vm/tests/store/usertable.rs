@@ -268,3 +268,57 @@ fn deleting_the_only_super_user_is_refused_on_saas() {
     );
     assert_eq!(text(r), "ok");
 }
+
+fn error_with_code(r: Result<Value, Signal>) -> (String, String) {
+    match r {
+        Err(Signal::Error(e)) => (e.message, e.code),
+        other => panic!("expected an AL error, got {other:?}"),
+    }
+}
+
+/// access-control/lt-av-user-insert/AvUserInsertErrors.al:45-120: the full texts and codes. A used Insert result still
+/// raises the name error.
+#[test]
+fn the_user_trigger_errors_carry_their_full_texts_and_codes() {
+    let r = run(
+        "U.Init(); U.\"User Security ID\" := CreateGuid(); U.\"User Name\" := 'N'; \
+         U.\"Authentication Email\" := 'ltav.no.at.example.com'; U.Insert(true); exit('inserted');",
+    );
+    assert_eq!(
+        error_with_code(r),
+        (
+            "You must specify a valid email address.".into(),
+            "CannotSpecifyAuthenticationEmail".into()
+        )
+    );
+    let r = run(
+        "NewUser(U, 'ltav.taken@example.com'); V.Init(); V.\"User Security ID\" := CreateGuid(); V.\"User Name\" := 'N2'; \
+         V.\"Authentication Email\" := 'ltav.taken@example.com'; V.Insert(true); exit('inserted');",
+    );
+    assert_eq!(
+        error_with_code(r),
+        (
+            "The specified authentication email address 'ltav.taken@example.com' is already being used by another user. You must specify a unique email address.".into(),
+            "UserTableAuthEmailMustBeUnique".into()
+        )
+    );
+    let r = run("NewUser(U, ''); NewUser(V, ''); V.\"User Name\" := U.\"User Name\"; V.Modify(true); exit('x');");
+    assert_eq!(
+        error_with_code(r),
+        (
+            "The user name must be unique.".into(),
+            "UserTableUserNameMustBeUnique".into()
+        )
+    );
+    let r = run(
+        "NewUser(U, ''); V.Init(); V.\"User Security ID\" := CreateGuid(); V.\"User Name\" := U.\"User Name\"; \
+         if V.Insert(true) then exit('true'); exit('false');",
+    );
+    assert_eq!(
+        error_with_code(r),
+        (
+            "The user name must be unique.".into(),
+            "UserTableUserNameMustBeUnique".into()
+        )
+    );
+}

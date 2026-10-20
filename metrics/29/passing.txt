@@ -5302,7 +5302,6 @@
 68569 ValueArray_SmallerAndLargerArgument
 68569 VarArray_LargerArgument
 68569 VarArray_SmallerArgument_Length
-68571 ExportStream_OfAnImportedPicture
 68571 ImportStream_ReturnValueAndMediaId
 68571 ImportStream_SecondImportIntoTheSameField
 68600 JoinFilterElement_FilterSet_AggregatesOnlyRowsInRange
@@ -13028,7 +13027,6 @@
 80006 AT_GetInteger_CodeKey_RowExists
 80006 AT_GetInteger_CodeKey_RowMissing_Bare
 80006 AT_GetInteger_CodeKey_RowMissing_ReturnValueUsed
-80007 AT_TimeZone_Numbering_Probe
 80011 AT_FieldAttribute_EmptyField_Export
 80150 Array_CopyArray_OneDimIntoRow
 80150 BigInteger_IntoOption_LackingOrdinal
@@ -13637,7 +13635,6 @@
 85780 Item46_ArrayGetPastEnd_BooleanForm
 85780 Item48_AddLabelAndAppendLine_WriteTo
 85841 Item62_XmlEncodingHeaderInText
-85841 Item63_MediaAfterChangeCompany
 85841 Item72_Base64OddInput
 85901 WriteThenWriteText_ReadTextAndRead
 85901 WriteWithLineBreak_ReadTextAndRead

@@ -12999,7 +12999,6 @@
 80006 AT_GetInteger_CodeKey_RowExists
 80006 AT_GetInteger_CodeKey_RowMissing_Bare
 80006 AT_GetInteger_CodeKey_RowMissing_ReturnValueUsed
-80007 AT_TimeZone_Numbering_Probe
 80011 AT_FieldAttribute_EmptyField_Export
 80150 Array_CopyArray_OneDimIntoRow
 80150 Case_OnlyElseBranch

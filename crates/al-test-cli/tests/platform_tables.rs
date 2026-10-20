@@ -709,6 +709,38 @@ codeunit 50000 "T" { Subtype = Test;
     passes(&o, "Rows");
 }
 
+/// A tableextension `modify(..) { TableRelation }` on a field whose base relation is unconditional: the Field row keeps
+/// the base's table when the extension adds an unconditional relation (tableextension/TestTableExtFieldTableRelation.al:266)
+/// or a conditional one with an else arm (:532). An extension relation without an else arm is not pinned: refused.
+/// A conditional base relation reads 0 (:368, :409, :450, :491).
+#[test]
+fn field_row_of_an_unconditional_base_relation_modified_by_an_extension() {
+    let o = outcomes(
+        r#"table 50001 "A" { fields { field(1; Code; Code[20]) { } } keys { key(PK; Code) { Clustered = true; } } }
+table 50002 "B" { fields { field(1; Code; Code[20]) { } } keys { key(PK; Code) { Clustered = true; } } }
+table 50003 "Base" { fields { field(1; Id; Integer) { } field(2; Kind; Option) { OptionMembers = X,Y,Z; }
+    field(3; Uncond; Code[20]) { TableRelation = A; } field(4; Else; Code[20]) { TableRelation = A; } field(5; NoElse; Code[20]) { TableRelation = A; }
+    field(6; CondBase; Code[20]) { TableRelation = if (Kind = const(X)) A; } }
+  keys { key(PK; Id) { Clustered = true; } } }
+tableextension 50004 "Ext" extends "Base" { fields { modify(Uncond) { TableRelation = B; }
+    modify(Else) { TableRelation = if (Kind = const(Y)) B else B; } modify(NoElse) { TableRelation = if (Kind = const(Y)) B; } modify(CondBase) { TableRelation = B; } } }
+codeunit 50000 "T" { Subtype = Test;
+  [Test] procedure Uncond() var F: Record "Field"; begin F.Get(50003, 3); if (F.RelationTableNo <> 50001) or (F.RelationFieldNo <> 1) then Error('uncond %1', F.RelationTableNo); end;
+  [Test] procedure ElseArm() var F: Record "Field"; begin F.Get(50003, 4); if F.RelationTableNo <> 50001 then Error('else %1', F.RelationTableNo); end;
+  [Test] procedure NoElse() var F: Record "Field"; begin F.Get(50003, 5); if F.RelationTableNo <> 50001 then Error('noelse %1', F.RelationTableNo); end;
+  [Test] procedure CondBase() var F: Record "Field"; begin F.Get(50003, 6); if (F.RelationTableNo <> 0) or (F.RelationFieldNo <> 0) then Error('condbase %1', F.RelationTableNo); end; }"#,
+    );
+    passes(&o, "Uncond");
+    passes(&o, "ElseArm");
+    assert!(
+        not_run(&o, "NoElse").contains("TableRelation"),
+        "{:?}",
+        not_run(&o, "NoElse")
+    );
+    // A conditional base relation reads 0 whatever the extension adds (:368, :409, :450, :491).
+    passes(&o, "CondBase");
+}
+
 /// The code coverage tables hold nothing until a recording starts; after one they hold what ran
 /// (codeunit/TestCodeCoverageTable.al, TestCodeCoveragePerTest.al). `Line No.` is a source line.
 #[test]

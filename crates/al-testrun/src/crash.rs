@@ -227,7 +227,7 @@ mod tests {
             ("abort", libc::SIGABRT, "SIGABRT"),
         ] {
             let (status, stderr) = crash(mode);
-            assert_eq!(status.signal(), Some(sig), "{mode}: {status:?}\n{stderr}");
+            assert_eq!(status.signal(), Some(sig), "{mode}: {status}\n{stderr}");
             assert!(
                 stderr.contains(&format!("crashed ({name})")) && stderr.contains("codeunit 134 test PostInvoiceTwice"),
                 "{mode}: {stderr}"
@@ -239,7 +239,7 @@ mod tests {
     #[test]
     fn a_stack_overflow_is_still_named() {
         let (status, stderr) = crash("overflow");
-        assert_eq!(status.signal(), Some(libc::SIGABRT), "{status:?}\n{stderr}");
+        assert_eq!(status.signal(), Some(libc::SIGABRT), "{status}\n{stderr}");
         assert!(stderr.contains("has overflowed its stack"), "{stderr}");
         assert!(stderr.contains("codeunit 134 test PostInvoiceTwice"), "{stderr}");
     }

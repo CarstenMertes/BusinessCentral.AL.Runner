@@ -368,6 +368,37 @@ impl Lowerer<'_> {
         out
     }
 
+    /// The routine that evaluates field `f`'s `CaptionClass` expression: of the object that declares the field, or of the
+    /// last of the table's `extensions` whose `modify` block sets one.
+    fn field_caption_class(
+        &self,
+        oi: usize,
+        f: &crate::members::FieldInfo,
+        extensions: &[usize],
+        routine_at: &RoutineAt,
+    ) -> Option<(usize, usize)> {
+        let declared = f.declared_in.unwrap_or(oi);
+        let mut found = None;
+        for o in std::iter::once(declared).chain(extensions.iter().copied().filter(|&e| e != declared)) {
+            if !self.ws.usable(o) {
+                continue;
+            }
+            let obj = self.ws.object_ast(o);
+            for (field, name, _) in crate::pages::field_caption_class_routines(&obj) {
+                if !field.eq_ignore_ascii_case(&f.name) {
+                    continue;
+                }
+                if let Some(r) = obj.routines().find(|r| r.name() == name) {
+                    let offset: usize = r.syntax().text_range().start().into();
+                    if let Some(r) = routine_at.get(&(o, offset)) {
+                        found = Some((o, r));
+                    }
+                }
+            }
+        }
+        found
+    }
+
     /// What a field's `TableRelation` gives the runtime: the arms, the arms of a relation with filter
     /// conditions, and the metadata of a relation the runtime does not understand. They read the properties of the
     /// field as the table and its extensions leave them (a `modify` block can change `TableRelation`).
@@ -461,6 +492,7 @@ impl Lowerer<'_> {
                         (Some(o), Some(off)) => routine_at.get(&(o, off)).map(|r| (o, r)),
                         _ => None,
                     },
+                    caption_class: self.field_caption_class(oi, f, &extensions, routine_at),
                     flow_filter: f.class == crate::members::FieldClass::FlowFilter,
                     calc,
                     calc_refusal: refusal,

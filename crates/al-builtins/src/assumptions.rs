@@ -481,6 +481,12 @@ registry! {
         tests: "Microsoft tests that read ToString or Format of a last-error exception.",
         probe: "Format(GetLastErrorObject()) after Error('x') in a codeunit run from a test: every line,. Asked in corpus #652.",
     },
+    FieldCaptionClassExpressionPerRead => {
+        id: "field-caption-class-expression-per-read",
+        assumed: "A table field's CaptionClass expression runs once each time its caption is read (FieldCaption, a FieldRef's Caption, a page control over the field), with the record that reads it as Rec, its current values and its table globals; what the expression changes stays changed. The corpus pins the result of one read (pageext/lt-page-ext-properties/TableExtCaptionClass.al:124-149), not how often or with which record the expression runs.",
+        tests: "Microsoft tests that read the caption of Sales Line, Purchase Line and their archive and history tables' \"No.\" (CaptionClass = GetCaptionClass(FieldNo(\"No.\"))), about 2100 tests of Tests-ERM and 160 of Tests-Bank in the 2026-10-20 measurement.",
+        probe: "A table field whose CaptionClass calls a procedure that counts its calls in a SingleInstance codeunit and returns '3,' + Format(Rec.Id) + Format(count): read FieldCaption twice on one record, once on a second record with another Id, and the page control caption over the field; read the count after each.",
+    },
     RunnerPermissionSetsGrantAll => {
         id: "runner-permission-sets-grant-all",
         assumed: "The permission sets BC's test runner assigns before each test method whose TestPermissions is not Disabled (codeunit 130302 \"Set State Test Run\": All Objects, D365 Full Access, TEST TABLES, D365 BASIC, LOCAL through Permissions Mock) grant every access and every permission answer the test then makes, as the unrestricted session does here (permissions are not enforced, ADR-027 owner decision 2). On BC they narrow the session (permissions/TestPermissionsMockEnforcement.al:28-47).",

@@ -603,7 +603,14 @@ impl Session {
             return unsupported("the caption of a Count column without a Caption property (not pinned)");
         };
         let t = self.engine.tables[def.items[c.item].table].clone().expect("table");
-        self.field_caption_checked(&t, field)
+        match self.field_caption_written(&t, field)? {
+            Ok(caption) => Ok(caption),
+            Err(expr) => unsupported(format!(
+                "the caption of query column {} whose field's CaptionClass is the expression `{}` (not pinned)",
+                c.name,
+                expr.trim()
+            )),
+        }
     }
 
     /// The filters in the order `GetFilters` prints them.

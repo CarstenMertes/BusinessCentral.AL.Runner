@@ -629,6 +629,7 @@ fn walk_field<V: RefVisitor>(f: &mut Field, v: &mut V) {
         ext_before_validate,
         ext_after_validate,
         on_lookup,
+        caption_class,
         properties: _,
         relation_arms,
         relation_meta,
@@ -652,6 +653,9 @@ fn walk_field<V: RefVisitor>(f: &mut Field, v: &mut V) {
         pair(v, p);
     }
     if let Some(p) = on_lookup {
+        pair(v, p);
+    }
+    if let Some(p) = caption_class {
         pair(v, p);
     }
     for a in relation_arms.iter_mut().chain(relation_runtime.iter_mut()) {

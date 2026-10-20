@@ -519,6 +519,10 @@ pub struct Session {
     pub tx_model: TxModel,
     /// Whether a test codeunit is executing (a test codeunit cannot be run from one).
     pub in_test_codeunit: bool,
+    /// The test runner's step that assigns the permission sets of a test method runs (codeunit 130302 "Set State Test
+    /// Run", al-testrun `runner_reset.rs`): `PermissionTestHelper.AddEffectivePermissionSet` runs there on the assumption
+    /// `runner-permission-sets-grant-all` instead of refusing.
+    pub runner_permission_step: bool,
     /// The object index of the test codeunit being run (set by the test runner).
     pub test_object: Option<usize>,
     /// The `TestHttpRequestPolicy` of the running test codeunit (`None`: the property is absent).
@@ -727,6 +731,7 @@ impl Session {
             default_table_connection: Default::default(),
             tx_model: TxModel::default(),
             in_test_codeunit: false,
+            runner_permission_step: false,
             test_object: None,
             http_policy: None,
             scratch_messages: None,
@@ -784,6 +789,7 @@ impl Session {
                 var_origins: Vec::new(),
                 next_aliases: Vec::new(),
                 next_var_lens: Vec::new(),
+                publisher_var_lens: Vec::new(),
                 unpinned_event_depth: 0,
                 skip_dependency_subscribers: false,
                 global_setups: Default::default(),

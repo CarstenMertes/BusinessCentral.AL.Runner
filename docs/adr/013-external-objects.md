@@ -1378,8 +1378,9 @@ Around each test method (not the test codeunit's OnRun) it runs code that no tes
 
 130301 and 130302 are in Tests-TestLibraries, 131006 in Permissions Mock, 132553 in Prevent Metadata Updates. 130301 runs
 `LibraryRandom.SetSeed(1)` (so every test method starts from `Randomize(1)`), starts the permissions mock with no set and
-clears the temporary notification context. 130302 narrows the session to "D365 Full Access", so a test whose TestPermissions
-is not Disabled is refused when 130302 is loaded (permissions are not enforced, ADR-027).
+clears the temporary notification context. 130302 narrows the session to "D365 Full Access"; permissions are not enforced
+(ADR-027), so a test whose TestPermissions is not Disabled runs on an assumption when 130302 is loaded (decided
+2026-10-20, below).
 
 **As built.** `al-testrun/src/runtime/runner_reset.rs` does steps 1, 2 and 4 in this order: our runner replaces the Test
 Runner app, as it already did for ClearLastError and ApplicationArea. Each codeunit is Microsoft's own code from the
@@ -1408,6 +1409,17 @@ session of its own.
   would need its suite tables and the event with a `Test Method Line`; the steps are short and cited line by line.
 - The order is the source's: 131006 before ClearLastError and ApplicationArea, then 130301, 130302, 132553; 131006 again
   after the method's transaction ended.
+
+### Decided without owner review (2026-10-20, branch `lane-ms-regression`)
+
+- 130302 no longer refuses the test. Its `PermissionTestHelper.AddEffectivePermissionSet` calls (All Objects, D365 Full
+  Access, TEST TABLES, D365 BASIC, LOCAL through Permissions Mock) run on the registered assumption
+  `runner-permission-sets-grant-all`: the sets grant all the test does, as the unrestricted session does here (ADR-027
+  owner decision 2, "all permissions granted in 3.0"). Every test that passes after the step is a flagged pass. The
+  refusal stopped about 6500 Microsoft tests (5 % of the plain 27.5 run on 2026-10-20). A test that assigns a permission
+  set itself (`Library - Lower Permissions`.SetO365Basic and the like) is still refused when the call runs: its sets are
+  narrower and the test may expect a denial. Reviewer: if ADR-027 decision 2 is meant to cover the runner's sets, drop
+  the mark and the passes become clean.
 
 ## Amendment 2026-10-20 (owner decision, branch `dep-resolve`): older Microsoft packages in `.alpackages` give way to the feed
 

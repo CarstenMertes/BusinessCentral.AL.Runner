@@ -241,10 +241,10 @@ fn max_str_len_of_a_var_parameter_is_the_length_of_the_callers_variable() {
     );
 }
 
+// corpus text/lt-text-functions/MaxStrLen.Codeunit.al:146-170, PYC_MaxStrLen_VarParameterHops (`two hops text30` = 30).
 #[test]
-fn max_str_len_of_a_var_parameter_handed_on_from_another_var_parameter_is_refused() {
-    let r = run_in(MAXSTRLEN, "MS", "Chained");
-    assert!(matches!(r, Err(Signal::Unsupported(_))), "{r:?}");
+fn max_str_len_of_a_var_parameter_handed_on_from_another_var_parameter_is_the_first_callers_length() {
+    assert_eq!(text(run_in(MAXSTRLEN, "MS", "Chained")), "30");
 }
 
 const CONTINUE_ELSE: &str = r#"

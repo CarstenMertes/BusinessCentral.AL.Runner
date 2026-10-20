@@ -494,7 +494,11 @@ impl Session {
         }
         let first = forward[0].clone();
         rec.borrow_mut().fields = first.stored.clone();
-        self.populate_current(st)?;
+        // A view of one row: nothing above it, so the row is not read again before `=` (PnF06FindListMoves.al:348
+        // PW_FindList_Descending_1Rows `F(=><);R1;N(1);N(-1);F(=);R1;C`; two rows read it again, :362).
+        if !above.is_empty() {
+            self.populate_current(st)?;
+        }
         self.nav_find(st, "=")?;
         above.reverse();
         above.extend(forward);
@@ -519,7 +523,9 @@ impl Session {
     /// `First` on a descending find list whose window was read up from its last row (see `read_rows_up_from_the_last`) and
     /// holds a full block: the client reads the top row it holds again, then asks OnNextRecord(-1) and reads each row above until
     /// it answers 0, asks OnFindRecord(`=`) for the top row and reads it again (misc/lt-probes-needed-6/PnF06FindListMoves.al:318
-    /// FindList_Descending_25Rows `desc25_first` = `R21;N(-1);R22;...;R25;N(-1);F(=);R25;C`). A second full block is refused.
+    /// FindList_Descending_25Rows `desc25_first` = `R21;N(-1);R22;...;R25;N(-1);F(=);R25;C`). When there is no row above, the top
+    /// row is read once more before `=` (:404 PW_FindList_Descending_21Rows `desc21_first` = `R21;N(-1);R21;F(=);R21;C`). A second
+    /// full block is refused.
     fn first_above_the_window(&mut self, st: &St) -> Result<Option<bool>, Signal> {
         let before = self.xrec_before_move(st);
         let rec = self.page_rec(st);
@@ -541,6 +547,9 @@ impl Session {
                     "First on a descending list with a second full block of rows above the window (not pinned)",
                 );
             }
+        }
+        if new_rows.is_empty() {
+            self.populate_current(st)?;
         }
         new_rows.reverse();
         {
@@ -970,6 +979,17 @@ impl Session {
             }
             if how == PageMethod::First && !st.borrow().window_whole {
                 return self.first_above_the_window(st);
+            }
+            // First on the top row of a view the client holds whole reads nothing either (PnF06FindListMoves.al:362
+            // PW_FindList_Descending_2Rows `desc2_first` empty, after Previous landed on the top row).
+            let at_first = st.borrow().window.first().is_some_and(|w| Self::same_key(&w.key, &key));
+            if how == PageMethod::First && at_first {
+                return Ok(Some(true));
+            }
+            // Previous on a view of one row asks nothing (PnF06FindListMoves.al:348 PW_FindList_Descending_1Rows `desc1_prev`
+            // empty); with more rows above the cursor's top row it is not pinned and goes on as before.
+            if how == PageMethod::Previous && at_first && st.borrow().window.len() == 1 {
+                return Ok(Some(false));
             }
         }
         if how == PageMethod::Last && st.borrow().window.len() == Self::WINDOW {

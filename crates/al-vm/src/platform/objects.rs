@@ -450,8 +450,9 @@ pub(super) fn all_obj_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
         },
     );
     // BC's test environment has the codeunits of Microsoft's Test Runner app, 130450-130455 (permissions/
-    // lt-ba-testpermissions/BaTpEnv.al:26-28). The runtime does not load that app (ADR-013: it is compiled from source or
-    // not at all): a read that may land on one of them is refused.
+    // lt-ba-testpermissions/BaTpEnv.al:26-28). Every run loads that app from source (ADR-013, "The test environment's
+    // apps"), and its objects are rows like any other app's. A run that found no package for it (offline, no feed) has
+    // no such codeunit: a read that may land on one of them is refused.
     for id in TEST_RUNNER_CODEUNITS {
         let present = c
             .objects
@@ -464,7 +465,7 @@ pub(super) fn all_obj_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
             out.push(Entry::poisoned(
                 k,
                 format!(
-                    "AllObj row of codeunit {id}: BC's test environment has the Test Runner app's codeunits 130450-130455, which the runtime does not load (owner decision pending: compile the Test Runner app or refuse)"
+                    "AllObj row of codeunit {id}: BC's test environment has the Test Runner app's codeunits 130450-130455, and this run found no package of Microsoft's Test Runner app"
                 ),
             ));
         }

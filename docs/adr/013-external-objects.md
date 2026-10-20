@@ -1441,3 +1441,40 @@ higher, and the resolver failed with a version conflict.
 ### Decided without owner review (2026-10-20)
 - The rule also applies against the chosen build when `--bc-version` is not given, but a build is still taken from the
   feed: the run loads that build's Microsoft apps, so an older test library would conflict the same way.
+
+## The test environment's apps: Microsoft's Test Runner (2026-10-20, branch `lane-test-runner-source`)
+
+**What BC has.** BC runs tests through Microsoft's Test Runner app, so a BC test environment has it installed although no
+test app declares it. The corpus pins its codeunits 130450-130455 in AllObj on BC 27, 28 and 29, and pins that
+Tests-TestLibraries (130301, 130302, 130440), Permission Test Catalog (132218) and Prevent Metadata Updates (132553) are not
+installed there (`permissions/lt-ba-testpermissions/BaTpEnv.al:28`). Microsoft's own recipe builds and installs the Test
+Runner with the test apps (BCApps `build/projects/Apps W1/.AL-Go/settings.json:120`).
+
+**As built.** `al-testrun/src/deps.rs` (`with_test_environment`) adds the Test Runner app (id
+`23de40a6-dfe8-4f80-80db-d70f83ce8caf`) to the project that the dependency resolution works for, as an optional root with
+no minimum version, unless the project or a workspace app already declares it or is it. It is found like a declared
+dependency: the project's `.alpackages`, `--deps`, then the artifact feed when a build is chosen anyway
+(`TestFramework/TestRunner/Test Runner.Source.zip`). It is compiled from its source like every dependency app (hard rule 7),
+demand-driven. Both the corpus job and `alrunner test` go through this function.
+
+- **Not visible by name.** An app sees only the apps it declares (`al_sema::workspace`, `visible_from`), so a test app that
+  names `Codeunit::"Test Runner - Mgt"` without declaring the Test Runner still does not compile, as on BC.
+- **What becomes observable.** Its objects are AllObj and AllObjWithCaption rows, the app is a row of the app tables (NAV App
+  Installed App, Published Application, Installed Application), and its profile `TestRoleCenter` is an All Profile row. BC's
+  environment has all of these, because the app is installed there.
+- **Unchanged.** Our runner still does the Test Runner's steps around each test natively ("The test runner's steps around
+  each test method" above); the app's own codeunits are not what runs the tests. The six runner frames of
+  `SessionInformation.Callstack` now carry the loaded app's version (they did when an app declared it already); no corpus
+  test reads that version.
+- **No package for it.** A run that finds none (offline, `--no-download` with nothing on disk) goes on without it and says
+  so in the verbose log; AllObj reads that may land on 130450-130455 then refuse, as before.
+
+### Decided without owner review (2026-10-20)
+
+- Only the Test Runner is added. The other test framework apps are installed in some environments and not in others
+  (Prevent Metadata Updates: in Microsoft's recipe, settings.json:121, not in the corpus environment, BaTpEnv.al:28), and
+  whether the corpus environment has Library Assert and Library Variable Storage is not pinned. Adding them would be a
+  guess; they come only as declared dependencies.
+- This is not a seam change: no interface changes (`Dependencies`, `AppSource`, `Request` stay as they are). The optional
+  root is the mechanism the platform's `System` and the `Application` floor already use. Reviewer: if the owner sees an app
+  that no project declares as a change of decision 2, this section becomes an amendment to accept.

@@ -8,6 +8,9 @@ use al_deps::select::MissingPolicy;
 use al_sema::workspace::AppSource;
 use std::path::{Path, PathBuf};
 
+/// Microsoft's Test Runner app (`TestFramework/TestRunner/Test Runner.Source.zip`).
+pub const TEST_RUNNER_APP_ID: &str = "23de40a6-dfe8-4f80-80db-d70f83ce8caf";
+
 pub struct Dependencies {
     /// Dependency apps in dependency order.
     pub apps: Vec<AppSource>,
@@ -93,6 +96,32 @@ pub fn load_with(
     load_project(&project, &workspace_apps, &search_dirs, provision, None, false)
 }
 
+/// `project` with the apps BC's test environment has installed although no test app declares them: Microsoft's Test
+/// Runner app, whose codeunits run every test (corpus permissions/lt-ba-testpermissions/BaTpEnv.al:28: AllObj has
+/// 130450-130455 on BC 27, 28 and 29; Microsoft's own recipe builds it with the test apps, BCApps
+/// `build/projects/Apps W1/.AL-Go/settings.json:120`). It is an optional root, looked up like a declared dependency (the
+/// project's packages, `--deps`, the artifact feed when a build is chosen anyway); a run that finds no package for it
+/// goes on without it. Loading it does not make it visible: an app sees only what it declares (`al_sema::workspace`).
+/// The other apps of the environment are not pinned (Tests-TestLibraries and Prevent Metadata Updates are absent from
+/// the corpus environment, BaTpEnv.al:28), so nothing else is added.
+fn with_test_environment(project: &AppJson, workspace_apps: &[WorkspaceApp]) -> AppJson {
+    let mut project = project.clone();
+    let known = |id: &str| id.eq_ignore_ascii_case(TEST_RUNNER_APP_ID);
+    let declared = known(&project.id)
+        || project.dependencies.iter().any(|d| known(&d.id))
+        || workspace_apps.iter().any(|w| known(&w.json.id));
+    if !declared {
+        project.dependencies.push(al_deps::select::DepDecl {
+            id: TEST_RUNNER_APP_ID.into(),
+            name: "Test Runner".into(),
+            publisher: "Microsoft".into(),
+            min: Default::default(),
+            optional: true,
+        });
+    }
+    project
+}
+
 /// Resolves and reads the dependencies of `project`. `workspace_apps` are built from source by the
 /// caller and satisfy their own dependents. `search` is the package search list in order: each
 /// entry a directory of packages, a package file or an app folder (`al_deps::load::scan_path`).
@@ -122,6 +151,7 @@ pub fn load_project_with(
     implied: bool,
     lazy_sources: bool,
 ) -> Result<Dependencies, String> {
+    let project = &with_test_environment(project, workspace_apps);
     let req = Request {
         project,
         workspace_apps,
@@ -149,7 +179,16 @@ pub fn load_project_with(
             (got.loaded, got.artifact)
         }
     };
-    log.extend(loaded.notes.iter().map(|n| format!("dependency note: {n}")));
+    // The Test Runner app is the environment's, not the project's: no package for it is not a problem of the
+    // project's dependencies, only a line for the verbose log.
+    log.extend(loaded.notes.iter().map(|n| {
+        if n.starts_with("optional dependency `Test Runner` ") {
+            "test environment: Microsoft's Test Runner app was not found; AllObj reads of its codeunits are refused"
+                .into()
+        } else {
+            format!("dependency note: {n}")
+        }
+    }));
     for s in &loaded.skipped {
         log.push(format!("dependency skipped: {s}"));
     }
@@ -189,4 +228,74 @@ pub fn load_project_with(
         application_aggregate,
         lazy,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn app_folder(root: &Path, name: &str, json: &str, files: &[(&str, &str)]) -> PathBuf {
+        let dir = root.join(name);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("app.json"), json).unwrap();
+        for (f, text) in files {
+            std::fs::write(dir.join(f), text).unwrap();
+        }
+        dir
+    }
+
+    /// BC's test environment has Microsoft's Test Runner app installed although no test app declares it
+    /// (corpus permissions/lt-ba-testpermissions/BaTpEnv.al:28: AllObj has codeunits 130450-130455). The run loads it
+    /// from the same search list as the declared dependencies.
+    #[test]
+    fn the_test_runner_app_is_loaded_although_the_project_does_not_declare_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let runner = app_folder(
+            tmp.path(),
+            "TestRunner",
+            &format!(
+                r#"{{"id":"{TEST_RUNNER_APP_ID}","name":"Test Runner","publisher":"Microsoft","version":"27.5.1.2","dependencies":[]}}"#
+            ),
+            &[("Mgt.Codeunit.al", "codeunit 130454 \"Test Runner - Mgt\" { }")],
+        );
+        let project =
+            parse_app_json(r#"{"id":"p","name":"P","publisher":"Me","version":"1.0.0.0","dependencies":[]}"#).unwrap();
+        let deps = load_project(&project, &[], &[runner], None, None, false).unwrap();
+        assert_eq!(deps.summary, ["Test Runner 27.5.1.2"], "{:?}", deps.log);
+    }
+
+    /// An app that declares the Test Runner (or is it) gets it once, as before.
+    #[test]
+    fn a_project_that_declares_the_test_runner_gets_it_once() {
+        let tmp = tempfile::tempdir().unwrap();
+        let runner = app_folder(
+            tmp.path(),
+            "TestRunner",
+            &format!(
+                r#"{{"id":"{TEST_RUNNER_APP_ID}","name":"Test Runner","publisher":"Microsoft","version":"27.5.1.2","dependencies":[]}}"#
+            ),
+            &[("Mgt.Codeunit.al", "codeunit 130454 \"Test Runner - Mgt\" { }")],
+        );
+        let project = parse_app_json(&format!(
+            r#"{{"id":"p","name":"P","publisher":"Me","version":"1.0.0.0","dependencies":[{{"id":"{TEST_RUNNER_APP_ID}","name":"Test Runner","publisher":"Microsoft","version":"27.0.0.0"}}]}}"#
+        ))
+        .unwrap();
+        let deps = load_project(&project, &[], &[runner], None, None, false).unwrap();
+        assert_eq!(deps.summary, ["Test Runner 27.5.1.2"], "{:?}", deps.log);
+    }
+
+    /// Without a package for it the run goes on without it (the AllObj rows of its codeunits stay refused).
+    #[test]
+    fn a_run_without_the_test_runner_package_goes_on_without_it() {
+        let project =
+            parse_app_json(r#"{"id":"p","name":"P","publisher":"Me","version":"1.0.0.0","dependencies":[]}"#).unwrap();
+        let deps = load_project(&project, &[], &[], None, None, false).unwrap();
+        assert!(deps.apps.is_empty(), "{:?}", deps.summary);
+        assert!(
+            deps.log.iter().all(|l| !l.starts_with("dependency note"))
+                && deps.log.iter().any(|l| l.starts_with("test environment:")),
+            "{:?}",
+            deps.log
+        );
+    }
 }

@@ -4,7 +4,7 @@
 //! `cargo test --release -p al-test-cli --test network_deps -- --ignored --nocapture`
 //!
 //! Cold: the build is chosen from the index, the central directory (about 1 MB of a 1.3 GB file)
-//! and three source archives (about 300 KB) are read by range and saved in a fresh cache.
+//! and four source archives (about 300 KB: three test libraries and the Test Runner app) are read by range and saved in a fresh cache.
 //! Warm: the same call with downloading off, served from that cache.
 
 use al_deps::build::{BuildQuery, Origin};
@@ -52,11 +52,16 @@ fn the_corpus_test_libraries_download_cache_and_load_offline() {
     assert_eq!(used.origin, Origin::Published);
     assert_eq!(
         used.fetched.len(),
-        3,
-        "System Application Test Library, Permissions Mock, Any"
+        4,
+        "System Application Test Library, Permissions Mock, Any, and the Test Runner app every run loads (ADR-013, \"The test environment's apps\")"
     );
     let names: Vec<&str> = cold.apps.iter().map(|a| a.name.as_str()).collect();
-    for want in ["System Application Test Library", "Permissions Mock", "Any"] {
+    for want in [
+        "System Application Test Library",
+        "Permissions Mock",
+        "Any",
+        "Test Runner",
+    ] {
         assert!(names.contains(&want), "{want} missing from {names:?}");
     }
 
@@ -72,6 +77,10 @@ fn the_corpus_test_libraries_download_cache_and_load_offline() {
     let used = warm.build.as_ref().unwrap();
     assert_eq!(used.origin, Origin::Cache);
     assert!(used.fetched.is_empty());
+    assert!(
+        warm.apps.iter().any(|a| a.name == "Test Runner"),
+        "the Test Runner app is loaded from the cache offline"
+    );
     assert_eq!(
         warm.apps.iter().map(|a| a.name.clone()).collect::<Vec<_>>(),
         cold.apps.iter().map(|a| a.name.clone()).collect::<Vec<_>>()

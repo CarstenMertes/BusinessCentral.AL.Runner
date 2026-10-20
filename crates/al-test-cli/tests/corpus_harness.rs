@@ -455,14 +455,14 @@ fn all_versions_runs_each_oracle_writes_per_version_files_and_compares() {
     // The known BC 29 differences are gated (ADR-015 3.4), so the runtime passes the same cases on every version, among the
     // cases every oracle has. One difference is known and open (corpus bump 10, backlog): the runtime passes
     // 71500 Get_Uses_Primary_Key_Not_Current_Key on BC 27 only. A new difference would be listed here.
-    // Corpus bump 28 adds four, all new cases, none in a baseline: 72786 BN_With_ImplicitWithInTableNoCodeunit fails on
-    // BC 29 (Record.IsDirty under implicit with, gate RecordIsDirtyFrom29 not consumed); 79926 Byte10 and Byte200 are refused
-    // from BC 28 (the escaped Byte form of TestFieldTypedValueTexts is not built); 81959 BM_CalcFormula_IntegerFilterFromBigInteger
-    // is refused on BC 29 (a BigInteger above the Integer range in an Integer filter).
+    // Corpus bump 28 added four, all new cases, none in a baseline; two remain: 72786 BN_With_ImplicitWithInTableNoCodeunit is
+    // refused on BC 29 (the bare IsDirty() binds Record.IsDirty, which is not built yet); 81959
+    // BM_CalcFormula_IntegerFilterFromBigInteger is refused on BC 29 (a BigInteger above the Integer range in an Integer filter).
+    // 79926 Byte10 and Byte200 pass on every version since branch lane-bump28-failures.
     // Corpus bump 29 adds one, a new case: 84275 Expr_BigIntegerLiteral_Enabled (pages/lt-cc-page-leads/CcPageLeads.al:801) passes
     // from BC 28; on BC 27 real BC fails to compile the dynamic control expression `0L <> Big`, which the runtime does not do
     // (gate ProbedValuesDifferFrom28 not consumed).
-    assert!(out.contains("runtime: 6 case(s) differ between versions"), "{out}");
+    assert!(out.contains("runtime: 4 case(s) differ between versions"), "{out}");
     assert!(out.contains("71500 Get_Uses_Primary_Key_Not_Current_Key: 27"), "{out}");
 }
 

@@ -4733,6 +4733,7 @@
 68039 SetupSubscriberWritesTheAskedTable
 68042 BR_DateFlowFilterWithInitValue
 68042 BR_IntegerConstOnOptionAndEnumFields
+68042 BR_LookupIntoShorterTextFlowField
 68042 BR_TableExtensionConst_HostHasSameNamedOptionField
 68045 Ascending_WholeKey_Ties
 68045 SetAscending_SingleFieldKey
@@ -12941,6 +12942,7 @@
 81956 BM_LongFieldNames_ReadWriteFilter
 81959 BM_CalcFormula_BigIntegerFilterFromInteger
 81959 BM_CalcFormula_IntegerFilterFromBigInteger
+81959 BM_LookupFlowField_ShorterThanSource
 82356 ListElementTypeOverloads_WhichRuns
 82356 SameNamedLabelInOverloads_EachKeepsItsText
 82357 CodeLengthListOverloads_WhichRuns

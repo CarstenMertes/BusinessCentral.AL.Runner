@@ -16207,7 +16207,7 @@
         "code": "AssertError",
         "file": "crates/al-vm/src/exec/run.rs",
         "generic": false,
-        "line": 430,
+        "line": 453,
         "pinned": true,
         "site": "types/TestFormatEvaluateTextContracts.al:228",
         "template": "An error was expected inside an ASSERTERROR statement."
@@ -16216,7 +16216,7 @@
         "code": "AL:InvalidOperation",
         "file": "crates/al-vm/src/exec/run.rs",
         "generic": false,
-        "line": 581,
+        "line": 604,
         "pinned": true,
         "site": "TestDotNetValueKindsContracts.al:312",
         "template": "Collection was modified; enumeration operation may not execute."
@@ -16270,7 +16270,7 @@
         "code": "NotSupportedOperation",
         "file": "crates/al-vm/src/interp.rs",
         "generic": false,
-        "line": 872,
+        "line": 882,
         "pinned": true,
         "site": "misc/lt-cx-odd-leads/CxVariants.al:273",
         "template": "The requested operation is not supported."
@@ -16279,16 +16279,7 @@
         "code": "IndexOutOfBounds",
         "file": "crates/al-vm/src/interp.rs",
         "generic": false,
-        "line": 1114,
-        "pinned": true,
-        "site": "collections/lt-array-rows/ArrayRows.al:185",
-        "template": "Index out of bounds."
-      },
-      {
-        "code": "IndexOutOfBounds",
-        "file": "crates/al-vm/src/interp.rs",
-        "generic": false,
-        "line": 1191,
+        "line": 1124,
         "pinned": true,
         "site": "collections/lt-array-rows/ArrayRows.al:185",
         "template": "Index out of bounds."
@@ -16303,10 +16294,19 @@
         "template": "Index out of bounds."
       },
       {
+        "code": "IndexOutOfBounds",
+        "file": "crates/al-vm/src/interp.rs",
+        "generic": false,
+        "line": 1211,
+        "pinned": true,
+        "site": "collections/lt-array-rows/ArrayRows.al:185",
+        "template": "Index out of bounds."
+      },
+      {
         "code": "StackOverflow",
         "file": "crates/al-vm/src/lib.rs",
         "generic": false,
-        "line": 1163,
+        "line": 1167,
         "pinned": true,
         "site": "record/TestCalcFieldsTruncateUniqueContracts.al:179",
         "template": "There is insufficient memory to execute this function. This can be caused by recursive function calls. Contact your system administrator."
@@ -16360,7 +16360,7 @@
         "code": "RenameArgument",
         "file": "crates/al-vm/src/records.rs",
         "generic": false,
-        "line": 2839,
+        "line": 2846,
         "pinned": true,
         "site": "recordref/lt-refs/RfTWrite.al:223",
         "template": "The number of field arguments does not match the primary key size."
@@ -16405,7 +16405,7 @@
         "code": "IndexOutOfBounds",
         "file": "crates/al-vm/src/refs.rs",
         "generic": false,
-        "line": 877,
+        "line": 886,
         "pinned": true,
         "site": "collections/lt-array-rows/ArrayRows.al:185",
         "template": "Index out of bounds."
@@ -16414,7 +16414,7 @@
         "code": "DB:KeyNotFound",
         "file": "crates/al-vm/src/refs.rs",
         "generic": false,
-        "line": 897,
+        "line": 906,
         "pinned": true,
         "site": "recordref/TestRecordRefKeyIndexSetRecFilterContracts.al:103",
         "template": "The % table does not have an active key at index %."
@@ -16423,7 +16423,7 @@
         "code": "KeyRef.{other}",
         "file": "crates/al-vm/src/refs.rs",
         "generic": false,
-        "line": 992,
+        "line": 1001,
         "pinned": true,
         "site": "collections/lt-array-rows/ArrayRows.al:185",
         "template": "Index out of bounds"
@@ -16432,7 +16432,7 @@
         "code": "NotInitialized",
         "file": "crates/al-vm/src/refs.rs",
         "generic": false,
-        "line": 1012,
+        "line": 1021,
         "pinned": true,
         "site": "misc/lt-probes-needed-4/PnD05_UnassignedFieldRef.al:42",
         "template": "Microsoft.Dynamics.Nav.Runtime.NavFieldRef variable not initialized."

@@ -217,9 +217,26 @@ impl Session {
         if let RtType::Enum(id) = &ty {
             self.note_enum(*id);
         }
+        let enum_list = match &ty {
+            RtType::Enum(id) => self.enum_option_list(st, idx, *id)?.map(|(list, _)| list),
+            _ => None,
+        };
+        if enum_list.is_some() && text.is_empty() {
+            return unsupported(
+                "SetValue of the empty text on an Enum control with an OptionCaption or a caption with a comma (not pinned)",
+            );
+        }
         let enum_engine = engine.clone();
         let by_text = move |id: u32, t: &str| {
             let o = &enum_engine.program.objects[id as usize];
+            // The client's list takes the first entry that matches, its spaces trimmed (` with bonus` for `with bonus`,
+            // misc/lt-cv-odd-leads/CvEnumCaptionComma.al:155-159; ` ` selects position 0 of ' ,c1,,,c4,c5',
+            // handlers/TestPageEnumField_Tests.al:245-246), and the value at that position; an entry past the last value is
+            // refused (`c4`, :240).
+            if let Some(list) = &enum_list {
+                let at = list.iter().position(|x| x.trim().eq_ignore_ascii_case(t))?;
+                return o.enum_values.get(at).map(|(v, _)| *v);
+            }
             // An enum control resolves by caption only; a value without a caption shows its name.
             // The bare member name of a captioned value is rejected, as on a real service tier
             // (handlers/TestPageEnumVariableControl_Tests.al:50-56,86-90,137-140).
@@ -374,7 +391,25 @@ impl Session {
         let parsed = match parsed {
             Ok(v) => v,
             Err(al_builtins::pagefmt::ParseError::Invalid) => {
-                let mut msg = format!("Your entry of '{text}' is not an acceptable value for '{caption}'.");
+                // The message names an entry of up to 19 characters whole (pages/lt-page-run-overloads-testpart/
+                // P106TestFieldAsDateTime.al:61, controls/W2ValueControls.al:456); an Enum entry of 25 keeps its first and last 8 around `...`
+                // (misc/lt-cv-odd-leads/CvEnumCaptionComma.al:151, `Diamond ...th bonus`). Other lengths are not pinned.
+                let n = text.chars().count();
+                let named: String = if n <= 19 {
+                    text.to_string()
+                } else if n == 25 && matches!(ty, RtType::Enum(_)) {
+                    let chars: Vec<char> = text.chars().collect();
+                    format!(
+                        "{}...{}",
+                        chars[..8].iter().collect::<String>(),
+                        chars[n - 8..].iter().collect::<String>()
+                    )
+                } else {
+                    return unsupported(format!(
+                        "a refused entry of {n} characters (how the message shortens it is not pinned)"
+                    ));
+                };
+                let mut msg = format!("Your entry of '{named}' is not an acceptable value for '{caption}'.");
                 // A Date adds how the client reads one (controls/W2ValueControls.al:Date_IsoSpellings and
                 // session/W5WorkDateShorthand.al, BC 27.5 and 29.0); the text holds a CR, a backslash, a CR and
                 // a backslash where one would expect line breaks.
@@ -451,6 +486,47 @@ impl Session {
             }
         }
         let parsed = ops::convert(parsed, &ty)?;
+        // A table field's ValuesAllowed is checked by the client: on a Code[1] field with `'', 'A', 'N'` an entry outside the list,
+        // and also the empty text although '' is listed, is a TestValidation error that lists the values with `;`; `A` is taken
+        // (pages/lt-cd-testpage-leads/CdTestPageLeads.al:396-423, Item56_ValuesAllowedEmpty_SetValueEmptyAfterA,
+        // Item56_ValuesAllowed_SetValueNotAllowed). Validate in code does not check it (:426-444). Pinned for a Text or Code field
+        // of quoted values on a card with a row; an entry that matches only when the case is ignored, or that a Code field
+        // upper-cases, and the empty text on a list without '' are not.
+        if let Some(raw) = self.control_field(st, idx).and_then(|f| {
+            f.properties
+                .iter()
+                .find(|(k, _)| k.eq_ignore_ascii_case("ValuesAllowed"))
+                .map(|(_, v)| v.clone())
+        }) {
+            let values = quoted_list(&raw);
+            let card_row = rec_bound && !no_row && !self.is_list(st);
+            let Some(values) = values.filter(|_| card_row && matches!(ty, RtType::Text(_) | RtType::Code(_))) else {
+                return unsupported(
+                    "SetValue on a field with ValuesAllowed that is not a Text or Code field of quoted values on a card with a row (not pinned)",
+                );
+            };
+            let typed = text.to_string();
+            if matches!(ty, RtType::Code(_)) && typed != typed.to_uppercase() {
+                return unsupported("SetValue of a lower-case entry on a Code field with ValuesAllowed (not pinned)");
+            }
+            let exact = values.contains(&typed);
+            if !(exact && !typed.is_empty()) {
+                if !exact && values.iter().any(|v| v.eq_ignore_ascii_case(&typed)) {
+                    return unsupported(
+                        "SetValue on a field with ValuesAllowed of an entry that differs in case only (not pinned)",
+                    );
+                }
+                if typed.is_empty() && !exact {
+                    return unsupported(
+                        "SetValue of the empty text on a field whose ValuesAllowed does not list '' (not pinned)",
+                    );
+                }
+                return Err(refuse_bound(format!(
+                    "Value '{typed}' is not a valid value. The following values can be used: {}.",
+                    values.join(";")
+                )));
+            }
+        }
         // MinValue / MaxValue are enforced on a control write, not on Rec.Validate (corpus
         // handlers/TestPageFieldMinMaxValue_Tests.al:20-110). A control bound to a variable has
         // its own bounds, with the same texts; a table field's adds the "Select Refresh" suffix
@@ -927,6 +1003,11 @@ impl Session {
                     Some(RtType::Option(names)) => (0..names.len() as i32).collect(),
                     Some(RtType::Enum(id)) => {
                         self.note_enum(id);
+                        if self.enum_option_list(st, idx, id)?.is_some() {
+                            return unsupported(format!(
+                                "TestField.{m} on an Enum control with an OptionCaption or a caption with a comma (not pinned)"
+                            ));
+                        }
                         engine.program.objects[id as usize]
                             .enum_values
                             .iter()
@@ -1074,6 +1155,40 @@ impl Session {
 /// (pages/lt-ah-pages/AhPageTests.al:444-535, GVE_TwoOnOne_*: two refusals on QtyCtl count once and the later text stays,
 /// and report/lt-report-requestpage-query-members/P105RpValid.al:135). Where another control's refusal came in between,
 /// the order the client then keeps is not pinned: refused.
+/// The values of a property such as `ValuesAllowed = '', 'A', 'N'`, unquoted; `None` when one is not a quoted text.
+fn quoted_list(raw: &str) -> Option<Vec<String>> {
+    let mut out = Vec::new();
+    let mut chars = raw.trim().chars().peekable();
+    loop {
+        while chars.peek().is_some_and(|c| c.is_whitespace()) {
+            chars.next();
+        }
+        if chars.next()? != '\'' {
+            return None;
+        }
+        let mut v = String::new();
+        loop {
+            match chars.next()? {
+                '\'' if chars.peek() == Some(&'\'') => {
+                    chars.next();
+                    v.push('\'');
+                }
+                '\'' => break,
+                c => v.push(c),
+            }
+        }
+        out.push(v);
+        while chars.peek().is_some_and(|c| c.is_whitespace()) {
+            chars.next();
+        }
+        match chars.next() {
+            None => return Some(out),
+            Some(',') => {}
+            Some(_) => return None,
+        }
+    }
+}
+
 fn note_refusal(st: &St, idx: usize, text: String) -> Result<(), Signal> {
     let mut s = st.borrow_mut();
     match s.errors.iter().position(|(i, _)| *i == idx) {

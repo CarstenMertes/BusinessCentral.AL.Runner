@@ -349,6 +349,11 @@ fn resolve_request_path(base: &str, path: &str) -> Result<(String, bool), Signal
         return match normalize_uri(path) {
             Ok(u) => Ok((u, false)),
             Err(_) if is_pinned_relative(path) => Ok((path.to_string(), false)),
+            // Another relative path with no base address: whether it reaches the policy, the empty-uri error or the
+            // invalid-url error is not measured (docs/probes-needed.md).
+            Err(false) if !path.is_empty() && !path.contains(':') => unsupported(format!(
+                "HttpClient with the relative request path `{path}` and no base address: which error it raises is not measured (docs/probes-needed.md)"
+            )),
             Err(true) => unsupported(format!(
                 "HttpClient with the request path `{path}` and no base address: whether it is valid is not measured"
             )),
@@ -421,19 +426,10 @@ fn is_pinned_relative(path: &str) -> bool {
     (!word.is_empty() && word.chars().all(|c| c.is_ascii_alphanumeric())) || is_empty_uri_form(path)
 }
 
-/// The no-base-address forms that raise "Invalid URI: The URI is empty." when they reach a handler on BC 29: words joined by
-/// `/` or `.`, and a query alone (AyHttpHandler.al:NoBaseAddress_RelativePaths_1 `a/b`, `a.b`; _2 `?q=1`).
+/// The no-base-address forms that raise "Invalid URI: The URI is empty." when they reach a handler on BC 29, exactly as pinned
+/// (AyHttpHandler.al:NoBaseAddress_RelativePaths_1 `a/b`, `a.b`; _2 `?q=1`). Any other form is not measured.
 pub fn is_empty_uri_form(path: &str) -> bool {
-    let words = |t: &str, sep: char| {
-        t.contains(sep)
-            && t.split(sep)
-                .all(|w| !w.is_empty() && w.chars().all(|c| c.is_ascii_alphanumeric()))
-    };
-    let query = path.strip_prefix('?').is_some_and(|q| {
-        q.split_once('=')
-            .is_some_and(|(k, v)| !k.is_empty() && [k, v].iter().all(|w| w.chars().all(|c| c.is_ascii_alphanumeric())))
-    });
-    words(path, '/') || words(path, '.') || query
+    matches!(path, "a/b" | "a.b" | "?q=1")
 }
 
 fn invalid_url<T>() -> Result<T, Signal> {

@@ -612,3 +612,42 @@ fn a_content_length_after_a_rewrite_of_another_length_is_refused_when_read() {
         "{got:?}"
     );
 }
+
+// Only the pinned no-base-address forms `a/b`, `a.b` and `?q=1` raise the empty-uri error (AyHttpHandler.al:
+// NoBaseAddress_RelativePaths_1 and _2); another form reaching a handler on BC 29 is refused.
+#[test]
+fn an_unpinned_no_base_address_form_reaching_a_handler_is_refused() {
+    for url in ["x/y", "a/b/c", "ab.cd"] {
+        let tests = format!(
+            r#"
+    [Test] [HandlerFunctions('PathHandler')] procedure Other()
+    var Client: HttpClient;
+    begin
+        Check(Path(Client, '{url}'), 'x');
+    end;"#
+        );
+        let got = ay_on("29.0", &tests);
+        assert!(matches!(&got[0].1, Outcome::NotRun(_)), "{url}: {got:?}");
+    }
+}
+
+// GetDotNetType of an AL Enum is pinned for Enum "Sales Document Type" only (lt-bb-dotnet/BbGetDotNetType.al:341): another
+// enum is refused when lowered.
+#[test]
+fn get_dotnet_type_of_an_unpinned_enum_is_refused() {
+    let (ws, l) = compile(
+        r#"codeunit 69400 T { Subtype = Test;
+    [Test] procedure OtherEnum()
+    var T: DotNet LtT; E: Enum "LT Other";
+    begin
+        T := GetDotNetType(E);
+    end;
+}
+enum 69401 "LT Other" { value(0; A) { } }
+dotnet { assembly("mscorlib") { type("System.Type"; LtT) { } } }"#
+            .to_string(),
+    );
+    assert!(ws.diagnostics.is_empty(), "{:?}", ws.diagnostics);
+    let reasons = format!("{:?}", l.unsupported);
+    assert!(reasons.contains("GetDotNetType of an Enum"), "{reasons}");
+}

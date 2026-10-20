@@ -513,8 +513,20 @@ impl Checker<'_> {
             self.raise(e, level);
         }
         match kind {
-            ObjKind::Table => self.activate_table(i, level),
-            ObjKind::TableExtension => {}
+            // A field's CaptionClass expression runs when code reads the field's caption (FieldCaption, a FieldRef's
+            // Caption, a page control over the field): `pages::expand` made it a `__captionclass_N` routine of the table or
+            // table extension that writes it (pageext/lt-page-ext-properties/TableExtCaptionClass.al:56-74).
+            ObjKind::Table => {
+                self.activate_table(i, level);
+                if level >= READ {
+                    self.reach_synthetic(i);
+                }
+            }
+            ObjKind::TableExtension => {
+                if level >= READ {
+                    self.reach_synthetic(i);
+                }
+            }
             // The test client drives a page: any of its routines can run, and so can the
             // operations on its table, so all of them are reached (the call graph the lowering
             // builds for a TestPage assumes the same).

@@ -571,6 +571,22 @@ Refused until a probe pins them, unless the row says otherwise. Code: `crates/al
 | The company address lines 2 to 8 of the BC 29 dataset header (AhDatasetHeader.al:98-151 pins them; the country address format is not built) | REFUSED when Company Information has Address 2, City, Post Code, County or Country/Region Code set. Address alone is written as line 2 (documentation-only: Address is line 2 in every pinned variant, AhDatasetHeader.al:120-124, but Address alone is not observed) | Address alone, and the address format built for the rest |
 | The Xml dataset of `LT PnB Rep` on BC 29 has 113 lines, the runtime writes 107 (PnBReportSaveAs.al:138, :179, Header_RawBytes, Header_Lines, SecondSaveAs_OnOneVariable); the header elements and the first 24 data lines match | fails | A full dump of that dataset on BC 29, line by line |
 
+## Record.IsDirty (lane-record-isdirty, 2026-10-20)
+
+Pinned by lt-ac/ACRecordIsDirty.al (codeunit 77504, BC 29). Everything below is refused. Code: `crates/al-vm/src/isdirty.rs`.
+
+| What is not pinned | Today | Probe wanted |
+|---|---|---|
+| IsDirty on a temporary record | REFUSED | The 77504 sequences on a `temporary` variable |
+| IsDirty after Find('-'), FindSet or Next (FindFirst and FindLast are pinned) | REFUSED | FindSet, change a field, Next, IsDirty; and Find('-') then IsDirty |
+| IsDirty after Insert(true), Modify(true), Delete(true), or a write whose triggers or subscribers ran | REFUSED | A table whose OnInsert/OnModify/OnRename sets a field: IsDirty after each write, and inside the trigger |
+| IsDirty after Copy, Clear, CalcFields, GetBySystemId, SetPosition, ChangeCompany, a failed or false Get/Find/Insert/Modify | REFUSED | IsDirty right after each of these |
+| IsDirty of a record passed by value, of xRec, of a record filled by a page or RecordRef.SetTable | REFUSED (where the snapshot and the stored row disagree, or the state is a copy) | IsDirty on a by-value parameter right after the call starts, and on xRec in OnModify |
+| Whether system fields (SystemId, SystemCreatedAt, ...) count: Init clears them, TransferFields does not copy them | REFUSED where only system fields differ | Get, Init, then set every other field back to the read values: IsDirty |
+| Whether TransferFields and Delete keep the snapshot or take the buffer as the new one | answered only where both readings agree (ACRecordIsDirty.al:65-71) | TransferFields from another row into a read record, then IsDirty; Delete of a changed buffer, then IsDirty |
+| IsDirty of a declared variable of a table with InitValue fields; a partial record (SetLoadFields); a FlowField or Blob that differs | REFUSED | The 77504 sequences on such a table |
+| IsDirty after DeleteAll or ModifyAll on a record that was read (pinned only on a fresh variable, ACRecordIsDirty.al:37-38) | REFUSED | Get, DeleteAll, IsDirty |
+
 ## Assumptions in force (generated from the registry)
 
 Owner rule of 2026-10-15 (CLAUDE.md hard rule 3): behavior a Microsoft test needs may be implemented before its probe, and every test that passes through such behavior is reported as a FLAGGED pass. The registry is `crates/al-builtins/src/assumptions.rs`; each code path marks its entry when it runs. This table is generated from it (do not edit it by hand: `UPDATE_ASSUMPTIONS_DOC=1 cargo test -p al-builtins assumptions` rewrites it). `alrunner test --top-assumptions` ranks the entries by flagged passes, `--list-assumptions` prints them with the hit counts of the last run. When a probe pins an entry, delete it from the registry; the compiler names every place that still marks it.

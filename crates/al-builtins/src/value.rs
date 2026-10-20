@@ -656,11 +656,84 @@ pub struct RecordState {
     /// (recordref/lt-recordref-fieldref-members/RecordRefIsDirtyEdges.al:IsDirty_TwoRefs_OtherModifies). `None` when the
     /// buffer came from elsewhere (GetTable, Init).
     pub dirty_base: Option<Vec<Value>>,
+    /// What `Record.IsDirty` compares the buffer with (lt-ac/ACRecordIsDirty.al). A clone of the state starts unknown.
+    pub is_dirty_base: DirtyBase,
     /// The row this variable's last Modify wrote. A later Modify of the unchanged buffer, after a rollback undid that write,
     /// writes nothing (record/lt-record-conversion-assumptions/StaleBuffer.al:76-86).
     pub last_modify: Option<Vec<Value>>,
     /// The table's and its extensions' global variables of this record variable (ADR-021).
     pub globals: TableGlobals,
+}
+
+/// What `Record.IsDirty` compares a record variable's buffer with: a copy of the fields the variable last read or wrote
+/// (lt-ac/ACRecordIsDirty.al). BC compares values, not writes: a field set back to what was read is not dirty
+/// (ACRecordIsDirty.al:54-56, `after_value_restored`).
+///
+/// `Clone` gives `Unknown`: whether a copy of a record state (a record passed by value, xRec, a row image,
+/// `RecordRef.GetTable`) keeps the snapshot is not pinned. `:=` copies it with [`DirtyBase::copy`]
+/// (ACRecordIsDirty.al:63-64, `copy_dirty`).
+#[derive(Debug)]
+pub enum DirtyBase {
+    /// Nothing pins what IsDirty answers; the text says why.
+    Unknown(&'static str),
+    /// A declared variable nothing was read into: compared with a fresh buffer (ACRecordIsDirty.al:38-43).
+    Fresh,
+    /// The variable read or wrote its buffer and no field was written since: the snapshot is the buffer itself. A write
+    /// copies it first ([`RecordState::before_field_write`]), so a read costs no copy.
+    Synced,
+    /// The fields the variable last read or wrote. `alt` is a second candidate where the corpus does not tell which one BC
+    /// keeps (after TransferFields and Delete): IsDirty answers only where both give the same answer.
+    Row { base: Vec<Value>, alt: Option<Vec<Value>> },
+}
+
+impl Default for DirtyBase {
+    fn default() -> Self {
+        DirtyBase::Unknown("a record state that is not a declared variable")
+    }
+}
+
+impl Clone for DirtyBase {
+    fn clone(&self) -> Self {
+        DirtyBase::Unknown("a copy of a record variable (passed by value, xRec, a row image, a RecordRef)")
+    }
+}
+
+impl DirtyBase {
+    /// A real copy, for `:=` between record variables.
+    pub fn copy(&self) -> DirtyBase {
+        match self {
+            DirtyBase::Unknown(why) => DirtyBase::Unknown(why),
+            DirtyBase::Fresh => DirtyBase::Fresh,
+            DirtyBase::Synced => DirtyBase::Synced,
+            DirtyBase::Row { base, alt } => DirtyBase::Row {
+                base: base.clone(),
+                alt: alt.clone(),
+            },
+        }
+    }
+
+    /// `Synced` becomes a copy of `fields`, before something writes them.
+    pub fn materialize(&mut self, fields: &[Value]) {
+        if matches!(self, DirtyBase::Synced) {
+            *self = DirtyBase::Row {
+                base: fields.to_vec(),
+                alt: None,
+            };
+        }
+    }
+}
+
+impl RecordState {
+    /// A field of the buffer is about to be written: a snapshot that is the buffer itself becomes a copy.
+    #[inline]
+    pub fn before_field_write(&mut self) {
+        if matches!(self.is_dirty_base, DirtyBase::Synced) {
+            let RecordState {
+                is_dirty_base, fields, ..
+            } = self;
+            is_dirty_base.materialize(fields);
+        }
+    }
 }
 
 /// The global variables of a table and of its table extensions, as one record variable holds

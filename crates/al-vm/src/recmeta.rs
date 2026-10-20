@@ -305,6 +305,7 @@ impl Session {
             }
             RecordOp::RecordId => Ok(self.record_id(rec, t)),
             RecordOp::IsTemporary => Ok(Value::Boolean(rec.borrow().temporary)),
+            RecordOp::IsDirty => self.record_is_dirty(rec),
             // Without an argument, whether the current row is marked; with one, marks or unmarks it.
             // What the call returns then (the previous state?) is not pinned, so a used result is refused.
             RecordOp::Mark => {

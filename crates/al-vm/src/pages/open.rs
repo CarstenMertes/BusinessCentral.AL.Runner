@@ -227,6 +227,9 @@ impl Session {
                 s.caption = None;
             }
             s.opening = true;
+            s.or_group_dropped = false;
+            s.unpinned_filter_fields = Vec::new();
+            s.placeholder_line = false;
             s.parts = Vec::new();
             s.areas = self.application_areas.clone();
         }
@@ -305,10 +308,38 @@ impl Session {
             } else {
                 Vec::new()
             };
+            let (view, enum_consts, blank_dates) = match crate::views::page_source_view(&table, &view) {
+                Ok(v) => v,
+                Err(e) => {
+                    self.mark_closed(st);
+                    return Err(e);
+                }
+            };
+            // The text a `0D` view filter reads back as is not pinned: a page with code that could read it is refused, and a
+            // TestPage Filter read of the field refuses (see `test_filter_op`).
+            if !blank_dates.is_empty() {
+                if self.page_code_runs(st, true) {
+                    self.mark_closed(st);
+                    return unsupported(
+                        "SourceTableView const(0D) or filter(0D) on a page with code that could read the filter (its text is not pinned)",
+                    );
+                }
+                st.borrow_mut().unpinned_filter_fields = blank_dates;
+            }
             self.set_view_in(&rec, &table, &view, Some(2), sub_view.is_some(), false)?;
             // A field the view filters itself keeps the view's filter alone (two equal filters of one field read as a doubled value
             // when a new line takes it: Purchase Price List's "Price Type").
             let mut r = rec.borrow_mut();
+            // An Enum const is held as a typed value, as SetRange holds one (see `page_source_view`).
+            for f in r
+                .filters
+                .iter_mut()
+                .filter(|f| f.group == 2 && enum_consts.contains(&f.field))
+            {
+                if let al_builtins::filter::FilterExpr::Eq(v) = &f.expr {
+                    f.expr = al_builtins::filter::FilterExpr::Range(Some(v.clone()), Some(v.clone()));
+                }
+            }
             let viewed: Vec<usize> = r.filters.iter().filter(|f| f.group == 2).map(|f| f.field).collect();
             r.filters
                 .extend(kept.into_iter().filter(|f| !viewed.contains(&f.field)));
@@ -386,10 +417,23 @@ impl Session {
             st.borrow_mut().opening = false;
             opened?;
             self.page_event(st, "onopenpageevent", None, None)?;
+            if has_source {
+                self.drop_or_group(st)?;
+            }
             if unattended {
                 return Ok(());
             }
-            let new_line = has_source && self.offers_new_line(st)?;
+            let mut new_line = has_source && self.offers_new_line(st)?;
+            // A record handed to the page filtered to one Enum or Option value the blank row does not hold: no blank line shows
+            // (pages/lt-ce-page-run/CePageRun.al RunModal_EnumFilter_RowsAndNewRowDefault, RunModal_OptionFilter_RowsAndNewRowDefault,
+            // `[2][5]`; a Boolean filter the blank row matches keeps it, handlers/TestPageModalNewRowLine_Tests.al:180).
+            if new_line {
+                if let Some(r) = &record {
+                    if self.enum_filter_excludes_blank(st, r)? {
+                        new_line = false;
+                    }
+                }
+            }
             st.borrow_mut().new_line = new_line;
             // Visible is evaluated once, at open.
             let mut frozen = Vec::new();
@@ -423,6 +467,99 @@ impl Session {
             return Err(e);
         }
         Ok(handler)
+    }
+
+    /// Whether the page's SourceTableView has a WHERE part.
+    fn source_view_filters(&self, st: &St) -> bool {
+        let object = st.borrow().object as usize;
+        self.engine.program.objects[object]
+            .properties
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case("SourceTableView"))
+            .is_some_and(|(_, v)| v.to_ascii_lowercase().contains("where"))
+    }
+
+    /// Whether the blank row of a page run on `rec` fails one of `rec`'s filters on a field the new row does not take from the
+    /// filter (a key field, or any field with PopulateAllFields, takes a single value): true for a single Enum or Option value
+    /// (pinned, see the caller); any other filter keeps the blank line.
+    fn enum_filter_excludes_blank(&mut self, st: &St, rec: &Rec) -> Result<bool, Signal> {
+        let table = rec.borrow().table as usize;
+        let fresh = self.initial_fields(table);
+        let object = st.borrow().object as usize;
+        let populate_all = self.engine.program.objects[object]
+            .properties
+            .iter()
+            .any(|(k, v)| k.eq_ignore_ascii_case("PopulateAllFields") && is_true(v));
+        let Some(t) = self.engine.program.objects[table].table.as_ref() else {
+            return Ok(false);
+        };
+        let mut hidden = false;
+        for f in rec.borrow().filters.iter() {
+            let single = match &f.expr {
+                al_builtins::filter::FilterExpr::Range(Some(a), Some(b)) => ops::compare(a, b).is_ok_and(|o| o.is_eq()),
+                al_builtins::filter::FilterExpr::Eq(_) => true,
+                _ => false,
+            };
+            if single && (populate_all || t.keys[0].contains(&f.field)) {
+                continue;
+            }
+            if f.expr.matches(&fresh[f.field]) {
+                continue;
+            }
+            let typed_single = matches!(&f.expr, al_builtins::filter::FilterExpr::Range(Some(_), Some(_))) && single;
+            if typed_single && matches!(t.fields[f.field].ty, RtType::Enum(_) | RtType::Option(_)) {
+                hidden = true;
+                continue;
+            }
+            // Any other filter the blank row fails keeps the blank line: a Boolean (pages/lt-modal-list-new-row/
+            // ModalListNewRowKeyFilters.al P157_NonKeyFilter `[0///No/]` with Active = true), and the Text, Code and range shapes
+            // 63 baseline cases walk past (pages/W1Navigation.al, ModalListNewRowKeyFilters.al, P197, P157 and others; the
+            // lane-page-views PR lists them).
+        }
+        Ok(hidden)
+    }
+
+    /// Whether the page has code that runs after OnOpenPage and could read its `Rec`: another trigger, a control or action
+    /// trigger, an extension; with `open`, OnInit and OnOpenPage count too.
+    fn page_code_runs(&self, st: &St, open: bool) -> bool {
+        let engine = self.engine();
+        let page = page_of(&engine, st);
+        page.triggers
+            .iter()
+            .any(|(n, _)| open || (n != "oninit" && n != "onopenpage"))
+            || !page.extensions.is_empty()
+            || !page.ext_triggers.is_empty()
+            || page
+                .controls
+                .iter()
+                .any(|c| !c.triggers.is_empty() || !c.ext_triggers.is_empty())
+    }
+
+    /// Filters OnOpenPage left in `FilterGroup(-1)` do not limit the rows the page shows: the record counts the OR rows inside the
+    /// trigger, the page shows every row (pages/lt-cd-testpage-leads/CdTestPageLeads.al:776 Item63_FilterGroupMinus1_InOnOpenPage).
+    /// What the page's `Rec` holds in group -1 afterwards is not pinned, so a page with code that could read it later (another
+    /// trigger, a control or action trigger, an extension) is refused, and so is a TestPage `Filter` read (see `test_filter_op`).
+    fn drop_or_group(&mut self, st: &St) -> Result<(), Signal> {
+        let rec = self.page_rec(st);
+        if !rec
+            .borrow()
+            .filters
+            .iter()
+            .any(|f| f.group == al_builtins::filter::OR_GROUP)
+        {
+            return Ok(());
+        }
+        let reads_later = self.page_code_runs(st, false);
+        if reads_later {
+            return unsupported(
+                "FilterGroup(-1) filters left by OnOpenPage on a page with code that runs later (what Rec holds then is not pinned)",
+            );
+        }
+        rec.borrow_mut()
+            .filters
+            .retain(|f| f.group != al_builtins::filter::OR_GROUP);
+        st.borrow_mut().or_group_dropped = true;
+        Ok(())
     }
 
     /// An AL error escaping the first row a TestPage reads when it opens. OpenEdit of a card turns an error of OnFindRecord,
@@ -1176,11 +1313,16 @@ impl Session {
     pub(super) fn page_first_row(&mut self, st: &St) -> Result<(), Signal> {
         // A page that serves its rows from OnFindRecord is asked `=><` when it opens (corpus
         // pageext/PCCurrRecordReads.al:FindList_OnFindRecordAndOnNextRecord, `open`).
-        // That is pinned for the default order; a page with a SourceTableView (a descending order
-        // among them) keeps the `-` assumed so far, as the client's blank key would sit at the other end.
+        // A SourceTableView that sorts descending asks the same (pages/lt-ce-page-run/CePageRun.al
+        // OpenView_DescendingWithOnFindRecord_CurrentRow `find(=><)=1`). A view that filters is not pinned: refused.
         let object = st.borrow().object as usize;
         let has_view = self.engine.object_facts[object].has_source_table_view;
-        let which = if self.declares(st, "onfindrecord") && !has_view {
+        let which = if self.declares(st, "onfindrecord") {
+            if has_view && self.source_view_filters(st) {
+                return unsupported(
+                    "OnFindRecord on a page whose SourceTableView filters (the find string at open is not pinned)",
+                );
+            }
             "=><"
         } else {
             "-"
@@ -1277,6 +1419,8 @@ impl Session {
         rec.borrow_mut().fields = fresh;
         {
             let mut s = st.borrow_mut();
+            s.placeholder_line = true;
+            s.split_burned = false;
             s.cursor = Cursor::NewLine;
             s.draft = true;
             s.typed_before_key = false;
@@ -1422,6 +1566,7 @@ impl Session {
         if rec.borrow().key != 0 || !rec.borrow().ascending {
             return unsupported("AutoSplitKey on a part that is not read in primary key order");
         }
+        let burned = st.borrow().split_burned;
         let lower = st
             .borrow()
             .lower_key
@@ -1474,6 +1619,12 @@ impl Session {
             // corpus handlers/TestPageAutoSplitKeyRanges_Tests.al): last + 10000. After a negative
             // line the corpus pins exactly these values; the rule behind them is not known, so
             // any other negative last line is refused.
+            (Some(l), None) if l >= D::ZERO && burned => l + step + step,
+            (Some(_), _) if burned => {
+                return unsupported(
+                    "AutoSplitKey of a line started from the placeholder line below a negative line or above another line (not pinned)",
+                );
+            }
             (Some(l), None) if l >= D::ZERO => l + step,
             (Some(l), None)
                 if !is_decimal && [-30000, -20000, -10000, -5, -1].contains(&ToPrimitive::to_i64(&l).unwrap_or(0)) =>

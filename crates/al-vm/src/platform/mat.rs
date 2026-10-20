@@ -152,9 +152,16 @@ fn may_pass(t: &TableDef, row: &Row, known: usize, known_cols: &[usize], filters
         .all(|f| f.expr.matches(&row[f.field]))
 }
 
-/// Why a filter on the row cannot be decided: it reads a column the row leaves unknown.
+/// Why a filter on the row cannot be decided: it reads a column the row leaves unknown, and the filters on the
+/// columns the row knows do not leave it out (all of them must hold, outside the cross-column OR group).
 fn unknown_filtered<'a>(row: &'a Row, filters: &[FieldFilter]) -> Option<&'a str> {
-    filters.iter().find_map(|f| row[f.field].unknown())
+    let why = filters.iter().find_map(|f| row[f.field].unknown())?;
+    let or_group = filters.iter().any(|f| f.group == al_builtins::filter::OR_GROUP);
+    let left_out = !or_group
+        && filters
+            .iter()
+            .any(|f| row[f.field].unknown().is_none() && !f.expr.matches(&row[f.field]));
+    (!left_out).then_some(why)
 }
 
 fn refusal(t: &TableDef, why: &str) -> StoreError {
@@ -531,6 +538,35 @@ mod tests {
             after: None,
         };
         assert!(refused(m.next(&t, &by_name).map(|_| ())));
+    }
+
+    #[test]
+    fn a_row_a_decided_filter_leaves_out_is_not_refused_for_its_unknown_column() {
+        let t = table();
+        let unknown = Value::Unknown("the value of field 'Name' is not known".into());
+        // The poisoned row makes the listing unclean: no band bounds the scan, every row is looked at.
+        let m = Mat::new(
+            &t,
+            vec![
+                Entry::ok(row(1, "a")),
+                Entry::ok(vec![Value::Integer(2), unknown]),
+                Entry::poisoned(row(3, ""), "not known".into()),
+            ],
+        );
+        let name_is_a = FieldFilter {
+            field: 1,
+            expr: FilterExpr::Eq(Value::Text("a".into())),
+            group: 0,
+        };
+        assert_eq!(m.count(&t, &[id_filter(1, 1), name_is_a.clone()]).ok(), Some(1));
+        assert!(
+            matches!(m.next(&t, &scan(&[id_filter(1, 1), name_is_a.clone()], None, false)), Ok(Some(r)) if matches!(r[0], Value::Integer(1)))
+        );
+        // Row 2 passes the decided filter: still refused.
+        assert!(matches!(
+            m.count(&t, &[id_filter(1, 2), name_is_a]),
+            Err(StoreError::Refused(_))
+        ));
     }
 
     #[test]

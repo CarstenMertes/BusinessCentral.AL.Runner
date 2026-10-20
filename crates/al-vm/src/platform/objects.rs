@@ -392,6 +392,14 @@ fn runtime_package_id(c: &Catalog, o: &Object) -> [u8; 16] {
     ids::runtime_package_id(c.owner(o), dependency)
 }
 
+/// The codeunits of Microsoft's Test Runner app that BC's test environment has (BaTpEnv.al:28).
+const TEST_RUNNER_CODEUNITS: std::ops::RangeInclusive<u32> = 130_450..=130_455;
+
+/// A table declared `ObsoleteState = Moved`.
+fn moved(o: &Object) -> bool {
+    o.kind == al_ir::ObjKind::Table && al_ir::ObjectFacts::of(o).moved
+}
+
 pub(super) fn all_obj_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
     let engine = p.engine();
     let c = Catalog::new(&engine);
@@ -402,6 +410,11 @@ pub(super) fn all_obj_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
             let (Some(id), Some(ty)) = (o.id, object_type(o.kind)) else {
                 return None;
             };
+            // A table declared ObsoleteState = Moved is not in the runtime app and has no row
+            // (platform/lt-aw-fresh-tenant/AwTests.al:413-423).
+            if moved(o) {
+                return None;
+            }
             Some(vec![(1, option(t, 1, ty)), (3, Value::Integer(id as i32))])
         },
         |o, r| {
@@ -413,6 +426,26 @@ pub(super) fn all_obj_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
             Ok(())
         },
     );
+    // BC's test environment has the codeunits of Microsoft's Test Runner app, 130450-130455 (permissions/
+    // lt-ba-testpermissions/BaTpEnv.al:26-28). The runtime does not load that app (ADR-013: it is compiled from source or
+    // not at all): a read that may land on one of them is refused.
+    for id in TEST_RUNNER_CODEUNITS {
+        let present = c
+            .objects
+            .iter()
+            .any(|o| o.id == Some(id) && object_type(o.kind) == Some(5));
+        if !present {
+            let mut k = Blank::new(t).row();
+            k[pos(t, 1)] = option(t, 1, 5);
+            k[pos(t, 3)] = Value::Integer(id as i32);
+            out.push(Entry::poisoned(
+                k,
+                format!(
+                    "AllObj row of codeunit {id}: BC's test environment has the Test Runner app's codeunits 130450-130455, which the runtime does not load (owner decision pending: compile the Test Runner app or refuse)"
+                ),
+            ));
+        }
+    }
     // BC lists one more row per table than the runtime does: a table, a codeunit and a page in one namespace count 4
     // (metadata/lt-all-obj-namespace/AllObjNamespace.al:101). Most likely the TableData row (ordinal 0), whose
     // columns no corpus test pins: each table gets that row poisoned, so a read that may land on it is refused and

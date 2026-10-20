@@ -687,6 +687,11 @@ impl Lowerer<'_> {
                     if n.kind() == MemberExpr && kids.first().is_some_and(|b| b.kind() == SyntaxKind::CallExpr) =>
                 {
                     self.readable_field_pos(table, id)?;
+                    if self.is_coverage_test_id(table, id) {
+                        return Err(al_builtins::platform::coverage_test_id_refusal(
+                            "the Test ID of a record a procedure returns",
+                        ));
+                    }
                     let field = self.field_ref(table, id);
                     Ok(ir::Expr::FieldOf(Box::new(self.expr(&kids[0])?), field))
                 }

@@ -91,6 +91,7 @@ fn run() -> CorpusRuntime {
         version: "1.0.0.0".into(),
         resources: vec![],
         include_source: false,
+        target: String::new(),
         symbols: vec![],
         layout_files: Vec::new(),
     };

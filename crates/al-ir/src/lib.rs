@@ -156,6 +156,10 @@ pub struct AppInfo {
     /// lines are known (`SourceFile::lines`).
     #[serde(default)]
     pub include_source: bool,
+    /// The manifest's `target` (`Cloud` when the manifest leaves it out, the compiler's default); `None` when no
+    /// manifest was read.
+    #[serde(default)]
+    pub target: Option<String>,
     /// The files the app's reports name with `LayoutFile`: path relative to the app (`/` separators), content.
     #[serde(default)]
     pub layout_files: Vec<(String, Vec<u8>)>,

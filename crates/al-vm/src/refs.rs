@@ -318,13 +318,35 @@ impl Session {
         }
     }
 
+    /// The table object with number `no`. A table declared `ObsoleteState = Moved` is not in the runtime app
+    /// (platform/lt-aw-fresh-tenant/AwTests.al:426-442), so it is never the answer.
     pub(crate) fn table_object(&self, no: i64) -> Option<usize> {
         let no = u32::try_from(no).ok()?;
         self.engine
             .program
             .objects
             .iter()
-            .position(|o| o.table.is_some() && o.id == Some(no))
+            .enumerate()
+            .position(|(i, o)| o.table.is_some() && o.id == Some(no) && !self.engine.object_facts[i].moved)
+    }
+
+    /// The manifest `target` of the app whose code is running now.
+    fn caller_target(&self) -> Option<&str> {
+        let o = *self.frames.last()?;
+        let app = self.engine.program.objects[o].app as usize;
+        self.engine.program.apps.get(app)?.target.as_deref()
+    }
+
+    /// Whether the only tables with number `no` are declared `ObsoleteState = Moved`.
+    fn only_moved_table(&self, no: i64) -> bool {
+        u32::try_from(no).is_ok_and(|no| {
+            self.engine
+                .program
+                .objects
+                .iter()
+                .enumerate()
+                .any(|(i, o)| o.table.is_some() && o.id == Some(no) && self.engine.object_facts[i].moved)
+        })
     }
 
     /// `RecordRef.Open(No, Temp, CompanyName)`.
@@ -358,12 +380,40 @@ impl Session {
         // refused for a Cloud-target app (this app is Cloud), whether or not a dependency app
         // declares an object with that number (the platform's `System.app` does, as
         // `Object Metadata`; a complete compile of the dependencies must not change the answer).
+        // Agent Creation Control (2000000297) is refused the same way from BC 28 on, where the System app declares it
+        // (platform/lt-aw-fresh-tenant/AwTests.al:590-616, BC28PLUS arm :612); on BC 27 no table has the number and
+        // the open fails as for a missing object (:614).
+        if no == 2_000_000_297 && self.table_object(no).is_some() {
+            match self.caller_target() {
+                Some(t) if t.eq_ignore_ascii_case("Cloud") => {
+                    return Err(al_error(format!(
+                        "You cannot open record {no} from a RecordRef data type when you are using target Cloud."
+                    )));
+                }
+                // An OnPrem app opens it and reads its one row (onprem platform/lt-aw-fresh-tenant/AwOnPremTests.al:234-253).
+                Some(t) if t.eq_ignore_ascii_case("OnPrem") => {}
+                other => {
+                    return unsupported(format!(
+                        "RecordRef.Open(2000000297) from an app whose target is {} (only Cloud and OnPrem are pinned)",
+                        other.unwrap_or("not known")
+                    ));
+                }
+            }
+        }
         if no == 2_000_000_071 {
             return Err(al_error(format!(
                 "You cannot open record {no} from a RecordRef data type when you are using target Cloud."
             )));
         }
         let Some(table) = self.table_object(no) else {
+            // A moved table: the open fails with AL:MetadataNotFound (AwTests.al:440). The text names the test runner on
+            // Windows and the test codeunit on Linux (AwTests.al:434-438, held): not pinned here.
+            if self.only_moved_table(no) {
+                return Err(Signal::Error(Box::new(al_builtins::native::unpinned_text_error(
+                    "AL:MetadataNotFound",
+                    "the text of RecordRef.Open on a table declared ObsoleteState = Moved (AwTests.al:434-439)",
+                ))));
+            }
             return match no {
                 // :37-62: these system tables open for a Cloud-target app and report their number.
                 2_000_000_026 | 2_000_000_187 | 2_000_000_188 => {
@@ -825,6 +875,15 @@ impl Session {
             | "FindLast" | "FindSet" | "Next" | "Reset" | "Rename" => self.record_op(record_method(method), &rec, args),
             "Field" => {
                 let no = int_arg(args, 0)?;
+                // BC 29 has the user-name FlowFields at 2000000005-8 (platform/fields.rs `USER_NAME_SYSTEM_FIELDS`); the
+                // runtime does not hold them.
+                if (2_000_000_005..=2_000_000_008).contains(&no)
+                    && self.has(al_version::Gate::PlatformMetadataColumnsFrom29)
+                {
+                    return unsupported(format!(
+                        "RecordRef.Field({no}): the user-name system FlowFields (SystemCreatedByUserName and the others) are not modelled"
+                    ));
+                }
                 match t.fields.iter().position(|f| i64::from(al_field_no(f.id)) == no) {
                     // A removed field raises the obsolete error with its reason (recordref/PWRecordMisc.al:128-167).
                     Some(pos) if self.field_removed(&t, pos) => {
@@ -1052,6 +1111,12 @@ impl Session {
                     // A column the platform row leaves unknown (its value nothing pins) is refused, naming the table and the field.
                     if let Value::Unknown(why) = &v {
                         return unsupported(why.to_string());
+                    }
+                    // A coverage Test ID read by number: no pinned shape (platform::coverage_test_id_refusal).
+                    if !rec.borrow().temporary && self.is_coverage_test_id(&t, field.id) {
+                        return unsupported(al_builtins::platform::coverage_test_id_refusal(
+                            "FieldRef.Value of the Test ID",
+                        ));
                     }
                     let order = {
                         let r = rec.borrow();

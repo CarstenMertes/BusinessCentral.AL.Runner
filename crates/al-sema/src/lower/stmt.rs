@@ -1168,8 +1168,17 @@ impl Lowerer<'_> {
             }
         }
         self.refuse_textconst_into_variant(&target_ty, &kids[1])?;
+        // A Byte assigned to a character of a Text or Code goes in unconverted: the runtime maps a byte from 0x80 up to the
+        // character Format shows for it (al-language-onprem/types/ByteFormat.al:13-31, `Interp::write_char`).
+        let byte_into_text_char = matches!(op_kind, Some(SyntaxKind::Assign) | None)
+            && matches!(self.ty_ref(&kids[1]), Ty::Byte)
+            && kids[0].kind() == SyntaxKind::IndexExpr
+            && kids[0]
+                .children()
+                .next()
+                .is_some_and(|b| matches!(self.ty_ref(&b), Ty::Text(_) | Ty::Code(_)));
         let value = match op_kind {
-            _ if variant_into_text_field => value,
+            _ if variant_into_text_field || byte_into_text_char => value,
             Some(SyntaxKind::Assign) | None => self.convert_to(&target_ty, self.ty_ref(&kids[1]), value)?,
             Some(_) => ir::Expr::Convert(self.rt(&target_ty)?, Box::new(value)),
         };
@@ -1440,6 +1449,7 @@ impl Lowerer<'_> {
                         self.field_pos(table, id).ok_or_else(|| "field position".to_string())?;
                     } else {
                         self.readable_field_pos(table, id)?;
+                        self.coverage_test_id_read(n, table, id)?;
                     }
                     let field = self.field_ref(table, id);
                     let base = match n.kind() {

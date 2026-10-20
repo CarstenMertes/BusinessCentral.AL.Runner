@@ -250,7 +250,8 @@ pub const UNSEEDED_ROWS: &[u32] = &[2_000_000_076, 2_000_000_168];
 /// Platform tables that only the System app of a later major declares (the registry above is checked against the System app
 /// of the first major the corpus pins, `tests/platform_tables.rs`). Ordinary stored tables here, written by install code:
 /// "Agent Install" (System Application "Agent Upgrade") and "MCP Install" insert into them, and without a provider the install
-/// baseline of those majors stopped at them and left tables unseeded. No corpus test touches them.
+/// baseline of those majors stopped at them and left tables unseeded. A Cloud-target `RecordRef.Open` of Agent Creation Control
+/// is refused (platform/lt-aw-fresh-tenant/AwTests.al:590-616, `al-vm` refs.rs).
 pub const LATER_MAJORS: &[(u32, &str, Provider)] = &[
     (2_000_000_297, "Agent Creation Control", Provider::Stored),
     (2_000_000_292, "MCP Configuration", Provider::Stored),
@@ -538,6 +539,21 @@ pub fn unpinned_column(table: u32, field: u32) -> Option<String> {
     Some(format!(
         "column {field} of platform table '{name}' ({table}) is not pinned: no corpus test fixes its value (docs/probes-needed.md)"
     ))
+}
+
+/// The `Test ID` column of the per-test code coverage tables, as (table, field): Code Coverage Tests Run (2000000289)
+/// and Code Coverage Test Lookup (2000000288).
+pub const COVERAGE_TEST_ID: [(u32, u32); 2] = [(2_000_000_289, 1), (2_000_000_288, 4)];
+
+/// Why `what` (a read of a coverage `Test ID`) is refused. The corpus pins only that the Test ID is the same for the tests
+/// of a recording and for two recordings of one test, that the lookup rows of a test carry it, and that it is not 1
+/// (coverage/W6CodeCoverageIds.al:111-112, :167-168; codeunit/TestCodeCoveragePerTest.al:116). BC computes the number per
+/// run (codeunit/TestCodeCoveragePerTest.al:14), so any other read would show the runtime's own choice.
+pub fn coverage_test_id_refusal(what: &str) -> String {
+    format!(
+        "{what}: the value of the Code Coverage Test ID is not pinned (only that it is equal across rows and recordings and \
+         not 1, coverage/W6CodeCoverageIds.al:111-112, :167-168)"
+    )
 }
 
 /// The first id of the platform's system objects.

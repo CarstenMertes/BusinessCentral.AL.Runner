@@ -171,6 +171,8 @@ pub fn load_project_with(
             version: d.version.to_string(),
             resources: std::mem::take(&mut d.resources),
             include_source: false,
+            // Not read from the package.
+            target: String::new(),
             layout_files: Vec::new(),
             symbols: d.preprocessor_symbols.clone(),
         });

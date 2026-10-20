@@ -1074,9 +1074,24 @@ impl Session {
             return Err(Signal::Unsupported("a text indexed with several positions".into()));
         };
         let i = int(&Self::index_value(e, f)?)?;
-        let unit = match int(&v) {
-            Ok(c) => u16::try_from(c).ok().filter(|u| !(0xD800..0xE000).contains(u)),
-            Err(_) => None,
+        // A Byte from 0x80 up goes in as the character Format shows for it: 128 is `Ç` (199), 239 is `Ù` (217)
+        // (al-language-onprem/types/ByteFormat.al:13-31 `_text1_code`, report/lt-report-dataset-header/
+        // ReportDatasetHeaderRaw.al:Lines_Window1, the byte order mark read byte by byte); a byte whose character is not
+        // pinned is refused.
+        let unit = match &v {
+            Value::Byte(b) if *b >= 0x80 => {
+                let enc = al_builtins::stream::Encoding::MsDos;
+                if !enc.decode_pinned(&[*b]) {
+                    return Err(Signal::Unsupported(format!(
+                        "assigning Byte {b} to a character of a text (its character is not pinned)"
+                    )));
+                }
+                enc.decode(&[*b]).encode_utf16().next()
+            }
+            _ => match int(&v) {
+                Ok(c) => u16::try_from(c).ok().filter(|u| !(0xD800..0xE000).contains(u)),
+                Err(_) => None,
+            },
         };
         // A Text of ASCII only gets an ASCII character in place (a loop over a long text stays linear): the variable lets
         // go of its hold first so that nothing is copied.

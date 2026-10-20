@@ -97,6 +97,8 @@ pub struct ObjectFacts {
     pub manual_subscriber: bool,
     /// The object states `SourceTableView`.
     pub has_source_table_view: bool,
+    /// `ObsoleteState = Moved`: the object moved to another app and is not in the runtime app.
+    pub moved: bool,
 }
 
 fn value<'a>(properties: &'a [(String, String)], name: &str) -> Option<&'a str> {
@@ -126,6 +128,7 @@ impl ObjectFacts {
             has_source_table_view: properties
                 .iter()
                 .any(|(k, _)| k.eq_ignore_ascii_case("SourceTableView")),
+            moved: value(properties, "ObsoleteState").is_some_and(|v| v.eq_ignore_ascii_case("Moved")),
         }
     }
 

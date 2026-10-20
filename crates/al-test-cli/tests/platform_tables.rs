@@ -108,6 +108,11 @@ fn outcomes_with(main: &str, roots: al_sema::check::Roots) -> Vec<(String, Outco
 
 /// [`outcomes_with`] with the id of the app under test chosen (a platform table lists apps by Guid).
 fn outcomes_app(app_id: &str, main: &str, roots: al_sema::check::Roots) -> Vec<(String, Outcome)> {
+    outcomes_bc(app_id, main, roots, "27.5.0.0")
+}
+
+/// [`outcomes_app`] run as BC build `bc` (the System app stays the one of the corpus packages).
+fn outcomes_bc(app_id: &str, main: &str, roots: al_sema::check::Roots, bc: &str) -> Vec<(String, Outcome)> {
     use al_sema::workspace::{AppKind, AppSource};
     let app = |id: &str, name: &str, deps: &[&str], files: Vec<(String, String)>| AppSource {
         id: id.into(),
@@ -138,9 +143,7 @@ fn outcomes_app(app_id: &str, main: &str, roots: al_sema::check::Roots) -> Vec<(
     let engine = Engine::with_target(
         std::sync::Arc::new(program),
         blocked,
-        Some(al_version::Target::for_bc(
-            al_version::BcVersion::parse("27.5.0.0").unwrap(),
-        )),
+        Some(al_version::Target::for_bc(al_version::BcVersion::parse(bc).unwrap())),
     );
     let oi = l
         .program
@@ -1227,8 +1230,10 @@ fn code_coverage_tests_run_method_id_is_the_one_number_of_a_test_procedure() {
   [Test] procedure Ids()
   var R: Record "Code Coverage Tests Run"; A: Integer;
   begin Initialize();
-    CodeCoverageLog(true, false); One(); Two(); CodeCoverageLog(false, false);
+    CodeCoverageLog(true, false); One(); CodeCoverageLog(false, false);
     R.SetRange("Object ID", 50000); R.SetRange("Method Name", 'One'); R.FindFirst(); A := R."Method ID";
+    // Two tests in one recording share a Test ID, which the runtime's table cannot hold: one recording each.
+    Initialize(); CodeCoverageLog(true, false); Two(); CodeCoverageLog(false, false);
     R.SetRange("Method Name", 'Two'); R.FindFirst();
     if (A <> 469735107) or (R."Method ID" <> A) then Error('%1 %2', A, R."Method ID");
   end; }"#,
@@ -1303,4 +1308,156 @@ codeunit 50000 "T" { Subtype = Test;
     if M.LinkedObject then Error('linked'); M.Get(50004); if not M.LinkedObject then Error('not linked'); end; }"#,
     );
     passes(&o, "Meta");
+}
+
+/// The session reads the database of the oracle: `CRONUS`, in the Session and the Active Session
+/// row (platform/lt-aw-fresh-tenant/AwTests.al:49 and :71).
+#[test]
+fn the_session_rows_name_the_cronus_database() {
+    let o = outcomes(
+        r#"codeunit 50000 "T" { Subtype = Test;
+  [Test] procedure SessionRow() var S: Record Session; begin S.SetRange("My Session", true); S.FindFirst(); if S."Database Name" <> 'CRONUS' then Error('%1', S."Database Name"); end;
+  [Test] procedure ActiveSessionRow() var A: Record "Active Session"; begin A.Get(ServiceInstanceId(), SessionId()); if A."Database Name" <> 'CRONUS' then Error('%1', A."Database Name"); end; }"#,
+    );
+    passes(&o, "SessionRow");
+    passes(&o, "ActiveSessionRow");
+}
+
+/// A table the app declares with `ObsoleteState = Moved` is not in the runtime app: AllObj has no row for it and
+/// `RecordRef.Open` fails with AL:MetadataNotFound (platform/lt-aw-fresh-tenant/AwTests.al:413-442). The text of that
+/// error is not pinned on Linux (AwTests.al:434-439), so a read of it is refused; a record operation on the table is not
+/// pinned and is refused.
+#[test]
+fn a_moved_table_has_no_all_obj_row_and_does_not_open() {
+    let o = outcomes(
+        r#"table 50001 "Moved" { ObsoleteState = Moved; ObsoleteReason = 'x'; ObsoleteTag = '1.0'; MovedTo = '11111111-2222-3333-4444-555555555555'; fields { field(1; Id; Integer) { } } keys { key(PK; Id) { } } }
+codeunit 50000 "T" { Subtype = Test;
+  [Test] procedure NoAllObjRow() var A: Record AllObj; begin A.SetRange("Object Type", A."Object Type"::Table); A.SetRange("Object ID", 50001); if A.Count() <> 0 then Error('rows %1', A.Count()); end;
+  [Test] procedure OpenFails() var RR: RecordRef; begin asserterror RR.Open(50001); if GetLastErrorCode() <> 'AL:MetadataNotFound' then Error('code %1', GetLastErrorCode()); end;
+  [Test] procedure OpenText() var RR: RecordRef; begin asserterror RR.Open(50001); if GetLastErrorText() = '' then; end;
+  [Test] procedure RecordUse() var M: Record "Moved"; begin if M.IsEmpty() then; end; }"#,
+    );
+    passes(&o, "NoAllObjRow");
+    passes(&o, "OpenFails");
+    assert!(not_run(&o, "OpenText").contains("not pinned"));
+    assert!(not_run(&o, "RecordUse").contains("ObsoleteState = Moved"));
+}
+
+/// BC 29 adds four FlowFields to every table, listed in the Field table after SystemModifiedBy: 2000000005
+/// SystemCreatedByUserName and 2000000007 SystemModifiedByUserName (Text 50), 2000000006 SystemCreatedByFullName and
+/// 2000000008 SystemModifiedByFullName (Text 80) (system-fields/W6SystemFieldStamps.al:239-246; metadata/W6FieldKeyRows.al:
+/// 167-168, :267-268). Their other columns are not pinned, and the runtime keeps no such fields: a FieldRef to one is refused.
+#[test]
+fn bc_29_lists_the_user_name_system_fields_in_the_field_table() {
+    let src = r#"table 50001 "R" { fields { field(1; Id; Integer) { } field(2; Name; Text[30]) { } } keys { key(PK; Id) { } } }
+codeunit 50000 "T" { Subtype = Test;
+  [Test] procedure TextCount() var F: Record Field; begin F.SetRange(TableNo, 50001); F.SetRange(Type, F.Type::Text); if F.Count() <> 5 then Error('count %1', F.Count()); end;
+  [Test] procedure Names() var F: Record Field; N: Text; begin F.SetRange(TableNo, 50001); F.SetFilter("No.", '>=%1', 2000000004); if F.FindSet() then repeat N += F.FieldName + ';' until F.Next() = 0; if N <> 'SystemModifiedBy;SystemCreatedByUserName;SystemCreatedByFullName;SystemModifiedByUserName;SystemModifiedByFullName;' then Error('%1', N); end;
+  [Test] procedure Columns() var F: Record Field; begin F.Get(50001, 2000000006); if (F.Len <> 80) or (F.Class <> F.Class::FlowField) or (F.Type <> F.Type::Text) then Error('columns'); end;
+  [Test] procedure RelationAndState() var F: Record Field; begin F.SetRange(TableNo, 50001); F.SetFilter("No.", '>=%1', 2000000005); F.SetFilter(RelationTableNo, '<>0'); if not F.IsEmpty() then Error('relation'); F.SetRange(RelationTableNo); F.SetRange(ObsoleteState, F.ObsoleteState::Removed); if not F.IsEmpty() then Error('removed'); end;
+  [Test] procedure Caption() var F: Record Field; begin F.Get(50001, 2000000006); if F."Field Caption" = '' then; end;
+  [Test] procedure FieldRef() var R: Record R; RR: RecordRef; begin RR.GetTable(R); if Format(RR.Field(2000000005).Value()) = '' then; end; }"#;
+    let o = outcomes_bc("main", src, al_sema::check::Roots::default(), "29.0.0.0");
+    passes(&o, "TextCount");
+    passes(&o, "Names");
+    passes(&o, "Columns");
+    passes(&o, "RelationAndState");
+    assert!(not_run(&o, "Caption").contains("not known"));
+    assert!(not_run(&o, "FieldRef").contains("user-name system FlowFields"));
+    // BC 27 has none of them (W6FieldKeyRows.al:169-170).
+    let o = outcomes(&src.replace("<> 5", "<> 1"));
+    passes(&o, "TextCount");
+}
+
+/// A Tests Run row's `Test ID` is the same in two recordings of one test and is not 1
+/// (coverage/W6CodeCoverageIds.al:144-171); four tests recorded together share one Test ID (:96-97, :111-112), which
+/// the runtime's Tests Run table, keyed by Test ID alone, cannot hold: a read of the per-test tables is refused then.
+#[test]
+fn a_tests_run_row_keeps_its_test_id_across_recordings_and_several_recorded_tests_are_refused() {
+    let o = outcomes(
+        r#"codeunit 50000 "T" { Subtype = Test;
+  procedure Initialize() var C: Record "Code Coverage"; R: Record "Code Coverage Tests Run"; L: Record "Code Coverage Test Lookup"; begin CodeCoverageLog(false, false); C.DeleteAll(); R.DeleteAll(); L.DeleteAll(); end;
+  [Test] procedure Helper() begin if StrLen('x') = 0 then Error('x'); end;
+  [Test] procedure Helper2() begin if StrLen('x') = 0 then Error('x'); end;
+  [Test] procedure TwoRecordings()
+  var R: Record "Code Coverage Tests Run"; First: Integer;
+  begin Initialize(); CodeCoverageLog(true, false); Helper(); CodeCoverageLog(false, false);
+    R.FindFirst(); First := R."Test ID";
+    Initialize(); CodeCoverageLog(true, false); Helper(); CodeCoverageLog(false, false);
+    R.FindFirst(); if R."Test ID" <> First then Error('changed'); if R."Test ID" = 1 then Error('one');
+  end;
+  [Test] procedure TwoTests()
+  var R: Record "Code Coverage Tests Run";
+  begin Initialize(); CodeCoverageLog(true, false); Helper(); Helper2(); CodeCoverageLog(false, false);
+    if R.Count() <> 2 then Error('rows');
+  end;
+  [Test] procedure TwoTestsCodeCoverageRows()
+  var C: Record "Code Coverage";
+  begin Initialize(); CodeCoverageLog(true, false); Helper(); Helper2(); CodeCoverageLog(false, false);
+    C.SetRange("Object ID", 50000); if C.IsEmpty() then Error('rows');
+  end; }"#,
+    );
+    passes(&o, "TwoRecordings");
+    assert!(not_run(&o, "TwoTests").contains("Test ID"));
+    passes(&o, "TwoTestsCodeCoverageRows");
+}
+
+/// The corpus pins only shapes of the Test ID: equal between recordings and rows, and not 1 (coverage/W6CodeCoverageIds.al:
+/// 111-112, :167-168; codeunit/TestCodeCoveragePerTest.al:116 filters the lookup rows by it). Any other read of its value
+/// (formatted, compared with another number, a filter or a key of a literal, a FieldRef) would show the runtime's own
+/// number: refused.
+#[test]
+fn a_read_of_the_exact_test_id_value_is_refused_and_the_pinned_shapes_run() {
+    let rec = "Initialize(); CodeCoverageLog(true, false); Helper(); CodeCoverageLog(false, false); R.FindFirst();";
+    let src = r#"codeunit 50000 "T" { Subtype = Test;
+  procedure Initialize() var C: Record "Code Coverage"; R: Record "Code Coverage Tests Run"; L: Record "Code Coverage Test Lookup"; begin CodeCoverageLog(false, false); C.DeleteAll(); R.DeleteAll(); L.DeleteAll(); end;
+  procedure Inner() begin if StrLen('x') = 0 then Error('x'); end;
+  [Test] procedure Helper() begin Inner(); end;
+  [Test] procedure Formatted() var R: Record "Code Coverage Tests Run"; begin REC if Format(R."Test ID") = '' then; end;
+  [Test] procedure ComparedWithTwo() var R: Record "Code Coverage Tests Run"; begin REC if R."Test ID" = 2 then; end;
+  [Test] procedure Ordered() var R: Record "Code Coverage Tests Run"; begin REC if R."Test ID" > 1 then; end;
+  [Test] procedure HolderFormatted() var R: Record "Code Coverage Tests Run"; X: Integer; begin REC X := R."Test ID"; if Format(X) = '' then; end;
+  [Test] procedure LookupFormatted() var R: Record "Code Coverage Tests Run"; L: Record "Code Coverage Test Lookup"; begin REC L.FindFirst(); if Format(L."Test ID") = '' then; end;
+  [Test] procedure FilterLiteral() var R: Record "Code Coverage Tests Run"; begin REC R.SetRange("Test ID", 2); if R.IsEmpty() then; end;
+  [Test] procedure FilterText() var R: Record "Code Coverage Tests Run"; begin REC R.SetFilter("Test ID", '>1'); if R.IsEmpty() then; end;
+  [Test] procedure GetLiteral() var R: Record "Code Coverage Tests Run"; begin REC if R.Get(2) then; end;
+  [Test] procedure FieldRefValue() var R: Record "Code Coverage Tests Run"; RR: RecordRef; begin REC RR.GetTable(R); if Format(RR.Field(1).Value()) = '' then; end;
+  [Test] procedure PinnedShapes()
+  var R: Record "Code Coverage Tests Run"; L: Record "Code Coverage Test Lookup"; First: Integer;
+  begin REC First := R."Test ID";
+    REC if R."Test ID" - First <> 0 then Error('changed'); if R."Test ID" <> First then Error('differs');
+    if (R."Test ID" = 1) or (First = 1) then Error('one');
+    L.SetRange("Test ID", R."Test ID"); if L.Count() <> 1 then Error('lookup %1', L.Count());
+  end; }"#
+        .replace("REC", rec);
+    let o = outcomes(&src);
+    for t in [
+        "Formatted",
+        "ComparedWithTwo",
+        "Ordered",
+        "HolderFormatted",
+        "LookupFormatted",
+        "FilterLiteral",
+        "FilterText",
+        "GetLiteral",
+        "FieldRefValue",
+    ] {
+        let why = not_run(&o, t);
+        assert!(why.contains("Test ID") && why.contains("not pinned"), "{t}: {why}");
+    }
+    passes(&o, "PinnedShapes");
+}
+
+/// BC's test environment has the Test Runner app's codeunits 130450-130455 (permissions/lt-ba-testpermissions/BaTpEnv.al:
+/// 26-28). The runtime does not load that app, so an AllObj read that may land on one of them is refused; ids BC's test
+/// environment lacks (130301 there) still answer.
+#[test]
+fn all_obj_refuses_the_test_runner_codeunits_it_does_not_load() {
+    let o = outcomes(
+        r#"codeunit 50000 "T" { Subtype = Test;
+  [Test] procedure RunnerCodeunit() var A: Record AllObj; begin if A.Get(A."Object Type"::Codeunit, 130451) then; end;
+  [Test] procedure OtherCodeunit() var A: Record AllObj; begin if A.Get(A."Object Type"::Codeunit, 130301) then Error('row'); end; }"#,
+    );
+    assert!(not_run(&o, "RunnerCodeunit").contains("Test Runner"));
+    passes(&o, "OtherCodeunit");
 }

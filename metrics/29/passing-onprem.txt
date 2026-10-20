@@ -49,6 +49,8 @@
 61232 P109_GetUrl_Overload1_Basic
 61232 P109_GetUrl_Overload2_EmptyRecord
 61232 P109_GetUrl_Overload3_RecordRef
+61235 Format_Bytes_AroundTheAsciiBoundary
+61235 Format_Bytes_ByteOrderMark
 61235 TextFromBytes_ByteOrderMark
 61238 P109_TemporaryPath_Shape
 61243 SaveAsXml_ParametersFile_ListsTheUserAndTheExecutionTime

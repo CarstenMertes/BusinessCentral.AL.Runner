@@ -440,6 +440,15 @@ pub struct PageState {
     /// Primary key of the stored row the cursor stood on when the current new row was started:
     /// the lower neighbour AutoSplitKey numbers it from (`None`: no such row).
     pub lower_key: Option<Vec<Value>>,
+    /// The blank line the cursor stands on is the list's placeholder line (reached when the page opened or by moving onto it),
+    /// not a line `New()` started: a `New()` from it burns one AutoSplitKey interval on it.
+    pub placeholder_line: bool,
+    /// The current new row was started by `New()` from the placeholder line: AutoSplitKey counts one interval more.
+    pub split_burned: bool,
+    /// `OnOpenPage` left filters in `FilterGroup(-1)`: the page dropped them from the rows it shows.
+    pub or_group_dropped: bool,
+    /// Fields whose page filter reads back as a text nothing pins (a SourceTableView `const(0D)`): a TestPage Filter read refuses.
+    pub unpinned_filter_fields: Vec<usize>,
     /// The record `Page.SetRecord` handed a page variable, shown when the page runs.
     pub set_record: Option<Rc<RefCell<RecordState>>>,
     /// `Page.SetTableView` gave `set_record` its filters and order: a later `SetRecord` moves the position only
@@ -549,6 +558,10 @@ impl PageState {
             parts: Vec::new(),
             hidden_parts: Vec::new(),
             lower_key: None,
+            placeholder_line: false,
+            split_burned: false,
+            or_group_dropped: false,
+            unpinned_filter_fields: Vec::new(),
             set_record: None,
             set_view: false,
             new_by_call: false,

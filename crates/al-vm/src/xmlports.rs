@@ -1233,7 +1233,22 @@ impl Session {
                 let by_caption = list.iter().find(|(_, _, c)| c.eq_ignore_ascii_case(t));
                 match by_name.or(by_ordinal).or(by_caption) {
                     Some((o, _, _)) => Ok(Value::Enum(*id, *o)),
-                    None => Err(evaluate_error(text, "Enum")),
+                    // An ordinal the enum does not declare is imported as it is; a text that names no member raises with the
+                    // captions of the members (xmlport/PWXmlPortFormatEvaluate.al:Import_Xml_Enum_Invalid, `7` and `Two`).
+                    None if !t.is_empty() && t.bytes().all(|b| b.is_ascii_digit()) => match t.parse::<i32>() {
+                        Ok(o) => Ok(Value::Enum(*id, o)),
+                        Err(_) => unsupported(format!("XmlPort import of the ordinal {t} into an Enum (not pinned)")),
+                    },
+                    None if t == text => Err(xerr(
+                        format!(
+                            "'{t}' is not an option. The existing options are: {}",
+                            list.iter().map(|(_, _, c)| c.as_str()).collect::<Vec<_>>().join(",")
+                        ),
+                        "InvalidOptionString",
+                    )),
+                    None => unsupported(
+                        "XmlPort import of a text with surrounding spaces that names no Enum member (not pinned)",
+                    ),
                 }
             }
             RtType::Text(_) | RtType::Code(_) | RtType::Integer | RtType::BigInteger => self.xp_value(text, ty, false),

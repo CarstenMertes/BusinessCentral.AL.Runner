@@ -498,6 +498,17 @@ xmlport 60061 "FE Legacy"
     schema { textelement(Root) { tableelement(T; "FE Table") {
         fieldelement(Id; T.Id) { } fieldelement(Dt; T.Dt) { } fieldelement(Dec; T.Dec) { } fieldelement(Bl; T.Bl) { } } } }
 }
+enum 60065 "FE Enum" { value(0; Zero) { Caption = 'Zero cap'; } value(1; One) { Caption = 'One cap'; } }
+table 60066 "FE Enum Table"
+{
+    fields { field(1; Id; Integer) { } field(2; En; Enum "FE Enum") { } }
+    keys { key(PK; Id) { } }
+}
+xmlport 60067 "FE Enum Xml"
+{
+    Format = Xml; Direction = Both; FormatEvaluate = Xml; UseRequestPage = false;
+    schema { textelement(Root) { tableelement(T; "FE Enum Table") { fieldelement(Id; T.Id) { } fieldelement(En; T.En) { } } } }
+}
 xmlport 60062 "FE Xml"
 {
     Format = Xml; Direction = Both; FormatEvaluate = Xml; UseRequestPage = false;
@@ -1546,4 +1557,24 @@ fn a_field_element_without_its_field_attribute_is_refused_on_import() {
         "H.Stage(T, InStr, '<Root><Row><Id>2</Id><Name Kind=\"K9\">Beta</Name></Row></Root>'); Q.SetSource(InStr); Q.Import(); exit('');",
     );
     assert!(why.contains("without its field attribute Lang"), "{why}");
+}
+
+// xmlport/PWXmlPortFormatEvaluate.al:Import_Xml_Enum_Invalid: an undeclared ordinal is imported, a name that is no member raises
+// with the captions.
+#[test]
+fn an_xml_import_into_an_enum_takes_an_undeclared_ordinal_and_names_the_captions_for_an_unknown_name() {
+    let imp = |value: &str| {
+        text(
+            "H: Codeunit Helpers; B: Record \"ALT Blob\" temporary; InStr: InStream; T: Record \"FE Enum Table\"; Ok: Boolean;",
+            &format!(
+                "H.Stage(B, InStr, '<Root><T><Id>1</Id><En>{value}</En></T></Root>'); Ok := XmlPort.Import(60067, InStr);
+                 if T.FindFirst() then; exit(Format(Ok) + '|' + GetLastErrorText() + '|' + GetLastErrorCode() + '|' + Format(T.Count()) + '|' + Format(T.En.AsInteger()));"
+            ),
+        )
+    };
+    assert_eq!(imp("7"), "Yes|||1|7");
+    assert_eq!(
+        imp("Two"),
+        "No|'Two' is not an option. The existing options are: Zero cap,One cap|InvalidOptionString|0|0"
+    );
 }

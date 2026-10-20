@@ -1,6 +1,6 @@
 //! OnFindRecord (and OnNextRecord) on a page whose SourceTableView has a WHERE part. Pinned by writer QC's probe
-//! tests/al-language/pagefindrecord/QcFindViewTests.al (corpus branch al-runtime-rs-staging-qc eca98051, green on BC
-//! 27.5, 28.5 and 29.0; it lands on corpus master with corpus bump 33). Until the bump the runtime runs these paths under
+//! tests/al-language/pagefindrecord/QcFindViewTests.al (corpus branch al-runtime-rs-staging-qc eca98051, green on all three
+//! BC majors the corpus runs; it lands on corpus master with corpus bump 33). Until the bump the runtime runs these paths under
 //! Assumption::FindRecordFilteredView, so the passes are flagged. Shapes from Base Application: Interaction Log
 //! Entries (list), Service Invoice (document card with a fallback), Sales Order Subform (list part).
 

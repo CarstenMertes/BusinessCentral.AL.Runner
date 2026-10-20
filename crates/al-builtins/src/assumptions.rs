@@ -411,7 +411,7 @@ registry! {
     },
     FindRecordFilteredView => {
         id: "findrecord-filtered-view",
-        assumed: "A page with OnFindRecord whose SourceTableView has a WHERE part reads its rows as writer QC's probe shows (corpus branch al-runtime-rs-staging-qc eca98051, tests/al-language/pagefindrecord/QcFindViewTests.al, green on BC 27.5, 28.5, 29.0): the view's filter in group 2, the open asks '=><' once, a list run on a record asks '=>', a card '=' and then '=><', the view does not filter the rows the triggers serve. Becomes pinned with corpus bump 33.",
+        assumed: "A page with OnFindRecord whose SourceTableView has a WHERE part reads its rows as writer QC's probe shows (corpus branch al-runtime-rs-staging-qc eca98051, tests/al-language/pagefindrecord/QcFindViewTests.al, green on all three BC majors the corpus runs): the view's filter in group 2, the open asks '=><' once, a list run on a record asks '=>', a card '=' and then '=><', the view does not filter the rows the triggers serve. Becomes pinned with corpus bump 33.",
         tests: "Pages of Base Application with OnFindRecord and a filtered view (Sales Order Subform and the other document subforms, Service Invoice, Interaction Log Entries): about 939 Tests-ERM tests, e.g. ERM Sales Order tests that open Sales Order.",
         probe: "Done on corpus branch al-runtime-rs-staging-qc (QcFindViewTests.al); delete this entry when corpus bump 33 lands.",
     },

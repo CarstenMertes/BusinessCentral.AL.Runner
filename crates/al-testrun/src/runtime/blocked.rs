@@ -71,6 +71,34 @@ pub(crate) fn run_install_codeunits(lowered: &Lowered, session: &mut Session) ->
             }
         }
     }
+    // A workspace app's subscribers to the install events of "Extension Triggers" run at its install on BC, once in each
+    // company of the database and then once per database (events/lt-platform-events-v/PeVTests.al:284, :313-314;
+    // ADR-046 decision 1 and amendment 1, A1 facts 1 and 5). The runtime runs one company and does not raise these events
+    // yet (ADR-046 steps A and B), so a test on a table such a subscriber writes is not run: its rows would be missing.
+    let engine = session.engine.clone();
+    for (so, sr, event) in &engine.events.install_subscribers {
+        let (so, sr) = (*so, *sr);
+        if lowered.dependency[so] || lowered.left_out.get(so).copied().unwrap_or(false) {
+            continue;
+        }
+        let o = &lowered.program.objects[so];
+        let mut touched = tables_touched(lowered, so, sr);
+        for (s2, r2) in subscribers_reached(&engine, lowered, so, sr) {
+            touched.extend(tables_touched(lowered, s2, r2));
+        }
+        let event = if event == "oninstallapppercompany" {
+            "OnInstallAppPerCompany"
+        } else {
+            "OnInstallAppPerDatabase"
+        };
+        skipped.push((
+            touched,
+            format!(
+                "the install subscriber {} \"{}\".{} to \"Extension Triggers\".{event} is not run: BC runs it once per company of the database, and the runtime does not model the companies of an install yet (ADR-046 steps A and B)",
+                o.kind, o.name, o.routines[sr].name
+            ),
+        ));
+    }
     session.commit_transaction();
     skipped
 }

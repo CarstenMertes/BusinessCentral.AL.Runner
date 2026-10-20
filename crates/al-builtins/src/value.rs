@@ -233,6 +233,9 @@ pub struct QueryState {
     /// The instance of a query with code: its variables live as long as the query variable
     /// (query/TestQueryOnBeforeOpenVariablesContracts.al:104-140). Made on first use.
     pub instance: Option<Rc<RefCell<Instance>>>,
+    /// The query's OnBeforeOpen trigger is running: `CurrQuery.Open` and `Close` raise
+    /// (query/lt-ch-query-leads/ChQueryLeads.al:259-290).
+    pub in_before_open: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -469,6 +472,9 @@ pub struct PageState {
     /// A request page that `Report.RunRequestPage` opened: its OK confirms the parameters, whatever
     /// the report renders.
     pub parameters_wanted: bool,
+    /// The parameters string a `Report.RunRequestPage(Id, Parameters)` hands the request page: loaded after its OnInit
+    /// and before its OnOpenPage (report/lt-aq/AqTests.al:362-381).
+    pub request_seed: Option<String>,
     /// The session's application areas when the page opened: controls whose area they do not
     /// enable are not on the page.
     pub areas: String,
@@ -570,6 +576,7 @@ impl PageState {
             host: None,
             ext_instances: Vec::new(),
             parameters_wanted: false,
+            request_seed: None,
             areas: String::new(),
             inited: false,
             stale: false,
@@ -1455,6 +1462,7 @@ impl Value {
                 security_filtering: None,
                 run: None,
                 instance: None,
+                in_before_open: false,
             }))),
             // Records need the table's field types: the VM builds them.
             RtType::Record(..) => Value::Null,

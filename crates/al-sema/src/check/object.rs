@@ -562,6 +562,12 @@ impl<'a> Checker<'a> {
                     _ => None,
                 }
             });
+            let report_item = item_rec.is_some()
+                && self.ws.objects[oi].kind == ObjKind::Report
+                && r.syntax()
+                    .ancestors()
+                    .filter_map(ast::Section::cast)
+                    .any(|s| s.name().eq_ignore_ascii_case("dataitem"));
             let (rec, rec_unqualified) = match item_rec {
                 Some(t) => (
                     Some(Ty::Record {
@@ -586,6 +592,7 @@ impl<'a> Checker<'a> {
                 codeunit_on_run: self.ws.objects[oi].kind == ObjKind::Codeunit
                     && r.is_trigger()
                     && r.name().eq_ignore_ascii_case("OnRun"),
+                report_item,
             };
             let mut locals = super::posmap::FxMap::default();
             for p in r.params() {

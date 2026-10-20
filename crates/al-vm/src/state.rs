@@ -159,6 +159,9 @@ pub(crate) struct ReportState {
     /// The request page of a `RunRequestPage` is open: a table write in its handler finds no transaction
     /// (report/TestProbeReportContracts.al:RequestPage_TableWriteInsideHandler).
     pub(crate) request_only_page: bool,
+    /// The run failed on a DataItemTableView `const(0D)` (`report_prepare`): a SaveAs whose answer is used keeps that error
+    /// as the last error (report/lt-cj-report-leads/CjDataset.al:190-211).
+    pub(crate) zero_date_view_failed: bool,
     pub(crate) report_executed: Vec<std::rc::Weak<RefCell<Instance>>>,
     /// Report variables a `SaveAs` was called on: a second `SaveAs` on one whose first ended before it was marked
     /// executed is refused (what BC does then is not pinned).

@@ -119,3 +119,17 @@ fn a_caption_class_expression_on_a_table_field_is_refused() {
     refused(al_testkit::run_in(src, "C", "F"), "CaptionClass");
     refused(al_testkit::run_in(src, "C", "G"), "CaptionClass");
 }
+
+/// An error text that names a table whose caption is refused (a tableextension sets one over the table's own) is not pinned:
+/// the error is raised, and a read of its text or code refuses.
+#[test]
+fn an_error_that_names_a_refused_table_caption_is_unpinned() {
+    let src = "table 50100 Base { Caption = 'Base Caption'; fields { field(1; Id; Integer) { } } keys { key(PK; Id) { } } } \
+        tableextension 50101 BaseExt extends Base { Caption = 'Ext Caption'; } \
+        codeunit 50100 C { procedure F(): Text var R: Record Base; begin asserterror R.Get(5); exit(GetLastErrorText()); end; \
+        procedure G(): Text var R: Record Base; begin asserterror R.Get(5); exit(GetLastErrorCode()); end; \
+        procedure H(): Boolean var R: Record Base; begin exit(R.Get(5)); end; }";
+    refused(al_testkit::run_in(src, "C", "F"), "not pinned");
+    refused(al_testkit::run_in(src, "C", "G"), "not pinned");
+    assert!(matches!(al_testkit::run_in(src, "C", "H"), Ok(Value::Boolean(false))));
+}

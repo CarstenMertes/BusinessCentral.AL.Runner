@@ -184,6 +184,17 @@ impl Lowerer<'_> {
                             None => unsupported.push(format!("control {} is bound to unknown field {f}", raw.name)),
                         }
                     }
+                    // A page variable with the name of a field of the source table: which one a bare name binds is not pinned.
+                    Some(crate::pages::Source::Var(v))
+                        if table.is_some_and(|t| {
+                            self.members[t].fields.iter().any(|x| x.name.eq_ignore_ascii_case(&v))
+                        }) =>
+                    {
+                        unsupported.push(format!(
+                            "control {} is bound to the bare name {v}, which is a page variable and also a field of the source table (which one BC binds is not pinned)",
+                            raw.name
+                        ));
+                    }
                     Some(crate::pages::Source::Var(v)) => {
                         let slot = match raw.owner {
                             None => globals.iter().position(|g| g.name.eq_ignore_ascii_case(&v)),
@@ -198,19 +209,43 @@ impl Lowerer<'_> {
                         }
                     }
                     // A bare name of a field of the source table (no `Rec.`, warning AL0604) is that field: the control shows
-                    // the field's caption and value (pages/lt-page-controls-aa/AaControls.al:684-692, `SystemId`).
+                    // the field's caption and value (pages/lt-page-controls-aa/AaControls.al:684-692, `SystemId`). Pinned only where
+                    // nothing else in scope has the name; with a procedure of the page or the table, a page variable or another
+                    // control of that name, which one BC binds is not pinned: refused.
                     Some(crate::pages::Source::Expr)
-                        if let Some(p) =
-                            crate::pages::plain_name(args.get(1).map_or("", |a| a.as_str())).and_then(|n| {
-                                table.and_then(|t| {
-                                    self.members[t]
-                                        .fields
-                                        .iter()
-                                        .position(|x| x.name.eq_ignore_ascii_case(&n))
-                                })
+                        if let Some((n, p)) = crate::pages::plain_name(args.get(1).map_or("", |a| a.as_str()))
+                            .and_then(|n| {
+                                let t = table?;
+                                let p = self.members[t]
+                                    .fields
+                                    .iter()
+                                    .position(|x| x.name.eq_ignore_ascii_case(&n))?;
+                                Some((n, p))
                             }) =>
                     {
-                        binding = ir::Binding::Field(p);
+                        let named = |o: usize| {
+                            self.routine_nodes
+                                .get(o)
+                                .iter()
+                                .any(|r| r.name().eq_ignore_ascii_case(&n))
+                        };
+                        let other = named(oi)
+                            || named(ow.object)
+                            || table.is_some_and(named)
+                            || ow.names.contains(&n.to_lowercase())
+                            || globals.iter().any(|g| g.name.eq_ignore_ascii_case(&n))
+                            || layout
+                                .controls
+                                .iter()
+                                .any(|c| !std::ptr::eq(c, raw) && c.name.eq_ignore_ascii_case(&n));
+                        if other {
+                            unsupported.push(format!(
+                                "control {} is bound to the bare name {n}, which is a field of the source table and also another name in scope (which one BC binds is not pinned)",
+                                raw.name
+                            ));
+                        } else {
+                            binding = ir::Binding::Field(p);
+                        }
                     }
                     Some(crate::pages::Source::Expr) => {
                         let off = usize::from(sec.syntax().text_range().start()) - ow.base;

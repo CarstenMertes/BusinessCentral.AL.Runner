@@ -140,6 +140,20 @@ impl Session {
                             // costs the open nothing; only reading that caption is refused.
                             if let Value::Text(t) | Value::Code(t) = &v {
                                 if !t.starts_with("3,") {
+                                    // A text other than the one the control resolved before, at a fill other than the one after
+                                    // SetValue (`refresh_caption_classes`, misc/W2CaptionClass.al:174-178): whether BC resolves it
+                                    // there (after an action, on the next row) is not pinned.
+                                    if super::format::raises_resolve(t)
+                                        && st
+                                            .borrow()
+                                            .control_captions
+                                            .iter()
+                                            .any(|(i, old, _)| *i == idx && old != t.as_str())
+                                    {
+                                        return unsupported(
+                                            "a CaptionClass expression that gives another text at a fill other than after SetValue (whether BC resolves it again there is not pinned)",
+                                        );
+                                    }
                                     self.fill_caption_class(st, idx, t)?;
                                 }
                             }

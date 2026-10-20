@@ -936,7 +936,8 @@ pub fn unpinned_text_error(code: &str, probe: &str) -> AlError {
 /// Whether the text of `e` is not pinned ([`unpinned_error`], [`unpinned_error_for`]). Some errors have a pinned text and an
 /// unpinned code (the code alone is the mark).
 pub fn text_unpinned(e: &AlError) -> bool {
-    e.message.starts_with(UNPINNED_ERROR)
+    // Anywhere in the text: a text built around a value whose text is not pinned (a refused table caption) holds the mark inside.
+    e.message.contains(UNPINNED_ERROR)
 }
 
 fn unpinned_refusal(e: &AlError, what: &str) -> Signal {

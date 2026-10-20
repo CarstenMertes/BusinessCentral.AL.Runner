@@ -667,13 +667,9 @@ impl Session {
             .iter()
             .any(|(i, t, _)| *i == idx && t == text)
         {
-            // A later fill with the same class text: whether BC raises OnResolveCaptionClass again is not pinned
-            // (misc/W2CaptionClass.al:174-178 pins a changed text only).
-            if raises_resolve(text) {
-                return unsupported(
-                    "a CaptionClass that gives the same text at a later fill (whether BC resolves it again is not pinned)",
-                );
-            }
+            // A later fill with the same class text keeps the caption and raises no OnResolveCaptionClass: the session keeps
+            // what it translated (types/PSCaptionClass.al:94-115; misc/W2CaptionClass.al:174-178 pins that a changed text is
+            // resolved again).
             return Ok(());
         }
         let caption = self.caption_class_text(st, text)?;
@@ -1002,7 +998,7 @@ impl Session {
 
 /// The text of the `ENU = '...'` entry of a `...ML` property value.
 /// The class text goes to OnResolveCaptionClass (see `caption_class_text`): not area 3, not a numeric or empty area, and with a comma.
-fn raises_resolve(text: &str) -> bool {
+pub(super) fn raises_resolve(text: &str) -> bool {
     match text.split_once(',') {
         Some((area, _)) => area != "3" && !area.is_empty() && area.trim().parse::<u32>().is_err(),
         None => false,

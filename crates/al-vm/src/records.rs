@@ -153,7 +153,12 @@ impl Session {
         }
     }
 
+    /// The table's caption for an error text. Where the caption is refused (`al_ir::CAPTION_REFUSED`) the text holds the
+    /// unpinned-error mark, so a read of the error's text or code refuses (`al_builtins::native::text_unpinned`).
     pub(crate) fn caption(&self, t: &TableDef) -> String {
+        if self.caption_refused(t.object as usize).is_some() {
+            return al_builtins::native::UNPINNED_ERROR.to_string();
+        }
         self.engine.program.objects[t.object as usize]
             .properties
             .iter()

@@ -42,6 +42,7 @@ mod hostvalues;
 mod http;
 pub mod impact;
 mod interfaces;
+mod isdirty;
 mod pages;
 mod partial;
 mod platform;
@@ -449,6 +450,11 @@ pub struct Session {
     /// How many numbers `Random` has drawn in this session (a test that draws after tests that did not run sees another
     /// sequence than BC's).
     pub(crate) random_draws: u64,
+    /// How many AL routine calls the session has made: `Record.IsDirty` notes whether a record write ran triggers or
+    /// subscribers (isdirty.rs).
+    pub(crate) calls_made: u64,
+    /// How many record methods that Record.IsDirty tracks are running (isdirty.rs).
+    pub(crate) dirty_ops_open: u32,
     /// Whether the test running has reseeded the `Random` sequence (`Randomize`); see [`Session::inherited_random_draws`].
     pub(crate) reseeded_in_test: bool,
     /// How many numbers `Random` has drawn from a sequence the test running did not seed itself.
@@ -645,6 +651,8 @@ impl Session {
             guid_seed: random_seed,
             rng: al_host::random::NetRandom::new(random_seed),
             random_draws: 0,
+            calls_made: 0,
+            dirty_ops_open: 0,
             reseeded_in_test: false,
             inherited_draws: 0,
             unseeded_randomizes: 0,
@@ -839,6 +847,7 @@ impl Session {
                     assigned: false,
                     inserted: false,
                     dirty_base: None,
+                    is_dirty_base: al_builtins::value::DirtyBase::Fresh,
                     last_modify: None,
                     globals: Default::default(),
                 })))
@@ -1076,6 +1085,7 @@ impl Session {
                 call_stack: String::new(), ..Default::default() })));
         }
         self.depth += 1;
+        self.calls_made += 1;
         // The builtin being run (a record write that runs triggers and events) keeps its own
         // `ret_used`: the callee's builtins must not change it.
         let ret_used = self.ret_used;

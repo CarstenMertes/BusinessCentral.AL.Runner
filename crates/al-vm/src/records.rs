@@ -1285,7 +1285,13 @@ impl Session {
         ))
     }
 
+    /// A record method: [`Session::record_op_inner`], with what it does to the snapshot `Record.IsDirty` compares with
+    /// (isdirty.rs).
     pub(crate) fn record_op(&mut self, method: RecordOp, rec: &Rec, args: &mut [Value]) -> Result<Value, Signal> {
+        self.record_op_tracked(method, rec, args)
+    }
+
+    pub(crate) fn record_op_inner(&mut self, method: RecordOp, rec: &Rec, args: &mut [Value]) -> Result<Value, Signal> {
         self.connection_check(rec)?;
         let t = self.table(rec)?;
         self.linked_object_check(&t, rec, method)?;
@@ -1458,6 +1464,17 @@ impl Session {
                 let mut r = rec.borrow_mut();
                 r.assigned = false;
                 r.inserted = false;
+                if matches!(r.is_dirty_base, al_builtins::value::DirtyBase::Synced) {
+                    // The buffer is the snapshot Record.IsDirty compares with, and Init keeps it (isdirty.rs): the old
+                    // buffer becomes the snapshot instead of being copied.
+                    let mut fresh = fresh;
+                    for &i in &t.keys[0] {
+                        fresh[i] = r.fields[i].clone();
+                    }
+                    let old = std::mem::replace(&mut r.fields, fresh);
+                    r.is_dirty_base = al_builtins::value::DirtyBase::Row { base: old, alt: None };
+                    return Ok(Value::Null);
+                }
                 for (i, v) in fresh.into_iter().enumerate() {
                     // Doc (Record.Init): primary key fields keep their values.
                     if !t.keys[0].contains(&i) {

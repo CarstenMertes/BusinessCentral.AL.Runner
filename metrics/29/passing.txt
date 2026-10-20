@@ -10013,6 +10013,7 @@
 72783 P195_NestedWith_SameFieldName_InnerOrOuter
 72783 P195_NestedWith_SameRecordTwice_AndSequential
 72783 P195_With_TemporaryRecord_AndLoop
+72786 BN_With_ImplicitWithInTableNoCodeunit
 72786 BN_With_InitInsideWith
 72786 BN_With_ParameterNamedLikeFieldInTableProcedure
 72786 BN_With_ParameterVsGlobalOfWithTable
@@ -12591,6 +12592,8 @@
 77502 AC_EnumNamesMatchOrdinals
 77502 AC_EnumNamesOrdinalsSingle
 77502 AC_EnumOrdinals
+77504 AC_IsDirty_FindAndRename
+77504 AC_IsDirty_Lifecycle
 77510 AC_HttpRequestType_Case
 77510 AC_HttpRequestType_Format
 77510 AC_HttpRequestType_Variable

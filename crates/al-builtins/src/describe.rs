@@ -288,6 +288,7 @@ mod tests {
             assigned: false,
             inserted: false,
             dirty_base: None,
+            is_dirty_base: Default::default(),
             last_modify: None,
             globals: Default::default(),
         })))

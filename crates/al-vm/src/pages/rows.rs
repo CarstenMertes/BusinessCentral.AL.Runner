@@ -774,9 +774,7 @@ impl Session {
                 // What GetLastErrorText reads after the swallowed error is not pinned.
                 self.last_error = al_builtins::native::unpinned_error();
                 if answer_used {
-                    return unsupported(
-                        "the answer of Next() after an error in OnModifyRecord (not pinned)",
-                    );
+                    return unsupported("the answer of Next() after an error in OnModifyRecord (not pinned)");
                 }
                 return Ok(Value::Boolean(false));
             }

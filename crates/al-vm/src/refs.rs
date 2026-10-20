@@ -683,9 +683,6 @@ impl Session {
                         *lib.borrow_mut() = LibraryValue::RecordRef(Rc::new(RefCell::new(copy)));
                         return Ok(Value::Null);
                     }
-                    Some(Value::Library(..)) if from_variant => {
-                        return unsupported("RecordRef.GetTable of a Variant that holds a RecordRef (not pinned)");
-                    }
                     Some(Value::Record(src)) => src.clone(),
                     // A RecordRef as the source (Microsoft's Gen. Jnl.-Post Preview): the same copy of its record.
                     Some(Value::Library(_, other)) => match &*other.borrow() {

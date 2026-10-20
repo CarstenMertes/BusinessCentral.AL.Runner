@@ -397,12 +397,6 @@ registry! {
         tests: "Code that tests the result of HttpHeaders.Add and then reads GetLastErrorText.",
         probe: "ClearLastError(); if not H.Add('Accept', 'json') then Message(GetLastErrorText()), and the same for an empty name and a content header on request headers.",
     },
-    HttpGetValuesMissingError => {
-        id: "http-get-values-missing-error",
-        assumed: "HttpHeaders.GetValues as a statement on request, response or client headers raises 'Exception of type ''Microsoft.Dynamics.Nav.Types.Exceptions.NavNclInvalidHeaderException'' was thrown.' (code InvalidHeader) for a name that is not there, is no token or is a content header. (That it raises is pinned by network/lt-ay-http/AyHeaderAddResult.al `get=E`; the text and code are pinned on content headers only, network/lt-http/HttpContent.al:290-291.)",
-        tests: "Code that calls GetValues as a statement on request or response headers for a missing name inside a TryFunction or asserterror.",
-        probe: "asserterror H.GetValues('X-Missing', Vals) on request, response and HttpClient.DefaultRequestHeaders headers, and for 'Bad Name' and 'Content-Type' on request headers: GetLastErrorText and GetLastErrorCode.",
-    },
     HttpContentLengthAfterRead => {
         id: "http-content-length-after-read",
         assumed: "ReadAs(Text) of a content adds a Content-Length header of the body's length to its headers (the headers handed out before show it); a later WriteFrom sets the new length while the header is there. (PnE12HttpContent.al:WriteFromText_ThenReadAndHeaders reads 5 after WriteFrom('hello') and ReadAs; the P87 and P100 cases show none before a read.)",

@@ -1303,14 +1303,16 @@ fn headers_get_values(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -
         };
         if kind != HeaderKind::Content {
             // On request, response and client headers a statement raises too, for a name that is not there, no token or a content
-            // header (network/lt-ay-http/AyHeaderAddResult.al `get=E` after every refused Add, :88 to :383); the text and code are
-            // measured on content headers only, and with the result used nothing about the last error is measured there
-            // (assumption http-get-values-missing-error).
+            // header (network/lt-ay-http/AyHeaderAddResult.al `get=E` after every refused Add, :88 to :383). The text and code are
+            // measured on content headers only: the error carries none, and any read of them is refused (probe
+            // http-get-values-missing-error in docs/probes-needed.md). With the result used nothing about the last error is
+            // measured there; it is left as it was.
             if c.ret_used() {
                 return Ok(Value::Boolean(false));
             }
-            assume(crate::assumptions::Assumption::HttpGetValuesMissingError);
-            return Err(Signal::Error(Box::new(error)));
+            return Err(Signal::Error(Box::new(crate::native::unpinned_error_for(
+                "http-get-values-missing-error",
+            ))));
         }
         if c.ret_used() {
             c.set_last_error(error);

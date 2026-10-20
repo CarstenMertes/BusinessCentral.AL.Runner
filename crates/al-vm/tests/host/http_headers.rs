@@ -212,3 +212,103 @@ fn typed_response_header_values_follow_the_probe() {
     assert_eq!(call("Resp", "WWW-Authenticate", ","), "ret=Yes get=E");
     assert_eq!(call("Resp", "Accept-Ranges", "a b"), "ret=No get=E");
 }
+
+/// GetValues of a missing name as a statement on request headers raises an error whose text and code no corpus test pins
+/// (AyHeaderAddResult.al `get=E`; the text is pinned on content headers only, HttpContent.al:290-291). Every read of them is
+/// refused, naming the probe.
+const UNPINNED_SRC: &str = r#"
+table 50191 "HH Row"
+{
+    fields { field(1; "No."; Code[20]) { } field(2; Name; Text[50]) { } }
+    keys { key(PK; "No.") { } }
+}
+page 50192 "HH Card"
+{
+    PageType = Card;
+    SourceTable = "HH Row";
+    layout { area(Content) { field(NameCtl; Rec.Name) { trigger OnValidate() begin Missing(); end; } } }
+    local procedure Missing()
+    var
+        R: HttpRequestMessage;
+        H: HttpHeaders;
+        Vals: List of [Text];
+    begin
+        R.GetHeaders(H);
+        H.GetValues('X-Missing', Vals);
+    end;
+}
+codeunit 50193 C
+{
+    local procedure Missing()
+    var
+        R: HttpRequestMessage;
+        H: HttpHeaders;
+        Vals: List of [Text];
+    begin
+        R.GetHeaders(H);
+        H.GetValues('X-Missing', Vals);
+    end;
+
+    procedure Caught(): Boolean
+    begin
+        asserterror Missing();
+        exit(true);
+    end;
+
+    procedure Text(): Text
+    begin
+        asserterror Missing();
+        exit(GetLastErrorText());
+    end;
+
+    procedure TextFlag(): Text
+    begin
+        asserterror Missing();
+        exit(GetLastErrorText(true));
+    end;
+
+    procedure Code(): Text
+    begin
+        asserterror Missing();
+        exit(GetLastErrorCode());
+    end;
+
+    procedure PageValidate()
+    var
+        Row: Record "HH Row";
+        TP: TestPage "HH Card";
+    begin
+        Row."No." := 'A';
+        Row.Insert();
+        TP.OpenEdit();
+        TP.NameCtl.SetValue('x');
+    end;
+}
+"#;
+
+fn refused_naming_the_probe(r: Result<al_builtins::value::Value, al_builtins::native::Signal>) -> String {
+    match r {
+        Err(al_builtins::native::Signal::Unsupported(why)) => {
+            assert!(why.contains("http-get-values-missing-error"), "{why}");
+            why
+        }
+        other => panic!("expected a refusal, got {other:?}"),
+    }
+}
+
+#[test]
+fn the_unpinned_get_values_error_can_be_caught() {
+    assert!(al_testkit::boolean(al_testkit::run_in(UNPINNED_SRC, "C", "Caught")));
+}
+
+#[test]
+fn the_get_last_error_builtins_refuse_the_unpinned_error() {
+    refused_naming_the_probe(al_testkit::run_in(UNPINNED_SRC, "C", "Text"));
+    refused_naming_the_probe(al_testkit::run_in(UNPINNED_SRC, "C", "TextFlag"));
+    refused_naming_the_probe(al_testkit::run_in(UNPINNED_SRC, "C", "Code"));
+}
+
+#[test]
+fn a_page_validation_error_built_from_the_unpinned_error_is_refused() {
+    refused_naming_the_probe(al_testkit::run_in(UNPINNED_SRC, "C", "PageValidate"));
+}

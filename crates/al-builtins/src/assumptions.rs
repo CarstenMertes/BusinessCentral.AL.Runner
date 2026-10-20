@@ -243,9 +243,9 @@ registry! {
     },
     ModifyAllWithEventsUnchangedRow => {
         id: "modifyall-with-events-unchanged-row",
-        assumed: "ModifyAll(Field, Value, false) on a table with OnBeforeModifyEvent or OnAfterModifyEvent subscribers or a database trigger writes row by row: a row that has the value already keeps its SystemModifiedAt and row version, as a Modify that changes nothing does. Without subscribers every row is stamped (record/lt-record-write/RcBTriggers.al:ModifyAll_Equal_Value_Rows_BQ).",
+        assumed: "ModifyAll(Field, Value, false) on a table with OnBeforeModifyEvent or OnAfterModifyEvent subscribers or a database trigger writes row by row: a row that has the value already keeps its SystemModifiedAt and row version, as a Modify that changes nothing does. Without subscribers every row is stamped (record/lt-record-write/RcBTriggers.al:ModifyAll_Equal_Value_Rows_BQ) and, not pinned, also gets a new SystemRowVersion.",
         tests: "Tests-Bank 134141 DateCompressCheckLedgerEntries and others: about 220 Tests-Bank tests run a ModifyAll(.., false) over rows that have the value already.",
-        probe: "ModifyAll(Amount, 10, false) over a row whose Amount is 10, on a table with an OnAfterModifyEvent subscriber: SystemModifiedAt and SystemRowVersion of that row before and after.",
+        probe: "ModifyAll(Amount, 10, false) over a row whose Amount is 10, on a table with an OnAfterModifyEvent subscriber and on one without: SystemModifiedAt and SystemRowVersion of that row before and after.",
     },
     RecordRefGetTableOfRecordRef => {
         id: "recordref-gettable-of-recordref",

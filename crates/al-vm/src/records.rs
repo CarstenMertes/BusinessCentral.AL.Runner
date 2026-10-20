@@ -2194,18 +2194,30 @@ impl Session {
                 // other variable's Modify of a changed field is accepted, while a Modify that changed a field makes it fail with DB:RecordChanged).
                 self.check_code_storage(&t, &rec.borrow().fields, true)?;
                 self.sql_timestamp_before(&t, rec, stored_row.as_deref())?;
-                let old_version = match stored_row.as_deref() {
-                    Some(old)
-                        if !rec.borrow().temporary
-                            && !self.bulk_modify
-                            && Session::modify_changes_nothing(&t, old, rec) =>
-                    {
+                // A bulk ModifyAll(.., false) without subscribers stamps SystemModifiedAt of a row that has the value already
+                // (RcBTriggers.al:ModifyAll_Equal_Value_Rows_BQ); that it also gives the row a new row version is not pinned and
+                // marks the assumption modifyall-with-events-unchanged-row.
+                let unchanged = match stored_row.as_deref() {
+                    Some(old) if !rec.borrow().temporary && Session::modify_changes_nothing(&t, old, rec) => Some(old),
+                    _ => None,
+                };
+                let old_version = match unchanged {
+                    Some(old) if !self.bulk_modify => {
                         if let Some(i) = t.fields.iter().position(|f| f.id == 2_000_000_005) {
                             rec.borrow_mut().fields[i] = old[i].clone();
                         }
                         None
                     }
-                    _ => self.bump_row_version(&t, rec),
+                    Some(_) => {
+                        let bumped = self.bump_row_version(&t, rec);
+                        if bumped.is_some() {
+                            al_builtins::assumptions::assume(
+                                al_builtins::assumptions::Assumption::ModifyAllWithEventsUnchangedRow,
+                            );
+                        }
+                        bumped
+                    }
+                    None => self.bump_row_version(&t, rec),
                 };
                 self.sql_timestamp_after(&t, rec);
                 let stamped = self.stamp_modify(&t, rec, stored_row.as_deref());

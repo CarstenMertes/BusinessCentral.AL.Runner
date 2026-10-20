@@ -277,7 +277,9 @@ impl Session {
                     .map(|m| m.and_then(|j| lens.get(j).copied().flatten()))
                     .collect();
             }
+            self.events.next_is_subscriber = true;
             let called = self.call(s.object, s.routine, inst, call_args);
+            self.events.next_is_subscriber = false;
             self.events.next_aliases.clear();
             self.events.next_var_lens.clear();
             let (_, finals) = match called {

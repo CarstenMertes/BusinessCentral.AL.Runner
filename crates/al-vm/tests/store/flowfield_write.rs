@@ -1,6 +1,7 @@
 //! Writes into a FlowField: Validate, TransferFields and a temporary record
 //! (record/lt-flowfield-write/DiFwWriteTests.al).
 
+use al_builtins::native::Signal;
 use al_testkit::{run_in, text};
 
 const SRC: &str = r#"
@@ -377,10 +378,45 @@ codeunit 50381 T
 }
 "#;
 
-// events/lt-cl-event-leads/ClEventLeads.al:70: a stored record handed by value to a `temporary` parameter is a temporary copy.
+// events/lt-cl-event-leads/ClEventLeads.al:70 pins a stored record handed by value to a `temporary` parameter only for an event
+// subscriber; a plain procedure call is not pinned and is refused.
 #[test]
-fn a_stored_record_handed_to_a_temporary_parameter_is_an_empty_temporary_copy() {
-    assert_eq!(text(run_in(TEMP_PARAM, "T", "F")), "Yes 0 2");
+fn a_stored_record_handed_to_a_temporary_parameter_of_a_procedure_is_refused() {
+    let r = run_in(TEMP_PARAM, "T", "F");
+    assert!(matches!(&r, Err(Signal::Unsupported(m)) if m.contains("temporary")), "{r:?}");
+}
+
+const TEMP_SUBSCRIBER: &str = r#"
+table 50382 TQ { fields { field(1; Id; Integer) { } } keys { key(PK; Id) { } } }
+codeunit 50383 TL { SingleInstance = true; var T: Text; procedure Add(S: Text) begin T += S; end; procedure Get(): Text begin exit(T); end; }
+codeunit 50384 TS
+{
+    [EventSubscriber(ObjectType::Table, Database::TQ, 'OnAfterInsertEvent', '', false, false)]
+    local procedure Ins(Rec: Record TQ temporary)
+    var L: Codeunit TL;
+    begin
+        L.Add(Format(Rec.IsTemporary()) + ' ' + Format(Rec.Count()) + ' ' + Format(Rec.Id));
+    end;
+}
+codeunit 50385 T
+{
+    procedure F(): Text
+    var
+        R: Record TQ;
+        L: Codeunit TL;
+    begin
+        R.Id := 1; R.Insert();
+        R.Id := 2; R.Insert(true);
+        exit(L.Get());
+    end;
+}
+"#;
+
+// events/lt-cl-event-leads/ClEventLeads.al:70 (`ins.temporary temp=Yes count=0 id=103`): an OnAfterInsertEvent subscriber whose Rec
+// is declared temporary gets a temporary copy of the stored record over an empty table.
+#[test]
+fn a_stored_record_handed_to_a_temporary_subscriber_parameter_is_an_empty_temporary_copy() {
+    assert_eq!(text(run_in(TEMP_SUBSCRIBER, "T", "F")), "Yes 0 1Yes 0 2");
 }
 
 const SUM_TRIGGERS: &str = r#"

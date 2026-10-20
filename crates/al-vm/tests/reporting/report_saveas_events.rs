@@ -148,13 +148,22 @@ fn a_substitutereport_subscriber_changes_the_report() {
     );
 }
 
-/// report/lt-am-rdlc-output/AMRdlcOutput.al:TextRdlc_SaveAsHtml_IsRefused: SubstituteReport, with the parameters, then the layout error.
+/// report/lt-am-rdlc-output/AMRdlcOutput.al:TextRdlc_SaveAsHtml_IsRefused: SubstituteReport, then the layout error. A subscriber
+/// that does not read RequestPageXml runs.
 #[test]
 fn an_html_saveas_of_an_rdlc_report_raises_substitutereport_then_fails() {
+    let fixture = FIXTURE.replace("L.Add('req=' + RequestPageXml);", "L.Add('req');");
     assert_eq!(
-        text(run("Html")),
-        "No|The Html output format is not supported by the current report layout format.|SubstituteReport(50972,SaveAs,in=-1);req=MARK;"
+        text(al_testkit::run_in(&fixture, "SE Tests", "Html")),
+        "No|The Html output format is not supported by the current report layout format.|SubstituteReport(50972,SaveAs,in=-1);req;"
     );
+}
+
+/// AMRdlcOutput.al:TextRdlc_SaveAsHtml_IsRefused pins only that RequestPageXml of an Html SaveAs contains the parameters, not
+/// its text: a SubstituteReport subscriber that reads it is refused.
+#[test]
+fn an_html_saveas_whose_substitutereport_subscriber_reads_requestpagexml_is_refused() {
+    assert_refused(run("Html"), "RequestPageXml");
 }
 
 /// A NewReportId no report declares: what BC does is not pinned.

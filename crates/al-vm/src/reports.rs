@@ -1963,7 +1963,8 @@ impl Session {
             let (mut inst, mut schema) = self.report_by_number(id, args.first())?;
             // An Html SaveAs of a report with an RDLC layout raises SubstituteReport with the parameters as RequestPageXml before it
             // fails for the layout, and nothing after (report/lt-am-rdlc-output/AMRdlcOutput.al:TextRdlc_SaveAsHtml_IsRefused,
-            // `SubstituteReport(79256,SaveAs,req=Yes);`). A subscriber that substitutes another report is not pinned.
+            // `SubstituteReport(79256,SaveAs,req=Yes);`). Only that RequestPageXml contains the parameters is pinned, not its
+            // text: a subscriber that reads it is refused. A subscriber that substitutes another report is not pinned.
             if format == "Html"
                 && record_ref.is_none()
                 && matches!(target, SaveTarget::Stream(_))
@@ -1973,9 +1974,15 @@ impl Session {
                     .engine
                     .events
                     .is_subscribed(crate::events::REPORTING_TRIGGERS, "substitutereport")
-                && self.raise_substitute_report(&schema, &parameters)?.is_some()
             {
-                return unsupported("SubstituteReport set another report for an Html SaveAs (not pinned)");
+                if self.substitute_report_reads_request_page() {
+                    return unsupported(
+                        "a SubstituteReport subscriber reads RequestPageXml of an Html SaveAs: only that it contains the parameters is pinned",
+                    );
+                }
+                if self.raise_substitute_report(&schema, &parameters)?.is_some() {
+                    return unsupported("SubstituteReport set another report for an Html SaveAs (not pinned)");
+                }
             }
             if self.save_as_raises_events(&schema, &format, &parameters, record_ref, &target) {
                 if let Some(new_id) = self.raise_substitute_report(&schema, "")? {
@@ -2252,6 +2259,46 @@ impl Session {
                     .engine
                     .events
                     .is_subscribed(crate::events::REPORTING_TRIGGERS, "ondocumentready"))
+    }
+
+    /// Whether a `SubstituteReport` subscriber reads its `RequestPageXml` parameter anywhere in its body (a load of it, or
+    /// passing it on), or a subscriber is declared but not compiled (its body is not known).
+    fn substitute_report_reads_request_page(&self) -> bool {
+        let key = (crate::events::REPORTING_TRIGGERS, "substitutereport".to_string());
+        if self.engine.events.missing.contains_key(&key) {
+            return true;
+        }
+        fn root_is(p: &ir::Place, slot: usize) -> bool {
+            match p {
+                ir::Place::Local(i) => *i == slot,
+                ir::Place::Index(b, _) | ir::Place::Field(b, _) => root_is(b, slot),
+                _ => false,
+            }
+        }
+        let refs = |args: &[ir::Arg], slot: usize| args.iter().any(|a| matches!(a, ir::Arg::Ref(p) if root_is(p, slot)));
+        self.engine.events.subscribers.get(&key).is_some_and(|subs| {
+            subs.iter().any(|s| {
+                let r = &self.engine.program.objects[s.object].routines[s.routine];
+                let Some(slot) = r.locals[..r.params]
+                    .iter()
+                    .position(|l| l.name.eq_ignore_ascii_case("RequestPageXml"))
+                else {
+                    return false;
+                };
+                let mut reads = false;
+                ir::types::for_each_expr_post(&r.body, &mut |e| {
+                    reads |= match e {
+                        ir::Expr::Load(p) => root_is(p, slot),
+                        ir::Expr::Call { args, .. }
+                        | ir::Expr::InterfaceCall { args, .. }
+                        | ir::Expr::DotNet { args, .. }
+                        | ir::Expr::Builtin { args, .. } => refs(args, slot),
+                        _ => false,
+                    };
+                });
+                reads
+            })
+        })
     }
 
     /// Raises `SubstituteReport(ReportId, RunMode, RequestPageXml, RecordRef, var NewReportId)` for an Xml SaveAs and

@@ -795,6 +795,7 @@ impl Session {
                 sender_refused: None,
                 var_origins: Vec::new(),
                 next_aliases: Vec::new(),
+                next_is_subscriber: false,
                 next_var_lens: Vec::new(),
                 publisher_var_lens: Vec::new(),
                 unpinned_event_depth: 0,
@@ -1269,6 +1270,7 @@ impl Session {
         args: Vec<Value>,
     ) -> Result<(Value, Vec<Value>), Signal> {
         let aliases = std::mem::take(&mut self.events.next_aliases);
+        let subscriber_call = std::mem::take(&mut self.events.next_is_subscriber);
         self.first_use(&instance)?;
         let engine = self.engine.clone();
         let r = &engine.program.objects[object].routines[routine];
@@ -1315,10 +1317,17 @@ impl Session {
                 }
                 // A record of the stored table handed by value to a parameter declared `temporary` gives the callee a temporary
                 // record with the record's values over an empty table of its own (events/lt-cl-event-leads/ClEventLeads.al:70
-                // `ins.temporary temp=Yes count=0 id=103`, an OnAfterInsertEvent subscriber).
+                // `ins.temporary temp=Yes count=0 id=103`, an OnAfterInsertEvent subscriber). Pinned only for a subscriber; a plain
+                // procedure call is refused.
                 (Value::Record(rc), false)
                     if !rc.borrow().temporary && matches!(r.locals[i].ty, RtType::Record(_, true)) =>
                 {
+                    if !subscriber_call {
+                        return Err(Signal::Unsupported(format!(
+                            "a stored record passed by value to the temporary parameter `{}` of a procedure (pinned only for an event subscriber)",
+                            r.locals[i].name
+                        )));
+                    }
                     let mut st = rc.borrow().clone();
                     st.temporary = true;
                     st.temp_id = Some(self.new_temp_id());

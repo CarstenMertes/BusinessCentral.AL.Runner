@@ -140,7 +140,9 @@ fn power(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
             None => return overflow(),
         };
     }
-    Ok(Value::Decimal(result.normalize()))
+    // A result keeps 18 significant digits: `Power(2, 62)` into a BigInteger is 4611686018427387900
+    // (misc/lt-system-functions/Round.al:LT_BU_Power_LargeResultPrecision, misc/lt-cq-odd-leads/CqOddLeads.al:419-446).
+    Ok(Value::Decimal(crate::ops::keep_18_digits(result.normalize())))
 }
 
 #[cfg(test)]

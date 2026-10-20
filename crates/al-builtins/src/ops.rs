@@ -984,6 +984,12 @@ fn arith_general(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
         Arith::Mod => Some(a % b),
     }
     .ok_or_else(|| Signal::Unsupported("decimal overflow".into()))?;
+    // A sum or difference keeps 18 significant digits, rounded half away from zero: `Power(2, 62) + 1` equals
+    // `Power(2, 62)`, and `Power(2, 63) - 1` equals `Power(2, 63) - 5` (misc/lt-cq-odd-leads/CqOddLeads.al:419-446
+    // Item40_PowerPrecision, misc/lt-system-functions/Round.al:LT_BU_Power_LargeResultPrecision).
+    if any_dec && matches!(op, Arith::Add | Arith::Sub) {
+        return Ok(V::Decimal(keep_18_digits(res)));
+    }
     // A Decimal mod keeps the fraction (types/lt-scalars/ScT70058.al:Decimal_Basic `mod_int`, Decimal_DivModTruncation `mod2`).
     if any_dec && !matches!(op, Arith::IntDiv) {
         return Ok(V::Decimal(res));
@@ -1000,6 +1006,16 @@ fn arith_general(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
             .or_else(|_| raise("Arithmetic operation resulted in an overflow.", "AL:Overflow"));
     }
     Ok(V::Decimal(res))
+}
+
+/// A Decimal of more than 18 significant digits rounded at the 18th, half away from zero; a shorter one (trailing zeros
+/// not counted) as it is, with its scale.
+pub fn keep_18_digits(d: Decimal) -> Decimal {
+    if d.normalize().mantissa().unsigned_abs() <= 999_999_999_999_999_999 {
+        return d;
+    }
+    d.round_sf_with_strategy(18, rust_decimal::RoundingStrategy::MidpointAwayFromZero)
+        .unwrap_or(d)
 }
 
 fn text_like(v: &Value) -> Option<&crate::text::Txt> {
@@ -1035,6 +1051,13 @@ pub fn compare_operator(l: &Value, r: &Value, ordered: bool) -> Result<Ordering,
         if (*a == 0 && *b == 1) || (*a == 1 && *b == 0) {
             return date_invalid();
         }
+    }
+    // A BigInteger compared with a Decimal counts with the 18 significant digits a Decimal keeps: `Power(2, 60) =
+    // 1152921504606846976L` is true (misc/lt-system-functions/Round.al:LT_BU_Power_LargeResultPrecision).
+    match (l, r) {
+        (Value::Decimal(a), Value::BigInteger(b)) => return Ok(a.cmp(&keep_18_digits(Decimal::from(*b)))),
+        (Value::BigInteger(a), Value::Decimal(b)) => return Ok(keep_18_digits(Decimal::from(*a)).cmp(b)),
+        _ => {}
     }
     if ordered { compare_order(l, r) } else { compare(l, r) }
 }

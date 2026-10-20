@@ -12605,6 +12605,7 @@
 74973 Modify_TwiceWithoutChange_AfterRealChange
 74973 QD_ModifyAll_SameValue_AfterModifySubscriber
 74973 QD_ModifyAll_SameValue_BeforeModifySubscriber
+74973 QD_ModifyAll_SameValue_NoSubscriber
 74975 GetUrl_Web_CompanyForms
 74975 GetUrl_Web_CurrentCompanyShape
 74975 GetUrl_Web_ObjectTypesAndIds
@@ -13711,4 +13712,10 @@
 86450 RunnerSets_WhichSetsExist
 86504 Expression_ChangesRec
 86504 Expression_PerRead_CallCount
+86504 Expression_VatSwitch_SameRecord
+86504 Expressions_FieldRefCaption
+86504 Page_ControlCaptions
+86504 SalesLine_InvDiscountAmount_NoHeader
+86504 SalesLine_InvDiscountAmount_PricesInclVat
+86508 StoredRecord_ToTemporaryParameter
 86508 StoredRecord_ToTemporaryParameter_ModifyCurrent

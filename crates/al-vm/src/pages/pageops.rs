@@ -209,6 +209,22 @@ impl Session {
         } else {
             Vec::new()
         };
+        // Only an action right after the GoToKey is pinned to read the row once more; any other call drops it.
+        let read_after_goto = std::mem::take(&mut st.borrow_mut().read_after_goto);
+        if read_after_goto && name == PageMethod::Invoke {
+            st.borrow_mut().read_after_goto = true;
+        }
+        if matches!(
+            name,
+            PageMethod::Next
+                | PageMethod::Previous
+                | PageMethod::Last
+                | PageMethod::GoToKey
+                | PageMethod::GoToRecord
+                | PageMethod::New
+        ) {
+            st.borrow_mut().settled_first_row = false;
+        }
         let r = match self.test_page_op_inner(method, st, args) {
             // `CurrPage` and a `Page` variable are the page's own code, not a TestPage the test closed: BC does not raise
             // "The TestPage is not open." for them. What a method of a page that is not open (any more) does is not pinned, so
@@ -248,6 +264,18 @@ impl Session {
             // whether they read their rows again is docs/probes-needed.md.
             _ => false,
         };
+        // pages/lt-ai-list-order/AiListOrderTests.al:38-39 (Keep_Nav), :232-233 (Keep_Plain), :300-301, :334-335: after a
+        // GoToKey that moved a list without OnAfterGetCurrRecord nothing is read (`goto_log` empty), and the next action
+        // reads the row twice before its trigger.
+        if name == PageMethod::GoToKey
+            && moved
+            && st.borrow().open
+            && self.is_list(st)
+            && self.declares(st, "onaftergetrecord")
+            && !self.declares(st, "onaftergetcurrrecord")
+        {
+            st.borrow_mut().read_after_goto = true;
+        }
         if moved && st.borrow().open {
             if st.borrow().host.is_some() {
                 self.sync_dependents(st)?;

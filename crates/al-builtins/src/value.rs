@@ -407,6 +407,15 @@ pub struct PageState {
     pub save_record_called: bool,
     /// CurrPage.Update ran while the page's row was stored but outside the view the action had just set (list refresh).
     pub view_left: bool,
+    /// A TestPage GoToKey moved the cursor of a list without OnAfterGetCurrRecord: the client reads the new row once more before
+    /// the next action (pages/lt-ai-list-order/AiListOrderTests.al:39 Keep_Nav `update` = `R:R1002;R:R1002;A:filter...`).
+    pub read_after_goto: bool,
+    /// The reads after an action on a list without OnAfterGetCurrRecord ended the refresh: `CurrPage.Update` reads nothing more
+    /// (pages/lt-ai-list-order/AiListOrderTests.al:233 Keep_Plain).
+    pub refresh_read_done: bool,
+    /// The client's rows were read again from the row a list settled on after an action's filter left its row, with no row before
+    /// it: First stays on that row and reads nothing (pages/lt-ai-list-order/AiListOrderTests.al:339, :373 `after_first` empty).
+    pub settled_first_row: bool,
     /// The caption was assigned while the page was not open: it stays for every later run of the variable.
     pub caption_assigned_closed: bool,
     /// A row with the new record's starting key was already stored when the draft started.
@@ -560,6 +569,9 @@ impl PageState {
             refresh: false,
             save_record_called: false,
             view_left: false,
+            read_after_goto: false,
+            refresh_read_done: false,
+            settled_first_row: false,
             caption_assigned_closed: false,
             draft_stored: false,
             new_row_inserted_by_trigger: false,

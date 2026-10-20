@@ -1065,6 +1065,17 @@ impl Session {
         if how == PageMethod::Next && at + 1 == window.len() && read_to_end {
             return Ok(Some(false));
         }
+        // First on the first row of a list with OnFindRecord and OnNextRecord whose refresh read the view from its start reads
+        // nothing (pages/lt-ai-list-order/AiListOrderTests.al:174 Same_Nav_OnOpenRow and :203 Same_NavCurr_OnOpenRow
+        // `after_first` empty, after CurrPage.Update).
+        if how == PageMethod::First && at == 0 && find_page && self.declares(st, "onnextrecord") {
+            return Ok(Some(true));
+        }
+        // The same on a list whose action's filter left its row: it settled on the first row of the new view
+        // (AiListOrderTests.al:339 DropCurrent_RowsAfter_Plain, :373 DropCurrent_RowsAfter_PlainCurr).
+        if how == PageMethod::First && at == 0 && std::mem::take(&mut st.borrow_mut().settled_first_row) {
+            return Ok(Some(true));
+        }
         let target = match how {
             PageMethod::First => 0,
             PageMethod::Last => window.len() - 1,
@@ -1096,6 +1107,11 @@ impl Session {
         }
         let before = self.xrec_before_move(st);
         self.read_block_past_the_window(st, find_page)?;
+        // Without OnAfterGetCurrRecord the move ends with the block: `=` is not asked and the row is not read again
+        // (pages/lt-ai-list-order/AiListOrderTests.al:958 Paging_Last_Nav `last_log` ends `R:R1025;N:1=0`).
+        if !self.declares(st, "onaftergetcurrrecord") {
+            return Ok(Some(true));
+        }
         if find_page {
             self.nav_find(st, "=")?;
         }

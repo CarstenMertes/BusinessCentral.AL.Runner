@@ -1073,6 +1073,9 @@ fn a_table_procedure_called_on_rec_in_a_page_trigger_sees_the_pages_xrec() {
 // misc/W2FindRecordUpdate.al:Update_False_OnOpenedPage, Update_True_OnOpenedPage (3 rows, the cursor on the middle one): a list refresh
 // re-reads the row, asks `=>`, reads on to the end, steps back to the start and asks `=` (Base Application's sales subforms have
 // OnFindRecord alone; there Next moves the record: assumption update-refresh-list-onfindrecord, docs/probes-needed.md).
+// Without OnAfterGetCurrRecord the refresh ends after the step back and `=` is not asked (pages/lt-ai-list-order/
+// AiListOrderTests.al:301 DropCurrent_RowsAfter_FindOnly, :467 DropCurrent_NoRowsAfter_FindOnly); the row is read twice before
+// the action after a GoToKey (:39).
 #[test]
 fn current_page_update_on_a_list_with_on_find_record_alone_refreshes_it_instead_of_being_refused() {
     passes(&format!(
@@ -1081,8 +1084,7 @@ fn current_page_update_on_a_list_with_on_find_record_alone_refreshes_it_instead_
         procedure Refreshes() var C: TestPage \"PM Find List\"; R: Record \"PM Row\"; P: Codeunit \"PM Probe\"; begin
             R.DeleteAll(); R.\"No.\" := 'A'; R.Insert(); R.\"No.\" := 'B'; R.Insert(); R.\"No.\" := 'C'; R.Insert();
             C.OpenEdit(); C.GoToKey('B'); P.Reset(); C.Refresh.Invoke();
-            if StrPos(P.Trace(), 'F=>;') = 0 then Error('no =>: %1', P.Trace());
-            if StrPos(P.Trace(), 'F=;') = 0 then Error('no =: %1', P.Trace());
+            Check('RB;RB;RB;F=>;RB;RC;RB;RA;', P.Trace());
             Check('B', C.\"No.\".Value); C.Close(); end;"
     ));
 }

@@ -70,17 +70,9 @@ impl Lowerer<'_> {
             add(self, n, t.clone(), &mut locals);
         }
         let mut declared_security: Vec<(String, usize, Result<i32, String>)> = Vec::new();
-        let body_text: String = r
-            .body()
-            .map(|b| {
-                b.text()
-                    .to_string()
-                    .to_lowercase()
-                    .chars()
-                    .filter(|c| !c.is_whitespace())
-                    .collect()
-            })
-            .unwrap_or_default();
+        // The lowercased body text without whitespace is built only when a `[SecurityFiltering]` record variable needs it:
+        // building it for every routine cost about 18 % of a cold compile (perf_budget).
+        let mut body_text: Option<String> = None;
         for v in r.local_var_decls() {
             let ty = v.type_ref().map(|t| Ty::from_type_ref(&t)).unwrap_or(Ty::Unknown);
             let label = v.type_ref().as_ref().and_then(label_text);
@@ -94,7 +86,23 @@ impl Lowerer<'_> {
                 if let Some(m) = &security {
                     // Only a record keeps the declared value, and only one the routine does not clear or assign
                     // (what those leave is not pinned): on anything else the read stays refused.
-                    if matches!(self.rt(&ty), Ok(RtType::Record(..))) && !cleared_or_assigned(&body_text, &n) {
+                    if matches!(self.rt(&ty), Ok(RtType::Record(..)))
+                        && !cleared_or_assigned(
+                            body_text.get_or_insert_with(|| {
+                                r.body()
+                                    .map(|b| {
+                                        b.text()
+                                            .to_string()
+                                            .to_lowercase()
+                                            .chars()
+                                            .filter(|c| !c.is_whitespace())
+                                            .collect()
+                                    })
+                                    .unwrap_or_default()
+                            }),
+                            &n,
+                        )
+                    {
                         declared_security.push((n.clone(), locals.len(), m.clone()));
                     }
                 }

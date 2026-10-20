@@ -101,6 +101,9 @@ pub(crate) struct EventState {
     pub(crate) next_aliases: Vec<(usize, Rc<RefCell<crate::Instance>>, usize)>,
     /// Set by `finish_call` just before the call, taken by the callee's frame (`Frame::var_lens`).
     pub(crate) next_var_lens: Vec<Option<i32>>,
+    /// The declared lengths of a publisher's `var` Text and Code arguments (`var_lens_of`), set by `finish_call` just before
+    /// the publisher runs and taken by `publish`, which hands them to the subscribers that read them.
+    pub(crate) publisher_var_lens: Vec<Option<i32>>,
     /// Events being raised that have no publisher routine (table, page and Global Triggers
     /// events): BC puts frames between the subscriber and its caller that are not pinned, so the
     /// live call stack is not answered while one runs.

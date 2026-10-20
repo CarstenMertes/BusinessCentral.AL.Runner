@@ -528,11 +528,13 @@ impl Session {
         for (slot, inst, g) in &f.aliases {
             inst.borrow_mut().globals[*g] = f.locals[*slot].clone();
         }
-        // An event's subscribers do not get the lengths: what MaxStrLen answers there is not pinned.
-        // Only a routine that reads MaxStrLen of a `var` parameter gets them (known at lowering), so other calls pay nothing.
+        // Only a routine that reads MaxStrLen of a `var` parameter, or hands one on, gets them (known at lowering), so other
+        // calls pay nothing. An event's subscribers get the lengths of the publisher's arguments (`publish`).
         let var_lens = facts.var_lens;
         if var_lens {
             self.events.next_var_lens = self.var_lens_of(object, routine, args, f);
+        } else if facts.publisher {
+            self.events.publisher_var_lens = self.var_lens_of(object, routine, args, f);
         }
         if try_call {
             self.enter_used_try();
@@ -543,6 +545,8 @@ impl Session {
         }
         if var_lens {
             self.events.next_var_lens.clear();
+        } else if facts.publisher {
+            self.events.publisher_var_lens.clear();
         }
         for (slot, inst, g) in &f.aliases {
             f.locals[*slot] = inst.borrow().globals[*g].clone();
@@ -648,7 +652,10 @@ impl Session {
 
     /// For each `var` Text or Code parameter of the callee: the declared length of the variable or field the argument names
     /// (text/lt-text-functions/MaxStrLen.Codeunit.al:91-151, LT_BU_MaxStrLen_TextParameters), `i32::MAX` for one without a
-    /// length. A `var` parameter of the caller handed on is not pinned: `None`. Empty when no such parameter is passed.
+    /// length. A `var` parameter of the caller handed on keeps the length the caller got for it, through any number of hops
+    /// and whatever length the parameter on the way declares (:146-170, PYC_MaxStrLen_VarParameterHops: `three hops text30`
+    /// = 30, `hop through text30 param field` = 100); `None` when the caller did not get one. Empty when no such parameter
+    /// is passed.
     fn var_lens_of(&self, object: usize, routine: usize, args: &[ir::Arg], f: &Frame) -> Vec<Option<i32>> {
         let r = &self.engine.program.objects[object].routines[routine];
         let mut out = Vec::new();
@@ -661,7 +668,9 @@ impl Session {
             }
             let caller = &self.engine.program.objects[f.object].routines[f.routine];
             let len = match p {
-                ir::Place::Local(j) if *j < caller.params && caller.by_var.get(*j).copied().unwrap_or(false) => None,
+                ir::Place::Local(j) if *j < caller.params && caller.by_var.get(*j).copied().unwrap_or(false) => {
+                    f.var_lens.get(*j).copied().flatten()
+                }
                 _ => match self.place_type(p, f) {
                     RtType::Text(Some(n)) | RtType::Code(Some(n)) => i32::try_from(n).ok(),
                     RtType::Text(None) | RtType::Code(None) => Some(i32::MAX),
@@ -682,7 +691,7 @@ impl Session {
             ir::Place::Local(i) => match f.var_lens.get(*i).copied().flatten() {
                 Some(n) => Ok(Value::Integer(n)),
                 None => Err(Signal::Unsupported(
-                    "MaxStrLen of a var parameter whose argument's declared length is not known (a var parameter handed on, an event or another call path: not pinned)".into(),
+                    "MaxStrLen of a var parameter whose argument's declared length is not known (a routine the platform calls, not an AL call: not pinned)".into(),
                 )),
             },
             _ => Err(Signal::Unsupported("MaxStrLen of a var parameter that is not a local".into())),

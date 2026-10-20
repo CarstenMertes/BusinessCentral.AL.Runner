@@ -779,6 +779,7 @@ impl Session {
                 var_origins: Vec::new(),
                 next_aliases: Vec::new(),
                 next_var_lens: Vec::new(),
+                publisher_var_lens: Vec::new(),
                 unpinned_event_depth: 0,
                 skip_dependency_subscribers: false,
                 global_setups: Default::default(),

@@ -98,7 +98,12 @@ impl Session {
             let rec = self.page_rec(st);
             self.reset_table_globals(&rec);
         }
-        self.activate(st, idx)?;
+        let writes = self.write_mark();
+        let (activated, origin) = self.traced(st, |s| s.activate(st, idx));
+        if let (Err(Signal::Error(e)), Some("oninsertrecord")) = (&activated, origin.as_deref()) {
+            return Err(self.insert_trigger_error(st, e, writes)?);
+        }
+        activated?;
         // Only an Update() requested by this call's triggers refreshes at its end.
         st.borrow_mut().refresh = false;
         let engine = self.engine();
@@ -1121,7 +1126,11 @@ impl Session {
                 Ok(r)
             }
             PageMethod::Activate => {
-                self.activate(st, idx)?;
+                let (activated, origin) = self.traced(st, |s| s.activate(st, idx));
+                if let (Err(Signal::Error(_)), Some("oninsertrecord")) = (&activated, origin.as_deref()) {
+                    return unsupported("an error in OnInsertRecord on Activate() (only SetValue is pinned)");
+                }
+                activated?;
                 Ok(Value::Null)
             }
             PageMethod::ValidationErrorCount => {

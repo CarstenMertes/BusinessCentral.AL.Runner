@@ -489,6 +489,8 @@ pub struct Session {
     /// How many `Randomize()` calls without a seed the session has seen.
     pub(crate) unseeded_randomizes: i32,
     pub(crate) next_row_version: i64,
+    /// How many Delete and DeleteAll calls have reached the store: with `next_row_version`, it tells whether code wrote.
+    pub(crate) deletes: u64,
     /// The highest SystemRowVersion install code gave a row (`Session::mark_install_end`): a row at or below it was
     /// written by install code (ADR-046 amendment 1, A2 item d).
     pub(crate) install_row_version: i64,
@@ -695,6 +697,7 @@ impl Session {
             inherited_draws: 0,
             unseeded_randomizes: 0,
             next_row_version: 0,
+            deletes: 0,
             install_row_version: 0,
             session_id_override: None,
             autoinc: Default::default(),
@@ -764,6 +767,9 @@ impl Session {
                 page_xrec: None,
                 curr_field_no: Vec::new(),
                 lenient_bind: false,
+                failed_trigger: None,
+                test_open: false,
+                test_close: false,
             },
             events: EventState {
                 bindings: Vec::new(),

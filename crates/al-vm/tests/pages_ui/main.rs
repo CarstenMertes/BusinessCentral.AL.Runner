@@ -4,6 +4,7 @@ mod base_access;
 mod control_entry;
 mod control_properties;
 mod control_text;
+mod control_values;
 mod curr_field_no_assign;
 mod filterpage;
 mod flowfield_drilldown;

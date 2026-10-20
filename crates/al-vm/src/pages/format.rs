@@ -38,6 +38,21 @@ impl Session {
             return Ok(Value::default_for(to));
         }
         let v = self.control_value(st, idx)?;
+        // AsDecimal of a Text control that holds no number: '', ' ' and a word raise AL:Format naming the text
+        // (pages/lt-ca-odd-667/CaTestPageTests.al:90-91, :130-135). A text with digits that does not convert is not pinned.
+        if let (RtType::Decimal, Value::Text(t)) = (to, &v) {
+            let t = t.to_string();
+            return match ops::convert(v, to) {
+                Ok(d) => Ok(d),
+                Err(_) if !t.chars().any(|c| c.is_ascii_digit()) => Err(error_code(
+                    format!("The input string '{t}' was not in a correct format."),
+                    "AL:Format",
+                )),
+                Err(_) => {
+                    unsupported("AsDecimal of a Text control whose text has digits but is no number (not pinned)")
+                }
+            };
+        }
         ops::convert(v, to)
     }
 
@@ -195,6 +210,75 @@ impl Session {
         Ok(f)
     }
 
+    /// The option list of an Enum control where it is not the enum's captions one by one, with whether it is the control's own
+    /// OptionCaption. The client keeps one comma-separated list and the value at position i of the enum (declaration order) stands
+    /// for entry i:
+    /// - the control's OptionCaption: on an enum with ordinals 0, 1, 4, 5 and `' ,c1,,,c4,c5'` the values show ` `, `c1`, `4`, `5`
+    ///   (an empty entry shows the ordinal) and SetValue takes ` ` and `c1` only (handlers/TestPageEnumField_Tests.al:197-205,
+    ///   :235-246);
+    /// - the enum's captions joined, when one holds a comma: `Diamond Level, with bonus` is two entries, so `with bonus` selects the
+    ///   value at position 2 and shows as ` with bonus` (misc/lt-cv-odd-leads/CvEnumCaptionComma.al:150-174).
+    ///
+    /// Both are pinned on a control bound to a table field; OptionCaptionML or a table field's OptionCaption on an Enum, and a control
+    /// bound to a variable, are refused. `Ok(None)`: the captions one by one.
+    pub(super) fn enum_option_list(&self, st: &St, idx: usize, id: u32) -> Result<Option<(Vec<String>, bool)>, Signal> {
+        let engine = self.engine();
+        let ctl = &page_of(&engine, st).controls[idx];
+        let field = self.control_field(st, idx);
+        let field_has = |n: &str| {
+            field
+                .as_ref()
+                .is_some_and(|f| f.properties.iter().any(|(k, _)| k.eq_ignore_ascii_case(n)))
+        };
+        if ctl.prop("optioncaptionml").is_some() || field_has("optioncaptionml") || field_has("optioncaption") {
+            return unsupported("OptionCaptionML, or a table field's OptionCaption, on an Enum control (not pinned)");
+        }
+        let rec_bound = matches!(ctl.binding, ir::Binding::Field(_));
+        if let Some(prop) = ctl.prop("optioncaption") {
+            let ir::PropVal::Lit(v) = prop else {
+                return unsupported("an OptionCaption that is not a literal on an Enum control");
+            };
+            if !rec_bound {
+                return unsupported("OptionCaption on an Enum control bound to a variable (not pinned)");
+            }
+            return Ok(Some((unquote(v).split(',').map(str::to_string).collect(), true)));
+        }
+        let o = &engine.program.objects[id as usize];
+        let shown: Vec<&str> = o
+            .enum_values
+            .iter()
+            .map(|(v, name)| {
+                o.enum_captions
+                    .iter()
+                    .find(|(c, _)| c == v)
+                    .map_or(name.as_str(), |(_, c)| c.as_str())
+            })
+            .collect();
+        if !shown.iter().any(|c| c.contains(',')) {
+            return Ok(None);
+        }
+        if !rec_bound {
+            return unsupported("an Enum control bound to a variable whose captions hold a comma (not pinned)");
+        }
+        Ok(Some((shown.join(",").split(',').map(str::to_string).collect(), false)))
+    }
+
+    /// The text an Enum control with an option list ([`Self::enum_option_list`]) shows for `ordinal`.
+    fn enum_list_text(&self, id: u32, ordinal: i32, list: &[String], from_control: bool) -> Result<String, Signal> {
+        let engine = self.engine();
+        let at = engine.program.objects[id as usize]
+            .enum_values
+            .iter()
+            .position(|(v, _)| *v == ordinal);
+        match at.and_then(|p| list.get(p)) {
+            // An empty OptionCaption entry shows the ordinal (handlers/TestPageEnumField_Tests.al:204-205).
+            Some(e) if e.is_empty() && from_control => Ok(ordinal.to_string()),
+            Some(e) if e.is_empty() => unsupported("an empty entry of an Enum's comma-split captions (not pinned)"),
+            Some(e) => Ok(e.clone()),
+            None => unsupported("an Enum value past the end of its control's option list (not pinned)"),
+        }
+    }
+
     /// The places a decimal control with `AutoFormatType` 1, 2, 4 or 5 shows (corpus autoformat/PWAutoFormatTypes.al,
     /// BC 27.5; the setup does not matter in any of the three setups probed, so General Ledger Setup is not read):
     /// 1 and 4 are amounts, 2 and 5 unit amounts. A blank expression gives 2:2 for an amount and 2:5 for a unit
@@ -304,10 +388,17 @@ impl Session {
                 .map(|(_, c)| c.clone())
                 .unwrap_or_else(|| ordinal.to_string())
         };
-        if let Value::Enum(id, _) = v {
+        let mut listed = None;
+        if let Value::Enum(id, ordinal) = v {
             self.note_enum(*id);
+            if let Some((list, from_control)) = self.enum_option_list(st, idx, *id)? {
+                listed = Some(self.enum_list_text(*id, *ordinal, &list, from_control)?);
+            }
         }
-        let mut text = pagefmt::control_text(v, &f, &caption);
+        let mut text = match listed {
+            Some(t) => t,
+            None => pagefmt::control_text(v, &f, &caption),
+        };
         // ExtendedDatatype = Ratio shows a percentage: zero is `0%` (pages/lt-page-presentation-properties/P119PageFields.al:P119_FieldState); another
         // value is not pinned.
         {

@@ -36,6 +36,7 @@ mod lane_text_compare;
 mod lane_values_builtins;
 mod last_error_origin;
 mod list_read_in_foreach;
+mod max_str_len_var_hops;
 mod moved_fields;
 mod notification_by_value;
 mod np_blockers_6;

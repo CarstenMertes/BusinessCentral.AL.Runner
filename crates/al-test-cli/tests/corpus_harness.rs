@@ -601,3 +601,111 @@ fn a_suite_baseline_ratchets_that_extra_app_and_no_ratchet_ignores_it() {
     let (_, _, err) = cli(&["--bc-version", "27", "--suite-baseline", "nope=x"]);
     assert!(err.contains("no suite named `nope`"), "{err}");
 }
+
+/// The JUnit files of a run (the main app's and the extra suites'), with the per-test times
+/// removed: everything else (outcome, reason, flagged assumptions) must be the same between two
+/// runs of one build on one corpus.
+fn outcomes_of(dir: &Path, stem: &str) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    for e in std::fs::read_dir(dir).unwrap() {
+        let p = e.unwrap().path();
+        let name = p.file_name().unwrap().to_string_lossy().into_owned();
+        if !(name.starts_with(stem) && name.ends_with(".xml")) {
+            continue;
+        }
+        let xml = std::fs::read_to_string(&p).unwrap();
+        let mut kept = String::with_capacity(xml.len());
+        let mut rest = xml.as_str();
+        // Drops ` time="..."` and ` timestamp="..."` attributes.
+        while let Some(i) = rest.find([' ']) {
+            kept.push_str(&rest[..i]);
+            rest = &rest[i..];
+            let attr = [" time=\"", " timestamp=\""].into_iter().find(|a| rest.starts_with(a));
+            match attr {
+                Some(a) => {
+                    let end = rest[a.len()..].find('"').unwrap();
+                    rest = &rest[a.len() + end + 1..];
+                }
+                None => {
+                    kept.push(' ');
+                    rest = &rest[1..];
+                }
+            }
+        }
+        kept.push_str(rest);
+        out.push((name.replacen(stem, "", 1), kept));
+    }
+    out.sort();
+    out
+}
+
+/// One build on one corpus gives every case one outcome, whatever the thread counts and whatever
+/// HOME holds. Two causes of different results were seen on 2026-10-20: 99100
+/// `AL_JsonTextWriter_SimpleObject` (OnPrem DotNet) passed only where `~/.bcartifacts.cache`
+/// held a BC service tier with Newtonsoft.Json, and was refused everywhere else (CI). The second
+/// run swaps both: one worker thread instead of four, and a HOME with that folder (the machine's
+/// own when it has one) instead of an empty one. BC 27, because the OnPrem DotNet cases and the
+/// local service tiers of BC 27 are where the HOME difference showed.
+#[test]
+#[cfg(unix)]
+fn outcomes_do_not_depend_on_threads_or_home() {
+    require_corpus();
+    let work = tempfile::tempdir().unwrap();
+    let empty_home = work.path().join("home-empty");
+    let artifacts_home = work.path().join("home-artifacts");
+    std::fs::create_dir_all(&empty_home).unwrap();
+    std::fs::create_dir_all(&artifacts_home).unwrap();
+    let real = std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".bcartifacts.cache"));
+    match real.filter(|r| r.join("sandbox").is_dir()) {
+        Some(r) => std::os::unix::fs::symlink(r, artifacts_home.join(".bcartifacts.cache")).unwrap(),
+        // A machine without local artifacts (CI): a service-tier folder of the shape the local
+        // artifacts have, so that a run which looks there finds one.
+        None => std::fs::create_dir_all(artifacts_home.join(
+            ".bcartifacts.cache/sandbox/27.5.0.0/platform/ServiceTier/PFiles64/Microsoft Dynamics NAV/270/Service",
+        ))
+        .unwrap(),
+    }
+    let run = |home: &Path, threads: &str, stem: &str| {
+        let junit = work.path().join(format!("{stem}.xml"));
+        let out = Command::new(env!("CARGO_BIN_EXE_al-test-cli"))
+            .arg("--root")
+            .arg(root())
+            .args(["--no-deps", "--no-ratchet", "--bc-version", "27", "--junit"])
+            .arg(&junit)
+            .env("HOME", home)
+            .env_remove("XDG_CACHE_HOME")
+            .env("AL_TEST_THREADS", threads)
+            .env("AL_LOWER_THREADS", threads)
+            .env("AL_CHECK_THREADS", threads)
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(0), "{}", String::from_utf8_lossy(&out.stderr));
+        outcomes_of(work.path(), stem)
+    };
+    let a = run(&empty_home, "4", "run-a");
+    let b = run(&artifacts_home, "1", "run-b");
+    assert_eq!(
+        a.len(),
+        3,
+        "the main app and the two OnPrem suites: {:?}",
+        a.iter().map(|f| &f.0).collect::<Vec<_>>()
+    );
+    assert_eq!(
+        a.iter().map(|f| &f.0).collect::<Vec<_>>(),
+        b.iter().map(|f| &f.0).collect::<Vec<_>>()
+    );
+    for ((file, xa), (_, xb)) in a.iter().zip(&b) {
+        if xa != xb {
+            // The first differing test case, else the first differing line (a suite's counts).
+            let pairs = || xa.lines().zip(xb.lines()).filter(|(l, r)| l != r);
+            let first = pairs()
+                .find(|(l, _)| l.contains("<testcase"))
+                .or_else(|| pairs().next());
+            panic!(
+                "run{file}: the two runs differ, first at\n  4 threads, empty HOME:   {:?}\n  1 thread, artifacts HOME: {:?}",
+                first.map(|f| f.0),
+                first.map(|f| f.1)
+            );
+        }
+    }
+}

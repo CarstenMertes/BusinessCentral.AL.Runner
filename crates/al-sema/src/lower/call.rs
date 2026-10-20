@@ -127,7 +127,19 @@ impl Lowerer<'_> {
                 for (i, a) in args.iter().enumerate() {
                     let p = sig.params.get(i).ok_or("too many arguments")?;
                     if p.by_var {
-                        out.push(self.by_var_arg(a)?);
+                        let arg = self.by_var_arg(a)?;
+                        // A `var` Text or Code parameter handed on to another `var` parameter keeps the declared length of the
+                        // first caller's variable or field (text/lt-text-functions/MaxStrLen.Codeunit.al:146-170,
+                        // PYC_MaxStrLen_VarParameterHops; to an event's subscribers too, :172-201): the routine takes the
+                        // lengths from its caller to hand them on.
+                        if matches!(p.ty, Ty::Text(_) | Ty::Code(_))
+                            && let ir::Arg::Ref(ir::Place::Local(j)) = &arg
+                            && self.var_params.get(*j).copied().unwrap_or(false)
+                            && matches!(self.ty_of(a), Ty::Text(_) | Ty::Code(_))
+                        {
+                            self.reads_var_max_len = true;
+                        }
+                        out.push(arg);
                     } else {
                         if let Some(kind) = receiver_kind {
                             if let Some(fail) = self.char_into_number_of_other_object(kind, &p.ty, a)? {

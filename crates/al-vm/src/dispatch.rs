@@ -76,6 +76,7 @@ impl Session {
         args: Vec<Value>,
     ) -> Result<(Value, Vec<Value>), Signal> {
         let origins = std::mem::take(&mut self.events.var_origins);
+        let lens = std::mem::take(&mut self.events.publisher_var_lens);
         let engine = self.engine.clone();
         let p = &engine.events.publishers[&(object, routine)];
         self.note_event(p.object, &p.event, None);
@@ -146,6 +147,7 @@ impl Session {
         self.events.publish_frame = true;
         self.events.sender_refused = sender_refused;
         self.events.var_origins = origins;
+        self.events.publisher_var_lens = lens;
         let raised = self.raise(&call, &mut values);
         self.events.sender_refused = None;
         self.events.publish_frame = false;
@@ -203,6 +205,11 @@ impl Session {
         let engine = self.engine.clone();
         let sender_refused = self.events.sender_refused.take();
         let origins = std::mem::take(&mut self.events.var_origins);
+        // The declared lengths of the publisher's `var` Text and Code arguments: a subscriber's `var` parameter reports the
+        // length of the publisher's argument (text/lt-text-functions/MaxStrLen.Codeunit.al:172-201,
+        // PYC_MaxStrLen_EventSubscriberVarParameter: `direct raise field text100` = 100, `subscriber via var param text30` =
+        // 30). An event the platform raises has none: MaxStrLen refuses there when it runs.
+        let lens = std::mem::take(&mut self.events.publisher_var_lens);
         // The publisher's global a `var` argument names is the variable itself while the event runs: whoever changes it (a subscriber
         // through its parameter, or through the sender) changes what the next subscriber receives and what the publisher's caller sees.
         let refresh = |args: &mut [Value]| {
@@ -264,8 +271,15 @@ impl Session {
                     _ => None,
                 })
                 .collect();
+            if engine.facts[s.object][s.routine].var_lens {
+                self.events.next_var_lens = map
+                    .iter()
+                    .map(|m| m.and_then(|j| lens.get(j).copied().flatten()))
+                    .collect();
+            }
             let called = self.call(s.object, s.routine, inst, call_args);
             self.events.next_aliases.clear();
+            self.events.next_var_lens.clear();
             let (_, finals) = match called {
                 Err(Signal::Error(e)) if isolate => {
                     self.store = before.expect("snapshot taken when isolating");

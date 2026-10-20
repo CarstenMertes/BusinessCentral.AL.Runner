@@ -482,7 +482,32 @@ impl Session {
         if matches!((&value, &f.ty), (Value::Enum(from, _), RtType::Enum(to)) if from != to) {
             return Ok(value);
         }
-        ops::convert(value, &f.ty)
+        // A value longer than the FlowField: a lookup of a Text source into a shorter Text FlowField keeps the whole value,
+        // with no error and no truncation (calcfields/lt-bm-flowfield-conversions/BmFlowFieldConversions.al:201-217,
+        // BM_LookupFlowField_ShorterThanSource `short_30_chars`, fields at :50-58). Any other pair (Code, min or max) is
+        // not pinned.
+        match ops::convert(value.clone(), &f.ty) {
+            Err(Signal::Error(e)) if e.code == "StringLengthExceeded" => {
+                let source_text = calc.field.is_some_and(|at| {
+                    matches!(
+                        self.engine.program.objects[calc.table]
+                            .table
+                            .as_ref()
+                            .expect("table")
+                            .fields[at]
+                            .ty,
+                        RtType::Text(_)
+                    )
+                });
+                if calc.method == ir::CalcMethod::Lookup && matches!(f.ty, RtType::Text(_)) && source_text {
+                    return Ok(value);
+                }
+                unsupported(
+                    "a min, max or lookup FlowField value longer than the field (only a Text lookup into Text is pinned)",
+                )
+            }
+            other => other,
+        }
     }
 
     /// The source-table filters of a formula's where-conditions for `rec`.

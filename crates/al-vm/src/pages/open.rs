@@ -900,11 +900,17 @@ impl Session {
         // ClientValidateField:NSValidateField. The trigger is not run again here: whether its other effects happen again at
         // Close is not pinned (docs/probes-needed.md). With two such refusals which error is left last is not pinned: the last
         // error then refuses to be read (pages/lt-f3-pages/F3ValidationAddinFilter.al:253 closes such a page and reads nothing).
-        // On a list the edits are kept (the earlier behavior; what BC does is not pinned: docs/probes-needed.md, Close after a refused entry).
-        if !st.borrow().errors.is_empty() && !self.is_list(st) {
+        // A list drops its row the same way after a refusal of an OnValidate trigger, a new row included (pages/lt-ah-pages/
+        // PwCloseRevalidate.al:247 PW_List_RefusedOnValidate_ThenClose, :303 PW_List_NewRow_RefusedOnValidate_ThenClose: Close
+        // answers ok, runs no OnModify, stores nothing); the last error it leaves is not pinned. After other refusals a list keeps
+        // its edits (the earlier behavior; not pinned: docs/probes-needed.md, Close after a refused entry).
+        let list = self.is_list(st);
+        let list_trigger_refusal = list && !st.borrow().trigger_errors.is_empty();
+        if !st.borrow().errors.is_empty() && (!list || list_trigger_refusal) {
             let trigger_errors = st.borrow().trigger_errors.clone();
             match trigger_errors.as_slice() {
                 [] => {}
+                _ if list => self.last_error = al_builtins::native::unpinned_error(),
                 [(_, message)] => {
                     self.last_error = al_builtins::native::AlError {
                         message: message.clone(),

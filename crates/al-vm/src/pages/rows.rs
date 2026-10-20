@@ -771,6 +771,26 @@ impl Session {
             return self.move_on_open_new_list(how);
         }
         let answer_used = self.ret_used;
+        // A list row whose OnValidate refused an entry: Next() raises nothing, runs no OnModify and stores nothing of the row
+        // (pages/lt-ah-pages/PwCloseRevalidate.al:270 PW_List_RefusedOnValidate_ThenNext_ThenClose). Where the cursor lands
+        // and what Next() answers are not pinned, and neither are the other moves.
+        let refused_entry = {
+            let s = st.borrow();
+            !s.trigger_errors.is_empty() && !s.errors.is_empty() && s.dirty
+        };
+        if refused_entry && self.is_list(st) {
+            if how != PageMethod::Next || answer_used {
+                return unsupported(format!(
+                    "{how}() on a list row whose OnValidate refused an entry (only Next() with its answer unused is pinned)"
+                ));
+            }
+            let mut s = st.borrow_mut();
+            s.draft = false;
+            s.dirty = false;
+            s.unpinned_state =
+                Some("a list after Next() dropped a row whose OnValidate refused an entry (where it stands is not pinned)".into());
+            return Ok(Value::Boolean(false));
+        }
         // Leaving a row saves it.
         let anchor = st.borrow_mut().after_new.take();
         let writes = self.write_mark();

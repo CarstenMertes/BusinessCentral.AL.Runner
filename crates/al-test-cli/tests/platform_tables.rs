@@ -1449,8 +1449,8 @@ fn a_read_of_the_exact_test_id_value_is_refused_and_the_pinned_shapes_run() {
 }
 
 /// BC's test environment has the Test Runner app's codeunits 130450-130455 (permissions/lt-ba-testpermissions/BaTpEnv.al:
-/// 26-28). The runtime does not load that app, so an AllObj read that may land on one of them is refused; ids BC's test
-/// environment lacks (130301 there) still answer.
+/// 26-28). A run that finds no package of that app (this one has no dependency apps) refuses an AllObj read that may land
+/// on one of them; ids BC's test environment lacks (130301 there) still answer.
 #[test]
 fn all_obj_refuses_the_test_runner_codeunits_it_does_not_load() {
     let o = outcomes(

@@ -13146,6 +13146,7 @@
 80709 ReportExtensionEvent_IncludeSender
 80761 BaTpEnv_AppArea1_Set
 80761 BaTpEnv_AppArea2_SeenByNextTest
+80761 BaTpEnv_InstalledFrameworkCodeunits
 80860 Enum_ByValueToCompatibleEnum
 80860 Page_FieldFileUploadAction_SystemPartEntityName_HelpLink
 80860 ReportExt_OverloadByParameterType

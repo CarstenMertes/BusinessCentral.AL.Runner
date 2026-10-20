@@ -512,6 +512,12 @@ impl Session {
                 self.curr_field_no(rec)
             }
             ids::SYSTEM_CLEARALL_1 => self.clear_all(f),
+            ids::TEXT_MAXSTRLENOFVARPARAMETER_1 => match &site.place {
+                Some(p) => self.var_param_max_len(p, f),
+                None => Err(Signal::Unsupported(
+                    "MaxStrLen of a var parameter without its place".into(),
+                )),
+            },
             _ => {
                 let set = site.arg.map(|r| take(f, r, nl));
                 self.application_area(set)
@@ -691,9 +697,34 @@ impl Session {
     fn for_init(&mut self, site: &ForSite, f: &mut Frame, nl: u16) -> Result<(), Signal> {
         let from = take(f, site.from, nl);
         let to = take(f, site.to, nl);
+        let big_end = match to {
+            Value::BigInteger(e) if i32::try_from(e).is_err() => Some(e),
+            _ => None,
+        };
         let (start, end) = Self::for_limits(from, to)?;
         f.locals[site.i as usize] = Value::BigInteger(start);
         f.locals[site.end as usize] = Value::BigInteger(end);
+        // The end bound takes the type of the counter once the counter holds the start value: a BigInteger end beyond
+        // Integer on an Integer counter raises ConversionCast, the counter keeps the start and no round runs
+        // (misc/lt-system-functions/ControlFlow.al:779-830, LT_BU_ForLoop_BigIntegerEndBoundOnInteger: `end 10^14`,
+        // `end max+1` give `|1000|0`). Only an ascending loop is pinned.
+        if let Some(e) = big_end {
+            let integer_counter = site.int_local.is_some()
+                || matches!(self.place_type(&site.var, f), al_builtins::value::RtType::Integer);
+            if integer_counter {
+                if site.down {
+                    return Err(Signal::Unsupported(
+                        "a downto loop with a BigInteger bound beyond Integer on an Integer counter (not pinned)"
+                            .into(),
+                    ));
+                }
+                self.for_set(site, f)?;
+                return al_builtins::native::raise(
+                    format!("Overflow under conversion of System.Int64 value {e} to System.Int32."),
+                    "ConversionCast",
+                );
+            }
+        }
         // A loop over an empty range still gives the counter the start value
         // (misc/lt-system-functions/ControlFlow.al:ForLoop_VariableAfterLoop: `for i := 5 to 4` leaves 5).
         if if site.down { start < end } else { start > end } {

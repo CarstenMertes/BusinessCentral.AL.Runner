@@ -4,12 +4,21 @@ name: Edge
 # push to `release`, this rebuilds the three targets and REPLACES the assets of the one pre-release
 # with the tag `edge`. The tag moves to the commit. No new tag or release per push, and edge is
 # never "latest". See docs/releasing.md.
+# nightly-edge.yml also calls this workflow (workflow_call) with the commit it fast-forwarded
+# `release` to. That commit already passed CI on main, so the call publishes without a second
+# CI run.
 
 on:
   workflow_run:
     workflows: [CI]
     types: [completed]
     branches: [release]
+  workflow_call:
+    inputs:
+      sha:
+        description: The commit of `release` to build and publish. It passed CI on main.
+        required: true
+        type: string
   workflow_dispatch:
 
 permissions:
@@ -34,8 +43,15 @@ jobs:
           RUN_EVENT: ${{ github.event.workflow_run.event }}
           BRANCH: ${{ github.event.workflow_run.head_branch }}
           HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          # Set only on a workflow_call (from nightly-edge.yml). There, github.event_name is the
+          # caller's event (schedule or workflow_dispatch), so this input is checked first.
+          CALL_SHA: ${{ inputs.sha }}
         run: |
-          if [ "$EVENT" = workflow_dispatch ]; then
+          if [ -n "$CALL_SHA" ]; then
+            echo "Nightly build of $CALL_SHA."
+            echo "sha=$CALL_SHA" >> "$GITHUB_OUTPUT"
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          elif [ "$EVENT" = workflow_dispatch ]; then
             echo "Dry run: builds the selected commit, publishes nothing."
             echo "sha=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
             echo "publish=false" >> "$GITHUB_OUTPUT"

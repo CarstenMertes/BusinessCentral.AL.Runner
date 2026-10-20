@@ -123,3 +123,60 @@ impl Meter {
         (out, t.elapsed().as_nanos() as u64)
     }
 }
+
+/// What a perf budget does with a measurement (owner decision 2026-10-20): where the hardware counter exists the
+/// instruction budget is enforced; the CPU-time fallback (a CI runner has no counter) only warns.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum Verdict {
+    Pass,
+    Warn,
+    Fail,
+}
+
+pub fn decide(counting: bool, over_limit: bool) -> Verdict {
+    match (over_limit, counting) {
+        (false, _) => Verdict::Pass,
+        (true, true) => Verdict::Fail,
+        (true, false) => Verdict::Warn,
+    }
+}
+
+/// Prints which mode the budget runs in; every perf budget calls it once per run.
+pub fn print_mode(counting: bool) {
+    if counting {
+        eprintln!("mode: instructions (enforced)");
+    } else {
+        eprintln!("mode: CPU-time fallback (warning only)");
+    }
+}
+
+/// Applies the verdict: a failure panics with `text`, a warning prints a GitHub Actions warning line.
+pub fn enforce(counting: bool, over_limit: bool, text: &str) {
+    match decide(counting, over_limit) {
+        Verdict::Pass => {}
+        Verdict::Warn => {
+            // Workflow commands end at a newline; keep the text on one line.
+            let one_line = text.lines().next().unwrap_or("");
+            eprintln!("::warning title=perf budget (CPU fallback, not enforced)::{one_line}");
+            eprintln!("{text}");
+        }
+        Verdict::Fail => panic!("{text}"),
+    }
+}
+
+#[cfg(test)]
+mod decide_tests {
+    use super::*;
+
+    #[test]
+    fn counter_mode_over_the_limit_fails() {
+        assert_eq!(decide(true, true), Verdict::Fail);
+        assert_eq!(decide(true, false), Verdict::Pass);
+    }
+
+    #[test]
+    fn cpu_fallback_over_the_limit_only_warns() {
+        assert_eq!(decide(false, true), Verdict::Warn);
+        assert_eq!(decide(false, false), Verdict::Pass);
+    }
+}

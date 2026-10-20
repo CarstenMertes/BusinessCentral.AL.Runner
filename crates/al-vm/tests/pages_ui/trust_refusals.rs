@@ -88,9 +88,10 @@ codeunit 69995 C
 }
 
 /// record/lt-x-table-props/XTablePropsTests.al:229-230: a page control shows the session language's entry of its table
-/// field's OptionCaptionML (`deu_page_op` is `Zwei`). The client does not read it and refuses.
+/// field's OptionCaptionML (`deu_page_op` is `Zwei`). A session language other than 1033, 1031 and 1036 is not pinned and
+/// refused (the pinned languages: al-vm/tests/language/option_caption_ml.rs).
 #[test]
-fn a_page_control_on_a_field_with_option_caption_ml_is_refused() {
+fn a_page_control_on_a_field_with_option_caption_ml_is_refused_in_an_unpinned_language() {
     let src = r#"
 table 69996 "OM Row" { fields { field(1; Id; Integer) { } field(2; Op; Option) { OptionMembers = A,B,C; OptionCaptionML = ENU = 'Alpha,Beta,Gamma', DEU = 'Eins,Zwei,Drei'; } } keys { key(PK; Id) { } } }
 page 69997 "OM Card"
@@ -104,6 +105,7 @@ codeunit 69998 C
     var R: Record "OM Row"; P: TestPage "OM Card";
     begin
         R.Id := 1; R.Op := R.Op::B; R.Insert();
+        GlobalLanguage(1040);
         P.OpenView();
         exit(P.Op.Value());
     end;

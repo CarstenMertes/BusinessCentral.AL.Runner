@@ -153,21 +153,20 @@ impl Session {
             f.blank = Blank::parse(&b).unwrap_or_default();
         }
         f.option_captions = lit("optioncaption").map(|c| unquote(&c).split(',').map(str::to_string).collect());
-        // OptionCaptionML on the control: a TestPage shows and takes the ENU captions in every session language (pages/lt-page-controls-aa/
-        // AaFieldProps.al:AA_OptionCaptionML_PageField line 179: 1033, 1031 and 1036 all show One, Two, Three), over the table field's
-        // captions. An entry without ENU is not pinned.
+        // OptionCaptionML on the control, else on the table field: the captions of the language the page opened in, over the
+        // table field's OptionCaption. A page opened in 1033 keeps One, Two, Three after GlobalLanguage(1031) and (1036)
+        // (pages/lt-page-controls-aa/AaFieldProps.al:AA_OptionCaptionML_PageField line 179); one opened in 1031 shows Zwei
+        // (pageext/lt-z-modify-controls/ZModifyControls.al:322-360 on the control, record/lt-x-table-props/
+        // XTablePropsTests.al:229-230 on the field); 1036 falls back to ENU. Other languages are refused.
         if f.option_captions.is_none() {
-            if let Some(ml) = lit("optioncaptionml") {
-                let Some(enu) = enu_entry(&ml) else {
-                    return unsupported("OptionCaptionML without an ENU entry on a page field (not pinned)");
+            if let Some(ml) = lit("optioncaptionml").or_else(|| from_field("optioncaptionml")) {
+                let Some(language) = st.borrow().open_language else {
+                    return unsupported("OptionCaptionML on a page that has not opened");
                 };
-                f.option_captions = Some(enu.split(',').map(str::to_string).collect());
+                let list = al_builtins::format::ml_text_in_language(&ml, language)
+                    .map_err(|e| Signal::Unsupported(format!("OptionCaptionML on a page field {e}")))?;
+                f.option_captions = Some(list.split(',').map(str::to_string).collect());
             }
-        }
-        // The table field's OptionCaptionML gives the captions of the session language (record/lt-x-table-props/
-        // XTablePropsTests.al:229-230, `deu_page_op` is `Zwei`); it is not read, so the page refuses rather than show another list.
-        if f.option_captions.is_none() && from_field("optioncaptionml").is_some() {
-            return unsupported("OptionCaptionML of the table field of a page control is not supported");
         }
         if f.option_captions.is_none() {
             f.option_captions =
@@ -863,13 +862,4 @@ fn raises_resolve(text: &str) -> bool {
         Some((area, _)) => area != "3" && !area.is_empty() && area.trim().parse::<u32>().is_err(),
         None => false,
     }
-}
-
-fn enu_entry(ml: &str) -> Option<String> {
-    let low = ml.to_ascii_lowercase();
-    let at = low.find("enu")?;
-    let rest = ml[at + 3..].trim_start().strip_prefix('=')?.trim_start();
-    let rest = rest.strip_prefix('\'')?;
-    let end = rest.find('\'')?;
-    Some(rest[..end].to_string())
 }

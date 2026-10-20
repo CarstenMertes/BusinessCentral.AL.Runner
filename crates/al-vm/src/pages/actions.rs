@@ -103,6 +103,14 @@ impl Session {
                 if let Some(target) = drill_page {
                     return self.drill_down_page(st, idx, &target);
                 }
+                // A FlowField opens the DrillDownPageId of its CalcFormula's table (record/lt-x-table-props/XTablePropsTests.al:
+                // 646-658); the view that page gets is not pinned, so it is refused.
+                if self.control_field(st, idx).is_some_and(|f| !f.stored) {
+                    return unsupported(format!(
+                        "TestField.DrillDown on FlowField control {} (the CalcFormula table's page opens; its view is not pinned)",
+                        ctl.name
+                    ));
+                }
                 // No trigger and no page: a fixed platform error with the code MethodNotSupported
                 // (report/lt-bj-request-drilldown/BjRequestDrillDown.al:226-227, UPageProps.al:122-123).
                 return Err(error_code(

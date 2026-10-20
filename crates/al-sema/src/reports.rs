@@ -62,6 +62,8 @@ const FORMAT_ONLY_COLUMN_PROPERTIES: &[&str] = &[
     "autoformatexpression",
     "decimalplaces",
     "includecaption",
+    // An Option column shows the caption of the session language (record/lt-x-table-props/XTablePropsTests.al:741-785).
+    "optioncaptionml",
     // A pending-obsolete column is written to the dataset like any other (corpus errors/lt-ms-refusals-138/P138ColObsolete.al).
     "obsoletestate",
     "obsoletereason",
@@ -868,6 +870,7 @@ impl<'a> Owner<'a> {
                 let mut unsupported = None;
                 let mut include_caption = false;
                 let mut decimal_places = None;
+                let mut option_caption_ml = None;
                 for p in c.properties() {
                     let value = p.value_text();
                     match p.name().to_ascii_lowercase().as_str() {
@@ -880,6 +883,7 @@ impl<'a> Owner<'a> {
                             }
                         },
                         "decimalplaces" => decimal_places = Some(value.trim().to_string()),
+                        "optioncaptionml" => option_caption_ml = Some(value.trim().to_string()),
                         _ => {}
                     }
                 }
@@ -915,6 +919,7 @@ impl<'a> Owner<'a> {
                     field,
                     include_caption,
                     decimal_places,
+                    option_caption_ml,
                 }
             })
             .collect()

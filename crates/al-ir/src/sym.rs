@@ -276,12 +276,20 @@ pub struct FieldModify {
     pub after_validate: Vec<(usize, usize)>,
 }
 
+/// The property name a [`TableContribution`] uses for a reason that refuses its table: link adds the value to
+/// `Table::unsupported`.
+pub const UNSUPPORTED_TABLE_PROPERTY: &str = "\0unsupported";
+
 /// What a table extension adds to its table.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct TableContribution {
     pub fields: Vec<crate::Field>,
     pub keys: Vec<KeyDecl>,
     pub modifies: Vec<FieldModify>,
+    /// The object-level properties the extension sets on its table (`DataCaptionFields`, `LookupPageId`,
+    /// `DrillDownPageId`), as (name, value) in declared order.
+    #[serde(default)]
+    pub properties: Vec<(String, String)>,
 }
 
 /// A control of a page among the controls of the page and of its extensions.

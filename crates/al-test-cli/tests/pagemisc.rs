@@ -98,13 +98,14 @@ page 62015 "PM Look Card"
 
 codeunit 62020 "PM Worker"
 {
-    trigger OnRun() var P: Dictionary of [Text, Text]; R: Dictionary of [Text, Text]; N: Text; Row: Record "PM Row"; begin
+    trigger OnRun() var P: Dictionary of [Text, Text]; R: Dictionary of [Text, Text]; N: Text; V: Text; Row: Record "PM Row"; begin
         P := Page.GetBackgroundParameters(); P.Get('No', N);
         if N.StartsWith('FAIL') then Error('worker failed for %1', N);
         if N = 'WRITE' then begin Row."No." := 'W'; Row.Insert(); end;
         if N = 'COMMIT' then Commit();
         if N = 'ISOSET' then IsolatedStorage.Set('PMbg', 'x');
         if N = 'ISODEL' then IsolatedStorage.Delete('PMbg');
+        if N = 'ISOGET' then begin R.Add('Ret', Format(IsolatedStorage.Get('PMbg', V), 0, 9)); R.Add('Value', V); end;
         R.Add('Out', 'BG:' + N); Page.SetBackgroundTaskResult(R);
     end;
 }
@@ -636,6 +637,31 @@ fn a_worker_cannot_write_to_isolated_storage() {
             if StrPos(GetLastErrorText(), 'Sorry, the current permissions prevented the action. (TableData 2000000107 Isolated Storage Delete: ') = 0 then Error('got %1', GetLastErrorText());
             if GetLastErrorCode() <> 'DB:ReadOnlySession' then Error('code %1', GetLastErrorCode());
             if not IsolatedStorage.Contains('PMbg') then Error('gone'); C.Close(); end;
+        [TryFunction] local procedure TryRun(var C: TestPage \"PM Bg Card\"; P: Dictionary of [Text, Text]) var R: Dictionary of [Text, Text]; begin R := C.RunPageBackgroundTask(Codeunit::\"PM Worker\", P, false); end;"
+    ));
+}
+
+// session/lt-cn-session-leads/CnIsolatedStorageLeads.al:445-522: a worker's Get of a key the caller wrote and has not committed
+// reads no key; after a Commit of the caller it fails with the lock timeout of the Isolated Storage table.
+#[test]
+fn a_worker_get_of_a_key_the_caller_wrote_misses_it_or_waits_on_the_lock() {
+    passes(&format!(
+        "{HELPERS} {BG}
+        [Test]
+        procedure Uncommitted() var C: TestPage \"PM Bg Card\"; P: Dictionary of [Text, Text]; R: Dictionary of [Text, Text]; V: Text; begin
+            IsolatedStorage.Set('PMbg', 'fromcaller');
+            C.OpenView(); P.Add('No', 'ISOGET'); R := C.RunPageBackgroundTask(Codeunit::\"PM Worker\", P, false);
+            R.Get('Ret', V); Check('false', V); R.Get('Value', V); Check('', V); C.Close(); end;"
+    ));
+    passes(&format!(
+        "{HELPERS} {BG}
+        [Test]
+        procedure Committed() var C: TestPage \"PM Bg Card\"; P: Dictionary of [Text, Text]; begin
+            IsolatedStorage.Set('PMbg', 'fromcaller'); Commit();
+            C.OpenView(); P.Add('No', 'ISOGET');
+            if TryRun(C, P) then Error('must fail');
+            Check('We can''t save your changes right now, because a record in table ''Isolated Storage'' is being updated in a transaction done by another session.\\\\You''ll have to wait until the other transaction has completed, which may take a while. Please try again later.', GetLastErrorText());
+            Check('NDBCS:LockTimeout', GetLastErrorCode()); C.Close(); end;
         [TryFunction] local procedure TryRun(var C: TestPage \"PM Bg Card\"; P: Dictionary of [Text, Text]) var R: Dictionary of [Text, Text]; begin R := C.RunPageBackgroundTask(Codeunit::\"PM Worker\", P, false); end;"
     ));
 }

@@ -454,6 +454,8 @@ pub struct Session {
     /// What the isolated storage held at the last commit: a rollback goes back to it (session/
     /// TestProbeSessionMiscContracts.al:IsolatedStorage_NotRolledBack, whose name is the opposite of its result).
     pub(crate) isolated_committed: std::collections::HashMap<(String, String), (String, bool, bool)>,
+    /// The isolated storage keys the running test method set (a page background task reads them differently, sessionops.rs Get).
+    pub(crate) isolated_set_in_test: std::collections::HashSet<(String, String)>,
     /// An install codeunit is running.
     install_scope: bool,
     /// Registered table connections by (type member, lower-case name), and the default name per type.
@@ -679,6 +681,7 @@ impl Session {
             store = store.with_backing(Rc::new(testdata::TestBacking::new(engine.clone(), td.clone())));
         }
         let sequences = restored_sequences(&engine, &company);
+        al_builtins::ops::set_turkic_code(al_builtins::native::is_turkic_language(host.identity.global_language()));
         let mut session = Session {
             global_language: host.identity.global_language(),
             caption_translations: Vec::new(),
@@ -730,6 +733,7 @@ impl Session {
             fault_site: Vec::new(),
             isolated_storage: Default::default(),
             isolated_committed: Default::default(),
+            isolated_set_in_test: Default::default(),
             install_scope: false,
             sequences,
             table_connections: Default::default(),
@@ -838,6 +842,7 @@ impl Session {
     /// transaction type back at UpdateNoLocks.
     pub fn start_test_method(&mut self) {
         self.application_areas.clear();
+        self.isolated_set_in_test.clear();
         self.tx.transaction_type = 0;
         self.tx.tx_phase = crate::transactions::TX_FRESH;
     }

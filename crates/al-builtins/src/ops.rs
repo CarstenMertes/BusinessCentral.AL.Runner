@@ -263,7 +263,7 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
                 T::Text(max) => Value::Text(fit_txt(text.into(), *max)?),
                 _ => {
                     let T::Code(max) = t else { unreachable!() };
-                    Value::Code(fit(upper_code(text.trim()), *max)?.into())
+                    Value::Code(fit(upper_code_checked(text.trim())?, *max)?.into())
                 }
             }
         }
@@ -274,7 +274,7 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
         (v, T::Code(max)) if crate::native::text_of(&v).is_some() => {
             // Doc (Code data type): upper case, leading and trailing spaces removed.
             let text = crate::native::text_of(&v).expect("text");
-            let s = upper_code(text.trim());
+            let s = upper_code_assigned(text.trim());
             // The error shows the text as it was given (text/lt-label-textbuilder/TxCLabel.al:Label_MaxLength `toCode2`).
             if max.is_some_and(|m| Value::text_len(&s) > m as usize) {
                 fit(text.trim().to_string(), *max)?;
@@ -380,9 +380,44 @@ pub fn parse_guid(text: &str) -> Option<[u8; 16]> {
     Some(out)
 }
 
+thread_local! {
+    /// Whether the running session's language is Turkish or Azerbaijani (`GlobalLanguage` 1055 or 1068), which upper-cases `i` to `İ`.
+    static TURKIC_CODE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Sets whether Code conversions on this thread follow the Turkish `i` rule; the VM calls it when the session language changes.
+pub fn set_turkic_code(on: bool) {
+    TURKIC_CODE.with(|c| c.set(on));
+}
+
+/// Whether Code conversions on this thread follow the Turkish `i` rule.
+pub fn turkic_code() -> bool {
+    TURKIC_CODE.with(|c| c.get())
+}
+
 /// The upper case of a Code: a character whose upper case is several characters keeps its own (`ß` stays `ß`,
-/// types/TestProbeScalarContracts.al:CodeAssign_UpperAndTrim, `umlaut_sharp_s`).
-pub fn upper_code(s: &str) -> String {
+/// types/TestProbeScalarContracts.al:CodeAssign_UpperAndTrim, `umlaut_sharp_s`). Under Turkish a text assigned or passed to a Code
+/// maps `i` to the dotted `İ` (text/lt-text-functions/CaseConv.Codeunit.al:280-310, PYC_CodeAssign_Turkish).
+fn upper_code_assigned(s: &str) -> String {
+    if turkic_code() && s.contains('i') {
+        return upper_code_plain(&s.replace('i', "İ"));
+    }
+    upper_code_plain(s)
+}
+
+/// [`upper_code`] for the conversions the corpus pins only outside Turkish (Evaluate, a Format into a Code, a character written into
+/// a Code, a filter value): under Turkish a text with an `i` is refused there.
+pub fn upper_code_checked(s: &str) -> Result<String, Signal> {
+    if turkic_code() && s.contains('i') {
+        return Err(Signal::Unsupported(
+            "a text with `i` upper-cased into a Code under Turkish or Azerbaijani outside an assignment (not pinned)"
+                .into(),
+        ));
+    }
+    Ok(upper_code_plain(s))
+}
+
+fn upper_code_plain(s: &str) -> String {
     s.chars()
         .flat_map(|c| {
             let mut u = c.to_uppercase();
@@ -613,7 +648,9 @@ pub fn number_into_text_field(
         Err(e) => return Some(Err(Signal::Unsupported(e))),
     };
     Some(if code {
-        fit(upper_code(text.trim()), *max).map(|c| Value::Code(c.into()))
+        upper_code_checked(text.trim())
+            .and_then(|u| fit(u, *max))
+            .map(|c| Value::Code(c.into()))
     } else {
         fit_txt(text.into(), *max).map(Value::Text)
     })

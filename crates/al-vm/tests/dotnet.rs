@@ -1519,3 +1519,63 @@ fn adding_an_effective_permission_set_is_refused() {
         "{why}"
     );
 }
+
+/// A .NET String passed straight to SecretStrSubstNo becomes the secret's content
+/// (tests/al-language-onprem-dotnet/TestDotNetValueKindsContracts.al:463, QA_StringResult_IntoSecretText `SecretStrSubstNo`).
+#[test]
+fn a_dotnet_string_passed_to_secret_str_subst_no_is_its_content() {
+    let host = convert_script();
+    let r = run(
+        &host,
+        "C: DotNet Convert; S: SecretText;",
+        "S := SecretStrSubstNo('Basic %1', C.ToBase64String('u:p')); exit(S.Unwrap());",
+        ": Text",
+    );
+    assert_eq!(text(r), "Basic b64(u:p)");
+}
+
+/// Only a String is pinned: another .NET kind passed to SecretStrSubstNo is refused when it runs.
+#[test]
+fn a_dotnet_integer_passed_to_secret_str_subst_no_is_refused() {
+    let host = Fake::new(|r| match r {
+        Req::Invoke(DotNetTarget::Static(t), m, _) if t.name == "System.Convert" && m == "ToInt32" => {
+            reply(DotNetValue::Int32(3))
+        }
+        other => panic!("unexpected request {other:?}"),
+    });
+    let r = run(
+        &host,
+        "C: DotNet Convert; S: SecretText;",
+        "S := SecretStrSubstNo('n %1', C.ToInt32('3')); exit(S.Unwrap());",
+        ": Text",
+    );
+    let why = unsupported(&r);
+    assert!(why.contains("SecretText") || why.contains("not pinned"), "{why}");
+}
+
+/// A .NET String assigned to a SecretText is its content, and a null string an empty SecretText
+/// (TestDotNetValueKindsContracts.al:463, QA_StringResult_IntoSecretText cases 1 and 4).
+#[test]
+fn a_dotnet_string_assigned_to_a_secret_text_is_its_content() {
+    let host = convert_script();
+    let r = run(
+        &host,
+        "C: DotNet Convert; S: SecretText;",
+        "S := C.ToBase64String('u:p'); exit(Format(S.IsEmpty()) + S.Unwrap());",
+        ": Text",
+    );
+    assert_eq!(text(r), "Nob64(u:p)");
+    let host = Fake::new(|r| match r {
+        Req::Invoke(DotNetTarget::Static(t), m, _) if t.name == "System.Convert" && m == "ToBase64String" => {
+            reply(DotNetValue::NullString)
+        }
+        other => panic!("unexpected request {other:?}"),
+    });
+    let r = run(
+        &host,
+        "C: DotNet Convert; S: SecretText;",
+        "S := C.ToBase64String('u:p'); exit(Format(S.IsEmpty()) + S.Unwrap());",
+        ": Text",
+    );
+    assert_eq!(text(r), "Yes");
+}

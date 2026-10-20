@@ -139,6 +139,8 @@ impl Session {
                 Some(Value::Integer(n)) if *n > 0 => {
                     self.global_language = *n;
                     self.events.event_stats.language.set(*n);
+                    // A Code assignment under Turkish or Azerbaijani upper-cases `i` to `İ` (CaseConv.Codeunit.al:280-310).
+                    al_builtins::ops::set_turkic_code(al_builtins::native::is_turkic_language(*n));
                     Ok(Value::Null)
                 }
                 other => unsupported(format!(

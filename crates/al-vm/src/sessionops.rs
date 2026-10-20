@@ -631,6 +631,7 @@ impl Session {
                     ));
                 }
                 self.tx.tx_phase = crate::transactions::TX_WRITE;
+                self.isolated_set_in_test.insert(slot.clone());
                 self.isolated_storage
                     .insert(slot, (value, method == "SetEncrypted", secret));
                 Ok(Value::Boolean(true))
@@ -667,7 +668,33 @@ impl Session {
             }
             "Get" => {
                 let target = if n <= 2 { 2 } else { 1 };
-                match self.isolated_storage.get(&slot) {
+                let mut stored = self.isolated_storage.get(&slot);
+                if self.pages.bg_worker.is_some() && stored.is_some() {
+                    // A worker's Get of a key the caller wrote in this test: not committed yet, the worker reads no key; after
+                    // the caller's Commit it waits on the caller's lock and fails (session/lt-cn-session-leads/
+                    // CnIsolatedStorageLeads.al:445-522). A key the test did not write is not pinned.
+                    let committed = self.isolated_committed.get(&slot);
+                    if !self.isolated_set_in_test.contains(&slot) {
+                        return unsupported(
+                            "IsolatedStorage.Get in a page background task of a key the test did not write (not pinned)",
+                        );
+                    }
+                    match committed {
+                        None => stored = None,
+                        Some(c) if Some(c) == stored => {
+                            return Err(crate::transactions::al_error_code(
+                                "We can't save your changes right now, because a record in table 'Isolated Storage' is being updated in a transaction done by another session.\\\\You'll have to wait until the other transaction has completed, which may take a while. Please try again later.",
+                                "NDBCS:LockTimeout",
+                            ));
+                        }
+                        Some(_) => {
+                            return unsupported(
+                                "IsolatedStorage.Get in a page background task of a committed key the caller changed again (not pinned)",
+                            );
+                        }
+                    }
+                }
+                match stored {
                     // A value stored from a SecretText cannot be read into a Text, also in a TryFunction; the target keeps
                     // its value (misc/lt-cu-odd-leads/CuTryTests.al:181-232).
                     Some((_, _, true)) if n == 2 || n == 4 => al_builtins::native::raise(

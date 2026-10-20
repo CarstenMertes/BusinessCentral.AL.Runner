@@ -850,6 +850,35 @@ fn geturl_with_a_company_or_an_object_builds_the_pinned_query() {
     }
 }
 
+// session/lt-geturl-shape/GetUrlShape.al:270 (QA_GetUrl_Web_NoArgument_Whole `default alone`): GetUrl(ClientType::Default)
+// alone is the web address with the scheme dynamicsnav and the path followed by `//`. Only an http address and only the
+// form without arguments are pinned; the rest is refused.
+#[test]
+fn geturl_default_alone_is_the_dynamicsnav_form_of_the_address() {
+    let r = get_url("exit(GetUrl(ClientType::Default));", None);
+    assert!(
+        matches!(&r, Ok(Value::Text(t)) if &**t == "dynamicsnav://localhost:8080/BC//"),
+        "{r:?}"
+    );
+    assert_eq!(
+        al_builtins::assumptions::take_hits(),
+        vec![al_builtins::assumptions::Assumption::GetUrlWebBaseAddress]
+    );
+    for (body, url) in [
+        (
+            "exit(GetUrl(ClientType::Default));",
+            Some("https://bc.example:7048/BC1"),
+        ),
+        ("exit(GetUrl(ClientType::Default, 'C'));", None),
+    ] {
+        let r = get_url(body, url);
+        assert!(
+            matches!(&r, Err(Signal::Unsupported(w)) if w.contains("GetUrl")),
+            "{body}: {r:?}"
+        );
+    }
+}
+
 // The host part of the other client types, and a character the corpus does not pin in a company, are refused.
 #[test]
 fn geturl_of_another_client_type_or_an_unpinned_character_is_refused() {

@@ -18,6 +18,9 @@ use std::time::{Duration, Instant};
 #[global_allocator]
 static ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
+/// The server base address of a corpus run (ADR-042, decided without owner review 2026-10-20).
+const CORPUS_SERVER_URL: &str = "http://bcserver:8080/BC";
+
 fn main() -> ExitCode {
     // An AL call nests native frames of the bytecode loop; give the runner thread room.
     let worker = std::thread::Builder::new()
@@ -69,6 +72,10 @@ fn run() -> Result<ExitCode, String> {
     if let Some(env) = args.environment {
         al_test_cli::host::set_environment(env);
     }
+    // The corpus pins that real BC's web address in its CI is http, has a port and the path /BC, and that its host is
+    // not `localhost` (session/lt-geturl-shape/GetUrlShape.al:283); the host name itself is masked there and stays the
+    // host setting of ADR-042. So the corpus tool runs with an address of that shape instead of alrunner's default.
+    al_test_cli::host::set_server_url(Some(CORPUS_SERVER_URL.into()));
     if let Some(dir) = &args.files_dir {
         al_test_cli::host::set_files_dir(dir.clone());
     }

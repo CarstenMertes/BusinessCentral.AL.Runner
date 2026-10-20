@@ -436,6 +436,10 @@ impl Lowerer<'_> {
                             "DateTime" => Some(RtType::DateTime),
                             "Duration" => Some(RtType::Duration),
                             "Guid" => Some(RtType::Guid),
+                            // A .NET String passed to SecretStrSubstNo is the secret's content; another kind is
+                            // refused when it runs, as `fit` takes only a Text into a Text slot
+                            // (tests/al-language-onprem-dotnet/TestDotNetValueKindsContracts.al:463).
+                            "SecretText" if id.starts_with("SecretText.SecretStrSubstNo#") => Some(RtType::Text(None)),
                             _ => None,
                         };
                         let value = match pty.as_str() {

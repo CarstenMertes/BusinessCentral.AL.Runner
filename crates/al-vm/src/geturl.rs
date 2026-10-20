@@ -65,6 +65,20 @@ fn base64(bytes: &[u8]) -> String {
 impl Session {
     /// `GetUrl(ClientType, Company, ObjectType, ObjectId, Record|RecordRef, UseFilters, Layout)`: `args` is the call's arguments.
     pub(crate) fn get_url(&mut self, args: &[Value]) -> Result<Value, Signal> {
+        // GetUrlShape.al:270 (`default alone`): ClientType::Default without other arguments is the web address with the
+        // scheme `dynamicsnav` and its path followed by `//`, pinned for an http address only.
+        if member(args.first()).as_deref() == Some("Default") && args.len() == 1 {
+            al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::GetUrlWebBaseAddress);
+            let base = self.host.identity.server_base_url();
+            let Some(rest) = base.strip_prefix("http://") else {
+                return unsupported(format!(
+                    "GetUrl(ClientType::Default) with the server address {base}: only an http address is pinned"
+                ));
+            };
+            return Ok(Value::Text(
+                format!("dynamicsnav://{}//", rest.trim_end_matches('/')).into(),
+            ));
+        }
         if member(args.first()).as_deref() != Some("Web") {
             return unsupported(format!(
                 "GetUrl({}; the call had {} arguments): only ClientType::Web is built (the host part of the other client types is not pinned)",

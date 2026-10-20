@@ -600,12 +600,11 @@ fn a_time_that_rounds_to_midnight_reads_midnight() {
     assert_eq!(text(dates("TimeRollsOver", vec![])), "00:00:00");
 }
 
-// Not pinned: whether a temporary record keeps milliseconds the SQL column would round. Reading such a row is refused; one on
-// the 1/300 s grid reads as written.
+// errors/lt-ms-refusals-130/P130DateFilters.al:324 (QA_TempRecord_Milliseconds_InsertGetModify): a temporary table keeps
+// the milliseconds whole through Insert and Get; only a write to a database table rounds them.
 #[test]
-fn reading_a_temporary_row_with_unrounded_milliseconds_is_refused() {
-    let r = dates("TempKeepsMilliseconds", vec![]);
-    assert!(matches!(r, Err(Signal::Unsupported(_))), "{r:?}");
+fn a_temporary_row_keeps_unrounded_milliseconds() {
+    assert_eq!(text(dates("TempKeepsMilliseconds", vec![])), "12:00:00.001");
     assert_eq!(text(dates("TempOnTheGrid", vec![])), "12:00:00.003");
 }
 

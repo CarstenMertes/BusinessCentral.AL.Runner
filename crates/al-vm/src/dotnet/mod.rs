@@ -837,6 +837,21 @@ impl Session {
         // Variant (tests/al-language-onprem-dotnet/TestDotNetValueKindsContracts.al, codeunit
         // 61400, `NullStringResult_IsEmptyInExpressions`: `Text := <null string>` has length 0 and
         // `Value := <null string>` is neither Text nor DotNet).
+        // A String stored into a SecretText is its content, a null string an empty SecretText
+        // (TestDotNetValueKindsContracts.al:463, QA_StringResult_IntoSecretText). Another kind is not pinned (`fit`).
+        if matches!(t, RtType::Library(k) if k.as_str() == "SecretText") {
+            let content = match &v {
+                Value::Null if self.dotnet.null_string => Some(String::new()),
+                Value::Text(s) => Some(s.to_string()),
+                _ => None,
+            };
+            if let Some(content) = content {
+                return Ok(Value::Library(
+                    "SecretText".into(),
+                    std::rc::Rc::new(std::cell::RefCell::new(al_builtins::value::LibraryValue::Text(content))),
+                ));
+            }
+        }
         if matches!(v, Value::Null) && self.dotnet.null_string {
             return match t {
                 RtType::Text(_) | RtType::Code(_) => Ok(Value::Text(String::new().into())),

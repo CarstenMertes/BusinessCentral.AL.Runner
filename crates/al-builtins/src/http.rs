@@ -383,9 +383,9 @@ fn is_pinned_join(base_path: &str, path: &str) -> bool {
         && (word(path)
             || path.strip_prefix('/').is_some_and(word)
             || path.strip_prefix("../").is_some_and(word)
-            || path.strip_prefix('?').is_some_and(|q| {
-                q.split_once('=').is_some_and(|(k, v)| word(k) && word(v))
-            }))
+            || path
+                .strip_prefix('?')
+                .is_some_and(|q| q.split_once('=').is_some_and(|(k, v)| word(k) && word(v))))
 }
 
 /// RFC 3986 section 5.2.4: `.` and `..` segments of a merged path are removed, as `System.Uri` does.
@@ -425,7 +425,9 @@ fn is_pinned_relative(path: &str) -> bool {
 /// `/` or `.`, and a query alone (AyHttpHandler.al:NoBaseAddress_RelativePaths_1 `a/b`, `a.b`; _2 `?q=1`).
 pub fn is_empty_uri_form(path: &str) -> bool {
     let words = |t: &str, sep: char| {
-        t.contains(sep) && t.split(sep).all(|w| !w.is_empty() && w.chars().all(|c| c.is_ascii_alphanumeric()))
+        t.contains(sep)
+            && t.split(sep)
+                .all(|w| !w.is_empty() && w.chars().all(|c| c.is_ascii_alphanumeric()))
     };
     let query = path.strip_prefix('?').is_some_and(|q| {
         q.split_once('=')
@@ -1730,7 +1732,9 @@ fn response_status(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> O
 }
 
 fn response_reason(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Out {
-    match with_response(r, |s| (!s.reason_unpinned).then(|| Value::Text(s.reason.clone().into())))? {
+    match with_response(r, |s| {
+        (!s.reason_unpinned).then(|| Value::Text(s.reason.clone().into()))
+    })? {
         Some(v) => Ok(v),
         None => unsupported(
             "ReasonPhrase of a response whose [HttpClientHandler] set a status and no ReasonPhrase: the phrase BC gives is pinned for 200 and 404 only (docs/probes-needed.md)",

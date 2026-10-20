@@ -451,7 +451,8 @@ fn on_bc_29_a_relative_path_without_a_base_address_raises_the_empty_uri_error() 
 #[test]
 fn before_bc_29_a_handler_does_not_answer_under_allow_outbound_from_handler() {
     let unhandled = "Unhandled outbound HTTP requests are not permitted when the TestHttpRequestPolicy property is set to ''AllowOutboundFromHandler''. Please ensure that an HTTP client handler is configured.|TestCodeunitUnhandledHttpRequest";
-    let short = "E[Unhandled outbound HTTP requests are not permitted when the TestHttpRe|TestCodeunitUnhandledHttpRequest] ";
+    let short =
+        "E[Unhandled outbound HTTP requests are not permitted when the TestHttpRe|TestCodeunitUnhandledHttpRequest] ";
     let tests = format!(
         r#"
     [Test] [HandlerFunctions('PathHandler')] procedure Paths()
@@ -507,7 +508,10 @@ fn a_handler_status_whose_reason_phrase_is_not_pinned_is_refused() {
         Check(Format(Resp.HttpStatusCode), '418');
     end;"#;
     let got = ay_on("29.0", tests);
-    assert!(matches!(&got[0].1, Outcome::NotRun(w) if w.contains("ReasonPhrase")), "{got:?}");
+    assert!(
+        matches!(&got[0].1, Outcome::NotRun(w) if w.contains("ReasonPhrase")),
+        "{got:?}"
+    );
     // The status alone, with the phrase never read, runs.
     assert_eq!(got[1].1, Outcome::Pass, "{got:?}");
 }
@@ -539,7 +543,10 @@ fn a_handler_under_an_unprobed_policy_is_refused() {
     );
     for header in ["", "TestHttpRequestPolicy = AllowAllOutboundRequests;"] {
         let got = run_on("29.0", header, &body);
-        assert!(matches!(&got[0].1, Outcome::NotRun(w) if w.contains("policy")), "{header}: {got:?}");
+        assert!(
+            matches!(&got[0].1, Outcome::NotRun(w) if w.contains("policy")),
+            "{header}: {got:?}"
+        );
     }
 }
 
@@ -600,5 +607,8 @@ fn a_content_length_after_a_rewrite_of_another_length_is_refused_when_read() {
         H.GetValues('Content-Length', Vals);
     end;"#,
     );
-    assert!(matches!(&got[0].1, Outcome::NotRun(w) if w.contains("Content-Length")), "{got:?}");
+    assert!(
+        matches!(&got[0].1, Outcome::NotRun(w) if w.contains("Content-Length")),
+        "{got:?}"
+    );
 }

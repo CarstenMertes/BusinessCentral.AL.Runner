@@ -88,7 +88,8 @@ impl Lowerer<'_> {
             Ty::Enum(_) => (fixed("System.Int32"), true),
             // lt-bb-dotnet/BbGetDotNetType.al:352-353.
             Ty::DateFormula => (
-                "error:GetDotNetType() does not support the type Microsoft.Dynamics.Nav.Runtime.NavDateFormula.".to_string(),
+                "error:GetDotNetType() does not support the type Microsoft.Dynamics.Nav.Runtime.NavDateFormula."
+                    .to_string(),
                 false,
             ),
             Ty::BigInteger => (fixed("System.Int64"), true),

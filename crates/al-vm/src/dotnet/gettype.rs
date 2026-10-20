@@ -106,7 +106,12 @@ impl Session {
     fn type_of_unassigned(&mut self, declared: &str) -> Result<Value, Signal> {
         match declared {
             "System.String" => self.type_named("System.Object"),
-            "System.Object" | "System.Char" | "System.Byte" | "System.Int32" | "System.Text.StringBuilder" | "System.Type"
+            "System.Object"
+            | "System.Char"
+            | "System.Byte"
+            | "System.Int32"
+            | "System.Text.StringBuilder"
+            | "System.Type"
             | "System.Exception" => self.type_named(declared),
             "" => unsupported("GetDotNetType of an unassigned DotNet value whose declared type is not known"),
             other => unsupported(format!(

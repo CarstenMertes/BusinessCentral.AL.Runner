@@ -480,7 +480,18 @@ impl Session {
                 rec.borrow_mut().read_isolation = 0;
                 Ok(Value::Null)
             }
-            RecordOp::Consistent => Ok(Value::Null),
+            RecordOp::Consistent => {
+                let consistent = match args.first() {
+                    Some(Value::Boolean(b)) => *b,
+                    _ => return unsupported("Consistent without a Boolean argument"),
+                };
+                let (table, temporary) = {
+                    let r = rec.borrow();
+                    (r.table, r.temporary)
+                };
+                self.set_consistent(table, temporary, consistent)?;
+                Ok(Value::Null)
+            }
             RecordOp::ReadConsistency => Ok(Value::Boolean(false)),
             RecordOp::RecordLevelLocking => Ok(Value::Boolean(true)),
             RecordOp::ReadPermission | RecordOp::WritePermission => Ok(Value::Boolean(true)),

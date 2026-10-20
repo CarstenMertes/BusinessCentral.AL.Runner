@@ -9,6 +9,7 @@ mod flowfields;
 mod general_journal;
 mod hostvalues;
 mod key_ties;
+mod lane_codeunit_run;
 mod linked_object;
 mod loadfields;
 mod np_blockers;

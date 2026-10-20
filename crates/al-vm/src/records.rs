@@ -1652,6 +1652,28 @@ impl Session {
         {
             self.bg_refuse_write(t.object as usize, method.name())?;
             self.gate_write(method)?;
+            // Inside a TryFunction whose result is used only Insert is pinned (misc/lt-cu-odd-leads/CuTryTests.al:83-150);
+            // writes to a temporary record are allowed (:153-171), and never reach here.
+            if method == RecordOp::Insert {
+                // Whether the check comes before the table's insert code is not pinned. Subscribers and table-extension
+                // triggers that would see the order are refused. The table's own OnInsert trigger is kept: the pinned
+                // table has one (misc/lt-cu-odd-leads/CuFixtures.al:20-24), and refusing it would lose 85310
+                // TryInsertThenError_ExpressionForm, TryInsertThenError_IfNotForm and TryInsertOnly_ExpressionForm.
+                if self.used_try_write_applies()
+                    && (self.listened(&t, "onbeforeinsertevent", None)?
+                        || self.listened(&t, "onafterinsertevent", None)?
+                        || ["OnBeforeInsert", "OnInsert", "OnAfterInsert"]
+                            .iter()
+                            .any(|n| !self.ext_triggers(&t, n).is_empty()))
+                {
+                    return unsupported(
+                        "Insert inside a TryFunction whose result is used, on a table with insert event subscribers or table-extension insert triggers (whether they run before the TryFunctionWrite error is not pinned)",
+                    );
+                }
+                self.gate_used_try_write("INSERT")?;
+            } else {
+                self.refuse_used_try_write(method)?;
+            }
             self.user_bulk_refusal(&t, rec.borrow().temporary, method)?;
             // A write call starts the transaction, also a DeleteAll that finds no row
             // (session/ProbeSystemEnumMembers.al:143-161, session/TestDatabaseExtended.al:

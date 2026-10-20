@@ -749,6 +749,8 @@ impl Session {
                 deferred_raised: 0,
                 immediate_errors: false,
                 try_depth: 0,
+                used_tries: Vec::new(),
+                inconsistent: Vec::new(),
             },
             ui_state: UiState {
                 scope: None,
@@ -843,7 +845,9 @@ impl Session {
     /// The transaction a write call started has ended (record/TestProbeRecordRefContracts.al:WriteTransaction_State starts
     /// it with a write that changes nothing; codeunit/TestWriteTxTestBoundary.al:Test10 to Test13d end it with the run or
     /// the page operation, and a rollback ends it too).
+    /// The `Consistent(false)` marks end with the transaction too.
     fn end_write_phase(&mut self) {
+        self.tx.inconsistent.clear();
         if self.tx.tx_phase == crate::transactions::TX_WRITE {
             self.tx.tx_phase = crate::transactions::TX_FRESH;
         }
@@ -1356,7 +1360,7 @@ impl Session {
                 .filter(|a| a.name.eq_ignore_ascii_case("CommitBehavior"))
             {
                 match transactions::CommitBehavior::from_attribute(&a.text) {
-                    Some(b) => self.tx.commit_behavior = b,
+                    Some(b) => self.tx.commit_behavior = self.tx.commit_behavior.nested(b),
                     None => {
                         return Err(Signal::Unsupported(format!(
                             "{} (only Ignore and Error are pinned)",
@@ -1368,7 +1372,7 @@ impl Session {
             errorcollect::declares_collect(&r.attributes)?
         } else {
             if let Some(b) = facts.commit_behavior {
-                self.tx.commit_behavior = b;
+                self.tx.commit_behavior = self.tx.commit_behavior.nested(b);
             }
             facts.collects
         };

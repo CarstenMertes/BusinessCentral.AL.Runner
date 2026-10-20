@@ -490,7 +490,7 @@ pub struct PageState {
     /// `Page.RunModal(Id, Rec)` / `Page.RunModal(0, Rec)` had its return value used.
     pub lookup_set: bool,
     /// `Page.RunModal(Id, Rec)` called as a statement: not a lookup (pages/lt-be-runmodal-onlookup/BeRunModalOnLookup.al:916),
-    /// but the row the page closed on still goes back to `Rec`, as it did before that pin (not pinned either way).
+    /// and whether `Rec` takes the row the page closed on is not pinned: a later use of `Rec` refuses when that row differs.
     pub statement_run: bool,
     /// The refresh about to run follows an action on a card with OnFindRecord, without CurrPage.Update: pinned
     /// (pages/lt-be-card-onfindrecord/BeCardOnFindRecord.al), so it marks no assumption.
@@ -710,6 +710,9 @@ pub struct RecordState {
     pub last_modify: Option<Vec<Value>>,
     /// The table's and its extensions' global variables of this record variable (ADR-021).
     pub globals: TableGlobals,
+    /// Every use of the record refuses with this reason: what its buffer holds is not pinned (the row a page closed on after
+    /// `Page.RunModal(Id, Rec)` called as a statement, see `hand_back_selection`).
+    pub unpinned_buffer: Option<&'static str>,
 }
 
 /// What `Record.IsDirty` compares a record variable's buffer with: a copy of the fields the variable last read or wrote

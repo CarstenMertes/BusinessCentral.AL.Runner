@@ -65,3 +65,21 @@ fn descending_find_list_reads_at_one_two_and_twenty_one_rows() {
         assert_eq!(r, &Outcome::Pass, "{n}");
     }
 }
+
+// Previous on the top row of a descending find list with more than one row is not pinned (only one row is, :348): refused.
+#[test]
+fn previous_on_the_top_row_of_a_two_row_descending_find_list_is_refused() {
+    let src = format!(
+        "{OBJECTS}\ncodeunit 62891 T {{ Subtype = Test;
+        [Test] procedure Top() var Row: Record \"FD Row\"; P: TestPage \"FD Desc\"; begin
+            Row.DeleteAll(); Row.Id := 1; Row.Insert(); Row.Id := 2; Row.Insert();
+            P.OpenView(); P.Previous(); P.Previous(); P.Close(); end;
+        }}"
+    );
+    let o = al_testkit::outcomes_in(&src, "T");
+    assert_eq!(o.len(), 1);
+    assert!(
+        matches!(&o[0].1, Outcome::NotRun(why) if why.contains("Previous")),
+        "{o:?}"
+    );
+}

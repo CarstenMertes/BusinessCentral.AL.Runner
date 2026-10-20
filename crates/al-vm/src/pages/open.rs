@@ -1073,7 +1073,14 @@ impl Session {
         let on_new = st.borrow().draft && st.borrow().new_by_call;
         // A page the platform closes after the handler returned hands back nothing on Cancel (handlers/
         // TestPageActionRunObjectPageRec_Tests.al:PageRunModalTargetMovingItsRecAndTheCallersRecord).
-        let hands_back = action == "LookupOK" || (action == "LookupCancel" && via_action);
+        // `Page.RunModal(Id, Rec)` called as a statement closes with OK and Cancel. When the handler invoked one, the row is kept
+        // to tell whether Rec would change (`hand_back_selection` refuses a later use of Rec then). A page the platform closes
+        // leaves Rec as it was (handlers/TestPageActionRunObjectPageRec_Tests.al:296
+        // PageRunModalTargetMovingItsRecAndTheCallersRecord, called as a statement: `Row` stays on B).
+        let statement = st.borrow().statement_run;
+        let hands_back = action == "LookupOK"
+            || (action == "LookupCancel" && via_action)
+            || (statement && via_action && (action == "OK" || action == "Cancel"));
         if hands_back && self.has_source(st) && (on_row || on_new) {
             let fields = self.page_rec(st).borrow().fields.clone();
             st.borrow_mut().selection = Some(fields);

@@ -291,6 +291,7 @@ mod tests {
             is_dirty_base: Default::default(),
             last_modify: None,
             globals: Default::default(),
+            unpinned_buffer: None,
         })))
     }
 

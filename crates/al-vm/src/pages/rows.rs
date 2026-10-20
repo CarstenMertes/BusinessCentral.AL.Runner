@@ -1037,9 +1037,14 @@ impl Session {
                 return Ok(Some(true));
             }
             // Previous on a view of one row asks nothing (PnF06FindListMoves.al:348 PW_FindList_Descending_1Rows `desc1_prev`
-            // empty); with more rows above the cursor's top row it is not pinned and goes on as before.
+            // empty); with more rows it is not pinned and refused.
             if how == PageMethod::Previous && at_first && st.borrow().window.len() == 1 {
                 return Ok(Some(false));
+            }
+            if how == PageMethod::Previous && at_first {
+                return unsupported(
+                    "Previous on the top row of a descending list with OnFindRecord that holds more than one row (not pinned)",
+                );
             }
         }
         if how == PageMethod::Last && st.borrow().window.len() == Self::WINDOW {
@@ -1948,6 +1953,16 @@ impl Session {
         let picked = st.borrow_mut().selection.take();
         if let (true, Some(r), Some(fields)) = (closed_on_row, handed, picked) {
             if r.borrow().fields.len() == fields.len() {
+                // Called as a statement, whether Rec takes the row the page closed on is not pinned: when that row is not the
+                // one Rec holds, any later use of Rec refuses (docs/probes-needed.md, lane-lookups-30).
+                if statement {
+                    if !Self::same_values(&r.borrow().fields, &fields) {
+                        r.borrow_mut().unpinned_buffer = Some(
+                            "Rec after Page.RunModal(Id, Rec) called as a statement, closed on another row (whether Rec takes that row is not pinned)",
+                        );
+                    }
+                    return;
+                }
                 r.borrow_mut().fields = fields;
             }
         }

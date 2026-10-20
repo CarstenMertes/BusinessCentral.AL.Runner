@@ -630,8 +630,8 @@ pages/lt-ah-pages/PwCloseRevalidate.al (86157).
 | What is not pinned | Today | Probe wanted |
 |---|---|---|
 | A stored record handed to a card whose source table is temporary (Page.Run(Id, StoredRec)): BC shows the row, but whether it is copied into the page's temporary table or read from the database | REFUSED (BeCardOnFindRecord CardTemp_PageRun_StoredRec and CardTempFind_PageRun_StoredRec are not run) | The same card: after Page.Run(Id, StoredRec), Next/Previous on the TestPage with two stored rows; an action that calls Rec.Modify() and Rec.Count(); read the table afterwards. The same for a list page |
-| Whether Rec gets the row the page closed on after Page.RunModal(Id, Rec) called as a statement (not a lookup) | kept: the row goes back to Rec, as before | Page.RunModal(Id, Rec) as a statement, the handler moves to the second row and invokes OK; read Rec afterwards |
-| Previous on the top row of a descending OnFindRecord list that holds more than one row | kept: asks OnNextRecord(-1) as before | PnF06 MovesDesc with 2 rows: First, then Previous |
+| Whether Rec gets the row the page closed on after Page.RunModal(Id, Rec) called as a statement (not a lookup), when the handler invoked OK or Cancel on another row (a page the platform closes leaves Rec as it was: TestPageActionRunObjectPageRec_Tests.al:296) | REFUSED when Rec is used afterwards: a field read or a method that reads the buffer; Reset, filters, Count, DeleteAll and the like run, and Get/FindFirst/FindLast/FindSet make it usable again | Page.RunModal(Id, Rec) as a statement, the handler moves to the second row and invokes OK; read Rec afterwards |
+| Previous on the top row of a descending OnFindRecord list that holds more than one row | REFUSED | PnF06 MovesDesc with 2 rows: First, then Previous |
 | Moves other than Next() on a list row whose OnValidate refused an entry, and what Next() answers there | REFUSED | PwCloseRevalidate list: `B := P.Next()`, and Previous/First/Last/New after the refusal; read where the cursor stands and what is stored |
 
 ## Assumptions in force (generated from the registry)

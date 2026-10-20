@@ -144,3 +144,36 @@ fn run_modal_without_a_record_as_a_statement_has_no_cancel_action() {
         assert_eq!(r, &Outcome::Pass, "{n}");
     }
 }
+
+// Whether Rec gets the row the page closed on after Page.RunModal(Id, Rec) called as a statement is not pinned: a read of
+// Rec after the call refuses when the page closed on another row; when it closed on Rec's own row nothing changes.
+#[test]
+fn rec_after_a_statement_run_modal_that_moved_is_refused_when_read() {
+    let src = format!(
+        "{OBJECTS}\ncodeunit 62692 T {{ Subtype = Test; {HELPERS}
+        [ModalPageHandler] procedure MoveOk(var P: TestPage \"LS List\") begin P.Last(); P.OK().Invoke(); end;
+        [ModalPageHandler] procedure StayOk(var P: TestPage \"LS List\") begin P.OK().Invoke(); end;
+        [Test] [HandlerFunctions('MoveOk')]
+        procedure Moved() var R: Record \"LS Row\"; begin
+            Seed(); R.FindFirst(); Page.RunModal(Page::\"LS List\", R); Check('A', R.\"Code\"); end;
+        [Test] [HandlerFunctions('MoveOk')]
+        procedure MovedThenRefilled() var R: Record \"LS Row\"; begin
+            Seed(); R.FindFirst(); Page.RunModal(Page::\"LS List\", R); R.Reset(); R.SetRange(\"Code\", 'B'); R.FindFirst();
+            Check('B', R.\"Code\"); end;
+        [Test] [HandlerFunctions('StayOk')]
+        procedure Stayed() var R: Record \"LS Row\"; begin
+            Seed(); R.FindFirst(); Page.RunModal(Page::\"LS List\", R); Check('A', R.\"Code\"); end;
+        }}"
+    );
+    let o = al_testkit::outcomes_in(&src, "T");
+    assert_eq!(o.len(), 3, "{o:?}");
+    for (n, r) in &o {
+        match n.as_str() {
+            "Moved" => assert!(
+                matches!(r, Outcome::NotRun(why) if why.contains("statement")),
+                "{n}: {r:?}"
+            ),
+            _ => assert_eq!(r, &Outcome::Pass, "{n}"),
+        }
+    }
+}

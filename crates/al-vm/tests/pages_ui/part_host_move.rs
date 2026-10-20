@@ -102,3 +102,60 @@ fn a_host_move_reads_only_its_linked_parts() {
          |first=L:H1/30000;L:H1/20000;L:H1/10000;F:H1/30000;F:H1/20000;H:H1/30000;H:H1/20000;H:H1/10000;"
     );
 }
+
+const UPDATE_SRC: &str = r#"
+table 51410 "UP Row" { fields { field(1; Id; Integer) { } } keys { key(PK; Id) { } } }
+codeunit 51411 "UP Log"
+{
+    SingleInstance = true;
+    var T: Text;
+    procedure Add(S: Text) begin T += S + ';'; end;
+    procedure Reset() begin T := ''; end;
+    procedure Dump(): Text begin exit(T); end;
+}
+page 51412 "UP Part"
+{
+    PageType = ListPart;
+    SourceTable = "UP Row";
+    layout { area(Content) { repeater(R) { field(IdCtl; Rec.Id) { } } } }
+    procedure RunUpdate() var Log: Codeunit "UP Log"; begin Log.Add('proc'); CurrPage.Update(false); end;
+    trigger OnOpenPage() var Log: Codeunit "UP Log"; begin Log.Add('part-open'); end;
+    trigger OnAfterGetRecord() var Log: Codeunit "UP Log"; begin Log.Add('agr' + Format(Rec.Id)); end;
+}
+page 51413 "UP Host"
+{
+    PageType = Card;
+    SourceTable = "UP Row";
+    layout { area(Content) { field(IdCtl; Rec.Id) { } part(PartCtl; "UP Part") { Visible = ShowPart; } } }
+    var ShowPart: Boolean;
+    trigger OnAfterGetCurrRecord() var Log: Codeunit "UP Log"; begin Log.Add('host'); CurrPage.PartCtl.Page.RunUpdate(); end;
+}
+codeunit 51414 "UP Test"
+{
+    procedure Run(): Text
+    var R: Record "UP Row"; Log: Codeunit "UP Log"; Host: TestPage "UP Host"; T: Text;
+    begin
+        R.Id := 1; R.Insert(); R.Id := 2; R.Insert();
+        Log.Reset();
+        Host.OpenEdit();
+        T := 'open=' + Log.Dump();
+        Log.Reset();
+        Host.Next();
+        T += '|next=' + Log.Dump();
+        Host.Close();
+        exit(T);
+    end;
+}
+"#;
+
+/// A part hidden by a Visible expression whose procedure, called from the host's OnAfterGetCurrRecord, runs
+/// `CurrPage.Update`: the part fills its rows again after the host's code (pages/lt-hidden-part-currpage/
+/// HiddenPartCurrPageUpdateFalse.al:196-198).
+#[test]
+fn a_part_update_asked_by_host_code_refills_the_part() {
+    let r = al_testkit::run_in(UPDATE_SRC, "UP Test", "Run");
+    assert_eq!(
+        text(r),
+        "open=part-open;host;proc;agr1;agr2;agr1;agr1;agr2;agr1;|next=host;proc;agr1;agr2;agr1;"
+    );
+}

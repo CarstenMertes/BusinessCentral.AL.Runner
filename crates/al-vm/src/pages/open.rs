@@ -365,6 +365,7 @@ impl Session {
             if as_part {
                 return Ok(());
             }
+            let waiting = self.parts_waiting_refresh(st);
             self.load_first_row(st, mode, record.is_some())?;
             // A card over a table with no row to show stands on a blank Rec that was never stored: an action cannot have deleted it.
             if has_source && !self.is_list(st) && st.borrow().cursor == Cursor::Row && !st.borrow().draft {
@@ -372,7 +373,8 @@ impl Session {
                 let never = self.stored_row(&rec)?.is_none();
                 st.borrow_mut().never_stored = never;
             }
-            self.sync_parts_at_open(st)
+            self.sync_parts_at_open(st)?;
+            self.refresh_parts_asked_by_host(st, &waiting, true)
         })();
         if let Err(e) = result {
             // The open raises the error itself and leaves the variable closed

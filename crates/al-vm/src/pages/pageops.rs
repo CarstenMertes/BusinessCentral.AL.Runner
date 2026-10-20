@@ -175,6 +175,11 @@ impl Session {
         } else {
             None
         };
+        let waiting = if st.borrow().host.is_none() && !st.borrow().parts.is_empty() {
+            self.parts_waiting_refresh(st)
+        } else {
+            Vec::new()
+        };
         let r = match self.test_page_op_inner(method, st, args) {
             // `CurrPage` and a `Page` variable are the page's own code, not a TestPage the test closed: BC does not raise
             // "The TestPage is not open." for them. What a method of a page that is not open (any more) does is not pinned, so
@@ -235,6 +240,7 @@ impl Session {
                     }
                     _ => self.sync_parts(st)?,
                 }
+                self.refresh_parts_asked_by_host(st, &waiting, name == PageMethod::Next)?;
             }
         }
         Ok(r)

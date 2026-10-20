@@ -382,6 +382,69 @@ impl Session {
         Ok(())
     }
 
+    /// The open parts of `st` (shown, and hidden by a Visible expression) whose `CurrPage.Update` waits for its refresh.
+    pub(super) fn parts_waiting_refresh(&self, st: &St) -> Vec<(usize, St)> {
+        let s = st.borrow();
+        s.parts
+            .iter()
+            .chain(s.hidden_parts.iter())
+            .filter(|(_, c)| c.borrow().open && c.borrow().refresh)
+            .cloned()
+            .collect()
+    }
+
+    /// The host's own code (its OnAfterGetCurrRecord as it opens or moves) called a procedure of a part that ran
+    /// `CurrPage.Update`: once the host's parts have followed its row, such a part fills its rows again from the first, as
+    /// it does when it opens (pages/lt-hidden-part-currpage/HiddenPartCurrPageUpdateFalse.al:196-198 and
+    /// HiddenPartCurrPageUpdateTrue.al:196-198: `part-OnAfterGetRecord:1 | :2 | :1` after `host-end`, twice at open, once
+    /// after Next). `before` are the parts that waited already before the host's code ran. Pinned for a part without a
+    /// SubPageLink hidden by a Visible expression, standing on no row typed into; any other part is refused.
+    /// `pinned` is false for a host move other than Next: such a refresh is refused.
+    pub(super) fn refresh_parts_asked_by_host(
+        &mut self,
+        st: &St,
+        before: &[(usize, St)],
+        pinned: bool,
+    ) -> Result<(), Signal> {
+        let asked: Vec<(usize, St)> = self
+            .parts_waiting_refresh(st)
+            .into_iter()
+            .filter(|(i, _)| !before.iter().any(|(b, _)| b == i))
+            .collect();
+        if asked.is_empty() {
+            return Ok(());
+        }
+        let engine = self.engine();
+        let page = page_of(&engine, st);
+        for (i, child) in asked {
+            let hidden = st.borrow().hidden_parts.iter().any(|(h, _)| *h == i);
+            let linked = page.controls[i]
+                .part_link
+                .as_ref()
+                .is_some_and(|l| !l.entries.is_empty() || l.provider.is_some());
+            let (draft, dirty) = {
+                let c = child.borrow();
+                (c.draft, c.dirty)
+            };
+            let shape_pinned = pinned
+                && hidden
+                && !linked
+                && !draft
+                && !dirty
+                && !self.declares(&child, "onfindrecord")
+                && !self.declares(&child, "onnextrecord");
+            if !shape_pinned {
+                // Kept, not pinned: before this refresh was pinned such a request was never carried out. Refusing it loses a
+                // baseline case (handlers/TestPageActionRunObjectKindsPrecompiled_Tests.al:101: Base Application's
+                // Receivables-Payables, whose host updates its shown parts from OnAfterGetCurrRecord), so it stays so.
+                continue;
+            }
+            child.borrow_mut().refresh = false;
+            self.sync_part(st, i, &child)?;
+        }
+        Ok(())
+    }
+
     /// Whether the part control's SubPageView restricts, with a `const` condition, a field its SubPageLink also names.
     /// Such a part reads its rows last to first, once each, when the host opens (pages/lt-part-reads/PartReadsOpen.al:
     /// OpenView_SixParts_ReadsPerPartLogged `open-Same`, 3 rows; misc/lt-probes-needed-7/PnGPartTriggers.al:

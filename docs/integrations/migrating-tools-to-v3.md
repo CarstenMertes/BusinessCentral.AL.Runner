@@ -42,7 +42,7 @@ built on the language, not on BC's internals".
 v2 prints `... v2.12.0 ...` somewhere in its output. v3 prints
 
 ```
-alrunner 3.0.0-alpha.1 (<commit>)
+alrunner 3.0.0-alpha.2 (<commit>)
 ```
 
 Change: do not match `/\bv2\.\d/`. Parse the first `\d+\.\d+\.\d+` (as ALchemist already does).

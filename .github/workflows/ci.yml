@@ -25,7 +25,7 @@ on:
   schedule:
     - cron: "17 5 * * *"
   workflow_dispatch:
-  # release.yml runs the same checks before it builds a numbered alpha.
+  # release-tag.yml runs the same checks before it builds a numbered alpha.
   workflow_call:
 
 env:
@@ -323,7 +323,7 @@ jobs:
   #                    (one prefix per job, operating system and architecture), removes the older ones.
   # A failure of the API call or of `gh` never fails the build: the job and each step are continue-on-error, and
   # a cache that stays full is only slower. Only a push to main runs it (not a pull request, and not
-  # release.yml, which calls this workflow). Needs `actions: write`.
+  # release-tag.yml, which calls this workflow). Needs `actions: write`.
   cache-cleanup:
     name: cache cleanup
     needs: [test, portable, corpus, release-tests]

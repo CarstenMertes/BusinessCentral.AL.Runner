@@ -407,6 +407,8 @@ pub struct PageState {
     /// The page reached a state whose behavior is not pinned: every later call on it or its parts except Close is refused
     /// with this reason.
     pub unpinned_state: Option<String>,
+    /// With `unpinned_state`: Close is refused too.
+    pub unpinned_close: bool,
     /// The row a new line was started below (`New()` on a stored row of a list): after the new row
     /// is saved, `Next()` goes to the row below that one, as the client's own row order has it.
     pub after_new: Option<Vec<Value>>,
@@ -529,6 +531,7 @@ impl PageState {
             draft_stored: false,
             typed_before_key: false,
             unpinned_state: None,
+            unpinned_close: false,
             after_new: None,
             opening: false,
             editable_off: false,

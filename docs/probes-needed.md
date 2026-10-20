@@ -587,6 +587,22 @@ Pinned by lt-ac/ACRecordIsDirty.al (codeunit 77504, BC 29). Everything below is 
 | IsDirty of a declared variable of a table with InitValue fields; a partial record (SetLoadFields); a FlowField or Blob that differs | REFUSED | The 77504 sequences on such a table |
 | IsDirty after DeleteAll or ModifyAll on a record that was read (pinned only on a fresh variable, ACRecordIsDirty.al:37-38) | REFUSED | Get, DeleteAll, IsDirty |
 
+## Page trigger errors on a TestPage (lane-page-trigger-errors, 2026-10-20)
+
+Pinned by pages/lt-cc-page-leads/CcPageLeads.al:453-633 (the TriggerError_* tests, a Card opened with OpenEdit). Code:
+`open_row_error` (pages/open.rs), `move_trigger_error` (pages/rows.rs), `swallowed_trigger_error` and `insert_trigger_error`
+(pages/draft.rs), `page_close` (pages/open.rs).
+
+| What is not pinned | Today | Probe wanted |
+|---|---|---|
+| The row, the control values and what Close saves after New() swallowed an OnNewRecord error, Next() swallowed an OnModifyRecord error, or SetValue raised the TestValidation error of OnInsertRecord | REFUSED (every later call on the page, Close too) | After each error: read the key and Name controls, Next/First, Close, then read the table |
+| What Next() answers after a swallowed OnModifyRecord error | REFUSED when the answer is used | `B := P.Next()` with the OnModifyRecord error |
+| Whether a write (insert, modify or delete) the failing trigger made survives the swallowed error | REFUSED (a trigger that wrote before its error) | OnNewRecord / OnModifyRecord that inserts a row, then Error; read the table after the step |
+| An OnModifyRecord error on First, Last, Previous, New or Close; an OnNewRecord error on New() of a list, a document or in view mode; an OnInsertRecord error on Activate | REFUSED | The CcPageLeads ErrCase steps on those calls and page types |
+| The error of OnFindRecord/OnAfterGetRecord/OnAfterGetCurrRecord at OpenEdit of a page that is not a Card; the same error on a Card with a Caption of its own; an error other than Error() | raised with the unpinned mark (text and code refused) | ErrCase step 0 on a List, a Document and a captioned Card; a TestField error in OnAfterGetRecord |
+| The error of OnNextRecord on Previous/First/Last, in view mode, on a list; of OnFindRecord on any move; after the trigger moved Rec before it failed | raised with the unpinned mark | ErrCase step 1 with those calls and page types |
+| An OnClosePage error other than Error(); an error of an OnClosePage subscriber or of a part's OnClosePage at Close(); an OnClosePage error at a close by an action or a handler | first: unpinned mark; the others REFUSED | ErrCase step 5 with TestField in OnClosePage, a subscriber that errors, a part that errors, `P.OK().Invoke()` |
+
 ## Assumptions in force (generated from the registry)
 
 Owner rule of 2026-10-15 (CLAUDE.md hard rule 3): behavior a Microsoft test needs may be implemented before its probe, and every test that passes through such behavior is reported as a FLAGGED pass. The registry is `crates/al-builtins/src/assumptions.rs`; each code path marks its entry when it runs. This table is generated from it (do not edit it by hand: `UPDATE_ASSUMPTIONS_DOC=1 cargo test -p al-builtins assumptions` rewrites it). `alrunner test --top-assumptions` ranks the entries by flagged passes, `--list-assumptions` prints them with the hit counts of the last run. When a probe pins an entry, delete it from the registry; the compiler names every place that still marks it.

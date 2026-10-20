@@ -16,4 +16,5 @@ mod parts;
 mod row_window;
 mod run_record_group2;
 mod trap_reopen;
+mod trigger_errors;
 mod trust_refusals;

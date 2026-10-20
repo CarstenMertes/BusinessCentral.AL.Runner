@@ -162,9 +162,10 @@ impl Session {
             };
             exts.push((e, ext));
         }
-        if let Some(xml) = seed {
-            self.apply_request_parameters(inst, &exts, object, xml)?;
-        }
+        // A parameters string is loaded after the page's OnInit and before its OnOpenPage: OnInit sets a variable,
+        // OnOpenPage and the handler read the seeded value (report/lt-aq/AqTests.al:362-381,
+        // Seeded_OnInitSetsControl_HandlerReads: `OnInit int=5 opt=Alpha;OnOpenPage int=9 opt=Gamma;`).
+        st.borrow_mut().request_seed = seed.map(str::to_string);
         st.borrow_mut().ext_instances = exts.clone();
         let Some((hobject, hroutine, hinst)) =
             self.open_page_as(&st, PageMode::Edit, None, Some(UiKind::RequestPage), false)?
@@ -531,10 +532,27 @@ impl Session {
         let Some(id) = o.id else {
             return unsupported("an action of a request page of a report without an id");
         };
-        Err(error(format!(
+        let message = format!(
             "The action with ID = {} is not found on the page.",
             action_id(id, &c.name)
-        )))
+        );
+        // The code is TestActionNotFound for an action declared `Enabled = false` or `Visible = false`
+        // (report/lt-aq/AqTests.al:334-358, Actions_DisabledAndHidden_Invoke); for any other action it is not pinned.
+        let off = |name: &str| {
+            c.props
+                .iter()
+                .any(|(k, v)| k == name && matches!(v, ir::PropVal::Lit(l) if l.eq_ignore_ascii_case("false")))
+        };
+        let code = if off("enabled") || off("visible") {
+            "TestActionNotFound".to_string()
+        } else {
+            al_builtins::native::UNPINNED_ERROR.to_string()
+        };
+        Err(Signal::Error(Box::new(al_builtins::native::AlError {
+            message,
+            code,
+            ..Default::default()
+        })))
     }
 
     /// The parameters of the request page as BC returns them from `RunRequestPage`: the report's

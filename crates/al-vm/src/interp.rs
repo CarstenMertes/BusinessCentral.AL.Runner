@@ -45,7 +45,7 @@ impl Session {
             return self.request_page_update(&values);
         }
         if id == ids::REQUESTPAGE_CAPTION_1 {
-            return self.request_page_caption(&values);
+            return self.request_page_caption(&values, &f.instance);
         }
         if class == Class::Report {
             self.ret_used = ret_used;

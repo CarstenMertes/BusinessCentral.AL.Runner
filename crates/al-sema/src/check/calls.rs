@@ -94,6 +94,32 @@ impl<'a> Checker<'a> {
                 return Some(cs);
             }
         }
+        // In a report data item's trigger or column source, a procedure of the data item's table runs before the report's of
+        // the same name; in a report trigger the report's runs (report/lt-cj-report-leads/CjDataset.al:215-241,
+        // SameNameProcedure_ExtensionField_SaveAsXml: `FooCol = table 1,..`, `row 1 foo=table 1`, `prereport foo=report`).
+        // Pinned for a procedure of the table itself with the report's parameters; anything else is left as before.
+        if sc.report_item && sc.rec_unqualified && !self.members[sc.self_obj].procedures_named(n).is_empty() {
+            if let Some(rec @ Ty::Record { .. }) = sc.rec.clone() {
+                let Ty::Record { table, .. } = &rec else { unreachable!() };
+                let ti = self.resolve_quiet(sc.file, ObjKind::Table, table);
+                if let Some(E::Callable(cs)) = self.member(sc, &rec, n) {
+                    // Only where the two have the same parameters: with other signatures which one runs is not pinned.
+                    let same_signatures = self.members[sc.self_obj]
+                        .procedures_named(n)
+                        .iter()
+                        .map(|p| proc_cand(p).param_tys)
+                        .all(|tys| cs.iter().any(|c| c.param_tys == tys));
+                    if !cs.is_empty()
+                        && same_signatures
+                        && cs
+                            .iter()
+                            .all(|c| matches!(c.target, Res::Proc { object, .. } if Some(object) == ti))
+                    {
+                        return Some(cs);
+                    }
+                }
+            }
+        }
         let mut c: Vec<Cand> = self.members[sc.self_obj]
             .procedures_named(n)
             .iter()

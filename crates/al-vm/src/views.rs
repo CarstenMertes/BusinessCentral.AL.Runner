@@ -654,6 +654,33 @@ pub(crate) fn page_source_view(t: &TableDef, view: &str) -> Result<(String, Vec<
     Ok((parts.join(" "), enum_consts, blank_dates))
 }
 
+/// The conditions of a view (already through [`property_view`]) that filter a Date field with `const(0D)` or
+/// `filter(0D)`: (field, `CONST` or `FILTER`).
+pub(crate) fn blank_date_conditions(t: &TableDef, view: &str) -> Vec<(usize, String)> {
+    let mut out = Vec::new();
+    let mut rest = view.trim();
+    while let (Some(open), Some((inner, after))) = (rest.find('('), rest.find('(').and_then(|o| balanced(&rest[o..]))) {
+        if rest[..open].trim().eq_ignore_ascii_case("where") {
+            for item in split_top(inner, ',') {
+                let parsed = item.split_once('=').and_then(|(field, cond)| {
+                    let o = cond.find('(')?;
+                    let (value, _) = balanced(&cond[o..])?;
+                    let pos = field_by_name(t, field.trim())?;
+                    Some((pos, cond[..o].trim().to_ascii_uppercase(), value.trim().to_string()))
+                });
+                if let Some((pos, kind, value)) = parsed {
+                    if matches!(t.fields[pos].ty, al_builtins::value::RtType::Date) && value.eq_ignore_ascii_case("0d")
+                    {
+                        out.push((pos, kind));
+                    }
+                }
+            }
+        }
+        rest = after.trim();
+    }
+    out
+}
+
 /// [`property_view`] for a part control's `SubPageView`: a quoted filter stays as written, so a view like `filter('>10')` is
 /// refused.
 pub(crate) fn sub_page_view_text(raw: &str) -> String {

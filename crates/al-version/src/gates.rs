@@ -134,7 +134,10 @@ pub enum Gate {
     /// Probed values that are the same on BC 28 and 29 and differ on BC 27 (the laptop writer's probes-needed files, corpus
     /// bump 11): the date control shorthands, metadata table rows and keys, report dataset rows and names, the SystemRowVersion
     /// aggregates, Media import with three arguments. Each guarded test names its fact; split into one gate per fact when the
-    /// runtime implements it. Not consumed yet.
+    /// runtime implements it. Corpus bumps 31 and 32 add two tests held on Linux that assert only from BC 28, because BC 27.5
+    /// through the TestRunnerHub ends them with CallbackNotAllowed: the control add-in error of a test page
+    /// (pages/lt-ao-testpage/AoTests.al:786) and the Reporting Triggers events of Report.Run/RunModal/Execute
+    /// (events/lt-platform-events-v/PeVTests.al:750). Not consumed yet.
     ProbedValuesDifferFrom28,
     /// A BigInteger literal in a Boolean control expression (`Enabled = 0L <> Rec.Big`) compiles on the client and runs.
     /// Before, the page fails to open ("Error compiling dynamic control expression ... Not a valid number."); the runtime
@@ -144,7 +147,8 @@ pub enum Gate {
     /// BigInteger/Integer FlowField type mismatch, the report dataset header bytes and lines and a second SaveAs on one variable,
     /// Report/Field metadata rows, Media import, BigInteger into an Enum field. Corpus bump 30 adds the RDLC Pdf output tests,
     /// asserted only below BC 29 (`#if not BC29PLUS`): the BC 29 Linux container has no renderer, which is not BC behavior
-    /// (report/lt-am-rdlc-output/AMRdlcOutput.al:9-11). Not consumed yet.
+    /// (report/lt-am-rdlc-output/AMRdlcOutput.al:9-11). Corpus bumps 31 and 32 add SaveAs Word/Excel of an RDLC-only report, held on
+    /// Linux under a different hold id from BC 29 (report/lt-ci-report-leads/CiReportRunLeads.al:670). Not consumed yet.
     ProbedValuesDifferFrom29,
     /// `Base64Convert.ToBase64` of a Text with `TextEncoding::Windows` or `MSDos` and no code page gives the code page 1252
     /// bytes from BC 28 (`äöü` is `5Pb8`); before, the UTF-8 bytes (`w6TDtsO8`) (types/PVBase64.al, corpus bump 13).
@@ -620,6 +624,14 @@ impl Gate {
                     lines: "594,607",
                 },
                 Evidence {
+                    file: "pages/lt-ao-testpage/AoTests.al",
+                    lines: "786",
+                },
+                Evidence {
+                    file: "events/lt-platform-events-v/PeVTests.al",
+                    lines: "750",
+                },
+                Evidence {
                     file: "pages/lt-px-controls/PxControls.al",
                     lines: "1115,1118,1125,1128",
                 },
@@ -696,6 +708,10 @@ impl Gate {
                 Evidence {
                     file: "report/lt-am-report-output/AMReportOutputTests.al",
                     lines: "286",
+                },
+                Evidence {
+                    file: "report/lt-ci-report-leads/CiReportRunLeads.al",
+                    lines: "670",
                 },
                 Evidence {
                     file: "report/lt-am-rdlc-output/AMRdlcOutput.al",

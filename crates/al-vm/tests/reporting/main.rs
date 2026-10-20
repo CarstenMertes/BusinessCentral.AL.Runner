@@ -1,5 +1,6 @@
 //! The tests of one area in one binary (ADR-037 item 5): fewer binaries to link. Each module is a file of reporting/.
 
+mod lane_report_pages;
 mod multi_reportext;
 mod queries;
 mod query_outer_link;

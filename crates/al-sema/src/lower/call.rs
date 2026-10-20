@@ -95,6 +95,7 @@ impl Lowerer<'_> {
                     None if object == self.oi => {
                         self.declared_in_both_proc(object, offset)?;
                         self.bare_is_dirty_unpinned(node, object, offset)?;
+                        self.report_item_same_name_refusal(node)?;
                         None
                     }
                     // A page or report extension calling a procedure of the page or report it extends.
@@ -686,6 +687,23 @@ impl Lowerer<'_> {
             return Ok(());
         }
         Err("a bare IsDirty() outside OnRun of a codeunit with TableNo: its own procedure or Record.IsDirty is not pinned".into())
+    }
+
+    /// A call in a report data item to a name the report and the item's table both declare, in a shape no corpus test
+    /// pins (the checker's AR1006, see `Checker::lookup_callable`; report/lt-cj-report-leads/CjDataset.al:215-241 pins
+    /// only one procedure on each side with the same parameters).
+    fn report_item_same_name_refusal(&self, node: &SyntaxNode) -> L<()> {
+        let path = &self.ws.files[self.file].path;
+        let at: usize = node.text_range().start().into();
+        match self
+            .checked
+            .diagnostics
+            .iter()
+            .find(|d| d.code == "AR1006" && d.offset == at && &d.file == path)
+        {
+            Some(d) => Err(d.message.clone()),
+            None => Ok(()),
+        }
     }
 
     /// The checker's AR1005 on this call, if any.

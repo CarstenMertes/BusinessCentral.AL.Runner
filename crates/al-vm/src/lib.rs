@@ -586,6 +586,9 @@ pub struct Session {
     pub(crate) work_date: Option<i32>,
     /// The language `GlobalLanguage(Id)` set.
     pub(crate) global_language: i32,
+    /// What `CaptionClassTranslate` translated in this session: (class text, GlobalLanguage then, caption). Cleared by
+    /// `SelectLatestVersion` (types/PSCaptionClass.al:94-115).
+    pub(crate) caption_translations: Vec<(String, i32, String)>,
     /// The row `load` is about to read came from `Get` (partial.rs: a `Get` of the row the buffer holds keeps what is loaded).
     pub(crate) get_load: bool,
     /// Transactions: the depth of transaction-beginning constructs, and where the open transaction stands.
@@ -673,6 +676,7 @@ impl Session {
         let sequences = restored_sequences(&engine, &company);
         let mut session = Session {
             global_language: host.identity.global_language(),
+            caption_translations: Vec::new(),
             get_load: false,
             host,
             waited_ms: 0,
@@ -768,6 +772,7 @@ impl Session {
             pages: PageClients {
                 saved_values: std::collections::HashMap::new(),
                 traps: Vec::new(),
+                scope_unpinned: Vec::new(),
                 bg_worker: None,
                 page_xrec: None,
                 curr_field_no: Vec::new(),
@@ -808,6 +813,7 @@ impl Session {
                 report_flow: None,
                 flow_unwind: None,
                 request_only_page: false,
+                zero_date_view_failed: false,
                 report_executed: Vec::new(),
                 report_save_tried: Vec::new(),
                 prepared: Vec::new(),
@@ -1455,6 +1461,9 @@ impl Session {
         self.depth -= usize::from(is_try);
         self.tx.commit_behavior = saved_commit_behavior;
         self.end_trap_scope(&frame, r.params, &r.by_var);
+        if let Some(why) = self.end_unpinned_page_scope(&frame, r.params, &r.by_var) {
+            outcome = Err(Signal::Unsupported(why));
+        }
         let ret = match outcome {
             Ok(()) => None,
             // A report flow call (Skip, Break, Quit) leaves every procedure between the report trigger and the call.

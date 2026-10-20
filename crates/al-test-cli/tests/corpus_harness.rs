@@ -91,10 +91,10 @@ impl AllVersions {
 fn every_oracle_case_is_reported_and_attributed_to_an_area() {
     // BC 29: the version a run without `--bc-version` picks.
     let r = all_versions().json("29");
-    assert_eq!(r["overall"]["total"], 16382);
+    assert_eq!(r["overall"]["total"], 16892);
     assert_eq!(r["unmapped"].as_array().unwrap().len(), 0, "{}", r["unmapped"]);
     assert_eq!(r["areas"]["json"]["total"], 464);
-    assert_eq!(r["areas"]["record"]["total"], 2105);
+    assert_eq!(r["areas"]["record"]["total"], 2179);
 }
 
 #[test]
@@ -106,7 +106,7 @@ fn oracle_pinned_to_a_different_corpus_commit_is_refused() {
     std::fs::write(
         &bad,
         t.replace(
-            "c8d38887926f749df975996c1820bdde7c999836",
+            "fc154a4402246eec9e7f4c42210a13be1cd236ed",
             "0000000000000000000000000000000000000000",
         ),
     )
@@ -347,7 +347,7 @@ fn markdown_summary_is_written() {
     let shared = all_versions();
     assert_eq!(shared.code, 0, "{}", shared.err);
     let md = std::fs::read_to_string(shared.file("pass-rate", "29", "md")).unwrap();
-    assert!(md.starts_with("- BC 29.0: ") && md.contains(" of 16382 ("), "{md}");
+    assert!(md.starts_with("- BC 29.0: ") && md.contains(" of 16892 ("), "{md}");
     assert_eq!(md.lines().count(), 1, "one line per version: {md}");
     // ... and `--markdown` of a single-version run writes the file it is given.
     let dir = tempfile::tempdir().unwrap();
@@ -412,7 +412,7 @@ fn every_bc_major_has_an_oracle_with_the_same_cases() {
     // 28 and 29 come from the hybrid runner: its OnRun pseudo-cases must be skipped, or the
     // run stops with exit 2 (ADR-015 1.6).
     // All three are recorded for the pinned corpus commit.
-    for (v, total) in [("27", 16220), ("28", 16313), ("29", 16382)] {
+    for (v, total) in [("27", 16718), ("28", 16810), ("29", 16892)] {
         let r = all_versions().json(v);
         assert_eq!(r["overall"]["total"], total, "BC {v}");
         assert_eq!(r["unmapped"].as_array().unwrap().len(), 0, "BC {v}");
@@ -451,7 +451,8 @@ fn all_versions_runs_each_oracle_writes_per_version_files_and_compares() {
     // and the interface collection codeunit).
     // Corpus bump 28 adds 31 more (the BC28PLUS and BC29PLUS guards that al-version/src/gates.rs cites for bump 28), which make it 154.
     // Corpus bump 29 adds 10 more (the BC28PLUS and BC29PLUS guards that al-version/src/gates.rs cites for bump 29), which make it 164.
-    assert!(out.contains("oracle: 164 case(s) differ between versions"), "{out}");
+    // Corpus bump 30 adds 22 more (the BC28PLUS and BC29PLUS guards that al-version/src/gates.rs cites for bump 30), which make it 186.
+    assert!(out.contains("oracle: 186 case(s) differ between versions"), "{out}");
     // The known BC 29 differences are gated (ADR-015 3.4), so the runtime passes the same cases on every version, among the
     // cases every oracle has. One difference is known and open (corpus bump 10, backlog): the runtime passes
     // 71500 Get_Uses_Primary_Key_Not_Current_Key on BC 27 only. A new difference would be listed here.
@@ -462,7 +463,11 @@ fn all_versions_runs_each_oracle_writes_per_version_files_and_compares() {
     // Corpus bump 29 adds one, a new case: 84275 Expr_BigIntegerLiteral_Enabled (pages/lt-cc-page-leads/CcPageLeads.al:801) passes
     // from BC 28; on BC 27 real BC fails to compile the dynamic control expression `0L <> Big`, and the runtime refuses the
     // page there (gate BigIntegerLiteralInControlExpressionFrom28), so the case is not run on 27.
-    assert!(out.contains("runtime: 3 case(s) differ between versions"), "{out}");
+    // Corpus bump 30 adds three new cases that pass on BC 27 only: 79926 PX_ByteValues and PX_ByteValues_High
+    // (record/lt-as-records/AsTestFieldTexts.al:153: from BC 28 the TestField of a Byte has an escaped form that is not pinned,
+    // so they are refused there), and 85180 List_OfRecordRef (collections/lt-cs-odd-leads/CsCollections.al:594: from BC 28 the
+    // test reads more of a global that an earlier refused test of the codeunit could change, so it is not run there).
+    assert!(out.contains("runtime: 6 case(s) differ between versions"), "{out}");
     assert!(out.contains("71500 Get_Uses_Primary_Key_Not_Current_Key: 27"), "{out}");
 }
 
@@ -500,7 +505,7 @@ fn require_dotnet_turns_an_unusable_dotnet_into_a_setup_error() {
 #[test]
 fn the_other_test_apps_are_reported_apart_from_the_main_one() {
     let r = all_versions().json("28");
-    assert_eq!(r["overall"]["total"], 16313);
+    assert_eq!(r["overall"]["total"], 16810);
     let suites = r["suites"].as_array().unwrap();
     let get = |n: &str| {
         suites
@@ -508,7 +513,7 @@ fn the_other_test_apps_are_reported_apart_from_the_main_one() {
             .find(|s| s["name"] == n)
             .unwrap_or_else(|| panic!("no suite {n}"))
     };
-    assert_eq!(get("onprem")["counts"]["total"], 305);
+    assert_eq!(get("onprem")["counts"]["total"], 313);
     assert_eq!(get("isolation-function")["counts"]["total"], 7);
     assert_eq!(get("isolation-function")["counts"]["pass"], 7);
     // The control: real BC fails T5 under Codeunit isolation, and the runtime fails it too.
@@ -595,4 +600,112 @@ fn a_suite_baseline_ratchets_that_extra_app_and_no_ratchet_ignores_it() {
     assert_eq!(code, 0, "{err}");
     let (_, _, err) = cli(&["--bc-version", "27", "--suite-baseline", "nope=x"]);
     assert!(err.contains("no suite named `nope`"), "{err}");
+}
+
+/// The JUnit files of a run (the main app's and the extra suites'), with the per-test times
+/// removed: everything else (outcome, reason, flagged assumptions) must be the same between two
+/// runs of one build on one corpus.
+fn outcomes_of(dir: &Path, stem: &str) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    for e in std::fs::read_dir(dir).unwrap() {
+        let p = e.unwrap().path();
+        let name = p.file_name().unwrap().to_string_lossy().into_owned();
+        if !(name.starts_with(stem) && name.ends_with(".xml")) {
+            continue;
+        }
+        let xml = std::fs::read_to_string(&p).unwrap();
+        let mut kept = String::with_capacity(xml.len());
+        let mut rest = xml.as_str();
+        // Drops ` time="..."` and ` timestamp="..."` attributes.
+        while let Some(i) = rest.find([' ']) {
+            kept.push_str(&rest[..i]);
+            rest = &rest[i..];
+            let attr = [" time=\"", " timestamp=\""].into_iter().find(|a| rest.starts_with(a));
+            match attr {
+                Some(a) => {
+                    let end = rest[a.len()..].find('"').unwrap();
+                    rest = &rest[a.len() + end + 1..];
+                }
+                None => {
+                    kept.push(' ');
+                    rest = &rest[1..];
+                }
+            }
+        }
+        kept.push_str(rest);
+        out.push((name.replacen(stem, "", 1), kept));
+    }
+    out.sort();
+    out
+}
+
+/// One build on one corpus gives every case one outcome, whatever the thread counts and whatever
+/// HOME holds. Two causes of different results were seen on 2026-10-20: 99100
+/// `AL_JsonTextWriter_SimpleObject` (OnPrem DotNet) passed only where `~/.bcartifacts.cache`
+/// held a BC service tier with Newtonsoft.Json, and was refused everywhere else (CI). The second
+/// run swaps both: one worker thread instead of four, and a HOME with that folder (the machine's
+/// own when it has one) instead of an empty one. BC 27, because the OnPrem DotNet cases and the
+/// local service tiers of BC 27 are where the HOME difference showed.
+#[test]
+#[cfg(unix)]
+fn outcomes_do_not_depend_on_threads_or_home() {
+    require_corpus();
+    let work = tempfile::tempdir().unwrap();
+    let empty_home = work.path().join("home-empty");
+    let artifacts_home = work.path().join("home-artifacts");
+    std::fs::create_dir_all(&empty_home).unwrap();
+    std::fs::create_dir_all(&artifacts_home).unwrap();
+    let real = std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".bcartifacts.cache"));
+    match real.filter(|r| r.join("sandbox").is_dir()) {
+        Some(r) => std::os::unix::fs::symlink(r, artifacts_home.join(".bcartifacts.cache")).unwrap(),
+        // A machine without local artifacts (CI): a service-tier folder of the shape the local
+        // artifacts have, so that a run which looks there finds one.
+        None => std::fs::create_dir_all(artifacts_home.join(
+            ".bcartifacts.cache/sandbox/27.5.0.0/platform/ServiceTier/PFiles64/Microsoft Dynamics NAV/270/Service",
+        ))
+        .unwrap(),
+    }
+    let run = |home: &Path, threads: &str, stem: &str| {
+        let junit = work.path().join(format!("{stem}.xml"));
+        let out = Command::new(env!("CARGO_BIN_EXE_al-test-cli"))
+            .arg("--root")
+            .arg(root())
+            .args(["--no-deps", "--no-ratchet", "--bc-version", "27", "--junit"])
+            .arg(&junit)
+            .env("HOME", home)
+            .env_remove("XDG_CACHE_HOME")
+            .env("AL_TEST_THREADS", threads)
+            .env("AL_LOWER_THREADS", threads)
+            .env("AL_CHECK_THREADS", threads)
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(0), "{}", String::from_utf8_lossy(&out.stderr));
+        outcomes_of(work.path(), stem)
+    };
+    let a = run(&empty_home, "4", "run-a");
+    let b = run(&artifacts_home, "1", "run-b");
+    assert_eq!(
+        a.len(),
+        3,
+        "the main app and the two OnPrem suites: {:?}",
+        a.iter().map(|f| &f.0).collect::<Vec<_>>()
+    );
+    assert_eq!(
+        a.iter().map(|f| &f.0).collect::<Vec<_>>(),
+        b.iter().map(|f| &f.0).collect::<Vec<_>>()
+    );
+    for ((file, xa), (_, xb)) in a.iter().zip(&b) {
+        if xa != xb {
+            // The first differing test case, else the first differing line (a suite's counts).
+            let pairs = || xa.lines().zip(xb.lines()).filter(|(l, r)| l != r);
+            let first = pairs()
+                .find(|(l, _)| l.contains("<testcase"))
+                .or_else(|| pairs().next());
+            panic!(
+                "run{file}: the two runs differ, first at\n  4 threads, empty HOME:   {:?}\n  1 thread, artifacts HOME: {:?}",
+                first.map(|f| f.0),
+                first.map(|f| f.1)
+            );
+        }
+    }
 }

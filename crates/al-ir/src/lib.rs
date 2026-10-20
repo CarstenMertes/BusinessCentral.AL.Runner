@@ -211,6 +211,10 @@ impl Object {
     }
 }
 
+/// The name of an object property the lowering adds to a table whose caption is not pinned (a tableextension sets one over
+/// another): its value is the reason a read of the table's caption is refused.
+pub const CAPTION_REFUSED: &str = "$CaptionRefused";
+
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct Object {
     pub kind: ObjKind,

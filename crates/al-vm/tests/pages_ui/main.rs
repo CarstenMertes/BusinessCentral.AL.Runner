@@ -9,6 +9,7 @@ mod curr_field_no_assign;
 mod filterpage;
 mod flowfield_drilldown;
 mod gone_row;
+mod page_inserts;
 mod pageext;
 mod pages;
 mod part_host_move;

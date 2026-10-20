@@ -51,6 +51,11 @@ on the main machine or as a remote worker (`docs/agents/remote-worker.md`).
   When a probe pins it, delete the entry: the compiler lists the marker sites that remain.
   `alrunner test --top-assumptions` ranks the entries by flagged passes; `--list-assumptions`
   prints the registry with the counts of the last run (also in `al-test-cli`).
+- **One build, one result.** A corpus run must give each case the same outcome whatever the
+  thread counts, the run order and HOME hold (`corpus_harness.rs`
+  `outcomes_do_not_depend_on_threads_or_home` checks it). Before you call two runs "the same
+  build", compare their `binary:` lines: a rebuild after a golden file was regenerated (for
+  example `al-builtins/src/pinned_columns.rs`) changes what is refused.
 - **Unsupported is refused explicitly.** Use a lowering reason, a diagnostic in
   `al-sema`, or `Signal::Unsupported`. Never run a guessed or partial behavior
   silently.

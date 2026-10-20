@@ -157,6 +157,36 @@ impl Session {
         let engine = self.engine.clone();
         let object = qs.borrow().object as usize;
         let def = engine.program.objects[object].query.as_ref().expect("a query object");
+        if qs.borrow().in_before_open {
+            match method {
+                // CurrQuery.Open and CurrQuery.Close inside OnBeforeOpen raise; the trigger does not run again
+                // (query/lt-ch-query-leads/ChQueryLeads.al:259-290, OnBeforeOpen_CallsOpen / _CallsClose).
+                "Open" | "Close" => {
+                    return Err(Signal::Error(Box::new(al_builtins::native::AlError {
+                        message:
+                            "It is not possible to execute the current query from within the 'OnBeforeOpen' trigger."
+                                .into(),
+                        code: "QueryIllegalCallInTrigger".into(),
+                        ..Default::default()
+                    })));
+                }
+                // SaveAsXml there returns false after writing bytes the corpus only counts
+                // (query/lt-ch-query-leads/ChQueryLeads.al:271-278): their content is not pinned.
+                "SaveAsXml" | "SaveAsJson" | "SaveAsCsv" => {
+                    return unsupported(format!(
+                        "CurrQuery.{method} inside OnBeforeOpen (the bytes it writes are not pinned)"
+                    ));
+                }
+                // Read on a query opened for the first time returns false (ChQueryLeads.al:294-301); on a query
+                // that was open before, it is not pinned.
+                "Read" if qs.borrow().run.is_some() => {
+                    return unsupported(
+                        "CurrQuery.Read inside OnBeforeOpen of a query that was already open (not pinned)",
+                    );
+                }
+                _ => {}
+            }
+        }
         match method {
             "Open" => {
                 // Opening an open query is not an error (query/TestQueryRuntimeContracts.al:
@@ -182,7 +212,10 @@ impl Session {
                     .position(|r| r.is_trigger && r.name.eq_ignore_ascii_case("OnBeforeOpen"))
                 {
                     let inst = self.query_instance(object, qs.clone());
-                    self.call(object, ri, inst, Vec::new())?;
+                    qs.borrow_mut().in_before_open = true;
+                    let r = self.call(object, ri, inst, Vec::new());
+                    qs.borrow_mut().in_before_open = false;
+                    r?;
                 }
                 // Open does not run the query; the first Read does.
                 qs.borrow_mut().run = Some(QueryRun {

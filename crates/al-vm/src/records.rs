@@ -153,13 +153,36 @@ impl Session {
         }
     }
 
+    /// The table's caption for an error text. Where the caption is refused (`al_ir::CAPTION_REFUSED`) the text holds the
+    /// unpinned-error mark, so a read of the error's text or code refuses (`al_builtins::native::text_unpinned`).
     pub(crate) fn caption(&self, t: &TableDef) -> String {
+        if self.caption_refused(t.object as usize).is_some() {
+            return al_builtins::native::UNPINNED_ERROR.to_string();
+        }
         self.engine.program.objects[t.object as usize]
             .properties
             .iter()
             .find(|(k, _)| k.eq_ignore_ascii_case("Caption"))
             .map(|(_, v)| v.trim().trim_matches('\'').to_string())
             .unwrap_or_else(|| t.name.clone())
+    }
+
+    /// The caption a read of it gives (TableCaption, RecordRef.Caption, Format of a RecordId): refused where a
+    /// tableextension sets it over another caption (`al_ir::CAPTION_REFUSED`).
+    pub(crate) fn caption_checked(&self, t: &TableDef) -> Result<String, Signal> {
+        match self.caption_refused(t.object as usize) {
+            Some(why) => Err(Signal::Unsupported(why)),
+            None => Ok(self.caption(t)),
+        }
+    }
+
+    /// Why the caption of the table with object index `object` is not pinned, if it is not.
+    pub(crate) fn caption_refused(&self, object: usize) -> Option<String> {
+        self.engine.program.objects[object]
+            .properties
+            .iter()
+            .find(|(k, _)| k == al_ir::CAPTION_REFUSED)
+            .map(|(_, v)| v.clone())
     }
 
     /// `No.='A'` style identification of a row's primary key. A key value whose format is not

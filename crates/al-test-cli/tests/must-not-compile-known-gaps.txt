@@ -304,3 +304,19 @@
 29 1769-interface-from-unrelated-enum
 29 1817-jsonarray-no-removeall
 29 1819-jsonarray-no-clear-method
+# corpus bump 30: new cases the front end does not decide yet (Rec.CurrFieldNo in an event subscriber, ExcludedPermissionSets
+# in a permission set extension, BigText assigned to Text, test page access to pending special controls, and on BC 29 an
+# interface default method called through a codeunit variable).
+27 1691-subscriber-reads-rec-currfieldno
+27 1720-permissionsetextension-excludedpermissionsets
+27 1833-bigtext-to-text-assignment
+27 1864-testpage-cannot-reach-pending-special-controls
+28 1691-subscriber-reads-rec-currfieldno
+28 1720-permissionsetextension-excludedpermissionsets
+28 1833-bigtext-to-text-assignment
+28 1864-testpage-cannot-reach-pending-special-controls
+29 1691-subscriber-reads-rec-currfieldno
+29 1720-permissionsetextension-excludedpermissionsets
+29 1780-inherited-default-method-on-codeunit-variable
+29 1833-bigtext-to-text-assignment
+29 1864-testpage-cannot-reach-pending-special-controls

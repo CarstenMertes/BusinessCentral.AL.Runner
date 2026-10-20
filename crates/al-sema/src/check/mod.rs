@@ -662,6 +662,8 @@ pub(crate) struct Scope {
     withs: Vec<(Ty, usize)>,
     /// Whether the routine being checked is the `OnRun` trigger of a codeunit.
     codeunit_on_run: bool,
+    /// Whether the code being checked is a trigger or column source of a report's own data item (`rec` is its record).
+    report_item: bool,
 }
 
 /// A section with its first argument (its name, for controls and data items).

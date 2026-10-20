@@ -233,6 +233,9 @@ pub struct QueryState {
     /// The instance of a query with code: its variables live as long as the query variable
     /// (query/TestQueryOnBeforeOpenVariablesContracts.al:104-140). Made on first use.
     pub instance: Option<Rc<RefCell<Instance>>>,
+    /// The query's OnBeforeOpen trigger is running: `CurrQuery.Open` and `Close` raise
+    /// (query/lt-ch-query-leads/ChQueryLeads.al:259-290).
+    pub in_before_open: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -402,6 +405,11 @@ pub struct PageState {
     pub caption_assigned_closed: bool,
     /// A row with the new record's starting key was already stored when the draft started.
     pub draft_stored: bool,
+    /// The new row of a card that its OnNewRecord inserted itself: the page still holds it as a new row
+    /// (corpus pages/lt-cf-page-leads/CfPageLeads.al:241-289 Card_OnNewRecordInserts_OpenNewSetClose).
+    pub new_row_inserted_by_trigger: bool,
+    /// TestPage.OpenNew is reading the page's first row (cleared once it is read).
+    pub test_opened_new: bool,
     /// On a new row whose key fields were still blank, a field outside the key was typed.
     pub typed_before_key: bool,
     /// The page reached a state whose behavior is not pinned: every later call on it or its parts except Close is refused
@@ -464,6 +472,9 @@ pub struct PageState {
     /// A request page that `Report.RunRequestPage` opened: its OK confirms the parameters, whatever
     /// the report renders.
     pub parameters_wanted: bool,
+    /// The parameters string a `Report.RunRequestPage(Id, Parameters)` hands the request page: loaded after its OnInit
+    /// and before its OnOpenPage (report/lt-aq/AqTests.al:362-381).
+    pub request_seed: Option<String>,
     /// The session's application areas when the page opened: controls whose area they do not
     /// enable are not on the page.
     pub areas: String,
@@ -538,6 +549,8 @@ impl PageState {
             view_left: false,
             caption_assigned_closed: false,
             draft_stored: false,
+            new_row_inserted_by_trigger: false,
+            test_opened_new: false,
             typed_before_key: false,
             unpinned_state: None,
             unpinned_close: false,
@@ -563,6 +576,7 @@ impl PageState {
             host: None,
             ext_instances: Vec::new(),
             parameters_wanted: false,
+            request_seed: None,
             areas: String::new(),
             inited: false,
             stale: false,
@@ -1448,6 +1462,7 @@ impl Value {
                 security_filtering: None,
                 run: None,
                 instance: None,
+                in_before_open: false,
             }))),
             // Records need the table's field types: the VM builds them.
             RtType::Record(..) => Value::Null,

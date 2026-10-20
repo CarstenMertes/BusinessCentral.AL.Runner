@@ -1081,7 +1081,7 @@ impl Session {
     /// confirming it is not a run, so a `SaveValues` page does not remember what was confirmed
     /// (handlers/TestReportRequestPageSaveValues.al:SourceReport_SaveValues_RunRequestPageReturnsTheValueWithoutSavingIt).
     fn report_request_only(&mut self, inst: &Inst, schema: &Schema, seed: Option<&str>) -> Result<String, Signal> {
-        let run = self.report_prepare(inst, schema)?;
+        let run = self.report_prepare(inst, schema, false)?;
         let before = self.pages.saved_values.get(&(schema.object as u32)).cloned();
         let ext: Vec<(usize, Inst)> = run.exts.iter().map(|(i, e)| (*e, i.clone())).collect();
         let closed = self.run_request_page(inst, schema.object, seed, ext, true);
@@ -1124,7 +1124,26 @@ impl Session {
         }
     }
 
-    fn report_prepare(&mut self, inst: &Inst, schema: &Schema) -> Result<Run, Signal> {
+    /// Whether the report (or an extension that changes the run) declares OnInitReport, or the report has a request page
+    /// with controls of its own (not only the data item tabs) or triggers.
+    fn report_has_init_or_request_page(&self, run: &Run) -> bool {
+        let objects = &self.engine.program.objects;
+        objects[run.object].page.as_ref().is_some_and(|p| {
+            p.controls.iter().any(|c| c.kind != ir::ControlKind::DataItem)
+                || !p.triggers.is_empty()
+                || !p.extensions.is_empty()
+        }) || std::iter::once(run.object)
+            .chain(run.exts.iter().map(|(_, e)| *e))
+            .any(|o| {
+                objects[o]
+                    .routines
+                    .iter()
+                    .any(|r| r.is_trigger && r.name.eq_ignore_ascii_case("OnInitReport"))
+            })
+    }
+
+    fn report_prepare(&mut self, inst: &Inst, schema: &Schema, zero_date_pinned: bool) -> Result<Run, Signal> {
+        self.report.zero_date_view_failed = false;
         let report = schema.report();
         // A reportextension that changes the run gets an instance of its own for this run, whose
         // names for the base items point at the report's own records.
@@ -1155,6 +1174,28 @@ impl Session {
             };
             let rec = self.report_item_record(&run, r)?;
             let t = self.table(&rec)?;
+            let blank_dates = crate::views::blank_date_conditions(&t, &view);
+            if !blank_dates.is_empty() {
+                // `where(Date field = const(0D))` compiles, but the run fails before OnPreReport and before any data item
+                // trigger: Evaluate of the date '' (report/lt-cj-report-leads/CjDataset.al:190-211,
+                // ZeroDateView_ConstZeroDate_SaveAsXml; errors/lt-ms-refusals-136/P136Report.al:331-351,
+                // BN3_Report_DataItemTableViewConstZeroDate). Pinned for a report with no request page and no
+                // OnInitReport; where the error falls against those, and `filter(0D)`, are not pinned.
+                if blank_dates.iter().any(|(_, kind)| kind != "CONST") {
+                    return unsupported("DataItemTableView filter(0D) on a Date field (not pinned)");
+                }
+                if !zero_date_pinned || self.report_has_init_or_request_page(&run) {
+                    return unsupported(
+                        "DataItemTableView const(0D) on a Date field in a report with a request page or OnInitReport (where the error falls is not pinned)",
+                    );
+                }
+                self.report.zero_date_view_failed = true;
+                return Err(Signal::Error(Box::new(al_builtins::native::AlError {
+                    message: "The format of the Date '''' does not match your device's date settings.\\\\Make sure that the day, month, and year are in the correct order and use the correct separator (such as - or /). Alternatively, you can always use the format 'yyyy-mm-dd'.".into(),
+                    code: "Evaluate".into(),
+                    ..Default::default()
+                })));
+            }
             // A view that only sorts leaves the filters a SetTableView gave the item in force
             // (handlers/TestReportRuntimeContracts.al:393-410).
             let kept = Some(rec.borrow().filters.clone());
@@ -1265,7 +1306,7 @@ impl Session {
         shows_page: bool,
         save_as: Option<&str>,
     ) -> Result<bool, Signal> {
-        let mut run = self.report_prepare(inst, schema)?;
+        let mut run = self.report_prepare(inst, schema, !shows_page)?;
         run.dataset = save_as.is_some();
         if !shows_page {
             self.request_page_init_unshown(inst, schema, save_as.is_some_and(|x| !x.is_empty()))?;
@@ -2138,8 +2179,14 @@ impl Session {
                     // With the answer used, a report without a layout answers false and raises nothing
                     // (misc/lt-probes-needed-2/PnBReportSaveAs.al:412-413, TriggerError_InPreReport). What the last error
                     // holds then is not pinned: GetLastErrorText and GetLastErrorCode are refused.
+                    // The error of a DataItemTableView `const(0D)` stays the last error
+                    // (report/lt-cj-report-leads/CjDataset.al:190-211: `save err|code` Evaluate).
                     (ir::ReportLayout::None, false) => {
-                        self.last_error = al_builtins::native::unpinned_error();
+                        self.last_error = if std::mem::take(&mut self.report.zero_date_view_failed) {
+                            *e
+                        } else {
+                            al_builtins::native::unpinned_error()
+                        };
                         Ok(Value::Boolean(false))
                     }
                     // An error of a trigger reaches a SaveAs whose result is not used, also with a layout
@@ -2414,17 +2461,44 @@ impl Session {
     /// the variables as they are now, which they do on every read here, so nothing is left to do
     /// (handlers/TestReportRequestPageUpdateObjectIdContracts.al:RequestPageUpdate_RefreshesTheOtherControls:
     /// a handler sets Source to 21 and reads Derived 42 that the trigger set before it called Update(false)).
-    /// `RequestOptionsPage.Caption := x` in the code of a report (Base Application's Financial Report). The request page of
-    /// a run has no page object of its own to hold it, so the assignment is dropped; whether a request page handler
-    /// reads it back is not modelled (assumption request-page-caption-set).
-    pub(crate) fn request_page_caption(&mut self, args: &[Value]) -> Result<Value, Signal> {
-        match args {
-            [Value::Text(_) | Value::Code(_)] => {
-                al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::RequestPageCaptionSet);
-                Ok(Value::Null)
-            }
-            _ => unsupported("RequestPage.Caption read, or set with something that is not text"),
+    /// `RequestOptionsPage.Caption := x` in the code of a report. Set while the request page's own OnOpenPage runs (in it
+    /// or in a procedure it calls), it is the caption a request page handler reads
+    /// (report/lt-aq/AqTests.al:313-330, Caption_SetInOnOpenPage_TestRequestPageCaption). Set anywhere else (Base
+    /// Application's Financial Report also sets it from OnValidate) it is dropped: whether a handler reads it back is
+    /// not pinned (assumption request-page-caption-set).
+    pub(crate) fn request_page_caption(&mut self, args: &[Value], inst: &Inst) -> Result<Value, Signal> {
+        let [arg @ (Value::Text(_) | Value::Code(_))] = args else {
+            return unsupported("RequestPage.Caption read, or set with something that is not text");
+        };
+        if let Some(st) = self.request_page_in_on_open_page(inst) {
+            st.borrow_mut().caption = al_builtins::native::text_of(arg).map(|t| t.to_string());
+            return Ok(Value::Null);
         }
+        al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::RequestPageCaptionSet);
+        Ok(Value::Null)
+    }
+
+    /// The request page of the report `inst` is an instance of, when its own OnOpenPage trigger is on the call stack.
+    fn request_page_in_on_open_page(
+        &self,
+        inst: &Inst,
+    ) -> Option<std::rc::Rc<std::cell::RefCell<al_builtins::value::PageState>>> {
+        let object = inst.borrow().object as usize;
+        let engine = self.engine.clone();
+        let page = engine.program.objects[object].page.as_ref()?;
+        let st = match inst.borrow().globals.get(page.curr_page_slot) {
+            Some(Value::TestPage(st)) => st.clone(),
+            _ => return None,
+        };
+        if !st.borrow().opening {
+            return None;
+        }
+        let on_open = page.triggers.iter().find(|(n, _)| n == "onopenpage").map(|(_, r)| *r)?;
+        self.frames
+            .iter()
+            .zip(&self.call_stack)
+            .any(|(&o, f)| o == object && !f.event && f.routine == on_open)
+            .then_some(st)
     }
 
     pub(crate) fn request_page_update(&mut self, args: &[Value]) -> Result<Value, Signal> {

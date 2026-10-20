@@ -43,6 +43,9 @@ impl Session {
     /// area raises OnResolveCaptionClass of the Caption Class codeunit with the area, the rest after the first comma and the
     /// session language, and comes back unchanged when no subscriber resolves it (corpus types/PSCaptionClass.al:5-8,
     /// CaptionClassTranslate_Expressions).
+    /// The session keeps what it translated: the same text a second time comes back as before and raises no event, claimed or
+    /// not, until `SelectLatestVersion` (types/PSCaptionClass.al:94-115). Whether the kept caption holds after GlobalLanguage
+    /// changed is not pinned: refused.
     pub(crate) fn caption_class_translate(&mut self, text: &str) -> Result<String, Signal> {
         self.refuse_caption_class_translate()?;
         let Some((area, expr)) = text.split_once(',') else {
@@ -51,7 +54,18 @@ impl Session {
         if area == "3" {
             return Ok(expr.to_string());
         }
-        self.raise_resolve_caption_class(area, expr, text)
+        if let Some((_, language, caption)) = self.caption_translations.iter().find(|(t, _, _)| t == text) {
+            if *language != self.global_language {
+                return unsupported(
+                    "CaptionClassTranslate of a text translated before GlobalLanguage changed (whether BC translates it again is not pinned)",
+                );
+            }
+            return Ok(caption.clone());
+        }
+        let caption = self.raise_resolve_caption_class(area, expr, text)?;
+        self.caption_translations
+            .push((text.to_string(), self.global_language, caption.clone()));
+        Ok(caption)
     }
 
     /// Every caption class the client translates raises `CaptionClassTranslate` of the platform codeunit `UI Helper Triggers`,
@@ -126,6 +140,20 @@ impl Session {
                             // costs the open nothing; only reading that caption is refused.
                             if let Value::Text(t) | Value::Code(t) = &v {
                                 if !t.starts_with("3,") {
+                                    // A text other than the one the control resolved before, at a fill other than the one after
+                                    // SetValue (`refresh_caption_classes`, misc/W2CaptionClass.al:174-178): whether BC resolves it
+                                    // there (after an action, on the next row) is not pinned.
+                                    if super::format::raises_resolve(t)
+                                        && st
+                                            .borrow()
+                                            .control_captions
+                                            .iter()
+                                            .any(|(i, old, _)| *i == idx && old != t.as_str())
+                                    {
+                                        return unsupported(
+                                            "a CaptionClass expression that gives another text at a fill other than after SetValue (whether BC resolves it again there is not pinned)",
+                                        );
+                                    }
                                     self.fill_caption_class(st, idx, t)?;
                                 }
                             }
@@ -1764,6 +1792,55 @@ impl Session {
                 self.pages.traps.retain(|t| !Rc::ptr_eq(t, &trap));
             }
         }
+    }
+
+    /// A routine ends while one of its locals holds the last reference to an open TestPage whose end of scope is not pinned
+    /// (see `PageClients::scope_unpinned`): the reason to refuse the call.
+    pub(crate) fn end_unpinned_page_scope(
+        &mut self,
+        frame: &crate::Frame,
+        params: usize,
+        by_var: &[bool],
+    ) -> Option<String> {
+        if self.pages.scope_unpinned.is_empty() {
+            return None;
+        }
+        self.pages.scope_unpinned.retain(|p| p.borrow().open);
+        for page in self.pages.scope_unpinned.clone() {
+            let mut local_holders = 0;
+            let mut handed_back = false;
+            for (i, v) in frame.locals.iter().enumerate() {
+                if let Value::TestPage(st) = v {
+                    if Rc::ptr_eq(st, &page) {
+                        local_holders += 1;
+                        if i < params && by_var.get(i).copied().unwrap_or(false) {
+                            handed_back = true;
+                        }
+                    }
+                }
+            }
+            if local_holders == 0 || handed_back {
+                continue;
+            }
+            // The list and the clone above hold one reference each, and the page's own instances hold it as CurrPage.
+            let own = {
+                let s = page.borrow();
+                let held = |i: &Rc<RefCell<al_builtins::value::Instance>>| {
+                    i.borrow()
+                        .globals
+                        .iter()
+                        .filter(|v| matches!(v, Value::TestPage(p) if Rc::ptr_eq(p, &page)))
+                        .count()
+                };
+                s.instance.iter().map(held).sum::<usize>() + s.ext_instances.iter().map(|(_, i)| held(i)).sum::<usize>()
+            };
+            if Rc::strong_count(&page).saturating_sub(2 + local_holders + own) == 0 {
+                self.pages.scope_unpinned.retain(|p| !Rc::ptr_eq(p, &page));
+                let why = page.borrow().unpinned_state.clone().unwrap_or_default();
+                return Some(format!("an open TestPage goes out of scope: {why}"));
+            }
+        }
+        None
     }
 
     /// The `Trap()` waiting for page `object`, taken out of the list.

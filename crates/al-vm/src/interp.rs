@@ -45,7 +45,7 @@ impl Session {
             return self.request_page_update(&values);
         }
         if id == ids::REQUESTPAGE_CAPTION_1 {
-            return self.request_page_caption(&values);
+            return self.request_page_caption(&values, &f.instance);
         }
         if class == Class::Report {
             self.ret_used = ret_used;
@@ -219,6 +219,47 @@ impl Session {
                     }
                 }
                 inst.globals[i] = v;
+            }
+        }
+        // ClearAll in a page resets the globals of its page extensions too: a flag an extension set in its OnOpenPage reads
+        // false in the extension's OnAfterGetRecord once the base page's OnAfterGetRecord called ClearAll, for a base page of the
+        // same app and of another (corpus pages/lt-ce-page-run/CePageExt.al:27-41 ClearAll_InOwnBasePage_ExtensionGlobal, :43-69
+        // ClearAll_InBaseAppPage_ExtensionGlobal). The extension's Rec, xRec and CurrPage stay, as the page's own do.
+        let engine = self.engine.clone();
+        let o = &engine.program.objects[object];
+        if o.kind == al_ir::ObjKind::Page {
+            let curr = o.page.as_ref().map(|p| p.curr_page_slot);
+            let st = curr.and_then(|c| match &inst.globals[c] {
+                Value::TestPage(st) => Some(st.clone()),
+                _ => None,
+            });
+            drop(inst);
+            if let Some(st) = st {
+                let exts = st.borrow().ext_instances.clone();
+                for (e, ext) in exts {
+                    let eo = &engine.program.objects[e];
+                    let keep: Vec<usize> = eo
+                        .rec_slot
+                        .into_iter()
+                        .chain(eo.xrec_slot)
+                        .chain(eo.globals.iter().position(|g| g.name == "CurrPage"))
+                        .collect();
+                    let tys: Vec<RtType> = eo.globals.iter().map(|g| g.ty.clone()).collect();
+                    let fresh: Vec<Value> = tys.iter().map(|t| self.default_value(t)).collect();
+                    let mut ei = ext.borrow_mut();
+                    for (i, v) in fresh.into_iter().enumerate() {
+                        if keep.contains(&i) {
+                            continue;
+                        }
+                        // A temporary record of an extension is not pinned (see above): refused.
+                        if matches!(&ei.globals[i], Value::Record(r) if r.borrow().temporary) {
+                            return Err(Signal::Unsupported(
+                                "ClearAll in a page whose extension has a global temporary record (not pinned)".into(),
+                            ));
+                        }
+                        ei.globals[i] = v;
+                    }
+                }
             }
         }
         Ok(Value::Null)

@@ -54,6 +54,9 @@ fn png_size(b: &[u8]) -> Option<(i32, i32)> {
 pub struct MediaStore {
     pub objects: Rc<RefCell<HashMap<Id, MediaObject>>>,
     pub sets: Rc<RefCell<HashMap<Id, Vec<Id>>>>,
+    /// Media a Modify or Delete of one holder removed from Tenant Media while a row of another table, or another field,
+    /// still holds the id (media/TestMediaPngImport.al:441-674 QE_Media_*): that holder has no value any more.
+    pub removed: Rc<RefCell<std::collections::HashSet<Id>>>,
 }
 
 type Out = Result<Value, Signal>;
@@ -150,8 +153,14 @@ fn import_object(c: &mut dyn Ctx, a: &[Value]) -> Result<Id, Signal> {
     Ok(id)
 }
 
-fn has_value(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Out {
-    Ok(Value::Boolean(id_of(&r)? != [0; 16]))
+fn has_value(c: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Out {
+    let id = id_of(&r)?;
+    if id == [0; 16] {
+        return Ok(Value::Boolean(false));
+    }
+    // A holder whose media another holder let go keeps the id but has no value (media/TestMediaPngImport.al:441-470
+    // QE_Media_OtherTable_Assigned_SourceRowDeleted, `after delete has_value`).
+    Ok(Value::Boolean(c.media_store().is_none_or(|m| !m.removed.borrow().contains(&id))))
 }
 
 fn media_id(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Out {
@@ -204,6 +213,11 @@ fn media_export(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out 
         return unsupported("Media.ExportStream of an empty field (not pinned)");
     }
     let Some(obj) = store(c)?.objects.borrow().get(&id).cloned() else {
+        // A media another holder let go exports nothing and answers false (media/TestMediaPngImport.al:441-470
+        // QE_Media_OtherTable_Assigned_SourceRowDeleted, `after delete export_result`, `export_nonempty`).
+        if store(c)?.removed.borrow().contains(&id) {
+            return Ok(Value::Boolean(false));
+        }
         return unsupported("Media.ExportStream of a media the session does not hold");
     };
     if let Some(report) = &obj.pending {

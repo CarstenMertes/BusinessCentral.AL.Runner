@@ -63,4 +63,5 @@ mod var_attribute_refusals;
 mod version_gates;
 mod xml_doctype;
 mod xml_xmlns_attribute;
+mod qe_decimal_digits;
 mod xml_xpath_axes;

@@ -55,7 +55,9 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
         }
         (Value::Integer(n), T::BigInteger) => return Ok(Value::BigInteger(i64::from(*n))),
         (Value::Integer(n), T::Decimal) => return Ok(Value::Decimal(Decimal::from(*n))),
-        (Value::BigInteger(n), T::Decimal) => return Ok(Value::Decimal(Decimal::from(*n))),
+        // A BigInteger of 19 digits keeps 18 as a Decimal: `Dec := 4611686018427387905L` holds 4611686018427387910
+        // (types/lt-decimal-digits/DecimalDigits.al:287-288, :327 QE_Decimal_BigIntegerOperands `dec := b62p1, back`).
+        (Value::BigInteger(n), T::Decimal) => return Ok(Value::Decimal(keep_18_digits(Decimal::from(*n)))),
         _ => {}
     }
     Ok(match (v, t) {
@@ -1006,6 +1008,15 @@ fn arith_general(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
         // session/TestProbeSessionMiscContracts.al:Arithmetic_ErrorTexts.
         return raise("Attempted to divide by zero.", "AL:DivideByZero");
     }
+    // A BigInteger operand of a Decimal operation becomes a Decimal of 18 significant digits first:
+    // `4611686018427387905L - Power(2, 62)` is 10, not 5 (types/lt-decimal-digits/DecimalDigits.al:257-346
+    // QE_Decimal_BigIntegerOperands, `b62p1 - p62`; `dec := b62p1` holds ...910).
+    let (a, b) = if any_dec && any_big {
+        let round = |v: &Value, d: Decimal| if matches!(v, V::BigInteger(_)) { keep_18_digits(d) } else { d };
+        (round(l, a), round(r, b))
+    } else {
+        (a, b)
+    };
     let res = match op {
         Arith::Add => a.checked_add(b),
         Arith::Sub => a.checked_sub(b),
@@ -1025,28 +1036,15 @@ fn arith_general(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
         Arith::Mod => Some(a % b),
     }
     .ok_or_else(|| Signal::Unsupported("decimal overflow".into()))?;
-    // A sum or difference keeps 18 significant digits, rounded half away from zero: `Power(2, 62) + 1` equals
-    // `Power(2, 62)`, and `Power(2, 63) - 1` equals `Power(2, 63) - 5` (misc/lt-cq-odd-leads/CqOddLeads.al:419-446
-    // Item40_PowerPrecision, misc/lt-system-functions/Round.al:LT_BU_Power_LargeResultPrecision; with a fraction,
-    // types/lt-decimal-digits/DecimalDigits.al:116-137 P163_Decimal_AddSubtract_KeepsDigits). Pinned only for a
-    // non-negative result of Decimal and Integer operands; any other result of more than 18 digits is refused.
-    if any_dec && matches!(op, Arith::Add | Arith::Sub) {
-        if !over_18_digits(res) {
-            return Ok(V::Decimal(res));
-        }
-        if !any_big && !res.is_sign_negative() {
-            return Ok(V::Decimal(keep_18_digits(res)));
-        }
-        return unsupported(format!(
-            "a Decimal {} of more than 18 significant digits that is negative or has a BigInteger operand (not pinned)",
-            op.describe()
-        ));
-    }
-    // A product of more than 18 significant digits is left as it is (kept, not pinned: types/lt-decimal-digits/
-    // DecimalDigits.al:90-113 P163_Decimal_Multiplication_KeepsDigits pins what Format shows of non-negative products).
-    // A negative one, or one with a BigInteger operand, is refused.
-    if any_dec && op == Arith::Mul && over_18_digits(res) && (any_big || res.is_sign_negative()) {
-        return unsupported("a negative Decimal product of more than 18 significant digits (not pinned)".into());
+    // A sum, difference or product keeps 18 significant digits, rounded half away from zero, for any sign and with a
+    // BigInteger operand: `Power(2, 62) + 1` equals `Power(2, 62)`, and `Power(2, 63) - 1` equals `Power(2, 63) - 5`
+    // (misc/lt-cq-odd-leads/CqOddLeads.al:419-446 Item40_PowerPrecision, misc/lt-system-functions/Round.al:
+    // LT_BU_Power_LargeResultPrecision; with a fraction, types/lt-decimal-digits/DecimalDigits.al:116-137
+    // P163_Decimal_AddSubtract_KeepsDigits; negative results, mixed signs and ties, DecimalDigits.al:179-254
+    // QE_Decimal_SumDifference_SignsAndTies; products, `1234.56 * (1/3) = 411.52`, DecimalDigits.al:349-440
+    // QE_Decimal_Products_SignsAndRound; BigInteger operands, DecimalDigits.al:257-346 QE_Decimal_BigIntegerOperands).
+    if any_dec && matches!(op, Arith::Add | Arith::Sub | Arith::Mul) {
+        return Ok(V::Decimal(keep_18_digits(res)));
     }
     // A Decimal mod keeps the fraction (types/lt-scalars/ScT70058.al:Decimal_Basic `mod_int`, Decimal_DivModTruncation `mod2`).
     if any_dec && !matches!(op, Arith::IntDiv) {
@@ -1067,12 +1065,15 @@ fn arith_general(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
 }
 
 /// Whether `d` has more than 18 significant digits, trailing zeros not counted.
+#[inline]
 pub fn over_18_digits(d: Decimal) -> bool {
-    d.normalize().mantissa().unsigned_abs() > 999_999_999_999_999_999
+    // A mantissa of at most 18 digits needs no normalize (the hot path of Decimal arithmetic).
+    d.mantissa().unsigned_abs() > 999_999_999_999_999_999 && d.normalize().mantissa().unsigned_abs() > 999_999_999_999_999_999
 }
 
 /// A Decimal of more than 18 significant digits rounded at the 18th, half away from zero; a shorter one (trailing zeros
 /// not counted) as it is, with its scale.
+#[inline]
 pub fn keep_18_digits(d: Decimal) -> Decimal {
     if !over_18_digits(d) {
         return d;
@@ -1117,14 +1118,15 @@ pub fn compare_operator(l: &Value, r: &Value, ordered: bool) -> Result<Ordering,
     }
     // A BigInteger of more than 18 digits compared with a Decimal counts with the 18 significant digits a Decimal keeps:
     // `Power(2, 60) = 1152921504606846976L` is true (misc/lt-system-functions/Round.al:LT_BU_Power_LargeResultPrecision).
-    // Pinned only for a non-negative BigInteger and a non-negative whole Decimal; the rest is refused.
+    // Negative ones the same: `-4611686018427387905L < -Power(2, 62)` is true and `=` false (types/lt-decimal-digits/
+    // DecimalDigits.al:257-346 QE_Decimal_BigIntegerOperands, `-b62p1 < -p62`). Pinned only for a whole Decimal; a
+    // fractional one is refused.
     if let (Value::Decimal(d), Value::BigInteger(b)) | (Value::BigInteger(b), Value::Decimal(d)) = (l, r) {
         let big = Decimal::from(*b);
         if over_18_digits(big) {
-            if *b < 0 || d.is_sign_negative() || !d.fract().is_zero() {
+            if !d.fract().is_zero() {
                 return unsupported(
-                    "comparing a BigInteger of more than 18 digits with a negative or fractional Decimal (not pinned)"
-                        .into(),
+                    "comparing a BigInteger of more than 18 digits with a fractional Decimal (not pinned)".into(),
                 );
             }
             let big = keep_18_digits(big);

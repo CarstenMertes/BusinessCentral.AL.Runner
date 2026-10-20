@@ -484,7 +484,7 @@ registry! {
     RunnerPermissionSetsGrantAll => {
         id: "runner-permission-sets-grant-all",
         assumed: "The permission sets BC's test runner assigns before each test method whose TestPermissions is not Disabled (codeunit 130302 \"Set State Test Run\": All Objects, D365 Full Access, TEST TABLES, D365 BASIC, LOCAL through Permissions Mock) grant every access and every permission answer the test then makes, as the unrestricted session does here (permissions are not enforced, ADR-027 owner decision 2). On BC they narrow the session (permissions/TestPermissionsMockEnforcement.al:28-47).",
-        tests: "Every Microsoft test method of a codeunit without TestPermissions = Disabled when Tests-TestLibraries is loaded (about 6500 tests of the 27.5 buckets, 2026-10-20); they pass in Microsoft's CI under these sets.",
+        tests: "Every Microsoft test method of a codeunit without TestPermissions = Disabled when Tests-TestLibraries is loaded (about 6500 tests of the Base Application buckets in the 2026-10-20 measurement); they pass in Microsoft's CI under these sets.",
         probe: "Under Permissions Mock with D365 Full Access, TEST TABLES and D365 BASIC assigned: read, insert, modify and delete a Base Application table, a system table (User, Access Control) and a table of a test app; ReadPermission and WritePermission of each; NavUserAccountHelper.GetEffectivePermissionForObject on table data.",
     },
 }

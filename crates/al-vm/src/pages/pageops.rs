@@ -44,6 +44,7 @@ impl Session {
                 self.bg_static(method, args)
             }
             None if method == PageOp::PageRunStatic || method == PageOp::PageRunModalStatic => {
+                let used = self.ret_used;
                 let n = match args.first() {
                     Some(Value::Integer(n)) => *n,
                     other => return unsupported(format!("Page.Run with {} as the page", other.describe())),
@@ -128,8 +129,20 @@ impl Session {
                 // for the record overload;
                 // handlers/TestPageModalResultsAndTriggersContracts.al:206 RunModal_Dialog_StaticVersusVariable_ReportedAction
                 // and :240 RunModal_Card_StaticWithAndWithoutRecord_VersusVariable_ReportedAction for the others). A page variable reports OK and Cancel.
+                // With a record, whether the caller uses the return value decides: used (assigned, passed on, compared),
+                // the list opens in lookup mode with no new-row line; called as a statement it is a plain modal page
+                // (pages/lt-be-runmodal-onlookup/BeRunModalOnLookup.al:18-27, :616 Direct_NoLookupPageId_KeyFilter_WalkOnly,
+                // :916 Shape_ReturnNotUsed_WalkOnly, :949 Shape_ReturnInIf_WalkOnly, :1100-1126 Shape_RunModalZero_*).
+                // Without a record the call stays a lookup either way (only its used form is pinned, above).
                 if method == PageOp::PageRunModalStatic {
-                    st.borrow_mut().lookup = true;
+                    let mut s = st.borrow_mut();
+                    if record.is_some() {
+                        s.lookup = used;
+                        s.lookup_set = used;
+                        s.statement_run = !used;
+                    } else {
+                        s.lookup = true;
+                    }
                 }
                 // A record of another table than the page's is refused before anything opens, and so is a field number the table
                 // lacks (a negative one or 0 goes on; pages/lt-page-run-overloads-testpart/P106RunErrors.al: Err_WrongTableRecord,

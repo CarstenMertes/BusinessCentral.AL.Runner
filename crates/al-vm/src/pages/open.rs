@@ -1271,8 +1271,9 @@ impl Session {
             && !tree
             && st.borrow().mode == PageMode::Edit
             // A list handed over in lookup mode has no new-row line (corpus
-            // handlers/TestPageModalNewRowLine_Tests.al:209 Plain_LookupModeTrue_HasNoNewRowLine). Only a
-            // LookupMode(true) call does that: Page.RunModal(id, Rec) keeps the line (:180).
+            // handlers/TestPageModalNewRowLine_Tests.al:209 Plain_LookupModeTrue_HasNoNewRowLine). A LookupMode(true) call
+            // does that, and so does Page.RunModal(id, Rec) whose return value is used; called as a statement it keeps the
+            // line (:180; pages/lt-be-runmodal-onlookup/BeRunModalOnLookup.al:616, :916).
             && !(st.borrow().lookup_set && st.borrow().lookup && self.is_list_page(st))
             && !prop_false("Editable")
             && !flag_denied(&engine, object, "InsertAllowed")?)

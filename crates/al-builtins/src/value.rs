@@ -486,8 +486,12 @@ pub struct PageState {
     /// A page whose rowset OnFindRecord/OnNextRecord serve was refreshed: which row the client
     /// settles on is not modelled, so Rec-bound controls are not read until the cursor moves.
     pub stale: bool,
-    /// `LookupMode(true)` was called on this variable (`Page.RunModal(id, Rec)` is a lookup too but is not).
+    /// The page is a lookup without the new-row line: `LookupMode(true)` was called on this variable, or
+    /// `Page.RunModal(Id, Rec)` / `Page.RunModal(0, Rec)` had its return value used.
     pub lookup_set: bool,
+    /// `Page.RunModal(Id, Rec)` called as a statement: not a lookup (pages/lt-be-runmodal-onlookup/BeRunModalOnLookup.al:916),
+    /// but the row the page closed on still goes back to `Rec`, as it did before that pin (not pinned either way).
+    pub statement_run: bool,
     /// Page background tasks the page enqueued and the client has not run yet: (task id, codeunit id,
     /// parameters), and the next task id.
     pub bg_tasks: std::collections::VecDeque<(i32, i32, Value)>,
@@ -581,6 +585,7 @@ impl PageState {
             inited: false,
             stale: false,
             lookup_set: false,
+            statement_run: false,
             bg_tasks: Default::default(),
             bg_next_id: 1,
         }

@@ -1,0 +1,112 @@
+//! Page.RunModal(Id, Rec) and Page.RunModal(0, Rec): whether the page opens in lookup mode depends on whether the
+//! caller uses the return value. Each test names the corpus test it mirrors
+//! (pages/lt-be-runmodal-onlookup/BeRunModalOnLookup.al, codeunit 81162).
+
+use al_test_cli::report::Outcome;
+
+const OBJECTS: &str = r#"
+table 62600 "LS Row"
+{
+    LookupPageId = "LS List";
+    fields { field(1; "Code"; Code[10]) { } }
+    keys { key(PK; "Code") { } }
+}
+page 62601 "LS List"
+{
+    PageType = List; SourceTable = "LS Row";
+    layout { area(Content) { repeater(R) { field(CodeCtl; Rec."Code") { } } } }
+    trigger OnOpenPage() var L: Codeunit "LS Log"; begin L.Add('lookupMode=' + Format(CurrPage.LookupMode)); end;
+}
+codeunit 62602 "LS Log"
+{
+    SingleInstance = true;
+    var Trail: Text;
+    procedure Add(T: Text) begin if Trail <> '' then Trail += ','; Trail += T; end;
+    procedure Take() R: Text begin R := Trail; Trail := ''; end;
+}
+"#;
+
+const HELPERS: &str = r#"
+    var Log: Codeunit "LS Log";
+    procedure Check(Expected: Text; Actual: Text) begin if Expected <> Actual then Error('expected <%1> got <%2>', Expected, Actual); end;
+    local procedure Seed()
+    var R: Record "LS Row";
+    begin
+        R.DeleteAll();
+        R."Code" := 'A'; R.Insert();
+        R."Code" := 'B'; R.Insert();
+        Log.Take();
+    end;
+    [ModalPageHandler] procedure WalkOnly(var P: TestPage "LS List")
+    var Seen: Text; Steps: Integer;
+    begin
+        Log.Add('editable=' + Format(P.Editable()));
+        if P.First() then
+            repeat Seen += '[' + P.CodeCtl.Value() + ']'; Steps += 1; until (not P.Next()) or (Steps > 5);
+        Log.Add('rows=' + Seen);
+    end;
+"#;
+
+fn outcomes(tests: &str) -> Vec<(String, Outcome)> {
+    let src = format!("{OBJECTS}\ncodeunit 62690 T {{ Subtype = Test; {HELPERS} {tests} }}");
+    al_testkit::outcomes_in(&src, "T")
+}
+
+fn passes(tests: &str) {
+    let o = outcomes(tests);
+    assert!(!o.is_empty());
+    for (n, r) in &o {
+        assert_eq!(r, &Outcome::Pass, "{n}");
+    }
+}
+
+// BeRunModalOnLookup.al:616-629 Direct_NoLookupPageId_KeyFilter_WalkOnly: the return value used opens the list in lookup
+// mode, with no new-row line.
+#[test]
+fn run_modal_by_id_with_the_return_value_used_is_a_lookup_without_the_new_row_line() {
+    passes(
+        "[Test] [HandlerFunctions('WalkOnly')]
+        procedure Used() var R: Record \"LS Row\"; begin
+            Seed(); Log.Add('action=' + Format(Page.RunModal(Page::\"LS List\", R)));
+            Check('lookupMode=Yes,editable=No,rows=[A][B],action=LookupCancel', Log.Take()); end;",
+    );
+}
+
+// BeRunModalOnLookup.al:916-929 Shape_ReturnNotUsed_WalkOnly: called as a statement, the list is not a lookup: editable,
+// with the new-row line.
+#[test]
+fn run_modal_by_id_called_as_a_statement_is_not_a_lookup() {
+    passes(
+        "[Test] [HandlerFunctions('WalkOnly')]
+        procedure Statement() var R: Record \"LS Row\"; begin
+            Seed(); Page.RunModal(Page::\"LS List\", R);
+            Check('lookupMode=No,editable=Yes,rows=[A][B][]', Log.Take()); end;",
+    );
+}
+
+// BeRunModalOnLookup.al:949-966 Shape_ReturnInIf_WalkOnly: a comparison in an if uses the return value.
+#[test]
+fn run_modal_by_id_compared_in_an_if_is_a_lookup() {
+    passes(
+        "[Test] [HandlerFunctions('WalkOnly')]
+        procedure InIf() var R: Record \"LS Row\"; begin
+            Seed();
+            if Page.RunModal(Page::\"LS List\", R) = Action::LookupOK then Log.Add('if=LookupOK') else Log.Add('if=other');
+            Check('lookupMode=Yes,editable=No,rows=[A][B],if=other', Log.Take()); end;",
+    );
+}
+
+// BeRunModalOnLookup.al:1100-1126 Shape_RunModalZero_ReturnUsed_WalkOnly and Shape_RunModalZero_ReturnNotUsed_WalkOnly.
+#[test]
+fn run_modal_zero_follows_the_same_rule() {
+    passes(
+        "[Test] [HandlerFunctions('WalkOnly')]
+        procedure ZeroUsed() var R: Record \"LS Row\"; begin
+            Seed(); Log.Add('action=' + Format(Page.RunModal(0, R)));
+            Check('lookupMode=Yes,editable=No,rows=[A][B],action=LookupCancel', Log.Take()); end;
+        [Test] [HandlerFunctions('WalkOnly')]
+        procedure ZeroStatement() var R: Record \"LS Row\"; begin
+            Seed(); Page.RunModal(0, R);
+            Check('lookupMode=No,editable=Yes,rows=[A][B][]', Log.Take()); end;",
+    );
+}

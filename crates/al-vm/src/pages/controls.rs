@@ -634,6 +634,8 @@ impl Session {
                 }
                 // An error of the write through an expression source (a text too long for the field) is a TestValidation
                 // error, as for a variable (misc/lt-probes-needed-7/PnGTempControl.al:SetValueTooLongAndInvalid).
+                // The text goes into a TestValidation error or the page's error list.
+                al_builtins::native::refuse_unpinned_text(&e, "A page validation error built from an error")?;
                 if matches!(ctl.binding, ir::Binding::Expr(_)) {
                     return Err(refuse_bound(e.message));
                 }

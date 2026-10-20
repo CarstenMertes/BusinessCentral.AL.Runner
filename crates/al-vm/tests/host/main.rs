@@ -3,6 +3,7 @@
 mod bitmap;
 mod files;
 mod gzip;
+mod http_headers;
 mod last_error_object;
 mod media;
 mod streams;

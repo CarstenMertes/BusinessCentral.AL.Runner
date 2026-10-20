@@ -911,6 +911,49 @@ pub fn unpinned_error() -> AlError {
     }
 }
 
+/// An error BC raises whose text and code the corpus does not pin, naming the probe that would pin them (its row in
+/// docs/probes-needed.md). It is the same marker as [`unpinned_error`], with the probe after the mark in the text.
+pub fn unpinned_error_for(probe: &str) -> AlError {
+    AlError {
+        message: format!("{UNPINNED_ERROR}{probe}"),
+        ..unpinned_error()
+    }
+}
+
+/// Whether the text of `e` is not pinned ([`unpinned_error`], [`unpinned_error_for`]). Some errors have a pinned text and an
+/// unpinned code (the code alone is the mark).
+pub fn text_unpinned(e: &AlError) -> bool {
+    e.message.starts_with(UNPINNED_ERROR)
+}
+
+fn unpinned_refusal(e: &AlError, what: &str) -> Signal {
+    match e.message.strip_prefix(UNPINNED_ERROR).filter(|p| !p.is_empty()) {
+        Some(probe) => Signal::Unsupported(format!(
+            "{what} of an error whose text is not pinned (probe wanted: {probe}, docs/probes-needed.md)"
+        )),
+        None => Signal::Unsupported(format!("{what} of an error whose text is not pinned")),
+    }
+}
+
+/// Refuses a read of the text of an error whose text is not pinned: `what` is the read; the reason names the probe when the
+/// error carries one. Every place that hands an error's text to AL code or to the test result calls it.
+pub fn refuse_unpinned_text(e: &AlError, what: &str) -> Result<(), Signal> {
+    if text_unpinned(e) {
+        Err(unpinned_refusal(e, what))
+    } else {
+        Ok(())
+    }
+}
+
+/// Refuses a read of the text or the code of an error when either is not pinned.
+pub fn refuse_unpinned(e: &AlError, what: &str) -> Result<(), Signal> {
+    if text_unpinned(e) || e.code == UNPINNED_ERROR {
+        Err(unpinned_refusal(e, what))
+    } else {
+        Ok(())
+    }
+}
+
 /// Text of a Text/Code/Char argument (Text parameters accept all three). Text that holds the
 /// untracked call stack marker is refused, so its content is never silently wrong.
 /// `Database.SID(UserName)`: a Windows-style security identifier as Text. Probed on BC 27.5 (corpus
@@ -1129,9 +1172,7 @@ fn abs_other(v: &Value) -> Result<Value, Signal> {
 
 fn get_last_error_text(ctx: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
     let e = ctx.last_error();
-    if e.message == UNPINNED_ERROR {
-        return unsupported("GetLastErrorText of an error whose text is not pinned");
-    }
+    refuse_unpinned_text(&e, "GetLastErrorText")?;
     Ok(Value::Text(e.message.into()))
 }
 
@@ -1147,6 +1188,7 @@ fn get_last_error_text_without_customer_content(
         return get_last_error_text(ctx, r, &mut []);
     }
     let e = ctx.last_error();
+    refuse_unpinned_text(&e, "GetLastErrorText(true)")?;
     if e.message.is_empty() {
         return Ok(Value::Text(String::new().into()));
     }
@@ -1162,9 +1204,7 @@ fn get_last_error_text_without_customer_content(
 
 fn get_last_error_code(ctx: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
     let e = ctx.last_error();
-    if e.code == UNPINNED_ERROR {
-        return unsupported("GetLastErrorCode of an error whose text is not pinned");
-    }
+    refuse_unpinned(&e, "GetLastErrorCode")?;
     Ok(Value::Text(e.code.into()))
 }
 
@@ -1182,6 +1222,7 @@ fn get_last_error_object(ctx: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Valu
         AL_EXCEPTION, NCL_DIALOG_EXCEPTION, NCL_EVALUATE_EXCEPTION, RECORD_NOT_FOUND_EXCEPTION, TEST_FIELD_EXCEPTION,
     };
     let e = ctx.last_error();
+    refuse_unpinned(&e, "GetLastErrorObject")?;
     if e.message.is_empty() && e.code.is_empty() {
         if e.exception != ExceptionKind::Cleared {
             return unsupported(

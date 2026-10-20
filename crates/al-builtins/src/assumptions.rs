@@ -393,9 +393,9 @@ registry! {
     },
     HttpHeadersAddUsedResult => {
         id: "http-headers-add-used-result",
-        assumed: "HttpHeaders.Add whose result is used answers false for a value it refuses with InvalidHeader:Format, where a statement raises it. (Pinned for adding a Content-Type that is there: HttpWriteFromStream.al:P100_PresetContentType_ThenWrite against lt-http-header-rules/P87Twice.al.)",
-        tests: "Code that tests the result of HttpHeaders.Add.",
-        probe: "Format(H.Add(N, V)) for a bad value of each typed header (Accept, Authorization, Date, Content-Type) and for a bad name. Asked in corpus #650.",
+        assumed: "HttpHeaders.Add whose result is used answers false and leaves the last error as it was. (The false is pinned for refused values, names and collections by network/lt-ay-http/AyHeaderAddResult.al; the last error after it is not measured.)",
+        tests: "Code that tests the result of HttpHeaders.Add and then reads GetLastErrorText.",
+        probe: "ClearLastError(); if not H.Add('Accept', 'json') then Message(GetLastErrorText()), and the same for an empty name and a content header on request headers.",
     },
     HttpContentLengthAfterRead => {
         id: "http-content-length-after-read",
@@ -405,7 +405,7 @@ registry! {
     },
     HttpHeaderRules => {
         id: "http-header-rules",
-        assumed: "HttpHeaders.Add checks a header the way the probes measured: the name is a token (empty: Argument, otherwise Format), the value has no line break, a content header is refused on request, response and client headers, and Accept, Authorization, Date and Content-Type values are checked; every other header .NET types (Range, Via, ...) is accepted as written, and the content headers other than Content-Type and Content-Length follow the same rule as those two.",
+        assumed: "HttpHeaders.Add checks a header the way the probes measured: the name is a token (empty: Argument, otherwise Format), the value has no line break, a content header is refused on request, response and client headers, and the typed header values are checked as the probes measured them (network/lt-ay-http/AyHeaderAddResult.al and the P87 files measured a few valid and invalid values of each); a value of another shape follows the same rule, and the headers .NET types that have no rule here (Via, Warning, TE, ...) and the typed headers on a collection the probes did not use are accepted as written.",
         tests: "Every Microsoft or NP Retail test that builds a request with headers (Authorization, Accept, Content-Type, custom X- headers).",
         probe: "network/lt-http/HttpHeaders.al covers the measured part; the case and the content-or-not of all 39 known names are pinned by network/lt-http-header-names-cache-control/HeaderNameCase*.al. Wanted: the value rules of the typed headers other than Cache-Control (Range, If-Match, Content-Disposition, Content-Encoding, Expires and the rest) on request, response and content headers; Cache-Control (directive order, values, merging) is pinned by CacheControl*.al. Asked in corpus #650.",
     },

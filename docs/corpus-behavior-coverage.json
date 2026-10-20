@@ -16279,7 +16279,7 @@
         "code": "StackOverflow",
         "file": "crates/al-vm/src/lib.rs",
         "generic": false,
-        "line": 1083,
+        "line": 1084,
         "pinned": true,
         "site": "record/TestCalcFieldsTruncateUniqueContracts.al:179",
         "template": "There is insufficient memory to execute this function. This can be caused by recursive function calls. Contact your system administrator."
@@ -16333,7 +16333,7 @@
         "code": "RenameArgument",
         "file": "crates/al-vm/src/records.rs",
         "generic": false,
-        "line": 2757,
+        "line": 2758,
         "pinned": true,
         "site": "recordref/lt-refs/RfTWrite.al:223",
         "template": "The number of field arguments does not match the primary key size."
@@ -16450,7 +16450,7 @@
         "code": "Dialog",
         "file": "crates/al-vm/src/usertable.rs",
         "generic": false,
-        "line": 374,
+        "line": 400,
         "pinned": true,
         "site": "session/PSuperUserLast.al:72",
         "template": "There should be at least one enabled 'SUPER' user."

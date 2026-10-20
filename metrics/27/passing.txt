@@ -12870,6 +12870,8 @@
 80514 Export_AutoCalc_NoCalcFields
 80514 Export_NoAutoCalc_CalcFields
 80514 Export_NoAutoCalc_NoCalcFields
+80514 Import_AutoCalc
+80514 Import_NoAutoCalc
 80518 Export_head_BreakUnbound
 80518 Export_passfield_BreakUnbound
 80518 Export_passfield_Quit
@@ -12888,6 +12890,9 @@
 80518 Import_head_BreakUnbound
 80518 Import_init_BreakUnbound
 80518 Import_init_Quit
+80606 CodeunitRun_MissingId_RawText
+80606 PageAction_DuplicateInsert
+80606 PageAction_ErrorCodes
 80606 VariantToText_Language1033_BoolDate
 80606 VariantToText_Language1033_EnumOption
 80606 VariantToText_Language1033_IntDec

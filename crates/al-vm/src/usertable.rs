@@ -19,8 +19,8 @@
 //! Everything else the server does on a User write is not pinned and is refused when it could matter
 //! (hard rule 4): a Windows Security ID or Application ID on the row, an address form the corpus
 //! does not show, rows in the tables a delete cascades to, and ModifyAll, Rename and Truncate.
-//! The error texts are the fragments the corpus matches; the full texts are not pinned
-//! (`docs/probes-needed.md`).
+//! The full error texts and codes are pinned for the forms access-control/lt-av-user-insert/AvUserInsertErrors.al shows;
+//! the other forms keep the fragments the older tests match (`user_checks`).
 
 use crate::Session;
 use crate::platform::{blank, pos};
@@ -56,11 +56,17 @@ fn unsupported<T>(why: impl Into<String>) -> Result<T, Signal> {
     Err(Signal::Unsupported(why.into()))
 }
 
-/// An error the server raises from the User table trigger. Its code is not pinned.
+/// An error the server raises from the User table trigger whose full text and code are not pinned: the fragment the corpus
+/// matches, with no code (kept from before the full texts were probed; see `user_checks`).
 fn refuse<T>(message: &str) -> Result<T, Signal> {
+    refuse_code(message, "")
+}
+
+/// An error the server raises from the User table trigger, with its full text and code.
+fn refuse_code<T>(message: &str, code: &str) -> Result<T, Signal> {
     Err(Signal::Error(Box::new(AlError {
         message: message.into(),
-        code: String::new(),
+        code: code.into(),
         call_stack: String::new(),
         ..Default::default()
     })))
@@ -236,15 +242,24 @@ impl Session {
         // User name: one user per name (TestUserAuthEmailTrigger.al:321-333). The Insert trigger is
         // said to do the same by the corpus header (TestUserAuthEmailTrigger.al:17-18).
         let name = text_of(&row[pos(t, F_NAME)]).to_string();
+        // Full text and code, Insert and Modify alike (access-control/lt-av-user-insert/AvUserInsertErrors.al:79-120).
         if others.iter().any(|r| text_of(&r[pos(t, F_NAME)]) == name) {
-            return refuse(NAME_TAKEN);
+            return refuse_code(&format!("{NAME_TAKEN}."), "UserTableUserNameMustBeUnique");
         }
 
         // Authentication email.
         let raw = text_of(&row[pos(t, F_EMAIL)]).to_string();
         let email = match normalise_email(&raw) {
             Ok(e) => e,
-            Err(EmailProblem::Invalid) => return refuse(INVALID_EMAIL),
+            // Full text and code of an Insert (AvUserInsertErrors.al:45-57). A Modify's are not pinned.
+            Err(EmailProblem::Invalid) if insert => {
+                return refuse_code(&format!("{INVALID_EMAIL}."), "CannotSpecifyAuthenticationEmail");
+            }
+            Err(EmailProblem::Invalid) => {
+                return Err(Signal::Error(Box::new(al_builtins::native::unpinned_error_for(
+                    "user-modify-invalid-email-text",
+                ))));
+            }
             Err(EmailProblem::Unpinned(why)) => {
                 return unsupported(format!("User authentication email, {why}: not pinned"));
             }
@@ -254,6 +269,17 @@ impl Session {
             for r in others.iter().filter(|r| enabled(r)) {
                 let theirs = text_of(&r[pos(t, F_EMAIL)]);
                 if theirs == email {
+                    // Full text and code of an Insert whose address needed no normalising (AvUserInsertErrors.al:59-77).
+                    // Which form a normalised address takes in the text, and a Modify's text and code, are not pinned:
+                    // they keep the fragment TestUserAuthEmailTrigger.al:182 and :219 match.
+                    if insert && raw == email {
+                        return refuse_code(
+                            &format!(
+                                "The specified authentication email address '{email}' {EMAIL_TAKEN}. You must specify a unique email address."
+                            ),
+                            "UserTableAuthEmailMustBeUnique",
+                        );
+                    }
                     return refuse(EMAIL_TAKEN);
                 }
                 if theirs.eq_ignore_ascii_case(&email) {

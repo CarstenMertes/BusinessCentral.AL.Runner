@@ -153,7 +153,18 @@ impl Session {
         // an unknown id, and of id 0).
         // Inside a try function the page error names the outermost object as the other kinds do (platform/
         // lt-xmlport-session-navapp-cookie/P94PageRun.al:211 Run_UnknownPage, misc/W5MissingObject.al:52 `run_missing_page`).
-        let caller = if kind == "Page" && self.tx.try_depth == 0 {
+        // A codeunit the test method runs itself, outside a try function, names the test runner too
+        // (errors/lt-az-error-texts/AzErrorTexts.al:110-134 CodeunitRun_MissingId_RawText). Deeper calls from the test codeunit
+        // keep the outermost object: only a helper codeunit is pinned (MissingCodeunit_FromHelperCodeunit above).
+        let test_method_itself = kind == "CodeUnit"
+            && self.frames.len() == 1
+            && self.frames.first().is_some_and(|&o| {
+                self.engine.program.objects[o]
+                    .properties
+                    .iter()
+                    .any(|(k, v)| k.eq_ignore_ascii_case("Subtype") && v.trim().eq_ignore_ascii_case("Test"))
+            });
+        let caller = if (kind == "Page" || test_method_itself) && self.tx.try_depth == 0 {
             "Test Runner - Mgt"
         } else {
             caller

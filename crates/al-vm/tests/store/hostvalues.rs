@@ -869,13 +869,47 @@ fn geturl_default_alone_is_the_dynamicsnav_form_of_the_address() {
             "exit(GetUrl(ClientType::Default));",
             Some("https://bc.example:7048/BC1"),
         ),
-        ("exit(GetUrl(ClientType::Default, 'C'));", None),
+        ("exit(GetUrl(ClientType::Default, 'A&B'));", None),
+        ("exit(GetUrl(ClientType::Default, 'C', ObjectType::Table, 18));", None),
+        ("exit(GetUrl(ClientType::Default, 'C', ObjectType::Page, 0));", None),
+        (
+            "exit(GetUrl(ClientType::Default, 'C', ObjectType::Codeunit, 80));",
+            None,
+        ),
     ] {
         let r = get_url(body, url);
         assert!(
             matches!(&r, Err(Signal::Unsupported(w)) if w.contains("GetUrl")),
             "{body}: {r:?}"
         );
+    }
+}
+
+// platform/lt-t-geturl/TGetUrl.al:203-210 (GetUrl_ClientDefault): the Default forms with a company and a page or report are
+// `dynamicsnav://<address>/<company>/` followed by `runpage?page=N` or `runreport?report=N`; the company is percent-encoded
+// (only the space is pinned).
+#[test]
+fn geturl_default_with_a_company_or_an_object_builds_the_pinned_path() {
+    for (body, want) in [
+        (
+            "exit(GetUrl(ClientType::Default, 'My Company'));",
+            "dynamicsnav://localhost:8080/BC/My%20Company/",
+        ),
+        (
+            "exit(GetUrl(ClientType::Default, ''));",
+            "dynamicsnav://localhost:8080/BC//",
+        ),
+        (
+            "exit(GetUrl(ClientType::Default, '', ObjectType::Page, 21));",
+            "dynamicsnav://localhost:8080/BC//runpage?page=21",
+        ),
+        (
+            "exit(GetUrl(ClientType::Default, 'My Company', ObjectType::Report, 69367));",
+            "dynamicsnav://localhost:8080/BC/My%20Company/runreport?report=69367",
+        ),
+    ] {
+        let r = get_url(body, None);
+        assert!(matches!(&r, Ok(Value::Text(t)) if &**t == want), "{body}: {r:?}");
     }
 }
 

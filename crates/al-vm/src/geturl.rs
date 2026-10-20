@@ -62,22 +62,87 @@ fn base64(bytes: &[u8]) -> String {
     out
 }
 
+/// The record argument of `GetUrl`: a Record or an open RecordRef.
+fn record_arg(v: Option<&Value>) -> Result<Rec, Signal> {
+    match v {
+        Some(Value::Record(r)) => Ok(r.clone()),
+        Some(Value::Library(_, l)) => match &*l.borrow() {
+            LibraryValue::RecordRef(r) => Ok(r.clone()),
+            // PGetUrl.al:P109_GetUrl_Overload3_ClosedRecordRef
+            _ => Err(Signal::Error(Box::new(al_builtins::native::AlError {
+                message: "The record is not open.".into(),
+                code: "RecordNotOpened".into(),
+                call_stack: String::new(),
+                ..Default::default()
+            }))),
+        },
+        other => unsupported(format!("GetUrl with record {}", other.describe())),
+    }
+}
+
 impl Session {
+    /// `GetUrl(ClientType::Default, ...)`: the web address with the scheme `dynamicsnav`, then `/<company>/` and for an
+    /// object `runpage?page=N` or `runreport?report=N`, for a page with a record `&bookmark=...`. Pinned for an http address
+    /// by session/lt-geturl-shape/GetUrlShape.al:270 (`default alone`) and platform/lt-t-geturl/TGetUrl.al:203-210
+    /// (GetUrl_ClientDefault: a company with a space, the empty company, page 21, report 69367, a page with a record and
+    /// UseFilters false). Every other form is refused.
+    fn get_url_default(&mut self, args: &[Value]) -> Result<Value, Signal> {
+        al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::GetUrlWebBaseAddress);
+        let base = self.host.identity.server_base_url();
+        let Some(rest) = base.strip_prefix("http://") else {
+            return unsupported(format!(
+                "GetUrl(ClientType::Default) with the server address {base}: only an http address is pinned"
+            ));
+        };
+        let company = match args.get(1) {
+            None => String::new(),
+            Some(Value::Text(t)) | Some(Value::Code(t)) if !t.has_marker() => {
+                let t = t.as_str();
+                if !t.chars().all(|c| c.is_ascii_alphanumeric() || c == ' ') {
+                    return unsupported(
+                        "GetUrl(ClientType::Default) with a company name of other characters than letters, digits and space (not pinned)",
+                    );
+                }
+                t.replace(' ', "%20")
+            }
+            other => return unsupported(format!("GetUrl with company {}", other.describe())),
+        };
+        let mut url = format!("dynamicsnav://{}/{company}/", rest.trim_end_matches('/'));
+        if args.len() > 2 {
+            let id = match args.get(3) {
+                Some(Value::Integer(n)) if *n > 0 => *n,
+                other => {
+                    return unsupported(format!(
+                        "GetUrl(ClientType::Default) with object id {} (only a positive id is pinned)",
+                        other.describe()
+                    ));
+                }
+            };
+            match (member(args.get(2)).as_deref(), args.len()) {
+                (Some("Page"), 4) => url.push_str(&format!("runpage?page={id}")),
+                (Some("Report"), 4) => url.push_str(&format!("runreport?report={id}")),
+                (Some("Page"), 6) if matches!(args.get(5), Some(Value::Boolean(false))) => {
+                    let rec = record_arg(args.get(4))?;
+                    url.push_str(&format!("runpage?page={id}"));
+                    if let Some(part) = self.url_record_part(&rec, false)? {
+                        url.push('&');
+                        url.push_str(&part);
+                    }
+                }
+                (kind, n) => {
+                    return unsupported(format!(
+                        "GetUrl(ClientType::Default) of object type {} with {n} arguments (only a page or a report, and a page with a record and UseFilters false, are pinned)",
+                        kind.unwrap_or("?")
+                    ));
+                }
+            }
+        }
+        Ok(Value::Text(url.into()))
+    }
     /// `GetUrl(ClientType, Company, ObjectType, ObjectId, Record|RecordRef, UseFilters, Layout)`: `args` is the call's arguments.
     pub(crate) fn get_url(&mut self, args: &[Value]) -> Result<Value, Signal> {
-        // GetUrlShape.al:270 (`default alone`): ClientType::Default without other arguments is the web address with the
-        // scheme `dynamicsnav` and its path followed by `//`, pinned for an http address only.
-        if member(args.first()).as_deref() == Some("Default") && args.len() == 1 {
-            al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::GetUrlWebBaseAddress);
-            let base = self.host.identity.server_base_url();
-            let Some(rest) = base.strip_prefix("http://") else {
-                return unsupported(format!(
-                    "GetUrl(ClientType::Default) with the server address {base}: only an http address is pinned"
-                ));
-            };
-            return Ok(Value::Text(
-                format!("dynamicsnav://{}//", rest.trim_end_matches('/')).into(),
-            ));
+        if member(args.first()).as_deref() == Some("Default") {
+            return self.get_url_default(args);
         }
         if member(args.first()).as_deref() != Some("Web") {
             return unsupported(format!(
@@ -126,22 +191,7 @@ impl Session {
             if args.len() > 4 {
                 // A record of another object kind than a page: no address (GetUrlShape.al:152-163 `table_record`;
                 // the report and query forms are pinned only to have no '?', GetUrlBookmarkFilter.al:`report`, `query`).
-                let rec = match args.get(4) {
-                    Some(Value::Record(r)) => r.clone(),
-                    Some(Value::Library(_, l)) => match &*l.borrow() {
-                        LibraryValue::RecordRef(r) => r.clone(),
-                        // PGetUrl.al:P109_GetUrl_Overload3_ClosedRecordRef
-                        _ => {
-                            return Err(Signal::Error(Box::new(al_builtins::native::AlError {
-                                message: "The record is not open.".into(),
-                                code: "RecordNotOpened".into(),
-                                call_stack: String::new(),
-                                ..Default::default()
-                            })));
-                        }
-                    },
-                    other => return unsupported(format!("GetUrl with record {}", other.describe())),
-                };
+                let rec = record_arg(args.get(4))?;
                 if key == "report" || key == "query" {
                     // GetUrlBookmarkFilter.al:`report`, `query` pin only that the result has no query part
                     // ('?'); the value itself (empty text or the bare address) is not pinned.

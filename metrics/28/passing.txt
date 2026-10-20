@@ -1687,6 +1687,7 @@
 60187 Case_Text_MatchesExactString
 60187 Case_UnmatchedValue_ExecutesElse
 60187 Case_WithProcedureCall_InElse
+60187 PYC_Case_CodeSelector_VariableAndRangeLabels
 60188 Boolean_AndOr_LogicalOperations
 60188 Comparison_Integer_AllOperators
 60188 Integer_Div_Negative
@@ -5775,6 +5776,7 @@
 69371 TextConst_Trim
 69371 TextConst_TrimEnd
 69371 TextConst_TrimStart
+69381 GetUrl_ClientDefault
 69381 GetUrl_ClientWeb
 69415 ExtensionOfTheBasePageRunsAndTheLocalPagesDoNot
 69415 ExtensionsOfTheLocalPageRunAndTheBasePagesDoesNot
@@ -7348,6 +7350,8 @@
 70509 LT_BU_CaseConv_TurkishGreekLanguage
 70509 LowerUpperBasic
 70509 LowerUpperLengthsAndTargets
+70509 PYC_CaseConv_OtherLanguages
+70509 PYC_CodeAssign_Turkish
 70510 StrPosBasic
 70510 StrPosTargets
 70511 LT_BU_StrSubstNo_RepeatedNonAdjacent
@@ -8989,6 +8993,7 @@
 71721 Label_Plain_EqualAndDifferent
 71722 Option_Plain_EqualAndDifferent
 71724 Variant_Plain_EqualAndDifferent
+71727 Clear_SecretText
 71727 Clear_SingleArrayElementAndWhole
 71727 Clear_WholeArrays
 71730 RemoveAttribute_ByObject
@@ -10432,6 +10437,7 @@
 73030 Send_Handler
 73030 Send_Twice_GlobalScope
 73032 Copy_Empty
+73032 Default_IsEmpty
 73033 Get_Text_Into_Fixed_Length
 73033 Key_Empty_Set
 73033 Key_Length_200
@@ -11218,6 +11224,8 @@
 73549 BT_DateTimeAndTime_MillisecondsAfterWrite
 73549 BT_DateTimeFilter_999Milliseconds
 73549 P130_DateFilter_OperatorsWithSessionFormat
+73549 QA_TempRecord_Milliseconds_InsertGetModify
+73549 QA_TempRecord_Milliseconds_ToAndFromDatabaseRecord
 73551 P130_GuidFilter_ValueForms
 73551 P130_GuidFilter_ViaFormatOfAGuidVariable
 73551 P130_GuidFilter_WildcardsOperatorsRanges
@@ -12580,6 +12588,7 @@
 74975 GetUrl_Web_CurrentCompanyShape
 74975 GetUrl_Web_ObjectTypesAndIds
 74975 GetUrl_Web_WithRecord
+74975 QA_GetUrl_Web_NoArgument_Whole
 74980 Setup_AfterChangeCompanyToSameCompany
 74980 Setup_AskedPerTable
 74980 Setup_AskedPerWrite
@@ -13647,3 +13656,6 @@
 86264 DI_TransferFieldsAndAssign
 86264 DI_ValidateFlowField
 86264 DI_ValidateSumFlowFieldSourceRow
+86264 QB_ValidateOneArgFlowFieldWithOnValidate
+86382 BgTask_IsolatedStorageGet_KeyWrittenByCaller_QB
+86383 BgTask_IsolatedStorageGet_KeyWrittenByCallerThenCommit_QB

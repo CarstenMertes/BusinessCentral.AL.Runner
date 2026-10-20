@@ -1269,7 +1269,7 @@ impl Lowerer<'_> {
                 (Ty::Code(Some(n)), Ty::Code(Some(m))) if n <= *m => Ok(e),
                 (Ty::Code(_), Ty::Code(None)) => Ok(e),
                 (t @ Ty::Code(_), _) => Err(format!(
-                    "a case label of type {t:?} with a selector of type {code:?}: whether the label is converted to the selector's length is not pinned"
+                    "a case label of type {t} with a selector of type {code}: whether the label is converted to the selector's length is not pinned"
                 )),
                 _ => Ok(e),
             }

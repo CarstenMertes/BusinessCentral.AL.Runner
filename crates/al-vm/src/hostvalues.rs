@@ -146,6 +146,12 @@ impl Session {
                     other = other.describe()
                 )),
             },
+            // SelectLatestVersion drops what CaptionClassTranslate kept (types/PSCaptionClass.al:103-115); the session reads the
+            // store as it is, so there is nothing else to refresh.
+            ids::DATABASE_SELECTLATESTVERSION_1 | ids::DATABASE_SELECTLATESTVERSION_2 => {
+                self.caption_translations.clear();
+                Ok(Value::Null)
+            }
             // corpus types/PSCaptionClass.al:5-8, :58-81 (CaptionClassTranslate_Expressions).
             ids::SYSTEM_CAPTIONCLASSTRANSLATE_1 => match args.first().and_then(al_builtins::native::text_of) {
                 Some(t) => self.caption_class_translate(&t).map(|s| Value::Text(s.into())),

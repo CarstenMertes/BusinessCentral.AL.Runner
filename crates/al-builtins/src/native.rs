@@ -466,8 +466,6 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     // Telemetry goes to the server's log, which AL cannot read (ADR-009).
     ("Session.LogMessage#1", |_, _, _| Ok(Value::Null)),
     ("Session.LogMessage#2", |_, _, _| Ok(Value::Null)),
-    ("Database.SelectLatestVersion#1", |_, _, _| Ok(Value::Null)),
-    ("Database.SelectLatestVersion#2", |_, _, _| Ok(Value::Null)),
     // Unique and not null is all the corpus asks (session/TestSystemExtended.al:306-328).
     ("Guid.CreateSequentialGuid#1", |c, _, _| Ok(Value::Guid(c.new_guid()))),
     // A TextBuilder is bounded by the Integer range; the corpus needs at least a million

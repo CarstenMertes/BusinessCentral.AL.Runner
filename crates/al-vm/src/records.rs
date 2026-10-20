@@ -162,6 +162,24 @@ impl Session {
             .unwrap_or_else(|| t.name.clone())
     }
 
+    /// The caption a read of it gives (TableCaption, RecordRef.Caption, Format of a RecordId): refused where a
+    /// tableextension sets it over another caption (`al_ir::CAPTION_REFUSED`).
+    pub(crate) fn caption_checked(&self, t: &TableDef) -> Result<String, Signal> {
+        match self.caption_refused(t.object as usize) {
+            Some(why) => Err(Signal::Unsupported(why)),
+            None => Ok(self.caption(t)),
+        }
+    }
+
+    /// Why the caption of the table with object index `object` is not pinned, if it is not.
+    pub(crate) fn caption_refused(&self, object: usize) -> Option<String> {
+        self.engine.program.objects[object]
+            .properties
+            .iter()
+            .find(|(k, _)| k == al_ir::CAPTION_REFUSED)
+            .map(|(_, v)| v.clone())
+    }
+
     /// `No.='A'` style identification of a row's primary key. A key value whose format is not
     /// pinned refuses.
     pub(crate) fn identification(&self, t: &TableDef, fields: &[Value]) -> Result<String, Signal> {

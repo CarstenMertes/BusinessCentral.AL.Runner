@@ -582,6 +582,9 @@ pub struct Session {
     pub(crate) work_date: Option<i32>,
     /// The language `GlobalLanguage(Id)` set.
     pub(crate) global_language: i32,
+    /// What `CaptionClassTranslate` translated in this session: (class text, GlobalLanguage then, caption). Cleared by
+    /// `SelectLatestVersion` (types/PSCaptionClass.al:94-115).
+    pub(crate) caption_translations: Vec<(String, i32, String)>,
     /// The row `load` is about to read came from `Get` (partial.rs: a `Get` of the row the buffer holds keeps what is loaded).
     pub(crate) get_load: bool,
     /// Transactions: the depth of transaction-beginning constructs, and where the open transaction stands.
@@ -669,6 +672,7 @@ impl Session {
         let sequences = restored_sequences(&engine, &company);
         let mut session = Session {
             global_language: host.identity.global_language(),
+            caption_translations: Vec::new(),
             get_load: false,
             host,
             waited_ms: 0,

@@ -22,6 +22,12 @@ pub trait FormatCtx {
     fn region_unpinned(&self) -> Option<String> {
         None
     }
+    /// The caption and the namespace of the table with object index `table`, for the text of a RecordId; None where the
+    /// context does not know the program (a RecordId format that names them is then refused).
+    fn record_id_table(&self, table: u32) -> Option<(String, Option<String>)> {
+        let _ = table;
+        None
+    }
 }
 
 /// A context without the format region, for the plain en-US text a region then rewrites.
@@ -33,6 +39,9 @@ impl FormatCtx for WithoutRegion<'_> {
     }
     fn language(&self) -> i32 {
         self.0.language()
+    }
+    fn record_id_table(&self, table: u32) -> Option<(String, Option<String>)> {
+        self.0.record_id_table(table)
     }
 }
 
@@ -545,7 +554,7 @@ pub fn format_value(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) 
         // A RecordId reads `Table: key1,key2` (corpus record/TestRecordRecordId.al:42-56 only needs
         // the key values in it; the layout is docs/probes-needed.md).
         Value::Library(crate::library_kind::LibraryKind::RecordId, l) => match &*l.borrow() {
-            crate::value::LibraryValue::RecordId { name, key, .. } => {
+            crate::value::LibraryValue::RecordId { table, name, key, .. } => {
                 // The numbers 3 to 8 do not exist for a RecordId; 2 and 9 format the key values with that number (types/
                 // lt-implicit-conversions/P79RecordId.al:CodeKey_FormatNumbers, DateKey_FormatNumbers).
                 if (3..=8).contains(&standard) {
@@ -572,12 +581,41 @@ pub fn format_value(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) 
                         })
                     })
                     .collect::<Result<Vec<_>, _>>()?;
+                // Format 1 names the table by its caption (record/lt-record-write/RcBMeta.al:572, :578, also under
+                // GlobalLanguage 1031); format 9 of a table in a namespace names it `[<namespace>.<name>]`
+                // (misc/lt-inferred-behaviors/P69NsConsumers.al:214, a name with spaces; :210 format 1 of the same table
+                // gives the plain name, which is its caption). The other numbers give the plain name (RcBMeta.al:570-574).
+                let shown = match standard {
+                    1 | 9 => {
+                        let Some((caption, namespace)) = ctx.record_id_table(*table) else {
+                            return Err(format!("Format of a RecordId with standard format {standard} where the table caption is not known").into());
+                        };
+                        match (standard, namespace) {
+                            (1, _) => caption,
+                            (_, Some(ns)) if name.contains(' ') => format!("[{ns}.{name}]"),
+                            (_, Some(_)) => {
+                                return Err(format!(
+                                    "Format(RecordId, 0, 9) of table {name} in a namespace, whose name has no space (whether it is bracketed is not pinned)"
+                                )
+                                .into());
+                            }
+                            (_, None) => name.clone(),
+                        }
+                    }
+                    _ => name.clone(),
+                };
                 // A RecordId made by Evaluate from a table name alone has no key values and reads as the name
                 // (errors/lt-ms-refusals-128/P128EvalRecordId.al:P128_Evaluate_IntoRecordId_OtherTexts `table name only`).
                 if key.is_empty() {
-                    name.clone()
+                    if shown != *name {
+                        return Err(format!(
+                            "Format(RecordId, 0, {standard}) of a RecordId with no key values (not pinned)"
+                        )
+                        .into());
+                    }
+                    shown
                 } else {
-                    format!("{name}: {}", key.join(","))
+                    format!("{shown}: {}", key.join(","))
                 }
             }
             _ => String::new(),

@@ -197,6 +197,21 @@ impl Lowerer<'_> {
                             )),
                         }
                     }
+                    // A bare name of a field of the source table (no `Rec.`, warning AL0604) is that field: the control shows
+                    // the field's caption and value (pages/lt-page-controls-aa/AaControls.al:684-692, `SystemId`).
+                    Some(crate::pages::Source::Expr)
+                        if let Some(p) =
+                            crate::pages::plain_name(args.get(1).map_or("", |a| a.as_str())).and_then(|n| {
+                                table.and_then(|t| {
+                                    self.members[t]
+                                        .fields
+                                        .iter()
+                                        .position(|x| x.name.eq_ignore_ascii_case(&n))
+                                })
+                            }) =>
+                    {
+                        binding = ir::Binding::Field(p);
+                    }
                     Some(crate::pages::Source::Expr) => {
                         let off = usize::from(sec.syntax().text_range().start()) - ow.base;
                         match routine_named(&ow, &crate::pages::synthetic_name("source", off)) {

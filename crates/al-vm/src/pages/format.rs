@@ -613,6 +613,19 @@ impl Session {
         // The source field's CaptionClass beats its Caption (pageext/lt-page-ext-properties/TableExtCaptionClass.al:69) and is
         // resolved when the caption is read, not when the page opens (record/lt-x-table-props/XTablePropsTests.al:483-487).
         // Whether a Caption on the control beats it is not pinned.
+        // A CaptionClass of the source field that is an expression (TableExtCaptionClass.al:128-133) is not evaluated yet.
+        if let Some(raw) = field.as_ref().and_then(|f| {
+            f.properties
+                .iter()
+                .find(|(k, _)| k.eq_ignore_ascii_case("captionclass"))
+                .map(|(_, v)| v.trim().to_string())
+        }) {
+            if crate::recmeta::string_literal(&raw).is_none() {
+                return unsupported(format!(
+                    "the caption of a control whose source field's CaptionClass is the expression `{raw}` (table field property expressions are not evaluated yet)"
+                ));
+            }
+        }
         if let Some(c) = field_prop("captionclass") {
             if own_caption.is_some() {
                 return unsupported(

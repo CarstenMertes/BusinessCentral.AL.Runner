@@ -305,3 +305,24 @@ fn a_second_read_of_a_field_caption_class_that_raises_the_event_is_refused() {
     // XTablePropsTests.al:483-487 pins one read only.
     refused("FieldClassTwice");
 }
+
+/// A page field bound to a bare field name of the source table (no `Rec.`, warning AL0604) is that field: its caption is the
+/// field's (pages/lt-page-controls-aa/AaControls.al:684-692, `SystemId` gives 'System ID'), its value the record's, and
+/// SystemId is not editable.
+#[test]
+fn a_control_bound_to_a_bare_field_name_is_the_field() {
+    let src = r#"
+table 69990 "CT Row" { fields { field(1; K; Integer) { } field(2; Cde; Code[30]) { Caption = 'Code Caption'; } } keys { key(PK; K) { } } }
+page 69991 "CT Card" { PageType = Card; SourceTable = "CT Row";
+  layout { area(Content) { field(SystemId; SystemId) { } field(Cde; Cde) { } } } }
+codeunit 69992 C {
+  procedure F(): Text var R: Record "CT Row"; P: TestPage "CT Card"; T: Text; begin
+    R.K := 1; R.Cde := 'A1'; R.Insert(); P.OpenView();
+    T := P.SystemId.Caption() + '|' + Format(P.SystemId.Editable()) + '|' + P.Cde.Caption() + '|' + P.Cde.Value();
+    T += '|' + Format(P.SystemId.Value() = LowerCase(Format(R.SystemId)));
+    P.Close(); exit(T); end; }"#;
+    assert_eq!(
+        text(al_testkit::run_in(src, "C", "F")),
+        "System ID|No|Code Caption|A1|Yes"
+    );
+}

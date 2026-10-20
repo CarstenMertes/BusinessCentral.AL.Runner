@@ -43,6 +43,9 @@ impl Session {
     /// area raises OnResolveCaptionClass of the Caption Class codeunit with the area, the rest after the first comma and the
     /// session language, and comes back unchanged when no subscriber resolves it (corpus types/PSCaptionClass.al:5-8,
     /// CaptionClassTranslate_Expressions).
+    /// The session keeps what it translated: the same text a second time comes back as before and raises no event, claimed or
+    /// not, until `SelectLatestVersion` (types/PSCaptionClass.al:94-115). Whether the kept caption holds after GlobalLanguage
+    /// changed is not pinned: refused.
     pub(crate) fn caption_class_translate(&mut self, text: &str) -> Result<String, Signal> {
         self.refuse_caption_class_translate()?;
         let Some((area, expr)) = text.split_once(',') else {
@@ -51,7 +54,18 @@ impl Session {
         if area == "3" {
             return Ok(expr.to_string());
         }
-        self.raise_resolve_caption_class(area, expr, text)
+        if let Some((_, language, caption)) = self.caption_translations.iter().find(|(t, _, _)| t == text) {
+            if *language != self.global_language {
+                return unsupported(
+                    "CaptionClassTranslate of a text translated before GlobalLanguage changed (whether BC translates it again is not pinned)",
+                );
+            }
+            return Ok(caption.clone());
+        }
+        let caption = self.raise_resolve_caption_class(area, expr, text)?;
+        self.caption_translations
+            .push((text.to_string(), self.global_language, caption.clone()));
+        Ok(caption)
     }
 
     /// Every caption class the client translates raises `CaptionClassTranslate` of the platform codeunit `UI Helper Triggers`,

@@ -401,6 +401,7 @@ mod tests {
             begin_pos: NO_POS,
             body,
             expr_tys,
+            reads_var_max_len: false,
         }
     }
 

@@ -27,6 +27,7 @@ mod impact_trace;
 mod in_precedence;
 mod interfaces;
 mod lane_bump28;
+mod lane_loops_syntax;
 mod lane_property_plumbing;
 mod lane_text_compare;
 mod lane_values_builtins;

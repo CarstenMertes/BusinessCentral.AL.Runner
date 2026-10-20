@@ -10,7 +10,6 @@
 //! - `dotnet:<declared CLR type>`: a DotNet variable; the object it holds decides (DotNetTypeOfDotNet.al).
 
 use super::*;
-use al_builtins::assumptions::{self, Assumption};
 
 const NOT_SUPPORTED: &str = "NotSupportedType";
 
@@ -45,6 +44,11 @@ impl Session {
             Value::Date(_, false) | Value::DateTime(_) => "System.DateTime",
             Value::Guid(_) => "System.Guid",
             Value::Duration(_) => "System.TimeSpan",
+            // BbGetDotNetType.al:287-332: a Byte and a Char are a Byte, a Time and a closing Date a DateTime, an Option
+            // and an Enum an Int32.
+            Value::Byte(_) | Value::Char(_) => "System.Byte",
+            Value::Time(_) | Value::Date(_, true) => "System.DateTime",
+            Value::Option(..) | Value::Enum(..) => "System.Int32",
             Value::Record(_) | Value::DotNet(_) => {
                 return al_builtins::native::raise(
                     "GetDotNetType() does not support the type Microsoft.Dynamics.Nav.Runtime.NavVariant.",
@@ -53,7 +57,7 @@ impl Session {
             }
             other => {
                 return unsupported(format!(
-                    "GetDotNetType of a Variant that holds {} (only Integer, BigInteger, Decimal, Boolean, Text, Code, Date, DateTime, Guid, Duration, a Record, a DotNet value and an empty Variant are pinned)",
+                    "GetDotNetType of a Variant that holds {} (not pinned)",
                     other.describe()
                 ));
             }
@@ -95,35 +99,18 @@ impl Session {
         }
     }
 
-    /// A DotNet variable that holds nothing. Declared `System.Object` raises (DotNetTypeOfDotNet.al:`Unassigned_error`);
-    /// a declared primitive CLR type answers itself (assumption).
+    /// A DotNet variable that holds nothing (tests/al-language-onprem-dotnet/lt-bb-dotnet/BbGetDotNetType.al:233-278, 364, 373):
+    /// a `System.String` answers System.Object; `System.Object`, `System.Char`, `System.Byte`, `System.Int32`,
+    /// `System.Text.StringBuilder`, `System.Type` and `System.Exception` answer their own type. Other declared types are not pinned.
+    /// (`X.GetType()` of the unassigned Object then raises: `dotnet_apply`.)
     fn type_of_unassigned(&mut self, declared: &str) -> Result<Value, Signal> {
         match declared {
-            "System.Object" => {
-                let Some((&object, &frame)) = self.frames.last().zip(self.call_stack.last()) else {
-                    return unsupported("GetDotNetType of an unassigned DotNet variable outside a routine");
-                };
-                let o = &self.engine.program.objects[object];
-                if o.kind != al_ir::ObjKind::Codeunit || o.uncompiled {
-                    return unsupported(
-                        "GetDotNetType of an unassigned DotNet variable outside a codeunit (the object kind's spelling in the error is not pinned)",
-                    );
-                }
-                let routine = o.routines.get(frame.routine).map_or("", |r| r.name.as_str());
-                let message = format!(
-                    "A DotNet variable has not been instantiated. Attempting to call System.Object.GetType in CodeUnit {}: {routine}",
-                    o.name
-                );
-                al_builtins::native::raise(message, "DotNetVariableNotCreated")
-            }
-            "System.String" | "System.Char" | "System.Byte" | "System.Int32"
-                if assumptions::hit(Assumption::DotNetTypeOfUnassignedPrimitive) =>
-            {
-                self.type_named(declared)
-            }
+            "System.String" => self.type_named("System.Object"),
+            "System.Object" | "System.Char" | "System.Byte" | "System.Int32" | "System.Text.StringBuilder" | "System.Type"
+            | "System.Exception" => self.type_named(declared),
             "" => unsupported("GetDotNetType of an unassigned DotNet value whose declared type is not known"),
             other => unsupported(format!(
-                "GetDotNetType of an unassigned DotNet variable declared as {other} (only System.Object is pinned; docs/probes-needed.md)"
+                "GetDotNetType of an unassigned DotNet variable declared as {other} (not pinned; docs/probes-needed.md)"
             )),
         }
     }

@@ -112,6 +112,7 @@ fn fresh_response() -> HttpResponseState {
     HttpResponseState {
         status: 200,
         reason: "OK".into(),
+        reason_unpinned: false,
         content: lib("HttpContent", LibraryValue::HttpContent(content)),
         headers: new_header_list(HeaderKind::Response),
         blocked: false,
@@ -135,8 +136,11 @@ fn with_response<R>(r: Option<&mut Value>, f: impl FnOnce(&mut HttpResponseState
 pub fn fresh_test_response() -> TestHttpResponseState {
     TestHttpResponseState {
         request_failed: false,
+        failure: None,
         status: 200,
         reason: "OK".into(),
+        reason_set: false,
+        reason_unpinned: false,
         success: true,
         blocked: false,
         content: new_content(),
@@ -185,6 +189,9 @@ fn hand_out_headers(arg: Option<&Value>, list: &HttpHeaderList) -> Result<(), Si
     *cell.borrow_mut() = LibraryValue::HttpHeaders(list.clone());
     Ok(())
 }
+
+/// The Content-Length value a WriteFrom of another length left after a read put the header in: `GetValues` of it is refused.
+const UNPINNED_LENGTH: &str = "\u{1}unmeasured Content-Length";
 
 // ------------------------------------------------------------------------------------------------ uri
 
@@ -334,9 +341,9 @@ fn percent_decode(s: &str) -> String {
 }
 
 /// Resolves `path` against the client's base address the way `new Uri(base, path)` does for the forms in use. The second
-/// value says the uri was joined to the base address. A relative path with no base address stays as written: such a
-/// request raises the blocked-request error with no handler bound, and a handler refuses it (`http_send_impl`); the
-/// corpus pins that `orders`, `/orders` and `https://...` all reach the policy check (HttpRelativeRequestPath.al:P168_Get_NoBaseAddress).
+/// value says the join is one the corpus does not pin (assumption http-relative-request-path). A relative path with no base
+/// address stays as written for the forms the corpus pins as reaching the request policy (`is_pinned_relative`); the
+/// session then raises the policy error, or the empty-uri error once a handler is reached (`http_send_impl`).
 fn resolve_request_path(base: &str, path: &str) -> Result<(String, bool), Signal> {
     if path.contains("://") || base.is_empty() {
         return match normalize_uri(path) {
@@ -353,20 +360,78 @@ fn resolve_request_path(base: &str, path: &str) -> Result<(String, bool), Signal
     };
     let path_start = base[after..].find('/').map_or(base.len(), |i| after + i);
     let (origin, base_path) = base.split_at(path_start);
-    let joined = if let Some(rooted) = path.strip_prefix('/') {
-        format!("{origin}/{rooted}")
+    let (rel_path, rest) = path.split_at(path.find(['?', '#']).unwrap_or(path.len()));
+    let merged = if let Some(rooted) = rel_path.strip_prefix('/') {
+        format!("/{rooted}")
+    } else if rel_path.is_empty() {
+        base_path.to_string()
     } else {
         let dir = &base_path[..base_path.rfind('/').map_or(0, |i| i + 1)];
-        format!("{origin}{dir}{path}")
+        format!("{}{rel_path}", if dir.is_empty() { "/" } else { dir })
     };
-    normalize_uri(&joined).map(|u| (u, true)).or_else(|_| invalid_url())
+    let joined = format!("{origin}{}{rest}", remove_dot_segments(&merged));
+    normalize_uri(&joined)
+        .map(|u| (u, !is_pinned_join(base_path, path)))
+        .or_else(|_| invalid_url())
+}
+
+/// The joins al-language-onprem/network/lt-ay-http-handler/AyHttpHandler.al:BaseAddress_RelativePaths_1 and _2 pin (BC 29, a
+/// base address `https://example.invalid/api/v1/`): a plain word, a rooted word, `../` and a word, and a query alone.
+fn is_pinned_join(base_path: &str, path: &str) -> bool {
+    let word = |w: &str| !w.is_empty() && w.chars().all(|c| c.is_ascii_alphanumeric());
+    base_path.ends_with('/')
+        && (word(path)
+            || path.strip_prefix('/').is_some_and(word)
+            || path.strip_prefix("../").is_some_and(word)
+            || path.strip_prefix('?').is_some_and(|q| {
+                q.split_once('=').is_some_and(|(k, v)| word(k) && word(v))
+            }))
+}
+
+/// RFC 3986 section 5.2.4: `.` and `..` segments of a merged path are removed, as `System.Uri` does.
+fn remove_dot_segments(path: &str) -> String {
+    let mut out: Vec<&str> = Vec::new();
+    let segments: Vec<&str> = path.split('/').skip(1).collect();
+    for (i, seg) in segments.iter().enumerate() {
+        let last = i + 1 == segments.len();
+        match *seg {
+            "." => {
+                if last {
+                    out.push("");
+                }
+            }
+            ".." => {
+                out.pop();
+                if last {
+                    out.push("");
+                }
+            }
+            s => out.push(s),
+        }
+    }
+    format!("/{}", out.join("/"))
 }
 
 /// The relative paths the corpus pins as reaching the request policy with no base address: a plain word and a rooted path
-/// (HttpRelativeRequestPath.al:P168_Get_NoBaseAddress `orders`, `/orders`).
+/// (network/lt-http-relative-request/HttpRelativeRequestPath.al:P168_Get_NoBaseAddress `orders`, `/orders`), and `a/b`, `a.b`
+/// and `?q=1` (al-language-onprem/network/lt-ay-http-handler/AyHttpHandler.al:NoBaseAddress_RelativePaths_1 and _2: the
+/// unhandled-request error on BC 27 and 28, where the handler is not reached).
 fn is_pinned_relative(path: &str) -> bool {
     let word = path.strip_prefix('/').unwrap_or(path);
-    !word.is_empty() && word.chars().all(|c| c.is_ascii_alphanumeric())
+    (!word.is_empty() && word.chars().all(|c| c.is_ascii_alphanumeric())) || is_empty_uri_form(path)
+}
+
+/// The no-base-address forms that raise "Invalid URI: The URI is empty." when they reach a handler on BC 29: words joined by
+/// `/` or `.`, and a query alone (AyHttpHandler.al:NoBaseAddress_RelativePaths_1 `a/b`, `a.b`; _2 `?q=1`).
+pub fn is_empty_uri_form(path: &str) -> bool {
+    let words = |t: &str, sep: char| {
+        t.contains(sep) && t.split(sep).all(|w| !w.is_empty() && w.chars().all(|c| c.is_ascii_alphanumeric()))
+    };
+    let query = path.strip_prefix('?').is_some_and(|q| {
+        q.split_once('=')
+            .is_some_and(|(k, v)| !k.is_empty() && [k, v].iter().all(|w| w.chars().all(|c| c.is_ascii_alphanumeric())))
+    });
+    words(path, '/') || words(path, '.') || query
 }
 
 fn invalid_url<T>() -> Result<T, Signal> {
@@ -1295,6 +1360,11 @@ fn headers_get_values(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -
         }
         Ok((find(&b.items, &name).map(|(_, v)| v.clone()), b.kind))
     })??;
+    if values.as_ref().is_some_and(|v| v.iter().any(|x| x == UNPINNED_LENGTH)) {
+        return unsupported(
+            "the Content-Length of an HttpContent that a read measured and a WriteFrom of another length rewrote: what it shows is not measured (docs/probes-needed.md)",
+        );
+    }
     let Some(values) = values else {
         let error = crate::native::AlError {
             message: GET_VALUES_MISSING.into(),
@@ -1577,23 +1647,44 @@ fn send(c: &mut dyn Ctx, method: &str, url: (String, bool), response: Option<&Va
         method: method.to_ascii_uppercase(),
         url: url.0,
         has_secret_uri: false,
-        joined_with_base: url.1,
+        unpinned_join: url.1,
     })?;
     let Some(Value::Library(_, cell)) = response else {
         return unsupported("HttpClient call without a response variable");
     };
-    // A request that failed (a handler answered true: the real send, to an unresolvable host) answers false and leaves
-    // the response a call that got no answer has: status 0 (network/PZHttpHandler.al:HandlerAnsweringTrue_SendsTheRealRequest
-    // pins only that the status is not the one the handler set).
-    let failed = state.request_failed;
+    // A request that failed (a handler answered true and BC asked whether to allow the real send) answers false, sets the
+    // last error and leaves the response as it was: a fresh one reads status 200 OK (al-language-onprem/network/lt-ay-http-handler/
+    // AyHttpHandler.al:Handler_FallThrough_ConnectionRefused, session/PZHttpHandler.al:HandlerAnsweringTrue_SendsTheRealRequest).
+    // Pinned only with the result used and a response variable nothing was written to: anything else is refused.
+    if state.request_failed {
+        if !c.ret_used() {
+            return unsupported(
+                "a failed HttpClient call whose result is not used: whether it raises is not measured (docs/probes-needed.md)",
+            );
+        }
+        if !matches!(&*cell.borrow(), LibraryValue::Empty) {
+            return unsupported(
+                "a failed HttpClient call into a response variable that already holds a response: what it keeps is not measured",
+            );
+        }
+        if let Some((message, code)) = state.failure {
+            c.set_last_error(crate::native::AlError {
+                message,
+                code,
+                ..Default::default()
+            });
+        }
+        return Ok(Value::Boolean(false));
+    }
     *cell.borrow_mut() = LibraryValue::HttpResponse(HttpResponseState {
         status: state.status,
         reason: state.reason,
+        reason_unpinned: state.reason_unpinned,
         content: state.content,
         headers: state.headers,
         blocked: state.blocked,
     });
-    Ok(Value::Boolean(!failed))
+    Ok(Value::Boolean(true))
 }
 
 macro_rules! verb {
@@ -1639,7 +1730,12 @@ fn response_status(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> O
 }
 
 fn response_reason(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Out {
-    with_response(r, |s| Value::Text(s.reason.clone().into()))
+    match with_response(r, |s| (!s.reason_unpinned).then(|| Value::Text(s.reason.clone().into())))? {
+        Some(v) => Ok(v),
+        None => unsupported(
+            "ReasonPhrase of a response whose [HttpClientHandler] set a status and no ReasonPhrase: the phrase BC gives is pinned for 200 and 404 only (docs/probes-needed.md)",
+        ),
+    }
 }
 
 fn response_blocked(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Out {
@@ -1695,7 +1791,11 @@ fn test_response_reason(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value])
         return with_test_response(r, |s| Value::Text(s.reason.clone().into()));
     }
     let t = text(a, 0)?;
-    with_test_response(r, |s| s.reason = t).map(|()| Value::Null)
+    with_test_response(r, |s| {
+        s.reason = t;
+        s.reason_set = true;
+    })
+    .map(|()| Value::Null)
 }
 
 fn test_response_blocked(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
@@ -1893,6 +1993,10 @@ fn cookie_name(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
     if new.is_some() && c.ret_used() {
         crate::assumptions::assume(crate::assumptions::Assumption::CookieSetterResult);
     }
+    // An empty name raises and keeps the old one (network/lt-ay-http/AyCookieSetterExpression.al:CookieSetter_EmptyName, BC 27-29).
+    if new.as_deref() == Some("") {
+        return raise("The 'Name'='' part of the cookie is invalid.", "AL:Cookie");
+    }
     with_cookie(r, |s| {
         if let Some(n) = new {
             s.name = n;
@@ -2060,8 +2164,10 @@ impl HttpContentState {
     /// `WriteFrom` of text or a stream: the body is replaced, the header collection stays the one every `HttpHeaders` handed out
     /// shows, with its Content-Type set to `text/plain; charset=utf-8` (put first when it was removed) and the other headers kept
     /// (lt-http-header-rules/P87Content.al:AddThenWrite_Text, WriteThenAdd_Text, RewriteKeepsHeader, P87ContentType.al:HeaderBeforeWrite,
-    /// P87ContentStream.al, HttpWriteFromStream.al:P100_*). A Content-Length the headers already hold (see `read_as`) shows the new
-    /// body's length (P100_SecondWrite_ReplacesBody; assumption http-content-length-after-read).
+    /// P87ContentStream.al, HttpWriteFromStream.al:P100_*). A Content-Length the headers already hold (see `read_as`) is not
+    /// rewritten: it stays for an empty body (network/lt-ay-http/AyContentLength.al:ContentLength_SecondWriteFrom `empty`
+    /// `Yes[13]`) and for a body of the same length (P100_SecondWrite_ReplacesBody, 5 bytes twice); after a body of another
+    /// length the value is not measured: reading it is refused (`UNPINNED_LENGTH`).
     fn write_body(&mut self, data: Vec<u8>) {
         {
             let mut bag = self.headers.borrow_mut();
@@ -2081,7 +2187,9 @@ impl HttpContentState {
                 .find(|(n, _)| n.eq_ignore_ascii_case("Content-Length"))
             {
                 assume(crate::assumptions::Assumption::HttpContentLengthAfterRead);
-                *v = vec![data.len().to_string()];
+                if !data.is_empty() && v.first() != Some(&data.len().to_string()) {
+                    *v = vec![UNPINNED_LENGTH.into()];
+                }
             }
         }
         self.data = data;

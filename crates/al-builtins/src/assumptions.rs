@@ -387,9 +387,9 @@ registry! {
     },
     HttpRelativeRequestPath => {
         id: "http-relative-request-path",
-        assumed: "HttpClient.Get/Post/Put/Delete/Patch with a path that is not an absolute uri joins it to the client's base address like new Uri(base, path), as a [HttpClientHandler] sees it: a rooted path replaces the base path, any other joins the base path's directory. (That a plain word and a rooted path with no base address, and the forms of P168 with a base address, are blocked without a handler is pinned by network/lt-http-relative-request/HttpRelativeRequestPath.al.)",
+        assumed: "HttpClient.Get/Post/Put/Delete/Patch with a path that is not an absolute uri joins it to the client's base address like new Uri(base, path), as a [HttpClientHandler] sees it: a rooted path replaces the base path, any other joins the base path's directory, and dot segments are removed. Pinned (no assumption) for a base address ending in a slash and a plain word, a rooted word, ../ and a word, or a query alone (al-language-onprem/network/lt-ay-http-handler/AyHttpHandler.al:BaseAddress_RelativePaths_1 and _2, BC 29).",
         tests: "Microsoft and NP Retail code that sets SetBaseAddress and then Get('/orders').",
-        probe: "SetBaseAddress('https://example.invalid/api/v1/') then Get('orders'), Get('/orders'), Get('../x'), Get('?q=1') with a handler printing Request.Path. Also wanted: Get with no base address for 'a/b', 'a.b' and '?q=1' (only a plain word and a rooted word are pinned; the others stay refused). Asked in corpus #650.",
+        probe: "SetBaseAddress('https://example.invalid/api') (no trailing slash) then Get('orders'); SetBaseAddress('https://example.invalid/api/v1/') then Get('a/b'), Get('./x'), Get('a/../b'), Get('../../x'), Get('orders?x=1#f') with a handler printing Request.Path.",
     },
     HttpHeadersAddUsedResult => {
         id: "http-headers-add-used-result",
@@ -399,7 +399,7 @@ registry! {
     },
     HttpContentLengthAfterRead => {
         id: "http-content-length-after-read",
-        assumed: "ReadAs(Text) of a content adds a Content-Length header of the body's length to its headers (the headers handed out before show it); a later WriteFrom sets the new length while the header is there. (PnE12HttpContent.al:WriteFromText_ThenReadAndHeaders reads 5 after WriteFrom('hello') and ReadAs; the P87 and P100 cases show none before a read.)",
+        assumed: "ReadAs(Text) of a content adds a Content-Length header of the body's length to its headers, and the headers handed out before the read show it too. (PnE12HttpContent.al:WriteFromText_ThenReadAndHeaders reads 5 after WriteFrom('hello') and ReadAs; network/lt-ay-http/AyContentLength.al pins the header for headers taken after the read, none after ReadAs(InStream), and that a later WriteFrom('') or a body of the same length leaves it as it was; a body of another length is refused.)",
         tests: "Code that reads a content and then its headers; ReadAs(InStream) is not covered.",
         probe: "WriteFrom('hello'), GetHeaders, Contains('Content-Length') before and after ReadAs(Text) and ReadAs(InStream); WriteFrom a longer text after the read and read the header. Asked in corpus #650.",
     },
@@ -408,18 +408,6 @@ registry! {
         assumed: "HttpHeaders.Add checks a header the way the probes measured: the name is a token (empty: Argument, otherwise Format), the value has no line break, a content header is refused on request, response and client headers, and the typed header values are checked as the probes measured them (network/lt-ay-http/AyHeaderAddResult.al and the P87 files measured a few valid and invalid values of each); a value of another shape follows the same rule, and the headers .NET types that have no rule here (Via, Warning, TE, ...) and the typed headers on a collection the probes did not use are accepted as written.",
         tests: "Every Microsoft or NP Retail test that builds a request with headers (Authorization, Accept, Content-Type, custom X- headers).",
         probe: "network/lt-http/HttpHeaders.al covers the measured part; the case and the content-or-not of all 39 known names are pinned by network/lt-http-header-names-cache-control/HeaderNameCase*.al. Wanted: the value rules of the typed headers other than Cache-Control (Range, If-Match, Content-Disposition, Content-Encoding, Expires and the rest) on request, response and content headers; Cache-Control (directive order, values, merging) is pinned by CacheControl*.al. Asked in corpus #650.",
-    },
-    HttpHandlerEveryVersion => {
-        id: "http-handler-every-version",
-        assumed: "An [HttpClientHandler] answers HttpClient calls on every BC major and environment, except under TestHttpRequestPolicy = BlockOutboundRequests on the majors before the gate HttpHandlerUnderBlockOutboundFrom29, where the request raises the unhandled-request error (pinned by al-language-onprem/session/PZHttpBlock.al:54-57; not assumed under that policy). (The probe PZHttpHandler.al measured it on the newest major; on the two older ones a request was not given to the handler, and NP Retail notes that handlers intercept only on an on-prem tier. ADR-027 owner decision 1: handler-served on all.) The response a handler leaves keeps 200 OK for what it does not set, a handler that answers false or nothing intercepts, a call answers true whatever the status, and a handler that answers true is treated as a failed send (http-true-is-unresolvable).",
-        tests: "NP Retail tests with [HttpClientHandler] mocks (Entria, Adyen, EFT, Azure Key Vault, Ticket Module): about 2,000 tests; 319 in the Microsoft buckets (CrossIntercompany Connector.Send).",
-        probe: "PZHttpHandler.al on the two older majors as an on-prem service tier; a handler that sets only the status 404 (reason phrase?); a handler error. Asked in corpus #650.",
-    },
-    HttpTrueIsUnresolvable => {
-        id: "http-true-is-unresolvable",
-        assumed: "An [HttpClientHandler] that answers true makes the request fail as one to an unresolvable host does (the call answers false, the response keeps status 0), whatever the host. (Pinned for example.invalid by session/PZHttpHandler.al:HandlerAnsweringTrue_SendsTheRealRequest; the runtime never sends, so a host that BC could resolve is treated the same.)",
-        tests: "NP Retail and Microsoft tests whose handler falls through with true and then expects a failed call or a real answer.",
-        probe: "A handler answering true for a resolvable host on an environment without a network: the Boolean, the status and GetLastErrorText. Asked in corpus #650.",
     },
     OpenNewSkipsOnFindRecord => {
         id: "open-new-skips-onfindrecord",
@@ -486,12 +474,6 @@ registry! {
         assumed: "A filter a procedure of the report set on a data item before a run with a request page is not in that run: the page does not show it (pinned) and the filters of the page replace it when the page closes with OK (assumed).",
         tests: "Microsoft tests that call a report procedure which filters a data item and then RunModal the report with its request page.",
         probe: "A report procedure RowDi.SetFilter(Code, 'B*'), RunModal with a handler that clicks OK and a report that counts the rows in OnPreDataItem and OnAfterGetRecord: are the B rows alone read? Asked in corpus #646.",
-    },
-    DotNetTypeOfUnassignedPrimitive => {
-        id: "dotnet-type-of-unassigned-primitive",
-        assumed: "GetDotNetType of a DotNet variable that holds nothing and is declared as System.String, System.Char, System.Byte or System.Int32 answers the declared type (such a variable reads as its default value); the pinned unassigned case, System.Object, raises DotNetVariableNotCreated.",
-        tests: "DotNet Array.StringArray, CharArray, ByteArray and Int32Array (GetDotNetType(DotNetString) and the like on a variable nothing was assigned to), reached through Web Request Helper and the Cryptography Management wrappers.",
-        probe: "An unassigned DotNet String, Char, Byte and Int32 variable: GetDotNetType(X).FullName, and the same for an unassigned DotNet StringBuilder and Type. Asked in corpus #653.",
     },
     ExceptionToStringStackFrames => {
         id: "exception-tostring-stack-frames",

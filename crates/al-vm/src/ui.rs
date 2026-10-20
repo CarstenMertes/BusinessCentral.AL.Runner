@@ -306,10 +306,15 @@ impl Session {
 
     /// Whether an `[HttpClientHandler]` is bound to the running test.
     pub(crate) fn has_http_handler(&self) -> bool {
+        self.has_ui_handler(UiKind::HttpClient)
+    }
+
+    /// Whether a handler of `kind` is bound to the running test.
+    pub(crate) fn has_ui_handler(&self, kind: UiKind) -> bool {
         self.ui_state
             .scope
             .as_ref()
-            .is_some_and(|s| s.handlers.iter().any(|h| h.kind == UiKind::HttpClient))
+            .is_some_and(|s| s.handlers.iter().any(|h| h.kind == kind))
     }
 
     /// Counts the bound `[HttpClientHandler]`s as run, so the end of the test does not report them unexecuted: before BC 29 a

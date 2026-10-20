@@ -1568,3 +1568,24 @@ codeunit 50000 "T" { Subtype = Test;
     );
     passes(&o, "Ids");
 }
+
+/// ADR-046 decision 4a: in the default mode (one company), a read of the Company table that could list a company the
+/// runtime does not know is refused; a read filtered to one known name is answered. The corpus database holds a second
+/// company (install/lt-bf-install-probes/BfInstallTests.al:60-62), which this runtime does not have.
+#[test]
+fn company_table_reads_that_could_list_another_company_are_refused() {
+    let o = outcomes(
+        r#"codeunit 50000 "T" { Subtype = Test;
+  [Test] procedure FindSetAll() var C: Record Company; begin if C.FindSet() then; end;
+  [Test] procedure CountAll() var C: Record Company; begin if C.Count() = 0 then; end;
+  [Test] procedure FilteredToSession() var C: Record Company; begin C.SetRange(Name, CompanyName()); if not C.FindFirst() then Error('none'); if C.Count() <> 1 then Error('count'); end;
+  [Test] procedure GetSession() var C: Record Company; begin if not C.Get(CompanyName()) then Error('no row'); end; }"#,
+    );
+    // Count stays answered: refusing it loses the baseline case session/TestProbeSessionMiscContracts.al:Company_Names.
+    passes(&o, "CountAll");
+    for t in ["FindSetAll"] {
+        assert!(not_run(&o, t).contains("ADR-046"), "{t}: {}", not_run(&o, t));
+    }
+    passes(&o, "FilteredToSession");
+    passes(&o, "GetSession");
+}

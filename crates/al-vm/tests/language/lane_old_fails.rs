@@ -38,8 +38,7 @@ fn clear_of_an_array_of_json_array_is_refused() {
 }
 
 /// `ReadAs(var Text)` after the body was handed out as a stream: a copy of a response's content reads an empty text (network/
-/// lt-db-http-leads/DbHttpContentLeads.al:146), the response's own content the body (:113). A variable written from a text is
-/// not pinned.
+/// lt-db-http-leads/DbHttpContentLeads.al:146), the response's own content the body (:113).
 #[test]
 fn http_content_read_as_text_after_a_stream_was_taken() {
     let r = text(
@@ -52,11 +51,12 @@ fn http_content_read_as_text_after_a_stream_was_taken() {
         "R.Content().WriteFrom('body'); R.Content().ReadAs(S); S.ReadText(Line); R.Content().ReadAs(T); exit(Line + '|' + T);",
     );
     assert_eq!(r, "body|body");
+    // A variable written from a text reads the body again (xml/lt-xml-attr-doc-http-members/P97ContentRead.al:89).
     let r = text(
         "C: HttpContent; S: InStream; T: Text; Line: Text;",
         "C.WriteFrom('body'); C.ReadAs(S); S.ReadText(Line); C.ReadAs(T); exit(Line + '|' + T);",
     );
-    assert!(r.starts_with("refused:"), "{r}");
+    assert_eq!(r, "body|body");
 }
 
 /// `WriteFrom(InStream)` leaves the source stream where it was: it is not at its end
@@ -97,4 +97,24 @@ fn http_request_content_clear_then_get_headers() {
         out(al_testkit::run_in(src, "C", "F")),
         "err1|text/plain; charset=utf-8|YesYesapplication/json|Yes|application/json|text/plain; charset=utf-8"
     );
+}
+
+/// An InStream handed back from a routine whose local owns its bytes reads as empty on BC once the local is out of scope
+/// (streams/lt-dc-stream-leads/DcInStreamScope.al:107-112, :125-126): refused. A stream of a global and one read in scope run.
+#[test]
+fn an_instream_of_a_local_handed_back_is_refused() {
+    let src = r#"table 50101 B { fields { field(1; Id; Integer) { } field(2; Data; Blob) { } } }
+codeunit 50100 C {
+  var G: Record B temporary;
+  local procedure FromLocal() Result: InStream var R: Record B temporary; O: OutStream; begin R.Data.CreateOutStream(O); O.WriteText('x'); R.Data.CreateInStream(Result); end;
+  local procedure FromLocalVar(var S: InStream) var R: Record B temporary; O: OutStream; begin R.Data.CreateOutStream(O); O.WriteText('x'); R.Data.CreateInStream(S); end;
+  local procedure FromGlobal() Result: InStream var O: OutStream; begin G.Data.CreateOutStream(O); O.WriteText('kept'); G.Data.CreateInStream(Result); end;
+  procedure Local(): Text var S: InStream; T: Text; begin S := FromLocal(); S.ReadText(T); exit(T); end;
+  procedure LocalVar(): Text var S: InStream; T: Text; begin FromLocalVar(S); S.ReadText(T); exit(T); end;
+  procedure Global(): Text var S: InStream; T: Text; begin S := FromGlobal(); S.ReadText(T); exit(T); end; }"#;
+    for routine in ["Local", "LocalVar"] {
+        let r = out(al_testkit::run_in(src, "C", routine));
+        assert!(r.contains("out of scope"), "{routine}: {r}");
+    }
+    assert_eq!(out(al_testkit::run_in(src, "C", "Global")), "kept");
 }

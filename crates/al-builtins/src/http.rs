@@ -107,7 +107,6 @@ fn fresh_response() -> HttpResponseState {
     // `freshKeys` is `0:`); the first WriteFrom gives it one.
     let content = HttpContentState {
         headers: new_header_list(HeaderKind::Content),
-        of_response: true,
         ..HttpContentState::default()
     };
     HttpResponseState {
@@ -1474,13 +1473,6 @@ fn write_from_stream(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) ->
     .map(|()| Value::Null)
 }
 
-/// What `ReadAs(var Text)` gives once the body was handed out as a stream (see `read_as`).
-enum Taken {
-    No,
-    Empty,
-    Unpinned,
-}
-
 /// `ReadAs(var Text)` gives the body back, UTF-8 decoded; a content nobody wrote to reads as an empty text and
 /// answers true (misc/W4XmlJsonHttp.al:ReadAs_FreshContent). On the content a request has when none was set, three shapes are
 /// pinned:
@@ -1526,17 +1518,7 @@ fn read_as(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
                 None => bag.items.push(("Content-Length".into(), len)),
             }
         }
-        let own_response = s.of_response && !s.copied;
-        let taken = match (
-            s.stream_taken,
-            own_response && !s.from_stream,
-            !own_response && (s.copied || s.from_stream),
-        ) {
-            (false, _, _) => Taken::No,
-            (true, true, _) => Taken::No,
-            (true, _, true) => Taken::Empty,
-            (true, _, _) => Taken::Unpinned,
-        };
+        let taken = s.stream_taken && (s.copied || s.from_stream);
         (s.data.clone(), s.uninitialized, s.copied, charset, taken)
     })?;
     if uninit {
@@ -1551,20 +1533,12 @@ fn read_as(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
             ),
         };
     }
-    // Once the body was handed out as a stream (and read to its end): the response's own content still reads the body
-    // (network/lt-db-http-leads/DbHttpContentLeads.al:113), a copy of a content (:146) and a content written from a stream (:336)
-    // read an empty text. Any other content is not pinned.
-    match taken {
-        Taken::No => {}
-        Taken::Empty => {
-            a[0] = Value::Text(String::new().into());
-            return Ok(Value::Boolean(true));
-        }
-        Taken::Unpinned => {
-            return unsupported(
-                "HttpContent.ReadAs(Text) after ReadAs(InStream) on a content that is neither a response's own, a copy nor written from a stream (not pinned)",
-            );
-        }
+    // Once the body was handed out as a stream (and read to its end): a copy of a content (network/lt-db-http-leads/
+    // DbHttpContentLeads.al:146) and a content written from a stream (:336) read an empty text; the response's own content
+    // (:113) and a variable written from a text (xml/lt-xml-attr-doc-http-members/P97ContentRead.al:89) still read the body.
+    if taken {
+        a[0] = Value::Text(String::new().into());
+        return Ok(Value::Boolean(true));
     }
     // The body is read with the charset of the Content-Type header (lt-http-header-rules/P87ContentType.al:ReadAsIgnoresCharsetHeader,
     // whatever its name says: iso-8859-1 reads each byte as a character, utf-16 reads little-endian units, a lone last byte is U+FFFD;
@@ -2189,7 +2163,6 @@ impl HttpContentState {
             stream_taken: self.stream_taken,
             written: self.written,
             copied: true,
-            of_response: self.of_response,
             from_stream: self.from_stream,
         }
     }

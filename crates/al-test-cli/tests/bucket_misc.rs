@@ -55,6 +55,19 @@ fn recall_after_a_handled_send_does_not_throw() {
     ));
 }
 
+// pages/lt-ca-odd-667/CaNotificationTests.al:14-38: a [SendNotificationHandler(true)] or [RecallNotificationHandler(true)]
+// that never runs lets the test pass (HandlerIsOptional).
+#[test]
+fn an_optional_notification_handler_that_never_fires_passes() {
+    passes(&format!(
+        "{HELPERS}
+        [Test] [HandlerFunctions('OptSend,OptRecall')]
+        procedure NothingSent() begin end;
+        [SendNotificationHandler(true)] procedure OptSend(var Notif: Notification): Boolean begin exit(true); end;
+        [RecallNotificationHandler(true)] procedure OptRecall(var Notif: Notification): Boolean begin exit(true); end;"
+    ));
+}
+
 // A declared handler that never fired fails the test (handlers/TestPageQueryCloseMessageHandler_Tests.al:51).
 #[test]
 fn a_send_notification_handler_that_never_fires_fails_the_test() {

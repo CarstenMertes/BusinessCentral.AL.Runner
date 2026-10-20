@@ -65,7 +65,7 @@ const LINK_GROUP: i32 = 4;
 /// The group of the filters a `DataItemTableView` gives its item. They stay in force next to the link filter (group `LINK_GROUP`),
 /// on the link field too: the child shows the rows that satisfy both (report/lt-f3-reports/F3ReportTests.al:68 `LinkFilter_InItemView`
 /// and :116 `LinkFilter_CallerViewOverItemView`). Not pinned: which group number BC gives them (nothing reads it).
-const ITEM_VIEW_GROUP: i32 = 5;
+pub(crate) const ITEM_VIEW_GROUP: i32 = 5;
 
 /// Which method started the run: they differ in whether the request page can open.
 #[derive(Clone, Copy, PartialEq, Eq)]

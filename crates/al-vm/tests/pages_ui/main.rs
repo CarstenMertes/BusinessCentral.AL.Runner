@@ -9,6 +9,7 @@ mod flowfield_drilldown;
 mod gone_row;
 mod pageext;
 mod pages;
+mod part_host_move;
 mod parts;
 mod row_window;
 mod run_record_group2;

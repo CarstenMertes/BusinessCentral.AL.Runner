@@ -207,6 +207,12 @@ Each step is built only after the probes it names have landed and the submodule 
   Company table (`session/TestProbeSessionMiscContracts.al:705`), and `TestInstall_CompanyGetConsultsTheKeyDuringInstall`
   reads what the install code's `Comp.Get('NO SUCH COMPANY')` answered (`install/TestInstallSeeder.al:72`,
   `install/TestInstallEnvVisible_Tests.al:64`). Expected: `EventLog_InstallRowCompany` passes on 27, 28 and 29.
+- **Interim, until step A (2026-10-20):** the runtime does not run "Extension Triggers" install subscribers. Each
+  subscriber of a workspace app is listed by `events::Registry::install_subscribers`, and `run_install_codeunits`
+  (`al-testrun/src/runtime/blocked.rs`) treats it as an install routine that could not run: a test that touches a table
+  the subscriber writes is not run, with the reason. This turns the two PeV tests and
+  `ExtensionTriggers_PerDatabaseAndPerCompany_Order` (`install/lt-av-install-order/AvInstallOrder.al:71`) from a wrong
+  answer (no rows) into not run. Step A replaces it.
 - **Not in this ADR:** `EventLog_RowsWrittenBeforeTheTestSessionStarted` also needs Company Triggers `OnCompanyOpen`
   and `OnCompanyOpenCompleted` raised at the start of the test session (`PeVTests.al:297`). No code raises them today.
   That is an additive change with its own pins.

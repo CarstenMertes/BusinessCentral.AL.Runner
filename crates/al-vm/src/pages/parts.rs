@@ -9,6 +9,17 @@ use al_builtins::filter::{FieldFilter, FilterExpr};
 /// (corpus handlers/TestPagePartLinkFilterGroup.al: `FilterGroup(4)` answers the link).
 pub(super) const LINK_GROUP: i32 = 4;
 
+/// Which parts [`Session::sync_parts_with`] re-points, and how they read.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Sync {
+    /// The host opens: hidden parts read too.
+    Open,
+    /// Every visible part, first to last.
+    Plain,
+    /// The host moved with First, Last, Next or Previous: only the linked parts, hidden ones included.
+    Move { backward: bool },
+}
+
 impl Session {
     /// Sets `open = false` on `st` and on the pages it shows as parts.
     pub(super) fn mark_closed(&mut self, st: &St) {
@@ -288,23 +299,62 @@ impl Session {
     /// Reads the link of every part off the host's current row and loads the parts' first rows.
     /// Providers go first: a part linked through `Provider` reads the provider's current row.
     pub(super) fn sync_parts(&mut self, st: &St) -> Result<(), Signal> {
-        self.sync_parts_with(st, false)
+        self.sync_parts_with(st, Sync::Plain)
     }
 
     /// [`Self::sync_parts`] as the host opens: the parts hidden by a Visible expression read their rows too, in the order of the
     /// controls (pages/lt-page-filtergroup-assumptions/P99InvisiblePart.al:P99_FlagFalseAtOpen).
     pub(super) fn sync_parts_at_open(&mut self, st: &St) -> Result<(), Signal> {
-        self.sync_parts_with(st, true)
+        self.sync_parts_with(st, Sync::Open)
     }
 
-    fn sync_parts_with(&mut self, st: &St, opening: bool) -> Result<(), Signal> {
+    /// [`Self::sync_parts`] after the host moved to another row with First, Last, Next or Previous. Only the parts with a
+    /// SubPageLink read their rows again; a part without one keeps what it shows and runs no trigger
+    /// (pages/lt-part-reads/PartReadsOpen.al:269-283 and :336-379, `-Plain` and `-View` empty;
+    /// pages/lt-part-subpageview-filter/PartViewFilter.al:381 `next-GtOnly`; types/lt-conversions-hidden-parts-doctype/
+    /// P142HiddenPartArea.al:386, :420). A linked part hidden by a Visible expression reads too (PartReadsOpen.al `-Hidden`).
+    /// After Previous and First the linked parts read their rows last to first, once each (PartReadsOpen.al:358-379: 1, 2
+    /// and 3 rows; PartViewFilter.al:387-389); after Next and Last first to last, then the first row once more.
+    pub(super) fn sync_parts_after_move(&mut self, st: &St, backward: bool) -> Result<(), Signal> {
+        self.sync_parts_with(st, Sync::Move { backward })
+    }
+
+    fn sync_parts_with(&mut self, st: &St, how: Sync) -> Result<(), Signal> {
         let engine = self.engine();
         let page = page_of(&engine, st);
+        let opening = how == Sync::Open;
         let mut parts = st.borrow().parts.clone();
-        if opening {
+        if opening || matches!(how, Sync::Move { .. }) {
             let hidden = st.borrow().hidden_parts.clone();
-            parts.extend(hidden.into_iter().filter(|(i, _)| !self.control_eliminated(st, *i)));
+            parts.extend(
+                hidden
+                    .into_iter()
+                    .filter(|(i, c)| !self.control_eliminated(st, *i) && (opening || c.borrow().open)),
+            );
             parts.sort_by_key(|(i, _)| *i);
+        }
+        if let Sync::Move { .. } = how {
+            let mut linked = Vec::new();
+            for (i, child) in parts {
+                let entries = page.controls[i]
+                    .part_link
+                    .as_ref()
+                    .map(|l| &l.entries[..])
+                    .unwrap_or(&[]);
+                if entries.is_empty() {
+                    continue;
+                }
+                // A part linked by `const` and `filter` terms only reads nothing off the host's row; whether it reads its rows
+                // again after a move is not pinned.
+                let reads_a_field = entries.iter().any(|e| matches!(e, ir::LinkEntry::Field(..)));
+                if !reads_a_field && child.borrow().open {
+                    return unsupported(
+                        "a host move with a part linked by const or filter terms only (whether it reads its rows again is not pinned)",
+                    );
+                }
+                linked.push((i, child));
+            }
+            parts = linked;
         }
         let has_provider = |i: usize| {
             page.controls[i]
@@ -316,11 +366,90 @@ impl Session {
             for (i, child) in &parts {
                 if has_provider(*i) == pass {
                     if opening && self.view_names_link_field(st, *i, child)? {
-                        child.borrow_mut().read_backwards = true;
+                        child.borrow_mut().read_backwards = Some(al_builtins::value::ReadBackwards::AtOpen);
+                    }
+                    if let Sync::Move { backward: true } = how {
+                        // The pinned parts walk the table; a part with its own OnFindRecord or OnNextRecord is not pinned.
+                        if self.declares(child, "onfindrecord") || self.declares(child, "onnextrecord") {
+                            return unsupported(
+                                "a host moved back with a linked part that declares OnFindRecord or OnNextRecord (reads not pinned)",
+                            );
+                        }
+                        child.borrow_mut().read_backwards = Some(al_builtins::value::ReadBackwards::AfterMove);
                     }
                     self.sync_part(st, *i, child)?;
+                    // A part that found no row to fill does not carry the order to a later fill.
+                    child.borrow_mut().read_backwards = None;
                 }
             }
+        }
+        Ok(())
+    }
+
+    /// The open parts of `st` (shown, and hidden by a Visible expression) whose `CurrPage.Update` waits for its refresh.
+    pub(super) fn parts_waiting_refresh(&self, st: &St) -> Vec<(usize, St)> {
+        let s = st.borrow();
+        s.parts
+            .iter()
+            .chain(s.hidden_parts.iter())
+            .filter(|(_, c)| c.borrow().open && c.borrow().refresh)
+            .cloned()
+            .collect()
+    }
+
+    /// The host's own code (its OnAfterGetCurrRecord as it opens or moves) called a procedure of a part that ran
+    /// `CurrPage.Update`: once the host's parts have followed its row, such a part fills its rows again from the first, as
+    /// it does when it opens (pages/lt-hidden-part-currpage/HiddenPartCurrPageUpdateFalse.al:196-198 and
+    /// HiddenPartCurrPageUpdateTrue.al:196-198: `part-OnAfterGetRecord:1 | :2 | :1` after `host-end`, twice at open, once
+    /// after Next). `before` are the parts that waited already before the host's code ran. Pinned for a part without a
+    /// SubPageLink hidden by a Visible expression, standing on no row typed into; any other part is refused.
+    /// `pinned` is false for a host move other than Next; `skipped_unlinked` says the move left the parts without a link alone.
+    pub(super) fn refresh_parts_asked_by_host(
+        &mut self,
+        st: &St,
+        before: &[(usize, St)],
+        pinned: bool,
+        skipped_unlinked: bool,
+    ) -> Result<(), Signal> {
+        let asked = self.parts_waiting_refresh(st);
+        if asked.is_empty() {
+            return Ok(());
+        }
+        let engine = self.engine();
+        let page = page_of(&engine, st);
+        for (i, child) in asked {
+            let newly = !before.iter().any(|(b, _)| *b == i);
+            let hidden = st.borrow().hidden_parts.iter().any(|(h, _)| *h == i);
+            let linked = page.controls[i]
+                .part_link
+                .as_ref()
+                .is_some_and(|l| !l.entries.is_empty() || l.provider.is_some());
+            let (draft, dirty) = {
+                let c = child.borrow();
+                (c.draft, c.dirty)
+            };
+            let shape_pinned = newly
+                && pinned
+                && hidden
+                && !linked
+                && !draft
+                && !dirty
+                && !self.declares(&child, "onfindrecord")
+                && !self.declares(&child, "onnextrecord");
+            if !shape_pinned {
+                // Kept, not pinned: before this refresh was pinned such a request was not carried out on its own. Refusing it
+                // loses baseline cases, so the earlier behavior stays: at open nothing more happens (handlers/
+                // TestPageActionRunObjectKindsPrecompiled_Tests.al:101, Base Application's Receivables-Payables); after a
+                // host move that left a shown part without a link alone, that part fills again, as every move made it do
+                // before (crates/al-test-cli/tests/list_read_order.rs, Microsoft's ERM Base Calendar 134233).
+                if skipped_unlinked && !hidden && !linked {
+                    child.borrow_mut().refresh = false;
+                    self.sync_part(st, i, &child)?;
+                }
+                continue;
+            }
+            child.borrow_mut().refresh = false;
+            self.sync_part(st, i, &child)?;
         }
         Ok(())
     }
@@ -369,6 +498,98 @@ impl Session {
             }
         }
         Ok(found)
+    }
+
+    /// Whether a part linked on host field `pos` links a field whose TableRelation names a table other than the host's.
+    fn part_link_relates_elsewhere(&self, st: &St, pos: usize) -> Result<bool, Signal> {
+        let engine = self.engine();
+        let page = page_of(&engine, st);
+        let host_table = self.table(&self.page_rec(st))?.name.to_ascii_lowercase();
+        let parts = st.borrow().parts.clone();
+        for (i, child) in &parts {
+            let Some(link) = page.controls[*i].part_link.as_ref() else {
+                continue;
+            };
+            if link.provider.is_some() || !self.has_source(child) {
+                continue;
+            }
+            let ti = self.page_rec(child).borrow().table as usize;
+            let Some(table) = engine.program.objects[ti].table.as_ref() else {
+                continue;
+            };
+            for e in &link.entries {
+                if let ir::LinkEntry::Field(pf, hf) = e
+                    && *hf == pos
+                    && table.fields[*pf]
+                        .relation_table
+                        .as_ref()
+                        .is_some_and(|t| *t != host_table)
+                {
+                    return Ok(true);
+                }
+            }
+        }
+        Ok(false)
+    }
+
+    /// Refuses a call on a page, or on a part of a page, that reached a state whose behavior is not pinned.
+    pub(super) fn refuse_unpinned_state(&self, st: &St) -> Result<(), Signal> {
+        let host = st.borrow().host.as_ref().and_then(|(h, _)| h.upgrade());
+        let why = st
+            .borrow()
+            .unpinned_state
+            .clone()
+            .or_else(|| host.and_then(|h| h.borrow().unpinned_state.clone()));
+        match why {
+            Some(why) => unsupported(why),
+            None => Ok(()),
+        }
+    }
+
+    /// A write into part `child` moves the focus out of its sibling parts: a row typed into one of them is saved first
+    /// (pages/lt-part-link-unsaved-host/PagePartLinkUnsavedHost.al:242, the line typed into LinesG is stored once LinesH is
+    /// written, LinesH's own line is not).
+    pub(super) fn save_sibling_parts(&mut self, child: &St) -> Result<(), Signal> {
+        let Some(host) = child.borrow().host.as_ref().and_then(|(h, _)| h.upgrade()) else {
+            return Ok(());
+        };
+        let siblings: Vec<St> = host
+            .borrow()
+            .parts
+            .iter()
+            .map(|(_, c)| c.clone())
+            .filter(|c| !Rc::ptr_eq(c, child) && c.borrow().open && c.borrow().dirty)
+            .collect();
+        for sibling in siblings {
+            self.save_row(&sibling)?;
+        }
+        Ok(())
+    }
+
+    /// A write into part `child` (SetValue, New) while its host stands on a typed row that is not stored yet: the host row is
+    /// saved first, and the parts link to it (pages/lt-part-line-before-host-key/PartLineBeforeHostKey.al:406
+    /// `HP.OnInsertRecord:D2 | H.OnInsert:D2 | L.OnValidate(Document No.):D2 | ...` for New(); handlers/
+    /// TestPageOpenNewPartLink.al:100 OpenNew_NumberTyped_PartWriteCarriesTheNumber for a write).
+    pub(super) fn save_unsaved_host_first(&mut self, child: &St) -> Result<(), Signal> {
+        let Some(host) = child.borrow().host.as_ref().and_then(|(h, _)| h.upgrade()) else {
+            return Ok(());
+        };
+        let unsaved = {
+            let h = host.borrow();
+            h.open && h.host.is_none() && h.draft && !h.draft_stored && h.dirty && h.cursor != Cursor::None
+        };
+        if !unsaved || !self.has_source(&host) {
+            return Ok(());
+        }
+        // A new host whose fields were typed before its key: what BC stores then is not known (pages/
+        // lt-new-line-stamps-filters/NewLineStampsFilters.al:264 PartB_OpenNewHeader_TypeThenNo stores the line with a
+        // blank link though the key was typed; the rule is not found).
+        if host.borrow().typed_before_key {
+            return unsupported(
+                "a part written into while its new host row had a field typed before its key (what is stored is not pinned)",
+            );
+        }
+        self.save_row(&host)
     }
 
     /// After part `child` moved, the parts that take their link from it follow.
@@ -444,7 +665,14 @@ impl Session {
                         // The row the link reads, else the type's blank value: a page that shows
                         // no row links to nothing (corpus testpart/TestPartProviderMove.al:
                         // ProviderLinkedPart_HostMovesToAnEmptyProvider_ReadsBlank).
-                        let value = if src_page.borrow().cursor == Cursor::None {
+                        // A host row that is not stored yet links to nothing either, also after its key was typed: the
+                        // part's blank line takes the blank value and validates it (pages/lt-part-line-before-host-key/
+                        // PartLineBeforeHostKey.al:398, :400 `H.OnValidate(No.):D2 | L.OnValidate(Document No.): | ...`).
+                        let unsaved_host = {
+                            let p = src_page.borrow();
+                            p.host.is_none() && p.draft && !p.draft_stored
+                        };
+                        let value = if src_page.borrow().cursor == Cursor::None || unsaved_host {
                             let host_ty = engine.program.objects[*src_table]
                                 .table
                                 .as_ref()
@@ -511,8 +739,56 @@ impl Session {
         let ir::Binding::Field(pos) = page.controls[control].binding else {
             return Ok(());
         };
+        // A key field typed on a host row that is stored (a new row the host inserted when a field outside the key was
+        // typed first): BC keeps the parts' blank lines on the old link value (pages/lt-new-line-stamps-filters/
+        // NewLineStampsFilters.al:264 PartB_OpenNewHeader_TypeThenNo, the line is stored with a blank "Document No.");
+        // the rule is not found, so it is refused.
+        let key_of_stored_row = {
+            let s = st.borrow();
+            !s.draft && s.cursor == Cursor::Row
+        } && self.has_source(st)
+            && self.table(&self.page_rec(st))?.keys[0].contains(&pos)
+            && st.borrow().typed_before_key;
+        // A new Card row whose key is typed while two or more parts link on it: BC stores the row at once
+        // (pages/lt-part-link-unsaved-host/PagePartLinkUnsavedHost.al:178, :201, :218 `a_hosts = 1`), and then shows a blank key
+        // and parts without rows (:181-183); what the page does after that is not understood (the shape conflicts with
+        // pages/lt-part-line-before-host-key/PartLineBeforeHostKey.al:401, a Document page that stores nothing). The row is
+        // stored, and every later call on the page or its parts but Close is refused.
+        let linked_on_key = parts_linked_on(page, &st.borrow().parts, pos);
+        let new_card = {
+            let s = st.borrow();
+            s.host.is_none() && s.draft && !s.draft_stored && s.cursor != Cursor::None
+        } && matches!(
+            self.engine.object_facts[st.borrow().object as usize].page_type,
+            Some(al_ir::PageType::Card)
+        ) && self.has_source(st)
+            && self.table(&self.page_rec(st))?.keys[0].contains(&pos);
+        // Only the shape of that file: one of the parts links a field whose TableRelation names another table than the
+        // host's (its "Group Code"). A Card whose two parts both relate to the host (pages/lt-new-line-stamps-filters/
+        // NewLineStampsFilters.al:289 PartB_OpenNewHeader_NoThenType) carries on as before.
+        let foreign_relation = new_card && linked_on_key >= 2 && self.part_link_relates_elsewhere(st, pos)?;
+        if foreign_relation {
+            st.borrow_mut().dirty = true;
+            self.save_row(st)?;
+            st.borrow_mut().unpinned_state = Some(
+                "a new Card row whose key was typed while two parts link on it (what the page shows afterwards is not pinned)"
+                    .into(),
+            );
+            return Ok(());
+        }
         let parts = st.borrow().parts.clone();
         for (i, child) in &parts {
+            if key_of_stored_row
+                && page.controls[*i].part_link.as_ref().is_some_and(|l| {
+                    l.entries
+                        .iter()
+                        .any(|e| matches!(e, ir::LinkEntry::Field(_, hf) if *hf == pos))
+                })
+            {
+                return unsupported(
+                    "a key field typed on a new host row stored after a field outside its key was typed, with parts linked on it (not pinned)",
+                );
+            }
             let reads = page.controls[*i].part_link.as_ref().is_some_and(|l| {
                 l.provider.is_none()
                     && l.entries
@@ -590,4 +866,19 @@ impl Session {
         }
         Ok(())
     }
+}
+
+/// How many of `parts` take a SubPageLink value from host field `pos`.
+fn parts_linked_on(page: &ir::Page, parts: &[(usize, St)], pos: usize) -> usize {
+    parts
+        .iter()
+        .filter(|(i, _)| {
+            page.controls[*i].part_link.as_ref().is_some_and(|l| {
+                l.provider.is_none()
+                    && l.entries
+                        .iter()
+                        .any(|e| matches!(e, ir::LinkEntry::Field(_, hf) if *hf == pos))
+            })
+        })
+        .count()
 }

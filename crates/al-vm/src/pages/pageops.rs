@@ -164,6 +164,25 @@ impl Session {
 
     pub(super) fn test_page_op(&mut self, method: PageOp, st: &St, args: &mut [Value]) -> Result<Value, Signal> {
         let name = method.method();
+        if name != PageMethod::Close {
+            self.refuse_unpinned_state(st)?;
+        }
+        // The row the host stands on before a First or Last, to tell a move from a stay (see below).
+        let before = if matches!(name, PageMethod::First | PageMethod::Last)
+            && st.borrow().host.is_none()
+            && !st.borrow().parts.is_empty()
+            && st.borrow().open
+            && self.has_source(st)
+        {
+            Some(self.row_key(&self.page_rec(st))?)
+        } else {
+            None
+        };
+        let waiting = if st.borrow().host.is_none() && !st.borrow().parts.is_empty() {
+            self.parts_waiting_refresh(st)
+        } else {
+            Vec::new()
+        };
         let r = match self.test_page_op_inner(method, st, args) {
             // `CurrPage` and a `Page` variable are the page's own code, not a TestPage the test closed: BC does not raise
             // "The TestPage is not open." for them. What a method of a page that is not open (any more) does is not pinned, so
@@ -207,7 +226,29 @@ impl Session {
             if st.borrow().host.is_some() {
                 self.sync_dependents(st)?;
             } else {
-                self.sync_parts(st)?;
+                // First and Last that move the host, Next and Previous: only the linked parts follow
+                // (`sync_parts_after_move`, pages/lt-part-reads/PartReadsOpen.al:269-283, :336-379). What a First or
+                // Last that stays on the row does, and what GoToKey, GoToRecord, the Find*Field methods and New do
+                // to a part without a link, is not pinned: they keep re-reading every part as before.
+                let stayed = match &before {
+                    Some(key) => self.has_source(st) && Self::same_key(&self.row_key(&self.page_rec(st))?, key),
+                    None => false,
+                };
+                let skipped_unlinked = match name {
+                    PageMethod::Next | PageMethod::Previous => {
+                        self.sync_parts_after_move(st, name == PageMethod::Previous)?;
+                        true
+                    }
+                    PageMethod::First | PageMethod::Last if before.is_some() && !stayed => {
+                        self.sync_parts_after_move(st, name == PageMethod::First)?;
+                        true
+                    }
+                    _ => {
+                        self.sync_parts(st)?;
+                        false
+                    }
+                };
+                self.refresh_parts_asked_by_host(st, &waiting, name == PageMethod::Next, skipped_unlinked)?;
             }
         }
         Ok(r)
@@ -816,6 +857,7 @@ impl Session {
             }
             PageMethod::New => {
                 self.require_open(st)?;
+                self.save_unsaved_host_first(st)?;
                 self.new_record(st)
             }
             PageMethod::ValidationErrorCount => {

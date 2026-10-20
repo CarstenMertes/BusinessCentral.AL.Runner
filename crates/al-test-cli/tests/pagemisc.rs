@@ -899,10 +899,11 @@ fn set_table_view_after_set_record_keeps_the_record_the_page_opens_on() {
 }
 
 // Base Application's Allocation Account page is a ListPlus card with a part linked on its key. A test opens it with OpenNew and types the
-// key: the part's blank line must not validate the link against a host row that is not saved yet (34 Tests-ERM tests failed
-// with "contains a value that cannot be found in the related table"). Assumed, part-link-not-validated-for-unsaved-host.
+// key: while the host row is not saved, the part's blank line links to a blank value, so its table relation finds nothing to
+// refuse (34 Tests-ERM tests failed with "contains a value that cannot be found in the related table"). Pinned by
+// pages/lt-part-line-before-host-key/PartLineBeforeHostKey.al:398, :400.
 #[test]
-fn a_part_linked_to_a_new_unsaved_host_does_not_validate_the_link_when_the_key_is_typed() {
+fn a_part_linked_to_a_new_unsaved_host_links_to_a_blank_value_when_the_key_is_typed() {
     passes(&format!(
         "{HELPERS}
         [Test]

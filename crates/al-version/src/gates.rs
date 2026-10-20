@@ -150,7 +150,9 @@ pub enum Gate {
     /// Report/Field metadata rows, Media import, BigInteger into an Enum field. Corpus bump 30 adds the RDLC Pdf output tests,
     /// asserted only below BC 29 (`#if not BC29PLUS`): the BC 29 Linux container has no renderer, which is not BC behavior
     /// (report/lt-am-rdlc-output/AMRdlcOutput.al:9-11). Corpus bump 34 lifts the RDLC holds of
-    /// report/lt-ci-report-leads/CiReportRunLeads.al, which then has no guard left. Not consumed yet.
+    /// report/lt-ci-report-leads/CiReportRunLeads.al, which then has no guard left. Corpus bump 36 asserts the control add-in
+    /// error of pages/lt-f3-pages/F3ValidationAddinFilter.al:409,447 only from BC 29, the one major checked on Windows; BC 27
+    /// and 28 stay held on Linux there (BC 27.5 gives a client callback error, :417-420). Not consumed yet.
     ProbedValuesDifferFrom29,
     /// `Base64Convert.ToBase64` of a Text with `TextEncoding::Windows` or `MSDos` and no code page gives the code page 1252
     /// bytes from BC 28 (`äöü` is `5Pb8`); before, the UTF-8 bytes (`w6TDtsO8`) (types/PVBase64.al, corpus bump 13).
@@ -770,6 +772,10 @@ impl Gate {
                 Evidence {
                     file: "report/lt-report-dataset-header/ReportDatasetHeaderRaw.al",
                     lines: "192,197,202,207,212,217,222,227,232,237,242",
+                },
+                Evidence {
+                    file: "pages/lt-f3-pages/F3ValidationAddinFilter.al",
+                    lines: "409,447",
                 },
             ],
             Gate::Base64TextIsWindows1252From28 => &[Evidence {

@@ -182,8 +182,30 @@ impl Session {
         Ok(parts.join("\t"))
     }
 
-    /// `FieldCaption` / `FieldRef.Caption`: refused for a system field whose caption the corpus does not pin.
-    pub(crate) fn field_caption_checked(&self, t: &TableDef, pos: usize) -> Result<String, Signal> {
+    /// `FieldCaption` / `FieldRef.Caption`: refused for a system field whose caption the corpus does not pin. `rec` is the
+    /// record whose caption is read; without one (a query column) a CaptionClass expression is refused.
+    pub(crate) fn field_caption_checked(
+        &mut self,
+        t: &TableDef,
+        pos: usize,
+        rec: Option<&Rc<RefCell<RecordState>>>,
+    ) -> Result<String, Signal> {
+        match self.field_caption_written(t, pos)? {
+            Ok(caption) => Ok(caption),
+            // A CaptionClass that is an expression runs with the record, and its `3,<text>` reads as <text>
+            // (pageext/lt-page-ext-properties/TableExtCaptionClass.al:56-74, BP_TableExtCaptionClass_ProcedureCall :124-149).
+            Err(expr) => {
+                let class = self.field_caption_class_value(t, pos, rec, &expr)?;
+                expression_caption(&t.fields[pos].name, &class)
+            }
+        }
+    }
+
+    /// The caption of field `pos` that its declaration gives, or `Err` with its CaptionClass when that is an expression.
+    pub(crate) fn field_caption_written(&self, t: &TableDef, pos: usize) -> Result<Result<String, String>, Signal> {
+        if let Some(why) = self.field_caption_class_refusal(t, pos) {
+            return unsupported(why);
+        }
         let has_caption = self.field_property(t, pos, "Caption").is_some();
         if t.fields[pos].id >= 2_000_000_000 && !has_caption {
             return unsupported(format!("the caption of system field {}", t.fields[pos].name));
@@ -193,26 +215,61 @@ impl Session {
         // Table_NoSubscriber f01..f14, Table_Log_* and Table_Resolve_* with no event call, BC 29). A non-numeric area is
         // the platform's event and not pinned for FieldCaption: refused.
         let declared = self.field_property(t, pos, "CaptionClass");
-        // A CaptionClass that is an expression (a procedure call of a tableextension, pageext/lt-page-ext-properties/
-        // TableExtCaptionClass.al:56-74, :124-134) is not evaluated yet.
         if let Some(v) = declared.as_ref().filter(|v| string_literal(v).is_none()) {
-            return unsupported(format!(
-                "the caption of field {} whose CaptionClass is the expression `{}` (table field property expressions are not evaluated yet)",
-                t.fields[pos].name,
-                v.trim()
-            ));
+            return Ok(Err(v.clone()));
         }
         if let Some(class) = declared.and_then(|v| string_literal(&v)) {
             return match class.split_once(',') {
-                Some(("3", "")) => Ok(self.field_caption(t, pos)),
-                Some(("3", rest)) => Ok(rest.to_string()),
-                Some((area, _)) if area.is_empty() || area.trim().parse::<u32>().is_ok() => Ok(class),
+                Some(("3", "")) => Ok(Ok(self.field_caption(t, pos))),
+                Some(("3", rest)) => Ok(Ok(rest.to_string())),
+                Some((area, _)) if area.is_empty() || area.trim().parse::<u32>().is_ok() => Ok(Ok(class)),
                 _ => unsupported(format!(
                     "FieldCaption of a field whose CaptionClass `{class}` has an area no built-in resolver claims (not pinned)"
                 )),
             };
         }
-        Ok(self.field_caption(t, pos))
+        Ok(Ok(self.field_caption(t, pos)))
+    }
+
+    /// Why a read of field `pos`'s caption is refused (see `ir::Field::caption_class_refusal`).
+    pub(crate) fn field_caption_class_refusal(&self, t: &TableDef, pos: usize) -> Option<String> {
+        self.engine.program.objects[t.object as usize]
+            .table
+            .as_ref()
+            .and_then(|s| s.fields.get(pos))
+            .and_then(|f| f.caption_class_refusal.clone())
+    }
+
+    /// The text field `pos`'s CaptionClass expression `expr` gives, run with `rec` as Rec (see `field_caption_checked`).
+    pub(crate) fn field_caption_class_value(
+        &mut self,
+        t: &TableDef,
+        pos: usize,
+        rec: Option<&Rc<RefCell<RecordState>>>,
+        expr: &str,
+    ) -> Result<String, Signal> {
+        let routine = self.engine.program.objects[t.object as usize]
+            .table
+            .as_ref()
+            .and_then(|s| s.fields.get(pos))
+            .and_then(|f| f.caption_class);
+        let (Some((object, routine)), Some(rec)) = (routine, rec) else {
+            return unsupported(format!(
+                "the caption of field {} whose CaptionClass is the expression `{}`, read without a record",
+                t.fields[pos].name,
+                expr.trim()
+            ));
+        };
+        // How often and with which record the expression runs is not pinned, only the caption one read gives.
+        al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::FieldCaptionClassExpressionPerRead);
+        match self.call_on_record(object, routine, rec.clone(), None, Vec::new())?.0 {
+            Value::Text(c) | Value::Code(c) => Ok(c.into_string()),
+            other => unsupported(format!(
+                "the CaptionClass expression of field {} gave a {}",
+                t.fields[pos].name,
+                other.describe()
+            )),
+        }
     }
 
     /// A field's caption: its `Caption` property, else the ENU entry of its `CaptionML` (record/lt-record-write/RcBInit.al:
@@ -299,7 +356,7 @@ impl Session {
             RecordOp::TableCaption => self.caption_checked(t).map(|c| Value::Text(c.into())),
             RecordOp::FieldName => Ok(Value::Text(t.fields[arg_pos(args, 0)?].name.clone().into())),
             RecordOp::FieldCaption => self
-                .field_caption_checked(t, arg_pos(args, 0)?)
+                .field_caption_checked(t, arg_pos(args, 0)?, Some(rec))
                 .map(|s| Value::Text(s.into())),
             RecordOp::FieldNo => Ok(Value::Integer(crate::refs::al_field_no(t.fields[arg_pos(args, 0)?].id))),
             // True for an enabled field (corpus record/TestRecordTriggers.al:223-231). What a field
@@ -1713,4 +1770,16 @@ pub(crate) fn lock_table_bad_parm(t: &TableDef) -> Signal {
         ),
         "AL:LockTableBadParm",
     )
+}
+
+/// The caption a CaptionClass expression's result `class` gives field `field`: `3,<text>` reads as <text>
+/// (pageext/lt-page-ext-properties/TableExtCaptionClass.al:124-149). Any other result of an expression is not pinned: the
+/// literal rules (P84Captions.al) are pinned for written classes only.
+pub(crate) fn expression_caption(field: &str, class: &str) -> Result<String, Signal> {
+    match class.split_once(',') {
+        Some(("3", rest)) if !rest.is_empty() => Ok(rest.to_string()),
+        _ => unsupported(format!(
+            "the caption of field {field} whose CaptionClass expression gives `{class}` (only `3,<text>` from an expression is pinned)"
+        )),
+    }
 }

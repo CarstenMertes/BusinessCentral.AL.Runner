@@ -359,6 +359,61 @@ fn needed(
     out
 }
 
+/// The table field sections of a table or table extension whose `CaptionClass` is an expression: (field name as written
+/// in the section, the name of the synthetic routine that evaluates it). A `field` section names its field second, a
+/// `modify` block first. The routine returns Text and runs with the record as Rec (FieldCaption, a page control's caption;
+/// pageext/lt-page-ext-properties/TableExtCaptionClass.al:56-74).
+pub fn field_caption_class_routines(obj: &ast::Object) -> Vec<(String, String, String)> {
+    let base = usize::from(obj.syntax().text_range().start());
+    let mut out = Vec::new();
+    for sec in ast::sections_in(obj.syntax()) {
+        let at = if sec.name().eq_ignore_ascii_case("field") {
+            1
+        } else if sec.name().eq_ignore_ascii_case("modify") {
+            0
+        } else {
+            continue;
+        };
+        let Some(field) = sec.args().get(at).cloned() else {
+            continue;
+        };
+        for p in sec.properties() {
+            if !p.name().eq_ignore_ascii_case("CaptionClass") {
+                continue;
+            }
+            let value = p.value_text();
+            if is_literal(PropType::Text, &value) {
+                continue;
+            }
+            let off = usize::from(p.syntax().text_range().start()) - base;
+            out.push((field.clone(), synthetic_name("captionclass", off), value));
+        }
+    }
+    out
+}
+
+/// The names of the fields whose `CaptionClass` a `field` section or `modify` block of a table or table extension sets,
+/// literal or expression, once per section that sets it.
+pub fn field_caption_class_settings(obj: &ast::Object) -> Vec<String> {
+    let mut out = Vec::new();
+    for sec in ast::sections_in(obj.syntax()) {
+        let at = if sec.name().eq_ignore_ascii_case("field") {
+            1
+        } else if sec.name().eq_ignore_ascii_case("modify") {
+            0
+        } else {
+            continue;
+        };
+        let Some(field) = sec.args().get(at).cloned() else {
+            continue;
+        };
+        if sec.properties().any(|p| p.name().eq_ignore_ascii_case("CaptionClass")) {
+            out.push(field);
+        }
+    }
+    out
+}
+
 /// Every control section of a page object, in source order.
 pub fn control_sections(obj: &ast::Object) -> Vec<ast::Section> {
     // Sections are object structure: a routine body never holds one, so the walk skips the routines.
@@ -408,12 +463,23 @@ fn expansion(src: &str, parse: &al_syntax::Parse) -> Option<(String, Vec<(usize,
     for obj in root.objects() {
         // A report's request page has the same controls (corpus handlers/TestReportRequestPageControl.al).
         let kind = obj.kind().to_ascii_lowercase();
-        if !["page", "pageextension", "report", "reportextension"].contains(&kind.as_str()) {
-            continue;
-        }
         let Some(close) = obj.close_brace_offset() else {
             continue;
         };
+        // A table field's CaptionClass expression becomes a routine of the table or table extension that writes it.
+        if kind == "table" || kind == "tableextension" {
+            let text: String = field_caption_class_routines(&obj)
+                .into_iter()
+                .map(|(_, name, expr)| format!("\nprocedure {name}(): Text begin exit({expr}); end;"))
+                .collect();
+            if !text.is_empty() {
+                inserts.push((close, text));
+            }
+            continue;
+        }
+        if !["page", "pageextension", "report", "reportextension"].contains(&kind.as_str()) {
+            continue;
+        }
         let globals = global_names(&obj);
         let extension_routines: Option<BTreeSet<String>> = kind
             .ends_with("extension")

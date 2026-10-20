@@ -597,12 +597,11 @@ Pinned by pages/lt-cc-page-leads/CcPageLeads.al:453-633 (the TriggerError_* test
 |---|---|---|
 | The row, the control values and what Close saves after New() swallowed an OnNewRecord error, Next() swallowed an OnModifyRecord error, or SetValue raised the TestValidation error of OnInsertRecord | REFUSED (every later call on the page, Close too) | After each error: read the key and Name controls, Next/First, Close, then read the table |
 | What Next() answers after a swallowed OnModifyRecord error | REFUSED when the answer is used | `B := P.Next()` with the OnModifyRecord error |
-| Whether a write the failing trigger made survives the swallowed error | REFUSED (a trigger that wrote before its error) | OnNewRecord / OnModifyRecord that inserts a row, then Error; read the table after the step |
+| Whether a write (insert, modify or delete) the failing trigger made survives the swallowed error | REFUSED (a trigger that wrote before its error) | OnNewRecord / OnModifyRecord that inserts a row, then Error; read the table after the step |
 | An OnModifyRecord error on First, Last, Previous, New or Close; an OnNewRecord error on New() of a list, a document or in view mode; an OnInsertRecord error on Activate | REFUSED | The CcPageLeads ErrCase steps on those calls and page types |
 | The error of OnFindRecord/OnAfterGetRecord/OnAfterGetCurrRecord at OpenEdit of a page that is not a Card; the same error on a Card with a Caption of its own; an error other than Error() | raised with the unpinned mark (text and code refused) | ErrCase step 0 on a List, a Document and a captioned Card; a TestField error in OnAfterGetRecord |
 | The error of OnNextRecord on Previous/First/Last, in view mode, on a list; of OnFindRecord on any move; after the trigger moved Rec before it failed | raised with the unpinned mark | ErrCase step 1 with those calls and page types |
-| An OnClosePage error other than Error(); an error of an OnClosePage subscriber or of a part's OnClosePage at Close(); an OnClosePage error at a close by an action or a handler | first: unpinned mark; the others raise the error as before | ErrCase step 5 with TestField in OnClosePage, a subscriber that errors, a part that errors, `P.OK().Invoke()` |
-| The page state after an OnQueryClosePage error shown to a MessageHandler | as before (Close() returns and the variable is not open) | ErrCase step 5 with a [MessageHandler] |
+| An OnClosePage error other than Error(); an error of an OnClosePage subscriber or of a part's OnClosePage at Close(); an OnClosePage error at a close by an action or a handler | first: unpinned mark; the others REFUSED | ErrCase step 5 with TestField in OnClosePage, a subscriber that errors, a part that errors, `P.OK().Invoke()` |
 
 ## Assumptions in force (generated from the registry)
 

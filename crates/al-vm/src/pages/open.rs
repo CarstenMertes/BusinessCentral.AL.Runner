@@ -625,6 +625,7 @@ impl Session {
             .is_some_and(al_ir::PageType::is_plain);
         let action = if ok_type && !st.borrow().modal { "OK" } else { "Cancel" };
         st.borrow_mut().close_error = false;
+        self.pages.test_close = true;
         let (r, origin) = self.traced(st, |s| s.close_with(st, action, false, false));
         // A refused TestPage.Close() leaves the variable not open all the same (corpus
         // handlers/TestPageCloseVeto_Tests.al: PlainVeto_SecondCloseRaisesNotOpen), and so does an error of OnQueryClosePage
@@ -667,6 +668,7 @@ impl Session {
         swallow_save_errors: bool,
         via_action: bool,
     ) -> Result<Value, Signal> {
+        let test_close = std::mem::take(&mut self.pages.test_close);
         self.require_open(st)?;
         let mapped = self.close_action(st, action);
         let action = mapped.as_str();
@@ -824,6 +826,10 @@ impl Session {
                 al_builtins::native::refuse_unpinned_text(&e, "The message shown for an error of OnQueryClosePage")?;
                 st.borrow_mut().close_error = true;
                 self.ui_message(e.message)?;
+                // With a MessageHandler, Close() returns and the variable is not open (handlers/TestPageCloseVeto_Tests.al:170
+                // ErrorConsumedByMessageHandler_SecondCloseRaisesNotOpen, TestPageQueryCloseMessageHandler_Tests.al:193
+                // ErrorInQueryClosePage_TestPageClose_MessageConsumed_CallerRegainsControl, TestPageNeverOpened_Tests.al:155
+                // ErrorConsumedClose_VariableOpensAgain).
                 return Ok(Value::Null);
             }
             other => other?,
@@ -835,12 +841,29 @@ impl Session {
         if !self.page_event(st, "onqueryclosepageevent", Some(true), None)? {
             return Ok(Value::Null);
         }
+        // Only an AL error of the page's own OnClosePage at TestPage.Close() is pinned (CcPageLeads.al:624-633, wrapped in
+        // `page_close`). An error of a part's OnClosePage or of an OnClosePageEvent subscriber, and an OnClosePage error at a
+        // close by an action or a handler, are refused.
+        let refuse_error = |r: Result<Option<Value>, Signal>, what: &str| -> Result<(), Signal> {
+            match r {
+                Err(Signal::Error(_)) => unsupported(format!("an error in {what} while the page closes (not pinned)")),
+                other => other.map(|_| ()),
+            }
+        };
         for part in &open_parts {
-            self.page_trigger(part, "onclosepage", vec![])?;
-            self.page_event(part, "onclosepageevent", None, None)?;
+            let r = self.page_trigger(part, "onclosepage", vec![]);
+            refuse_error(r, "a part's OnClosePage")?;
+            let r = self.page_event(part, "onclosepageevent", None, None).map(|_| None);
+            refuse_error(r, "an OnClosePageEvent subscriber of a part")?;
         }
-        self.page_trigger(st, "onclosepage", vec![])?;
-        self.page_event(st, "onclosepageevent", None, None)?;
+        let r = self.page_trigger(st, "onclosepage", vec![]);
+        if test_close {
+            r?;
+        } else {
+            refuse_error(r, "OnClosePage at a close by an action or a handler")?;
+        }
+        let r = self.page_event(st, "onclosepageevent", None, None).map(|_| None);
+        refuse_error(r, "an OnClosePageEvent subscriber")?;
         // SaveValues: what the page's variable-bound controls hold is stored unless the Cancel
         // action closed it (corpus handlers/TestPageSaveValues.al, testpageclose/TestPageClosingActions.al:937-977;
         // Close() and a platform close store too, docs/probes-needed.md).

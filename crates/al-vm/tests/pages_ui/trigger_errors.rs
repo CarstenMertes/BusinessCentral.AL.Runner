@@ -29,7 +29,16 @@ page 69992 "TE Card"
     trigger OnNextRecord(Steps: Integer): Integer begin MaybeFail('OnNextRecord'); exit(Rec.Next(Steps)); end;
     trigger OnAfterGetRecord() begin MaybeFail('OnAfterGetRecord'); end;
     trigger OnAfterGetCurrRecord() begin MaybeFail('OnAfterGetCurrRecord'); end;
-    trigger OnNewRecord(BelowxRec: Boolean) begin MaybeFail('OnNewRecord'); end;
+    trigger OnNewRecord(BelowxRec: Boolean)
+    var R: Record "TE Row"; L: Codeunit "TE Log";
+    begin
+        if L.GetFailAt() = 'DeleteThenFail' then begin
+            R.Get(2);
+            R.Delete();
+            Error('TE failure after a delete');
+        end;
+        MaybeFail('OnNewRecord');
+    end;
     trigger OnInsertRecord(BelowxRec: Boolean): Boolean begin MaybeFail('OnInsertRecord'); exit(true); end;
     trigger OnModifyRecord(): Boolean begin MaybeFail('OnModifyRecord'); exit(true); end;
     trigger OnQueryClosePage(CloseAction: Action): Boolean begin MaybeFail('OnQueryClosePage'); exit(true); end;
@@ -48,6 +57,15 @@ page 69993 "TE List"
     PageType = List; SourceTable = "TE Row"; ApplicationArea = All; UsageCategory = None;
     layout { area(Content) { repeater(R) { field(Id; Rec.Id) { } } } }
     trigger OnAfterGetRecord() var L: Codeunit "TE Log"; begin if L.GetFailAt() = 'OnAfterGetRecord' then Error('TE list failure'); end;
+}
+codeunit 69998 "TE Sub"
+{
+    [EventSubscriber(ObjectType::Page, Page::"TE Card", 'OnClosePageEvent', '', false, false)]
+    local procedure OnClose(var Rec: Record "TE Row")
+    var L: Codeunit "TE Log";
+    begin
+        if L.GetFailAt() = 'Subscriber' then Error('TE subscriber failure');
+    end;
 }
 codeunit 69994 C
 {
@@ -154,6 +172,36 @@ codeunit 69994 C
         exit(Format(B));
     end;
 
+    procedure NewDeletesThenFails(): Text
+    var P: TestPage "TE Card";
+    begin
+        Seed();
+        P.OpenEdit();
+        Log.SetFailAt('DeleteThenFail');
+        asserterror ErrNew(P);
+        exit(Outcome());
+    end;
+
+    procedure SubscriberCloseError(): Text
+    var P: TestPage "TE Card";
+    begin
+        Seed();
+        P.OpenEdit();
+        Log.SetFailAt('Subscriber');
+        asserterror P.Close();
+        exit(Outcome());
+    end;
+
+    procedure OkActionCloseError(): Text
+    var P: TestPage "TE Card";
+    begin
+        Seed();
+        P.OpenEdit();
+        Log.SetFailAt('OnClosePage');
+        asserterror P.OK().Invoke();
+        exit(Outcome());
+    end;
+
     procedure ListOpenEdit(): Text
     var P: TestPage "TE List";
     begin
@@ -258,7 +306,25 @@ fn an_error_in_on_close_page_is_wrapped() {
 
 // Only Next() is pinned for an OnModifyRecord error, and only where its answer is not used.
 #[test]
-fn an_on_modify_record_error_on_another_move_or_a_used_answer_is_refused() {
+fn an_on_modify_record_error_on_another_move_is_refused() {
     assert!(refused("ModifyThenPrevious").contains("OnModifyRecord on Previous()"));
+}
+
+#[test]
+fn the_used_answer_of_next_after_an_on_modify_record_error_is_refused() {
     assert!(refused("ModifyThenNextUsed").contains("answer of Next()"));
+}
+
+// Whether a delete the failing OnNewRecord made survives the swallowed error is not pinned: refused at once.
+#[test]
+fn a_swallowed_on_new_record_error_after_a_delete_is_refused() {
+    assert!(refused("NewDeletesThenFails").contains("wrote nothing"));
+}
+
+// Only the page's own OnClosePage at Close() is pinned: a subscriber's error, and an OnClosePage error at a close by an action,
+// are refused.
+#[test]
+fn other_close_errors_are_refused() {
+    assert!(refused("SubscriberCloseError").contains("OnClosePageEvent subscriber"));
+    assert!(refused("OkActionCloseError").contains("close by an action"));
 }

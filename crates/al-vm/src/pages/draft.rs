@@ -47,7 +47,7 @@ impl Session {
         match left? {
             Left::Stay => Ok(Value::Null),
             Left::Go => {
-                let writes = self.next_row_version;
+                let writes = self.write_mark();
                 let (r, origin) = self.traced(st, |s| s.start_draft(st, true));
                 match (r, origin.as_deref()) {
                     (Err(Signal::Error(e)), Some("onnewrecord")) => {
@@ -70,7 +70,7 @@ impl Session {
         &mut self,
         st: &St,
         e: &al_builtins::native::AlError,
-        writes: i64,
+        writes: (i64, u64),
     ) -> Result<Signal, Signal> {
         self.swallowed_trigger_error(st, "OnInsertRecord", "SetValue", e, writes)?;
         Ok(error_code(
@@ -90,7 +90,7 @@ impl Session {
         trigger: &str,
         call: &str,
         e: &al_builtins::native::AlError,
-        writes: i64,
+        writes: (i64, u64),
     ) -> Result<(), Signal> {
         let pinned_shape = e.code == "Dialog"
             && self.is_card(st)
@@ -99,7 +99,7 @@ impl Session {
             && st.borrow().host.is_none()
             && st.borrow().parts.is_empty()
             && !self.is_request_page(st)
-            && self.next_row_version == writes;
+            && self.write_mark() == writes;
         if !pinned_shape {
             return unsupported(format!(
                 "an error in {trigger} on {call} of this page (only an Error of a card opened for editing that wrote nothing is pinned)"

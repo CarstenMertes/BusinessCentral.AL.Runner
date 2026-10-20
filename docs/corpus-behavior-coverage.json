@@ -16306,7 +16306,7 @@
         "code": "StackOverflow",
         "file": "crates/al-vm/src/lib.rs",
         "generic": false,
-        "line": 1211,
+        "line": 1215,
         "pinned": true,
         "site": "record/TestCalcFieldsTruncateUniqueContracts.al:179",
         "template": "There is insufficient memory to execute this function. This can be caused by recursive function calls. Contact your system administrator."
@@ -16315,7 +16315,7 @@
         "code": "FormAbort:Dialog",
         "file": "crates/al-vm/src/pages.rs",
         "generic": false,
-        "line": 262,
+        "line": 267,
         "pinned": true,
         "site": "pages/lt-cc-page-leads/CcPageLeads.al:525",
         "template": "Page % has to close."
@@ -16369,7 +16369,7 @@
         "code": "RenameArgument",
         "file": "crates/al-vm/src/records.rs",
         "generic": false,
-        "line": 3065,
+        "line": 3067,
         "pinned": true,
         "site": "recordref/lt-refs/RfTWrite.al:223",
         "template": "The number of field arguments does not match the primary key size."

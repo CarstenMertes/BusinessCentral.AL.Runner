@@ -23,9 +23,22 @@ codeunit 69997 T
     local procedure ErrClose(var P: TestPage "TQ Card") begin P.Close(); Error('OK'); end;
     local procedure ErrRead(var P: TestPage "TQ Card") var V: Text; begin V := P.Name.Value(); Error('OK'); end;
     [Test]
+    [HandlerFunctions('Msg')]
+    procedure QueryCloseErrorHandled()
+    var R: Record "TQ Row"; P: TestPage "TQ Card";
+    begin
+        R.DeleteAll();
+        R.Id := 2; R.Name := 'b'; R.Insert();
+        P.OpenEdit();
+        P.Close();
+    end;
+    [MessageHandler]
+    procedure Msg(M: Text[1024]) begin end;
+    [Test]
     procedure QueryCloseError()
     var R: Record "TQ Row"; P: TestPage "TQ Card"; Got: Text;
     begin
+        R.DeleteAll();
         R.Id := 1; R.Name := 'a'; R.Insert();
         P.OpenEdit();
         asserterror ErrClose(P);
@@ -43,8 +56,20 @@ codeunit 69997 T
 #[test]
 fn an_error_in_on_query_close_page_leaves_the_page_closed() {
     let outcomes = al_testkit::outcomes_in(SRC, "T");
+    let of = |name: &str| outcomes.iter().find(|(n, _)| n.ends_with(name)).map(|(_, o)| o.clone());
     assert!(
-        matches!(outcomes.as_slice(), [(_, al_testrun::Outcome::Pass)]),
+        matches!(of("QueryCloseError"), Some(al_testrun::Outcome::Pass)),
         "{outcomes:?}"
     );
+}
+
+// With a MessageHandler, Close() returns (handlers/TestPageCloseVeto_Tests.al:170 and two more baseline cases pin it).
+#[test]
+fn close_after_a_handled_on_query_close_page_error_returns() {
+    let outcomes = al_testkit::outcomes_in(SRC, "T");
+    let o = outcomes
+        .iter()
+        .find(|(n, _)| n.ends_with("QueryCloseErrorHandled"))
+        .map(|(_, o)| o.clone());
+    assert!(matches!(&o, Some(al_testrun::Outcome::Pass)), "{outcomes:?}");
 }

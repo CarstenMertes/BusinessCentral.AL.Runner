@@ -80,6 +80,8 @@ pub(crate) struct PageClients {
     pub(crate) failed_trigger: Option<(u32, String)>,
     /// The open that starts next is a TestPage's own OpenEdit, OpenView or OpenNew (taken by `open_page_as`).
     pub(crate) test_open: bool,
+    /// The close that starts next is a TestPage's own Close() (taken by `close_with`).
+    pub(crate) test_close: bool,
 }
 
 /// Event subscriptions and what the Event Subscription table reports.

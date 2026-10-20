@@ -764,7 +764,7 @@ impl Session {
         let answer_used = self.ret_used;
         // Leaving a row saves it.
         let anchor = st.borrow_mut().after_new.take();
-        let writes = self.next_row_version;
+        let writes = self.write_mark();
         let (left, origin) = self.traced(st, |s| s.leave_row(st, how));
         let left = match (left, origin.as_deref()) {
             // corpus pages/lt-cc-page-leads/CcPageLeads.al:598-608 TriggerError_OnModifyRecord: Next() raises nothing. What it

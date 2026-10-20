@@ -98,7 +98,7 @@ impl Session {
             let rec = self.page_rec(st);
             self.reset_table_globals(&rec);
         }
-        let writes = self.next_row_version;
+        let writes = self.write_mark();
         let (activated, origin) = self.traced(st, |s| s.activate(st, idx));
         if let (Err(Signal::Error(e)), Some("oninsertrecord")) = (&activated, origin.as_deref()) {
             return Err(self.insert_trigger_error(st, e, writes)?);

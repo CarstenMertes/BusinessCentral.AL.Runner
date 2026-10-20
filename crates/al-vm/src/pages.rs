@@ -240,6 +240,11 @@ impl Session {
         (r, origin)
     }
 
+    /// A mark that changes with every insert, modify and delete the store takes (SystemRowVersion and the delete count).
+    fn write_mark(&self) -> (i64, u64) {
+        (self.next_row_version, self.deletes)
+    }
+
     /// Whether the page is of type Card.
     fn is_card(&self, st: &St) -> bool {
         matches!(

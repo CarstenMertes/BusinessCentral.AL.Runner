@@ -103,6 +103,8 @@ codeunit 62020 "PM Worker"
         if N.StartsWith('FAIL') then Error('worker failed for %1', N);
         if N = 'WRITE' then begin Row."No." := 'W'; Row.Insert(); end;
         if N = 'COMMIT' then Commit();
+        if N = 'ISOSET' then IsolatedStorage.Set('PMbg', 'x');
+        if N = 'ISODEL' then IsolatedStorage.Delete('PMbg');
         R.Add('Out', 'BG:' + N); Page.SetBackgroundTaskResult(R);
     end;
 }
@@ -606,7 +608,34 @@ fn run_page_background_task_returns_the_result_and_the_worker_cannot_write() {
             SeedBg(); C.OpenView(); P.Add('No', 'WRITE');
             if TryRun(C, P) then Error('must fail');
             if StrPos(GetLastErrorText(), 'Sorry, the current permissions prevented the action. (TableData 62000 PM Row Insert: ') = 0 then Error('got %1', GetLastErrorText());
+            if GetLastErrorCode() <> 'DB:ReadOnlySession' then Error('code %1', GetLastErrorCode());
             if Row.Get('W') then Error('landed'); C.Close(); end;
+        [TryFunction] local procedure TryRun(var C: TestPage \"PM Bg Card\"; P: Dictionary of [Text, Text]) var R: Dictionary of [Text, Text]; begin R := C.RunPageBackgroundTask(Codeunit::\"PM Worker\", P, false); end;"
+    ));
+}
+
+// session/lt-cn-session-leads/CnIsolatedStorageLeads.al:104-134: IsolatedStorage.Set and Delete in a worker are refused like a
+// table write, on table 2000000107.
+#[test]
+fn a_worker_cannot_write_to_isolated_storage() {
+    passes(&format!(
+        "{HELPERS} {BG}
+        [Test]
+        procedure SetIso() var C: TestPage \"PM Bg Card\"; P: Dictionary of [Text, Text]; begin
+            SeedBg(); if IsolatedStorage.Contains('PMbg') then IsolatedStorage.Delete('PMbg');
+            C.OpenView(); P.Add('No', 'ISOSET');
+            if TryRun(C, P) then Error('must fail');
+            if StrPos(GetLastErrorText(), 'Sorry, the current permissions prevented the action. (TableData 2000000107 Isolated Storage Insert: ') = 0 then Error('got %1', GetLastErrorText());
+            if GetLastErrorCode() <> 'DB:ReadOnlySession' then Error('code %1', GetLastErrorCode());
+            if IsolatedStorage.Contains('PMbg') then Error('landed'); C.Close(); end;
+        [Test]
+        procedure DelIso() var C: TestPage \"PM Bg Card\"; P: Dictionary of [Text, Text]; begin
+            SeedBg(); IsolatedStorage.Set('PMbg', 'seed'); Commit();
+            C.OpenView(); P.Add('No', 'ISODEL');
+            if TryRun(C, P) then Error('must fail');
+            if StrPos(GetLastErrorText(), 'Sorry, the current permissions prevented the action. (TableData 2000000107 Isolated Storage Delete: ') = 0 then Error('got %1', GetLastErrorText());
+            if GetLastErrorCode() <> 'DB:ReadOnlySession' then Error('code %1', GetLastErrorCode());
+            if not IsolatedStorage.Contains('PMbg') then Error('gone'); C.Close(); end;
         [TryFunction] local procedure TryRun(var C: TestPage \"PM Bg Card\"; P: Dictionary of [Text, Text]) var R: Dictionary of [Text, Text]; begin R := C.RunPageBackgroundTask(Codeunit::\"PM Worker\", P, false); end;"
     ));
 }

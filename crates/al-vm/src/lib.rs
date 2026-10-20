@@ -444,11 +444,12 @@ pub struct Session {
     /// `faultsite.rs`: whether to record where errors and refusals leave from, and the last one.
     fault_trace: bool,
     fault_site: Vec<faultsite::FaultFrame>,
-    /// `IsolatedStorage` by (scope, key): the value and whether it was stored encrypted.
-    pub(crate) isolated_storage: std::collections::HashMap<(String, String), (String, bool)>,
+    /// `IsolatedStorage` by (scope, key): the value, whether it was stored encrypted, and whether it was stored from a
+    /// SecretText (misc/lt-cu-odd-leads/CuTryTests.al:181-232: such a value cannot be read into a Text).
+    pub(crate) isolated_storage: std::collections::HashMap<(String, String), (String, bool, bool)>,
     /// What the isolated storage held at the last commit: a rollback goes back to it (session/
     /// TestProbeSessionMiscContracts.al:IsolatedStorage_NotRolledBack, whose name is the opposite of its result).
-    pub(crate) isolated_committed: std::collections::HashMap<(String, String), (String, bool)>,
+    pub(crate) isolated_committed: std::collections::HashMap<(String, String), (String, bool, bool)>,
     /// An install codeunit is running.
     install_scope: bool,
     /// Registered table connections by (type member, lower-case name), and the default name per type.

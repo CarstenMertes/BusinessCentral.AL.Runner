@@ -14,6 +14,7 @@ impl Lowerer<'_> {
         reasons: &[String],
     ) -> ir::Page {
         let mut unsupported = reasons.to_vec();
+        let mut big_integer_expressions = Vec::new();
         let table = self.table_of[oi];
         let extensions: Vec<usize> = self.page_extensions.get(&oi).cloned().unwrap_or_default();
         unsupported.extend(super::shared::over_max_length(obj));
@@ -48,11 +49,27 @@ impl Lowerer<'_> {
                 .get(&(ow.object, usize::from(r.syntax().text_range().start())))
         };
         // The routine behind an expression-valued property written at `p` in `ow`.
-        let prop_value = |ow: &Owner, p: &ast::Property, unsupported: &mut Vec<String>, control: &str| {
+        let prop_value = |ow: &Owner,
+                          p: &ast::Property,
+                          unsupported: &mut Vec<String>,
+                          big_integer: &mut Vec<String>,
+                          control: &str| {
             let name = p.name().to_ascii_lowercase();
             let value = p.value_text();
             let off = usize::from(p.syntax().text_range().start()) - ow.base;
             let dynamic = crate::pages::dynamic_type(&name).filter(|t| !crate::pages::is_literal(*t, &value));
+            // A Boolean control expression BC compiles on the client when the page opens (see `client_expression`).
+            if dynamic == Some(crate::pages::PropType::Boolean) {
+                match crate::pages::client_expression(&value) {
+                    Some(crate::pages::ClientExpr::Refused(why)) => {
+                        unsupported.push(format!("property {name} of control {control}: {why}"))
+                    }
+                    Some(crate::pages::ClientExpr::BigIntegerLiteral(why)) => {
+                        big_integer.push(format!("property {name} of control {control}: {why}"))
+                    }
+                    None => {}
+                }
+            }
             let val = match dynamic {
                 Some(_) => match routine_named(ow, &crate::pages::synthetic_name(&name, off)) {
                     Some(r) => Some(r),
@@ -97,7 +114,8 @@ impl Lowerer<'_> {
             let ow = owner_of(raw.owner);
             let mut props: Vec<(String, ir::PropVal)> = Vec::new();
             for p in sec.properties() {
-                let (name, value, routine) = prop_value(&ow, &p, &mut unsupported, &raw.name);
+                let (name, value, routine) =
+                    prop_value(&ow, &p, &mut unsupported, &mut big_integer_expressions, &raw.name);
                 props.push((
                     name,
                     match routine {
@@ -115,7 +133,8 @@ impl Lowerer<'_> {
                 let mut changed = Vec::new();
                 let mut added = Vec::new();
                 for p in msec.properties() {
-                    let (name, value, routine) = prop_value(&mow, &p, &mut unsupported, &raw.name);
+                    let (name, value, routine) =
+                        prop_value(&mow, &p, &mut unsupported, &mut big_integer_expressions, &raw.name);
                     let val = match routine {
                         Some(r) => ir::PropVal::Ext(*e, r),
                         None => ir::PropVal::Lit(value),
@@ -312,6 +331,7 @@ impl Lowerer<'_> {
             ext_triggers,
             action_areas: layout.action_areas.clone(),
             assumes: layout.assumes.clone(),
+            big_integer_expressions,
         }
     }
 

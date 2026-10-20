@@ -164,6 +164,26 @@ impl Session {
         f.blank_zero = lit("blankzero")
             .or_else(|| from_field("blankzero"))
             .is_some_and(|v| is_true(&v));
+        // A Decimal FlowFilter field shows nothing while it holds zero (handlers/N582TestPageEdges.al:400,
+        // BR_Editable_FlowFilterControl `card edit amtfilter value` ''; :428 after SetValue('7') it shows 7.00). Pinned for the
+        // unset field only; SetValue('0') and other number types are docs/probes-needed.md.
+        if field.as_ref().is_some_and(|f| {
+            matches!(f.ty, RtType::Decimal)
+                && f.properties
+                    .iter()
+                    .any(|(k, v)| k.eq_ignore_ascii_case("FieldClass") && v.trim().eq_ignore_ascii_case("FlowFilter"))
+        }) {
+            if st.borrow().set_controls.contains(&idx) {
+                // Only the unset field is pinned: after an explicit SetValue a zero's text is not.
+                if matches!(self.control_value(st, idx)?, Value::Decimal(d) if d.is_zero()) {
+                    return unsupported(
+                        "the text of a Decimal FlowFilter control after SetValue gave it zero (not pinned)",
+                    );
+                }
+            } else {
+                f.blank_zero = true;
+            }
+        }
         if let Some(b) = lit("blanknumbers").or_else(|| from_field("blanknumbers")) {
             f.blank = Blank::parse(&b).unwrap_or_default();
         }
@@ -805,11 +825,20 @@ impl Session {
         // A list handed over in lookup mode is read-only, page-variable controls included
         // (corpus handlers/TestPageControlEditableRoutes.al:446 List_RunModal_LookupMode).
         st.borrow().mode != PageMode::View
-            && !st.borrow().editable_off
+            && !(st.borrow().editable_off && self.open_lock(st) != Some(PageMode::New))
             && !(st.borrow().lookup && self.is_list_page(st))
             && !props
                 .iter()
                 .any(|(k, v)| k.eq_ignore_ascii_case("Editable") && v.trim().eq_ignore_ascii_case("false"))
+    }
+
+    /// The open mode, when the page is read-only only because its OnOpenPage called `CurrPage.Editable(false)`. What that
+    /// does depends on the mode: OpenEdit locks every control (handlers/TestPageControlEditableRoutes.al:553); OpenView
+    /// leaves a page-variable control editable (pages/lt-cd-testpage-leads/CdTestPageLeads.al:95, Item49_LockCard_OpenView);
+    /// OpenNew keeps the page editable and locks the Rec controls (CdTestPageLeads.al:117-118, Item49_LockCard_OpenNew).
+    pub(super) fn open_lock(&self, st: &St) -> Option<PageMode> {
+        let s = st.borrow();
+        (s.editable_off && s.editable_off_in_open).then_some(s.mode)
     }
 
     /// Editable and Enabled follow the page state live (corpus
@@ -818,11 +847,20 @@ impl Session {
         // A control bound to a page variable stays editable on a read-only page (corpus
         // handlers/TestPageReadOnlySetValue.al:365 OpenView_PageVariableControl_StaysEditable).
         let engine = self.engine();
-        let rec_bound = !matches!(
+        let var_bound = matches!(
             page_of(&engine, st).controls[idx].binding,
             ir::Binding::Var(_) | ir::Binding::BaseVar(_)
-        ) || (st.borrow().lookup && self.is_list_page(st))
-            || st.borrow().editable_off
+        );
+        let open_lock = self.open_lock(st);
+        if var_bound && open_lock == Some(PageMode::New) {
+            return unsupported(
+                "Editable() of a page-variable control on a page opened with OpenNew whose OnOpenPage called \
+                 CurrPage.Editable(false) (not pinned)",
+            );
+        }
+        let rec_bound = !var_bound
+            || (st.borrow().lookup && self.is_list_page(st))
+            || (st.borrow().editable_off && open_lock != Some(PageMode::View))
             // A request page that says `Editable = false` makes its variable-bound fields read No too
             // (handlers/PSRequestPageEditable.al Editable_RequestPageEditableFalse).
             || (self.is_request_page(st) && !self.page_editable(st));
@@ -887,7 +925,8 @@ impl Session {
                 }
             }
         }
-        Ok((!rec_bound || self.page_editable(st)) && self.prop_bool_now(st, idx, "editable", true)?)
+        let page_editable = self.page_editable(st) && !(rec_bound && open_lock == Some(PageMode::New));
+        Ok((!rec_bound || page_editable) && self.prop_bool_now(st, idx, "editable", true)?)
     }
 
     /// Whether control `idx` sits inside a `cuegroup`.
@@ -927,10 +966,12 @@ impl Session {
         let page = page_of(&engine, st);
         // Own Visible is the open-time value; a group's and a part's are live (a part: pages/lt-page-filtergroup-assumptions/
         // P99InvisiblePart.al:P99_FlagTrueInOnAfterGetCurrRecord) and so are the groups around the
-        // control (corpus handlers/TestPageControlPropertyLiveness_Tests.al:56).
+        // control (corpus handlers/TestPageControlPropertyLiveness_Tests.al:56). An action's is live too: after an action set
+        // its variable to false it reads No, with or without CurrPage.Update, while a field keeps its open-time value
+        // (pages/lt-cd-testpage-leads/CdTestPageLeads.al:251-253, :267, Item51_VisibleVariables_*).
         let own = if matches!(
             page.controls[idx].kind,
-            ir::ControlKind::Group | ir::ControlKind::CueGroup | ir::ControlKind::Part
+            ir::ControlKind::Group | ir::ControlKind::CueGroup | ir::ControlKind::Part | ir::ControlKind::Action
         ) {
             self.prop_bool_now(st, idx, "visible", true)?
         } else {

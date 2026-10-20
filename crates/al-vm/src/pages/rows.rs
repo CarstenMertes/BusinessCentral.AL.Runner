@@ -160,14 +160,25 @@ impl Session {
         let Some(def) = engine.program.objects[table].table.as_ref() else {
             return Ok(());
         };
-        let mut positions: Vec<usize> = page_of(&engine, st)
-            .controls
-            .iter()
-            .filter_map(|c| match c.binding {
-                ir::Binding::Field(p) if def.fields[p].calc.is_some() => Some(p),
-                _ => None,
-            })
-            .collect();
+        // A card opened for viewing does not calculate a FlowField whose control says `Visible = false`
+        // (pages/lt-cc-page-leads/CcPageLeads.al:722, FlowField_VisibleFalse_OnOpenView: `hidden=0`). Other page types and
+        // open modes are not pinned (docs/probes-needed.md): they keep calculating it, as before, because refusing them loses
+        // a baseline case (handlers/TestPartSubPageViewPrecompiled.al:104, a Base Application part with a hidden FlowField)
+        // and the Microsoft pages that hide one.
+        let hidden = |c: &ir::Control| matches!(c.prop("visible"), Some(ir::PropVal::Lit(v)) if v.trim().eq_ignore_ascii_case("false"));
+        let view_card = st.borrow().mode == PageMode::View
+            && self.engine.object_facts[st.borrow().object as usize].page_type == Some(al_ir::PageType::Card);
+        let mut positions = Vec::new();
+        for c in &page_of(&engine, st).controls {
+            let ir::Binding::Field(p) = c.binding else { continue };
+            if def.fields[p].calc.is_none() {
+                continue;
+            }
+            if view_card && hidden(c) {
+                continue;
+            }
+            positions.push(p);
+        }
         positions.sort_unstable();
         positions.dedup();
         if positions.is_empty() {

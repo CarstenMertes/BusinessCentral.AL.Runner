@@ -491,10 +491,19 @@ impl Session {
                     // their effect on Rec-bound controls is docs/probes-needed.md).
                     Some(v) => {
                         if st.borrow().opening && !ops::truthy(v)? {
-                            st.borrow_mut().editable_off = true;
+                            let mut s = st.borrow_mut();
+                            if !s.editable_off {
+                                s.editable_off_in_open = true;
+                            }
+                            s.editable_off = true;
                         }
                         Ok(Value::Null)
                     }
+                    // Read from page code on an OpenNew page after CurrPage.Editable(false): only TestPage.Editable() is
+                    // pinned there (pages/lt-cd-testpage-leads/CdTestPageLeads.al:117).
+                    None if self.open_lock(st) == Some(PageMode::New) => unsupported(
+                        "CurrPage.Editable() read on a page opened with OpenNew whose OnOpenPage called CurrPage.Editable(false) (not pinned)",
+                    ),
                     None => Ok(Value::Boolean(self.page_editable(st))),
                 }
             }

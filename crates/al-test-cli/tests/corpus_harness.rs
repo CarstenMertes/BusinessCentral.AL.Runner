@@ -460,8 +460,8 @@ fn all_versions_runs_each_oracle_writes_per_version_files_and_compares() {
     // 79926 Byte10 and Byte200 pass on every version since branch lane-bump28-failures, 72786
     // BN_With_ImplicitWithInTableNoCodeunit since branch lane-record-isdirty (Record.IsDirty).
     // Corpus bump 29 adds one, a new case: 84275 Expr_BigIntegerLiteral_Enabled (pages/lt-cc-page-leads/CcPageLeads.al:801) passes
-    // from BC 28; on BC 27 real BC fails to compile the dynamic control expression `0L <> Big`, which the runtime does not do
-    // (gate ProbedValuesDifferFrom28 not consumed).
+    // from BC 28; on BC 27 real BC fails to compile the dynamic control expression `0L <> Big`, and the runtime refuses the
+    // page there (gate BigIntegerLiteralInControlExpressionFrom28), so the case is not run on 27.
     assert!(out.contains("runtime: 3 case(s) differ between versions"), "{out}");
     assert!(out.contains("71500 Get_Uses_Primary_Key_Not_Current_Key: 27"), "{out}");
 }

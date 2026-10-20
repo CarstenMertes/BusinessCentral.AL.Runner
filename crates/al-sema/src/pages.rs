@@ -62,6 +62,139 @@ pub fn is_literal(ty: PropType, value: &str) -> bool {
     }
 }
 
+/// Why BC cannot run a Boolean control expression (`Visible`, `Editable`, `Enabled`, `HideValue`) the way the runtime
+/// would: BC compiles these on the client when the page opens ("dynamic control expression"), with a grammar of its own.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ClientExpr {
+    /// The client compile fails on every measured BC version: the page is refused.
+    Refused(String),
+    /// A BigInteger literal (`0L`): the client compile fails on BC 27 (`Not a valid number`) and runs from BC 28
+    /// (pages/lt-cc-page-leads/CcPageLeads.al:801-808, Expr_BigIntegerLiteral_Enabled, `#if BC28PLUS`).
+    BigIntegerLiteral(String),
+}
+
+/// What the client compile of Boolean control expression `value` does that the runtime cannot follow, or `None`.
+///
+/// Pinned failures (pages/lt-cc-page-leads/CcPageLeads.al): a member of a procedure's result (`GetRow().Flag`, :764,
+/// "The type of function 'GetRow' is unknown."), a date literal (`Rec.D = 0D`, :846, "Not a valid number."), a member of a
+/// global record (`GlobalRow.Grp = 2`, :880, "The identifier 'GlobalRow.Grp' could not be found."). The error texts carry an
+/// index and a rewritten expression whose rule is not pinned, so these are refused, not raised. A call, a time or datetime
+/// literal and a member of anything but `Rec`, `xRec` or `this` are refused with them: their client compile is not pinned
+/// (Base Application and the System Application use none of them).
+pub fn client_expression(value: &str) -> Option<ClientExpr> {
+    let b: Vec<char> = value.chars().collect();
+    let mut i = 0;
+    let mut prev_word: Option<String> = None;
+    let mut big = None;
+    let refuse = |what: &str| {
+        Some(ClientExpr::Refused(format!(
+            "{what} in the dynamic control expression `{}` (BC compiles it on the client when the page opens; not pinned)",
+            value.trim()
+        )))
+    };
+    while i < b.len() {
+        let c = b[i];
+        if c == '\'' {
+            i += 1;
+            while i < b.len() {
+                if b[i] == '\'' {
+                    if b.get(i + 1) == Some(&'\'') {
+                        i += 2;
+                        continue;
+                    }
+                    break;
+                }
+                i += 1;
+            }
+            i += 1;
+            prev_word = None;
+            continue;
+        }
+        let word = if c == '"' {
+            let start = i;
+            i += 1;
+            while i < b.len() && b[i] != '"' {
+                i += 1;
+            }
+            i += 1;
+            Some(b[start..i.min(b.len())].iter().collect::<String>())
+        } else if c.is_ascii_digit() {
+            let start = i;
+            while i < b.len()
+                && (b[i].is_ascii_alphanumeric() || b[i] == '.' && b.get(i + 1).is_some_and(|d| d.is_ascii_digit()))
+            {
+                i += 1;
+            }
+            let lit: String = b[start..i].iter().collect::<String>().to_ascii_lowercase();
+            if lit.ends_with('d') || lit.ends_with('t') {
+                return refuse("a date or time literal");
+            }
+            if lit.ends_with('l') {
+                big = Some(ClientExpr::BigIntegerLiteral(format!(
+                    "a BigInteger literal in the dynamic control expression `{}`: a BC version without gate BigIntegerLiteralInControlExpressionFrom28 fails to compile it when the page opens \
+                     (pages/lt-cc-page-leads/CcPageLeads.al:801-808; the error text's index rule is not pinned)",
+                    value.trim()
+                )));
+            }
+            prev_word = None;
+            continue;
+        } else if c.is_alphabetic() || c == '_' {
+            let start = i;
+            while i < b.len() && (b[i].is_alphanumeric() || b[i] == '_') {
+                i += 1;
+            }
+            Some(b[start..i].iter().collect::<String>())
+        } else {
+            None
+        };
+        if let Some(w) = word {
+            prev_word = Some(w);
+            continue;
+        }
+        if c.is_whitespace() {
+            i += 1;
+            continue;
+        }
+        match c {
+            '(' => {
+                if let Some(w) = &prev_word {
+                    if !["and", "or", "not", "xor", "div", "mod", "in"].contains(&w.to_ascii_lowercase().as_str()) {
+                        return refuse("a call");
+                    }
+                }
+            }
+            '.' if b.get(i + 1) != Some(&'.') => match &prev_word {
+                Some(w) if ["rec", "xrec", "this"].contains(&w.trim_matches('"').to_ascii_lowercase().as_str()) => {}
+                _ => return refuse("a member access"),
+            },
+            ':' if b.get(i + 1) == Some(&':') => {
+                // `Rec.Status::Open`, `"Enum"::Value`: the value name is a word, not a member.
+                i += 2;
+                while i < b.len() && b[i].is_whitespace() {
+                    i += 1;
+                }
+                if i < b.len() && b[i] == '"' {
+                    i += 1;
+                    while i < b.len() && b[i] != '"' {
+                        i += 1;
+                    }
+                    i += 1;
+                } else {
+                    while i < b.len() && (b[i].is_alphanumeric() || b[i] == '_') {
+                        i += 1;
+                    }
+                }
+                prev_word = None;
+                continue;
+            }
+            _ => {}
+        }
+        prev_word = None;
+        i += 1;
+    }
+    big
+}
+
 /// Name of the synthetic routine for property `prop` of the node at `offset`
 /// (counted from the start of its object, so inserting text into an earlier
 /// object of the same file does not rename it).
@@ -1088,6 +1221,39 @@ mod tests {
             expand("codeunit 50100 C { procedure P() begin end; }", &Default::default()),
             None
         );
+    }
+
+    #[test]
+    fn client_compiled_control_expressions_that_bc_fails_on_are_named() {
+        use super::{ClientExpr, client_expression};
+        let refused = |e: &str| matches!(client_expression(e), Some(ClientExpr::Refused(_)));
+        // pages/lt-cc-page-leads/CcPageLeads.al:764, :846, :880.
+        assert!(refused("GetRow().Flag"));
+        assert!(refused("Rec.D = 0D"));
+        assert!(refused("GlobalRow.Grp = 2"));
+        assert!(refused("Rec.T = 0T"));
+        assert!(refused("IsOk()"));
+        assert!(matches!(
+            client_expression("0L <> Rec.Big"),
+            Some(ClientExpr::BigIntegerLiteral(_))
+        ));
+        // Shapes the corpus and Microsoft's apps run.
+        for ok in [
+            "not HideIt",
+            "Rec.Flag",
+            "Rec.Value <> ''",
+            "Rec.Value <> 'a.b(c)'",
+            "(Rec.LineType = Rec.LineType::One) or (Rec.LineType = Rec.LineType::Two)",
+            "Rec.\"Report Output Type\" = Rec.\"Report Output Type\"::Print",
+            "(SourceItemTrackingEntryType = \"Item Tracking Entry Type\"::\"Serial No.\")",
+            "this.UserGreetingVisible",
+            "Cnt > 3",
+            "(2 = 3)",
+            "not (HideIt or SecondFlag)",
+            "Rec.Amount > 1.5",
+        ] {
+            assert_eq!(client_expression(ok), None, "{ok}");
+        }
     }
 
     #[test]

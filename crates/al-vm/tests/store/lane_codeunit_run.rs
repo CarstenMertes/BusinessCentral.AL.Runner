@@ -231,3 +231,20 @@ fn a_commit_after_consistent_false_fails_and_consistent_true_clears_it() {
          data from being updated incorrectly.|DB:TableInConsistent|0;1"
     );
 }
+
+/// Whether the TryFunctionWrite check comes before insert event subscribers is not pinned: such an Insert is refused.
+#[test]
+fn an_insert_in_a_used_try_on_a_table_with_insert_subscribers_is_refused() {
+    let body = r#"
+        [TryFunction]
+        local procedure TryInsert()
+        var Row: Record "CR Row";
+        begin Row.Id := 1; Row.Insert(); end;
+        procedure F(): Boolean begin exit(TryInsert()); end;
+        [EventSubscriber(ObjectType::Table, Database::"CR Row", 'OnBeforeInsertEvent', '', false, false)]
+        local procedure OnBeforeInsertRow(var Rec: Record "CR Row"; RunTrigger: Boolean) begin end;"#;
+    match run(body, "F") {
+        Err(Signal::Unsupported(m)) => assert!(m.contains("subscribers"), "{m}"),
+        other => panic!("{other:?}"),
+    }
+}

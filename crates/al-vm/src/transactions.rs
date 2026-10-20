@@ -288,6 +288,15 @@ impl Session {
         )
     }
 
+    /// The name of a table `Consistent(false)` marks in the open transaction, for the test runner's commit at the end of a
+    /// test (not pinned: refused there).
+    pub fn inconsistent_table(&self) -> Option<String> {
+        self.tx
+            .inconsistent
+            .first()
+            .map(|&t| self.engine.program.objects[t as usize].name.clone())
+    }
+
     /// A transaction that ends other than by `Commit()` while `Consistent(false)` marks a table: what BC does is not
     /// pinned (only `Commit()` is, misc/lt-cu-odd-leads/CuCommitTests.al:405-419), so it is refused.
     pub(crate) fn refuse_inconsistent_end(&self, how: &str) -> Result<(), Signal> {
@@ -318,14 +327,13 @@ impl Session {
     /// A TryFunction call whose result is used begins: `consumer` is the frame count of the caller that uses the
     /// result. What the TryFunctionWrite error names is the caller of that procedure: the test method when a helper
     /// of it uses the result (misc/lt-cu-odd-leads/CuTryTests.al:105-121 TryInsertThenError_IfNotForm), the test
-    /// runner's root scope when the test method uses it itself (:236-238 measured 'RunTests' under the classic runner
-    /// on BC 27.5 and 'RootMethodScope' under the TestRunnerHub runner on 28.5/29.0). Any other caller is not pinned:
+    /// runner's root scope when the test method uses it itself (:236-238 and corpus commit ff42e3d3: 'RunTests' under the
+    /// classic runner on BC 27.5, 'RootMethodScope' under the TestRunnerHub runner on 28.5/29.0). Any other caller is not pinned:
     /// the error is raised with an unpinned text.
     pub(crate) fn enter_used_try(&mut self) {
         let scope = match self.call_stack.len() {
-            // The corpus masks this name, so the runner's name is not pinned per version: the TestRunnerHub one is used for
-            // every major (the classic runner, measured on 27.5, says 'RunTests').
-            0 | 1 => Some("RootMethodScope".to_string()),
+            // The runner's name per major (al_version::test_runner_root_scope, corpus commit ff42e3d3).
+            0 | 1 => al_version::test_runner_root_scope(self.engine.target.as_ref()).map(str::to_string),
             2 => {
                 let (o, r) = (self.frames[0], self.call_stack[0].routine);
                 let obj = &self.engine.program.objects[o];
@@ -380,6 +388,14 @@ impl Session {
                 ..al_builtins::native::unpinned_error_for("TryFunctionWrite scope name")
             })),
         })
+    }
+
+    /// Whether a write here is a write of a TryFunction whose result is used (`gate_used_try_write` would raise).
+    pub(crate) fn used_try_write_applies(&self) -> bool {
+        self.tx
+            .used_tries
+            .last()
+            .is_some_and(|t| t.runs == 0 && t.world == self.tx.tx_world)
     }
 
     /// Writes other than Insert inside a TryFunction whose result is used are not pinned (docs/probes-needed.md).

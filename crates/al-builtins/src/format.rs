@@ -197,6 +197,52 @@ fn format_in_region(
     Ok(pad(text, length))
 }
 
+/// The text of a multi-language property (`ENU = 'a,b', DEU = 'x,y'`) in session language `language`: the entry of its
+/// language code, else the ENU entry. Pinned for OptionCaptionML (record/lt-x-table-props/XTablePropsTests.al:175-232 on a
+/// table field: 1033 ENU, 1031 DEU, 1036 falls back to ENU; :741-785 on a report column: an ENU-only list in 1031 gives ENU).
+/// Another language and a list without the entry and without ENU are not pinned: the error says why.
+pub fn ml_text_in_language(ml: &str, language: i32) -> Result<String, String> {
+    let code = match language {
+        1033 => "ENU",
+        1031 => "DEU",
+        1036 => "FRA",
+        n => return Err(format!("`{ml}` in language {n} (only 1033, 1031 and 1036 are pinned)")),
+    };
+    let mut entries = Vec::new();
+    let (mut start, mut quoted) = (0, false);
+    let mut parts = Vec::new();
+    for (i, c) in ml.char_indices() {
+        match c {
+            '\'' => quoted = !quoted,
+            ',' if !quoted => {
+                parts.push(&ml[start..i]);
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    parts.push(&ml[start..]);
+    for part in parts {
+        let Some((k, v)) = part.split_once('=') else {
+            return Err(format!("`{ml}` is not a list of language = text entries"));
+        };
+        let v = v.trim();
+        let Some(text) = v.strip_prefix('\'').and_then(|r| r.strip_suffix('\'')) else {
+            return Err(format!("`{ml}`: the {} entry is not a literal", k.trim()));
+        };
+        entries.push((k.trim().to_string(), text.replace("''", "'")));
+    }
+    let find = |c: &str| {
+        entries
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case(c))
+            .map(|(_, t)| t.clone())
+    };
+    find(code)
+        .or_else(|| find("ENU"))
+        .ok_or_else(|| format!("`{ml}` has neither a {code} nor an ENU entry (not pinned)"))
+}
+
 /// The text of a dataset column under the report's `FormatRegion` (report/lt-y-report-props/YReportPropsTests.al:34-148), `None`
 /// when the shape is not pinned: a Date `31.01.2025`, a DateTime `31.01.2025 14:30:15` (24-hour time with seconds; an hour below
 /// 10 is not measured), a Decimal with the region's decimal separator and no grouping (`1234567,891`).

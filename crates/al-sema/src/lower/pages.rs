@@ -16,6 +16,10 @@ impl Lowerer<'_> {
         let mut unsupported = reasons.to_vec();
         let table = self.table_of[oi];
         let extensions: Vec<usize> = self.page_extensions.get(&oi).cloned().unwrap_or_default();
+        unsupported.extend(super::shared::over_max_length(obj));
+        for &e in &extensions {
+            unsupported.extend(super::shared::over_max_length(&self.ws.object_ast(e)));
+        }
         // The code a control's text names lives in its owner: the page, or the extension.
         struct Owner {
             object: usize,

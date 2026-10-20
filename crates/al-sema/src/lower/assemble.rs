@@ -497,7 +497,10 @@ pub(crate) fn build_shared<'a>(
             source_slot: n,
             destination_slot: n + 1,
         };
-        xml_irs[oi] = Some(crate::xmlports::build(&cx, Vec::new()));
+        xml_irs[oi] = Some(crate::xmlports::build(
+            &cx,
+            super::shared::over_max_length(&ws.object_ast(oi)),
+        ));
         xml_layouts[oi] = Some(l);
     }
     // Reports: the dataset, and the reasons the runtime cannot run one yet. The data item records
@@ -618,7 +621,11 @@ pub(crate) fn build_shared<'a>(
             extension_reasons,
             extensions: exts.clone(),
         };
-        report_irs[oi] = Some(crate::reports::build(&cx, &obj, Vec::new()));
+        let mut over = super::shared::over_max_length(&obj);
+        for &e in &exts {
+            over.extend(super::shared::over_max_length(&ws.object_ast(e)));
+        }
+        report_irs[oi] = Some(crate::reports::build(&cx, &obj, over));
         report_layouts[oi] = Some(l);
     }
     for (ei, base) in ext_base.iter().enumerate() {
@@ -1120,6 +1127,13 @@ pub(crate) fn lower_core(
             .map(|f| f.properties)
             .collect::<Vec<_>>()
     };
+    let over_max_length = |e: usize| {
+        if ws.usable(e) {
+            super::shared::over_max_length(&ws.object_ast(e))
+        } else {
+            Vec::new()
+        }
+    };
     let modify_properties = |e: usize| {
         if ws.usable(e) && ws.objects[e].kind == ObjKind::TableExtension {
             crate::members::modify_properties(ws, e)
@@ -1155,6 +1169,7 @@ pub(crate) fn lower_core(
         enum_info: &enum_info,
         own_field_properties: &own_field_properties,
         modify_properties: &modify_properties,
+        over_max_length: &over_max_length,
     };
     let Linking { linked, expected, syms } = link_pieces(
         staged,
@@ -1261,6 +1276,8 @@ struct Lookups<'a> {
     own_field_properties: &'a (dyn Fn(usize) -> Vec<Vec<(String, String)>> + Sync),
     /// The `modify(Field)` blocks of a table extension: field name and the properties it sets.
     modify_properties: &'a (dyn Fn(usize) -> super::localize::Modifies + Sync),
+    /// Why a table extension's properties refuse its table (see [`super::shared::over_max_length`]).
+    over_max_length: &'a (dyn Fn(usize) -> Vec<String> + Sync),
 }
 
 /// For the check: turns the references the expressions of an object hold into the positions
@@ -1303,6 +1320,12 @@ impl al_ir::walk::RefVisitor for Unembed<'_> {
 
 /// The `OnBeforeValidate` and `OnAfterValidate` triggers one extension attaches to the field of a name: (extension, field name, before, after).
 type ExtTriggers = (usize, String, Vec<(usize, usize)>, Vec<(usize, usize)>);
+
+/// The object-level properties of a table that a table extension sets on it: the extension's value is the table's
+/// (record/lt-x-table-props/XTablePropsTests.al:TableProperties_Metadata_LookupDrillDownDataCaption :585-587,
+/// TableExt_DataCaptionFields_TestPageCaption :609).
+const TABLE_EXTENSION_TABLE_PROPERTIES: &[&str] = &["DataCaptionFields", "LookupPageId", "DrillDownPageId"];
+use al_ir::sym::UNSUPPORTED_TABLE_PROPERTY;
 
 /// Takes what the table extensions declare out of the tables that hold it: their fields, their keys
 /// and their changes to other fields (`modify`). The table keeps its own; link merges the rest again.
@@ -1426,6 +1449,23 @@ fn split_tables(
         touched.sort_unstable();
         touched.dedup();
         for e in touched {
+            // The table properties an extension may set (record/lt-x-table-props/XTablePropsTests.al:585-587, :609).
+            let ext_props: Vec<(String, String)> = staged[e]
+                .object
+                .properties
+                .iter()
+                .filter(|(k, _)| {
+                    TABLE_EXTENSION_TABLE_PROPERTIES
+                        .iter()
+                        .any(|n| n.eq_ignore_ascii_case(k))
+                })
+                .cloned()
+                .chain(
+                    (lookups.over_max_length)(e)
+                        .into_iter()
+                        .map(|why| (UNSUPPORTED_TABLE_PROPERTY.to_string(), why)),
+                )
+                .collect();
             let c = contributions[e].get_or_insert_with(|| {
                 let modifies = (lookups.modify_properties)(e)
                     .into_iter()
@@ -1440,6 +1480,7 @@ fn split_tables(
                     fields: Vec::new(),
                     keys: Vec::new(),
                     modifies,
+                    properties: ext_props,
                 }
             });
             if let Some(pos) = by_ext.iter().position(|(x, _)| *x == e) {

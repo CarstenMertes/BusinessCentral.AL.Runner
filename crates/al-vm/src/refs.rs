@@ -1282,6 +1282,18 @@ impl Session {
 
     /// The members of an Option or Enum field as (ordinal, name, caption), in declared order.
     pub(crate) fn members_of_field(&self, t: &TableDef, pos: usize) -> Result<Option<FieldMembers>, Signal> {
+        self.members_of_field_in(t, pos, false)
+    }
+
+    /// [`Self::members_of_field`]; with `session_language`, a field with OptionCaptionML takes the captions of the session
+    /// language (record/lt-x-table-props/XTablePropsTests.al:175-232, `FieldRef.OptionCaption`), else it is refused: what the
+    /// other readers (reports, XMLports, filters, TestField) show for it is not pinned.
+    pub(crate) fn members_of_field_in(
+        &self,
+        t: &TableDef,
+        pos: usize,
+        session_language: bool,
+    ) -> Result<Option<FieldMembers>, Signal> {
         match &t.fields[pos].ty {
             RtType::Enum(id) => {
                 self.note_enum(*id);
@@ -1302,20 +1314,28 @@ impl Session {
             }
             RtType::Option(names) => {
                 // A table field's OptionCaptionML gives the captions of the session language (record/lt-x-table-props/
-                // XTablePropsTests.al:219-232); the runtime does not read it, so the captions are refused rather than
-                // taken from OptionCaption or the member names.
-                if self.field_property(t, pos, "OptionCaptionML").is_some() {
-                    return unsupported(format!(
-                        "OptionCaptionML of option field {} is not supported",
-                        t.fields[pos].name
-                    ));
-                }
-                let captions: Vec<String> = match self.field_property(t, pos, "OptionCaption") {
-                    Some(v) => match crate::recmeta::string_literal(&v) {
+                // XTablePropsTests.al:219-232).
+                let ml = self.field_property(t, pos, "OptionCaptionML");
+                let captions: Vec<String> = match (ml, self.field_property(t, pos, "OptionCaption")) {
+                    (Some(ml), _) if session_language => {
+                        let language = al_builtins::format::FormatCtx::language(self);
+                        al_builtins::format::ml_text_in_language(&ml, language)
+                            .map_err(|e| Signal::Unsupported(format!("OptionCaptionML {e}")))?
+                            .split(',')
+                            .map(str::to_string)
+                            .collect()
+                    }
+                    (Some(_), _) => {
+                        return unsupported(format!(
+                            "OptionCaptionML of option field {} read here (not pinned for this reader)",
+                            t.fields[pos].name
+                        ));
+                    }
+                    (None, Some(v)) => match crate::recmeta::string_literal(&v) {
                         Some(list) => list.split(',').map(str::to_string).collect(),
                         None => return unsupported(format!("OptionCaption `{v}`")),
                     },
-                    None => names.clone(),
+                    (None, None) => names.clone(),
                 };
                 if captions.len() != names.len() {
                     return unsupported(
@@ -1338,7 +1358,10 @@ impl Session {
     /// Corpus: fieldref/TestFieldRefEnumOrdinalByIndex.al (index is a 1-based position, out of range
     /// answers -1 / ''), TestFieldRefEnum.al, TestPrecompiledFieldOptionCaption.al:34-48.
     fn enum_metadata(&self, method: &str, t: &TableDef, pos: usize, args: &[Value]) -> Result<Value, Signal> {
-        let Some((is_enum, members)) = self.members_of_field(t, pos)? else {
+        // OptionCaption and OptionMembers of a field with OptionCaptionML are pinned (XTablePropsTests.al:192-196); the other methods
+        // are not.
+        let session_language = matches!(method, "OptionCaption" | "OptionMembers");
+        let Some((is_enum, members)) = self.members_of_field_in(t, pos, session_language)? else {
             return match method {
                 "IsEnum" => Ok(Value::Boolean(false)),
                 "EnumValueCount" => Ok(Value::Integer(0)),

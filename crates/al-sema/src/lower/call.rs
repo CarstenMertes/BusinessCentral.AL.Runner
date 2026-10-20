@@ -232,6 +232,9 @@ impl Lowerer<'_> {
                     None
                 };
                 let option_captions = if id == "System.Evaluate#1" {
+                    if let Some(a) = args.first() {
+                        self.refuse_evaluate_option_caption_ml(a)?;
+                    }
                     args.first().and_then(|a| self.option_field_captions(a))
                 } else {
                     None
@@ -492,7 +495,13 @@ impl Lowerer<'_> {
                     // 'Variant' (corpus types/lt-scalars/ScT70052.al): `System.FormatVariant#1` checks the number when it runs,
                     // a literal, a variable or an expression alike.
                     } else if id.starts_with("System.Format#") && i == 0 {
-                        ir::Arg::Value(self.format_option_field(args.len() == 1, a)?)
+                        ir::Arg::Value(self.format_option_field(
+                            args.len() == 1,
+                            args.len() == 3
+                                && args[1].text().to_string().trim() == "0"
+                                && args[2].text().to_string().trim() == "9",
+                            a,
+                        )?)
                     // The substituted values of StrSubstNo, Message and Error are `Format`ted: an Option
                     // field shows its caption (corpus xmlport/PWXmlPortFormatEvaluate.al:Import_Xml_Option,
                     // `%3` of a field with OptionCaption).
@@ -501,7 +510,7 @@ impl Lowerer<'_> {
                             || id.starts_with("Dialog.Message#")
                             || id.starts_with("Dialog.Error#"))
                     {
-                        ir::Arg::Value(self.format_option_field(true, a)?)
+                        ir::Arg::Value(self.format_option_field(true, false, a)?)
                     } else {
                         ir::Arg::Value(self.expr(a)?)
                     });

@@ -766,7 +766,16 @@ impl Session {
             let kind = page_of(&self.engine(), st).controls[idx].kind.clone();
             match kind {
                 ir::ControlKind::DataItem => return self.request_item_op(method, st, idx, args),
-                ir::ControlKind::Action if m == PageMethod::Invoke => return self.request_action_invoke(st, idx),
+                // Visible and Enabled do not find the action either, whatever its own Visible and Enabled say
+                // (report/W3ReportActions.al:186); the other members of an action are not pinned.
+                ir::ControlKind::Action
+                    if matches!(m, PageMethod::Invoke | PageMethod::Visible | PageMethod::Enabled) =>
+                {
+                    return self.request_action_not_found(st, idx);
+                }
+                ir::ControlKind::Action => {
+                    return unsupported(format!("TestAction.{m} on an action of a request page (not pinned)"));
+                }
                 _ => {}
             }
         }

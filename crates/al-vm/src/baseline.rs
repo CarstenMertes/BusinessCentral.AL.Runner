@@ -15,7 +15,7 @@ pub struct Baseline {
     next_row_version: i64,
     committed_row_version: i64,
     autoinc: std::collections::HashMap<(String, u32), i64>,
-    isolated_storage: std::collections::HashMap<(String, String), (String, bool)>,
+    isolated_storage: std::collections::HashMap<(String, String), (String, bool, bool)>,
     sequences: std::collections::HashMap<(String, String), crate::sessionops::Sequence>,
     last_stamp: i64,
     /// The workspace app's own install codeunits ran once, before this capture (the runner does it once per run, as
@@ -64,11 +64,12 @@ impl Baseline {
         }
         let storage = sorted(&self.isolated_storage);
         put_u32(&mut out, storage.len() as u32);
-        for ((company, key), (value, encrypted)) in storage {
+        for ((company, key), (value, encrypted, secret)) in storage {
             put_str(&mut out, &company);
             put_str(&mut out, &key);
             put_str(&mut out, &value);
-            put_u8(&mut out, encrypted as u8);
+            // Bit 0: stored encrypted; bit 1: stored from a SecretText.
+            put_u8(&mut out, encrypted as u8 | (secret as u8) << 1);
         }
         let sequences = sorted(&self.sequences);
         put_u32(&mut out, sequences.len() as u32);
@@ -135,8 +136,8 @@ impl Baseline {
             let company = r.str()?;
             let key = r.str()?;
             let value = r.str()?;
-            let encrypted = r.u8()? != 0;
-            isolated_storage.insert((company, key), (value, encrypted));
+            let flags = r.u8()?;
+            isolated_storage.insert((company, key), (value, flags & 1 != 0, flags & 2 != 0));
         }
         let mut sequences = std::collections::HashMap::new();
         for _ in 0..r.u32()? {
@@ -288,9 +289,12 @@ mod tests {
             next_row_version: 1_000_000_007,
             committed_row_version: 1_000_000_001,
             autoinc: [(("CRONUS".to_string(), 311), 12_i64)].into_iter().collect(),
-            isolated_storage: [(("CRONUS".to_string(), "key".to_string()), ("secret".to_string(), true))]
-                .into_iter()
-                .collect(),
+            isolated_storage: [(
+                ("CRONUS".to_string(), "key".to_string()),
+                ("secret".to_string(), true, true),
+            )]
+            .into_iter()
+            .collect(),
             sequences: [(
                 ("".to_string(), "Seq".to_string()),
                 crate::sessionops::Sequence {

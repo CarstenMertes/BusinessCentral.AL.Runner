@@ -157,6 +157,8 @@ pub enum Value {
     /// A column of a platform table row whose value nothing pins (ADR-013 decision 7, hard rule 3): the
     /// provider leaves it unknown instead of giving it a default. It only ever sits in a record buffer or a
     /// listed row; every read of it is refused with the reason it holds, and writing the field replaces it.
+    /// An event argument the platform leaves unknown (RequestPageXml of SubstituteReport for an Html SaveAs) is
+    /// the one exception: it sits in a by-value parameter, can be passed on by value, and any other use is refused.
     Unknown(std::sync::Arc<str>),
 }
 

@@ -164,6 +164,15 @@ fn an_html_saveas_of_an_rdlc_report_raises_substitutereport_then_fails() {
 #[test]
 fn an_html_saveas_whose_substitutereport_subscriber_reads_requestpagexml_is_refused() {
     assert_refused(run("Html"), "RequestPageXml");
+    for read in [
+        "Format(StrPos(RequestPageXml, 'MARK') > 0)",
+        "Format(StrLen(RequestPageXml))",
+        "Format(RequestPageXml.Contains('MARK'))",
+        "Format(RequestPageXml)",
+    ] {
+        let fixture = FIXTURE.replace("L.Add('req=' + RequestPageXml);", &format!("L.Add({read});"));
+        assert_refused(al_testkit::run_in(&fixture, "SE Tests", "Html"), "RequestPageXml");
+    }
 }
 
 /// A NewReportId no report declares: what BC does is not pinned.
@@ -310,5 +319,21 @@ fn the_address_alone_is_the_second_address_line() {
          <CompanyAddressLine3></CompanyAddressLine3><CompanyAddressLine4></CompanyAddressLine4>\
          <CompanyAddressLine5></CompanyAddressLine5><CompanyAddressLine6></CompanyAddressLine6>\
          <CompanyAddressLine7></CompanyAddressLine7><CompanyAddressLine8></CompanyAddressLine8>"
+    );
+}
+
+/// A SubstituteReport subscriber that passes RequestPageXml on to an event of its own (Base Application's ReportManagement
+/// does, OnAfterSubstituteReport) runs while nothing reads it (AMRdlcOutput.al:TextRdlc_SaveAsHtml_IsRefused).
+#[test]
+fn an_html_saveas_whose_subscriber_passes_requestpagexml_on_runs() {
+    let fixture = FIXTURE
+        .replace("L.Add('req=' + RequestPageXml);", "L.Add('req'); OnForward(RequestPageXml); Pass(RequestPageXml);")
+        .replace(
+            "    [EventSubscriber(ObjectType::Codeunit, Codeunit::\"Reporting Triggers\", 'OnDocumentReady'",
+            "    [IntegrationEvent(false, false)]\n    local procedure OnForward(RequestPageXml: Text) begin end;\n    local procedure Pass(Xml: Text) begin end;\n    [EventSubscriber(ObjectType::Codeunit, Codeunit::\"SE Sub\", 'OnForward', '', false, false)]\n    local procedure Forwarded(RequestPageXml: Text) var L: Codeunit \"SE Log\"; begin L.Add('fwd'); end;\n\n    [EventSubscriber(ObjectType::Codeunit, Codeunit::\"Reporting Triggers\", 'OnDocumentReady'",
+        );
+    assert_eq!(
+        text(al_testkit::run_in(&fixture, "SE Tests", "Html")),
+        "No|The Html output format is not supported by the current report layout format.|SubstituteReport(50972,SaveAs,in=-1);req;fwd;"
     );
 }

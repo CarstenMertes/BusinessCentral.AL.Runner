@@ -88,6 +88,8 @@ impl Session {
                 // A Notification handed by value to an event is the caller's own notification: a subscriber's SetData and Message
                 // reach the publisher's caller (events/lt-notification-by-value/NotificationByValue.al:Event_ByValueArgument_SubscriberChanges).
                 (a @ Value::Library(al_builtins::library_kind::LibraryKind::Notification, _), false) => a,
+                // An unknown event argument a subscriber passes on to its own event stays unknown (see `call_inner`).
+                (a @ Value::Unknown(_), false) => a,
                 (a, _) => ops::convert(a, &r.locals[i].ty)?,
             });
         }

@@ -1376,6 +1376,9 @@ impl Session {
                 ) if matches!(r.locals[i].ty, RtType::Text(_) | RtType::Code(_)) => {
                     return Err(self.variant_to_text_error(matches!(r.locals[i].ty, RtType::Code(_))));
                 }
+                // An event argument the platform leaves unknown (RequestPageXml of SubstituteReport for an Html SaveAs, reports.rs)
+                // is passed on by value as it is: a routine that never reads it runs, a read is refused where it happens.
+                (a @ Value::Unknown(_), false) => a,
                 (a, _) => ops::convert_plain(a, &r.locals[i].ty)?,
             };
         }

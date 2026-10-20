@@ -1964,7 +1964,8 @@ impl Session {
             // An Html SaveAs of a report with an RDLC layout raises SubstituteReport with the parameters as RequestPageXml before it
             // fails for the layout, and nothing after (report/lt-am-rdlc-output/AMRdlcOutput.al:TextRdlc_SaveAsHtml_IsRefused,
             // `SubstituteReport(79256,SaveAs,req=Yes);`). Only that RequestPageXml contains the parameters is pinned, not its
-            // text: a subscriber that reads it is refused. A subscriber that substitutes another report is not pinned.
+            // text: the subscriber gets an unknown value, so a subscriber that reads it is refused where it reads it. A subscriber
+            // that substitutes another report is not pinned.
             if format == "Html"
                 && record_ref.is_none()
                 && matches!(target, SaveTarget::Stream(_))
@@ -1974,18 +1975,20 @@ impl Session {
                     .engine
                     .events
                     .is_subscribed(crate::events::REPORTING_TRIGGERS, "substitutereport")
+                && self
+                    .raise_substitute_report(
+                        &schema,
+                        Value::Unknown(
+                            "RequestPageXml of SubstituteReport for an Html SaveAs: only that it contains the parameters is pinned"
+                                .into(),
+                        ),
+                    )?
+                    .is_some()
             {
-                if self.substitute_report_reads_request_page() {
-                    return unsupported(
-                        "a SubstituteReport subscriber reads RequestPageXml of an Html SaveAs: only that it contains the parameters is pinned",
-                    );
-                }
-                if self.raise_substitute_report(&schema, &parameters)?.is_some() {
-                    return unsupported("SubstituteReport set another report for an Html SaveAs (not pinned)");
-                }
+                return unsupported("SubstituteReport set another report for an Html SaveAs (not pinned)");
             }
             if self.save_as_raises_events(&schema, &format, &parameters, record_ref, &target) {
-                if let Some(new_id) = self.raise_substitute_report(&schema, "")? {
+                if let Some(new_id) = self.raise_substitute_report(&schema, Value::Text(String::new().into()))? {
                     let (i, s) = self.report_by_number(id, Some(&Value::Integer(new_id)))?;
                     if !self.save_as_raises_events(&s, &format, &parameters, record_ref, &target) {
                         return unsupported(format!(
@@ -2261,51 +2264,11 @@ impl Session {
                     .is_subscribed(crate::events::REPORTING_TRIGGERS, "ondocumentready"))
     }
 
-    /// Whether a `SubstituteReport` subscriber reads its `RequestPageXml` parameter anywhere in its body (a load of it, or
-    /// passing it on), or a subscriber is declared but not compiled (its body is not known).
-    fn substitute_report_reads_request_page(&self) -> bool {
-        let key = (crate::events::REPORTING_TRIGGERS, "substitutereport".to_string());
-        if self.engine.events.missing.contains_key(&key) {
-            return true;
-        }
-        fn root_is(p: &ir::Place, slot: usize) -> bool {
-            match p {
-                ir::Place::Local(i) => *i == slot,
-                ir::Place::Index(b, _) | ir::Place::Field(b, _) => root_is(b, slot),
-                _ => false,
-            }
-        }
-        let refs = |args: &[ir::Arg], slot: usize| args.iter().any(|a| matches!(a, ir::Arg::Ref(p) if root_is(p, slot)));
-        self.engine.events.subscribers.get(&key).is_some_and(|subs| {
-            subs.iter().any(|s| {
-                let r = &self.engine.program.objects[s.object].routines[s.routine];
-                let Some(slot) = r.locals[..r.params]
-                    .iter()
-                    .position(|l| l.name.eq_ignore_ascii_case("RequestPageXml"))
-                else {
-                    return false;
-                };
-                let mut reads = false;
-                ir::types::for_each_expr_post(&r.body, &mut |e| {
-                    reads |= match e {
-                        ir::Expr::Load(p) => root_is(p, slot),
-                        ir::Expr::Call { args, .. }
-                        | ir::Expr::InterfaceCall { args, .. }
-                        | ir::Expr::DotNet { args, .. }
-                        | ir::Expr::Builtin { args, .. } => refs(args, slot),
-                        _ => false,
-                    };
-                });
-                reads
-            })
-        })
-    }
-
     /// Raises `SubstituteReport(ReportId, RunMode, RequestPageXml, RecordRef, var NewReportId)` for an Xml SaveAs and
     /// answers the report a subscriber put in its place. Pinned (PeVTests.al:432, :483): ReportId, RunMode `SaveAs`,
     /// NewReportId -1 on entry, and a NewReportId a subscriber sets runs that report. Not pinned, and passed as BC most
     /// likely does (docs/probes-needed.md): RequestPageXml empty and RecordRef unopened.
-    fn raise_substitute_report(&mut self, schema: &Schema, request_page_xml: &str) -> Result<Option<i32>, Signal> {
+    fn raise_substitute_report(&mut self, schema: &Schema, request_page_xml: Value) -> Result<Option<i32>, Signal> {
         let report_id = self.object_id_of(schema.object as u32) as i32;
         let members: std::sync::Arc<[String]> = ["Normal", "ParametersOnly", "Execute", "Print", "SaveAs", "RunModal"]
             .iter()
@@ -2318,7 +2281,7 @@ impl Session {
         let mut args = vec![
             Value::Integer(report_id),
             Value::Option(4, members),
-            Value::Text(request_page_xml.into()),
+            request_page_xml,
             Value::Library(
                 "RecordRef".into(),
                 Rc::new(RefCell::new(al_builtins::value::LibraryValue::Empty)),

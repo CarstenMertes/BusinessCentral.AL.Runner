@@ -383,7 +383,10 @@ codeunit 50381 T
 #[test]
 fn a_stored_record_handed_to_a_temporary_parameter_of_a_procedure_is_refused() {
     let r = run_in(TEMP_PARAM, "T", "F");
-    assert!(matches!(&r, Err(Signal::Unsupported(m)) if m.contains("temporary")), "{r:?}");
+    assert!(
+        matches!(&r, Err(Signal::Unsupported(m)) if m.contains("temporary")),
+        "{r:?}"
+    );
 }
 
 const TEMP_SUBSCRIBER: &str = r#"

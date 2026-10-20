@@ -20,10 +20,31 @@ fn publisher(program: &Program, object: usize) -> Option<String> {
         al_vm::events::CAPTION_CLASS => Some("platform captionclass".into()),
         al_vm::events::GLOBAL_TRIGGERS => Some("codeunit 2000000002".into()),
         al_vm::events::REPORTING_TRIGGERS => Some("platform reportingtriggers".into()),
+        al_vm::events::COMPANY_TRIGGERS => Some("codeunit 2000000003".into()),
         _ => {
             let o = program.objects.get(object)?;
             Some(format!("{} {}", o.kind.label(), o.id?))
         }
+    }
+}
+
+/// The impact point of install code (`label`) that can write `writes`, or a table the program does not name (`any`): it
+/// selects the tests that use one of those tables (ADR-043 section 1).
+fn install_point(program: &Program, label: &str, writes: BTreeSet<u32>, any: bool) -> ImpactPoint {
+    if any {
+        return unsupported(label, "its install code writes a table the program does not name");
+    }
+    let tables: Vec<usize> = writes.iter().map(|&t| t as usize).collect();
+    ImpactPoint {
+        what: format!("{label} (install code)"),
+        matcher: Matcher::AnyKey(
+            tables
+                .iter()
+                .filter_map(|&t| object_key(program, "table", t as u32))
+                .collect(),
+        ),
+        site: Site::Tables(tables),
+        runs_code: false,
     }
 }
 
@@ -171,8 +192,27 @@ pub fn impact_points(lowered: &al_sema::lower::Lowered, is_extension: impl Fn(us
     let mut out = Vec::new();
     // Event subscribers, in the order of their codeunits.
     let mut subs: Vec<(usize, usize, usize, String, String)> = Vec::new();
+    let install_subscriber = |o: usize, r: usize| {
+        registry
+            .install_subscribers
+            .iter()
+            .any(|(so, sr, _)| (*so, *sr) == (o, r))
+    };
     for ((object, event), list) in &registry.subscribers {
-        for s in list.iter().filter(|s| is_extension(s.object) && !s.manual) {
+        // `Company Triggers` OnCompanyOpen and OnCompanyOpenCompleted are listed once, under the key the install session
+        // raises them by (`events::COMPANY_TRIGGERS`), also when a loaded app declares the codeunit.
+        if program.objects.get(*object).is_some_and(|o| {
+            o.kind == ObjKind::Codeunit
+                && o.id == Some(2_000_000_003)
+                && (event == "oncompanyopen" || event == "oncompanyopencompleted")
+        }) {
+            continue;
+        }
+        // The install events of `Extension Triggers` run the subscriber as install code (listed below, ADR-046).
+        for s in list
+            .iter()
+            .filter(|s| is_extension(s.object) && !s.manual && !install_subscriber(s.object, s.routine))
+        {
             subs.push((s.object, s.routine, *object, event.clone(), s.element.to_lowercase()));
         }
     }
@@ -232,6 +272,19 @@ pub fn impact_points(lowered: &al_sema::lower::Lowered, is_extension: impl Fn(us
             site,
             runs_code: true,
         });
+    }
+    // A subscriber to the install events of `Extension Triggers` runs at the extension's install (ADR-046 decision 1):
+    // install code, like an install codeunit's triggers below.
+    let mut index = None;
+    for &(so, sr, _) in registry
+        .install_subscribers
+        .iter()
+        .filter(|(so, _, _)| is_extension(*so))
+    {
+        let label = routine_label(program, so, sr);
+        let index = index.get_or_insert_with(|| crate::runtime::written::ReachIndex::new(&registry, lowered));
+        let f = crate::runtime::written::reach_facts(&registry, lowered, index, so, sr);
+        out.push(install_point(program, &label, f.writes, f.writes_any));
     }
     // Extension objects: which base object they change.
     let mut base: HashMap<usize, usize> = HashMap::new();
@@ -307,22 +360,7 @@ pub fn impact_points(lowered: &al_sema::lower::Lowered, is_extension: impl Fn(us
                     writes.extend(f.writes);
                     any |= f.writes_any;
                 }
-                if any {
-                    unsupported(&label, "its install code writes a table the program does not name")
-                } else {
-                    let tables: Vec<usize> = writes.iter().map(|&t| t as usize).collect();
-                    ImpactPoint {
-                        what: format!("{label} (install code)"),
-                        matcher: Matcher::AnyKey(
-                            tables
-                                .iter()
-                                .filter_map(|&t| object_key(program, "table", t as u32))
-                                .collect(),
-                        ),
-                        site: Site::Tables(tables),
-                        runs_code: false,
-                    }
-                }
+                install_point(program, &label, writes, any)
             }
             // New objects are reached only through one of the points above; permission sets do nothing here (the
             // runtime checks no permission); a codeunit's subscribers are listed above.

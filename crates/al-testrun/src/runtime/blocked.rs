@@ -1,114 +1,20 @@
 //! What a test cannot run for: install codeunits, tables a test touches, blocked routines.
 use super::*;
 
-/// Runs every `Subtype = Install` codeunit's OnInstallAppPerCompany, then every
-/// OnInstallAppPerDatabase with no company chosen (the order measured on BC 27.5), and commits
-/// after each. An installer that cannot run is skipped; returned are the tables it touches and
-/// why, so tests that touch them can be reported not run.
+/// Runs the install code of the apps under test (`install.rs`, ADR-046 step A): per app, in dependency order, its
+/// per-company routines in the session company, then its per-database routines with no company chosen. A routine that
+/// cannot run is skipped; returned are the tables it touches and why, so tests that touch them can be reported not run.
 ///
-/// An installer a lean compile left out (`Lowered::left_out`) does not run: the compile is lean only for tests that
-/// read no data (`observe.rs`), and BC runs install code in the session that publishes the app, so nothing else of it
-/// reaches a test's session (the install baseline, which runs it once in a session of its own, gives the same).
+/// A routine a lean compile left out (`Lowered::left_out`) does not run: the compile is lean only for tests that
+/// read no data (`observe.rs`), and BC runs install code in a session of its own, so nothing else of it reaches a test's
+/// session (the install baseline, which runs it once in a session of its own, gives the same).
 pub(crate) fn run_install_codeunits(lowered: &Lowered, session: &mut Session) -> Vec<(BTreeSet<u32>, String)> {
-    let mut skipped = Vec::new();
-    let installers: Vec<usize> = lowered
-        .program
-        .objects
-        .iter()
-        .enumerate()
-        .filter(|(oi, o)| {
-            o.is_kind(al_ir::ObjKind::Codeunit)
-                && !lowered.dependency[*oi]
-                && !lowered.left_out.get(*oi).copied().unwrap_or(false)
-                && o.properties
-                    .iter()
-                    .any(|(k, v)| k.eq_ignore_ascii_case("Subtype") && v.trim().eq_ignore_ascii_case("Install"))
-        })
-        .map(|(oi, _)| oi)
-        .collect();
-    // Every OnInstallAppPerCompany first, then every OnInstallAppPerDatabase, which has no company
-    // (measured on real BC 27.5: docs/probes-needed.md, the same order as the dependency apps').
-    let company = session.set_company("");
-    session.set_company(&company);
-    for (trigger, no_company) in [("OnInstallAppPerCompany", false), ("OnInstallAppPerDatabase", true)] {
-        for &oi in &installers {
-            let o = &lowered.program.objects[oi];
-            let inst = session.instance(oi);
-            let Some(ri) = o
-                .routines
-                .iter()
-                .position(|r| r.is_trigger && r.name.eq_ignore_ascii_case(trigger))
-            else {
-                continue;
-            };
-            if no_company {
-                session.set_company("");
-            }
-            let why = match blocked_reason(lowered, oi, ri) {
-                Some(reason) => Some(reason),
-                None => match session.call(oi, ri, inst.clone(), Vec::new()) {
-                    Ok(_) => None,
-                    Err(Signal::Unsupported(r)) => Some(r),
-                    Err(Signal::Error(e)) => Some(format!("failed (behaviour not pinned): {}", e.message)),
-                    Err(_) => None,
-                },
-            };
-            session.set_company(&company);
-            // A trigger that ran is durable before the next one starts: a later trigger that
-            // cannot run must not take its writes with it.
-            if why.is_none() {
-                al_builtins::native::Ctx::commit(session).expect("commit");
-            }
-            if let Some(why) = why {
-                session.rollback_transaction();
-                // Subscribers to events the installer raises are not in its static calls,
-                // but they are what it would have written through.
-                let mut touched = tables_touched(lowered, oi, ri);
-                for (so, sr) in subscribers_reached(&session.engine.clone(), lowered, oi, ri) {
-                    touched.extend(tables_touched(lowered, so, sr));
-                }
-                // AllObj and AllObjWithCaption are listed from the compiled objects alone and cannot be written:
-                // nothing an installer does shows in them, so a test that reads them is not held back.
-                touched.retain(|&t| !listed_from_objects(lowered, t));
-                skipped.push((touched, format!("install codeunit {} could not run: {why}", o.name)));
-            }
-        }
-    }
-    // A workspace app's subscribers to the install events of "Extension Triggers" run at its install on BC, once in each
-    // company of the database and then once per database (events/lt-platform-events-v/PeVTests.al:284, :313-314;
-    // ADR-046 decision 1 and amendment 1, A1 facts 1 and 5). The runtime runs one company and does not raise these events
-    // yet (ADR-046 steps A and B), so a test on a table such a subscriber writes is not run: its rows would be missing.
-    let engine = session.engine.clone();
-    for (so, sr, event) in &engine.events.install_subscribers {
-        let (so, sr) = (*so, *sr);
-        if lowered.dependency[so] || lowered.left_out.get(so).copied().unwrap_or(false) {
-            continue;
-        }
-        let o = &lowered.program.objects[so];
-        let mut touched = tables_touched(lowered, so, sr);
-        for (s2, r2) in subscribers_reached(&engine, lowered, so, sr) {
-            touched.extend(tables_touched(lowered, s2, r2));
-        }
-        let event = if event == "oninstallapppercompany" {
-            "OnInstallAppPerCompany"
-        } else {
-            "OnInstallAppPerDatabase"
-        };
-        skipped.push((
-            touched,
-            format!(
-                "the install subscriber {} \"{}\".{} to \"Extension Triggers\".{event} is not run: BC runs it once per company of the database, and the runtime does not model the companies of an install yet (ADR-046 steps A and B)",
-                o.kind, o.name, o.routines[sr].name
-            ),
-        ));
-    }
-    session.commit_transaction();
-    skipped
+    crate::install::run_apps_under_test(lowered, session)
 }
 
 /// Whether the table at object index `table` is a platform table whose rows are computed from the compiled objects
 /// only (AllObj, AllObjWithCaption): no database write, and so no install code, changes them.
-fn listed_from_objects(lowered: &Lowered, table: u32) -> bool {
+pub(crate) fn listed_from_objects(lowered: &Lowered, table: u32) -> bool {
     use al_builtins::platform::{Provider, REGISTRY, Virtual};
     let Some(id) = lowered.program.objects.get(table as usize).and_then(|o| o.id) else {
         return false;

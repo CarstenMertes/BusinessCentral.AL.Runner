@@ -184,7 +184,62 @@ impl Session {
         self.engine.unseeded.contains(&o) || (!self.install_scope && self.engine.platform_unseeded.contains(&o))
     }
 
+    /// Why the rows install code left in table `object` are not known (ADR-046: `InstallFacts::unknown`). Install code
+    /// itself reads them (it runs in an order of the runtime's own; the tables it writes are in the set).
+    pub(crate) fn install_unknown(&self, object: u32) -> Option<&str> {
+        if self.install_scope {
+            return None;
+        }
+        let facts = self.engine.install_facts.get()?;
+        if facts.unknown.is_empty() {
+            return None;
+        }
+        facts.unknown.get(&(object as usize)).map(String::as_str)
+    }
+
+    /// The refusal of a read of field `pos` of a row of table `table` (`fields`, the record's values) when that field is
+    /// `SystemRowVersion`, `SystemCreatedAt` or `SystemModifiedAt`, the row was written by install code, and the order of
+    /// the install routines that write the table is not known (ADR-046 amendment 1, A2 item d; the row version orders
+    /// rows across tables: install/lt-bf-install-probes/BfInstallTests.al:8-9, :196-241).
+    pub(crate) fn install_row_order(
+        &self,
+        table: u32,
+        temporary: bool,
+        pos: usize,
+        fields: &[Value],
+    ) -> Option<String> {
+        if temporary || self.install_scope {
+            return None;
+        }
+        let facts = self.engine.install_facts.get()?;
+        if facts.row_order.is_empty() {
+            return None;
+        }
+        let why = facts.row_order.get(&(table as usize))?;
+        let def = self.engine.tables.get(table as usize)?.as_ref()?;
+        let field = def.fields.get(pos)?;
+        let name = match field.id {
+            2_000_000_001 => "SystemCreatedAt",
+            2_000_000_003 => "SystemModifiedAt",
+            2_000_000_005 => "SystemRowVersion",
+            _ => return None,
+        };
+        let version = def.fields.iter().position(|f| f.id == 2_000_000_005)?;
+        match fields.get(version) {
+            Some(Value::BigInteger(v)) if *v > 0 && *v <= self.install_row_version => Some(format!(
+                "{name} of a row of {} that install code wrote: {why}",
+                def.name
+            )),
+            _ => None,
+        }
+    }
+
     pub(crate) fn unseeded_read(&self, t: &TableDef, temporary: bool, what: &str) -> Result<(), Signal> {
+        if !temporary {
+            if let Some(why) = self.install_unknown(t.object) {
+                return unsupported(format!("{what} on {}: {why}", t.name));
+            }
+        }
         if !temporary && self.is_unseeded(t.object) {
             return unsupported(format!(
                 "{what} on {}: BC holds rows here that an install trigger or Company-Initialize creates, and the install baseline could not create them (ADR-013 decision 5)",
@@ -201,6 +256,11 @@ impl Session {
         // initialising a company create. Where the install baseline could not create them
         // (ADR-013 decision 5), a missing row there is not BC's answer, whoever asks (a dependency
         // app, or the tests of the project): refuse rather than report it as one.
+        if !exists {
+            if let Some(why) = self.install_unknown(t.object) {
+                return unsupported(format!("{} row not found: {why}", t.name));
+            }
+        }
         if !exists && self.is_unseeded(t.object) {
             return unsupported(format!(
                 "{} row not found: the rows a dependency app's install and Company-Initialize create could not be created (ADR-013 decision 5)",
@@ -1389,9 +1449,30 @@ impl Session {
                 ));
             }
         }
-        // OnInstallAppPerDatabase runs with CompanyName() empty; a per-company table fails there
-        // with "You must choose a company before you can access the ..." (measured on BC 27.5,
-        // docs/probes-needed.md; the rest of the text is not known, so this is refused).
+        // OnInstallAppPerDatabase runs with CompanyName() empty. IsEmpty and FindFirst of a per-company table fail there
+        // with `You must choose a company before you can access the "<table>" table.` for a table without a Caption
+        // (install/lt-bf-install-probes/BfInstallTests.al:138-139, reads at BfInstallFixtures.al:131-146; ADR-046
+        // amendment 1, A5). The code BC gave, DB:Ok, waits for the Windows check (a Linux suspect), so it is not pinned.
+        // Every other operation, and a table with a Caption, is not pinned: refused below.
+        if self.cx.company.is_empty()
+            && t.per_company
+            && !rec.borrow().temporary
+            && matches!(method, RecordOp::IsEmpty | RecordOp::FindFirst)
+            && !self.engine.program.objects[t.object as usize]
+                .properties
+                .iter()
+                .any(|(k, _)| k.eq_ignore_ascii_case("Caption"))
+        {
+            return Err(Signal::Error(Box::new(AlError {
+                message: format!(
+                    "You must choose a company before you can access the \"{}\" table.",
+                    t.name
+                ),
+                code: al_builtins::native::UNPINNED_ERROR.into(),
+                call_stack: String::new(),
+                ..Default::default()
+            })));
+        }
         if self.cx.company.is_empty()
             && t.per_company
             && !rec.borrow().temporary

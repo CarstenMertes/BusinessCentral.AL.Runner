@@ -1,11 +1,11 @@
 //! Whether a selected test can observe the install baseline (ADR-013 decision 5, "Install
 //! baseline only when needed", ADR-020 implementation note).
 //!
-//! The baseline is the data a session holds after the dependency apps' install code ran. A test
-//! sees it only through rows, the counters that must not repeat (system ids, row versions,
+//! The baseline is the data a session holds after the install code of the dependency apps and of the apps under test
+//! ran (ADR-046). A test sees it only through rows, the counters that must not repeat (system ids, row versions,
 //! AutoIncrement, time stamps of writes), isolated storage and number sequences (`al_vm::Baseline`
 //! holds nothing else), and through the engine's set of tables the baseline could not seed (a
-//! `Get` in dependency code). Every one of those is reached through a database access, a
+//! `Get` in dependency code) and its install facts (`al_vm::InstallFacts`, also only through a record read). Every one of those is reached through a database access, a
 //! `CreateGuid`, an `IsolatedStorage` or `NumberSequence` call, or an event whose subscribers do
 //! one of those.
 //!

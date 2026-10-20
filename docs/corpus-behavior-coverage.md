@@ -461,6 +461,8 @@ Presentation-only properties (Caption, ToolTip, ApplicationArea, ... ) are left 
 | codeunit | `MakeDateTimeFilter` | 0 | yes | 0 |
 | codeunit | `MakeIntFilter` | 0 | yes | 0 |
 | codeunit | `MakeTimeFilter` | 0 | yes | 0 |
+| codeunit | `OnCompanyOpen` | 0 | yes | 0 |
+| codeunit | `OnCompanyOpenCompleted` | 0 | yes | 0 |
 | codeunit | `OnDatabaseDelete` | 0 | yes | 0 |
 | codeunit | `OnDatabaseInsert` | 0 | yes | 0 |
 | codeunit | `OnDatabaseModify` | 0 | yes | 0 |
@@ -508,8 +510,6 @@ Presentation-only properties (Caption, ToolTip, ApplicationArea, ... ) are left 
 | codeunit | `OnAfterCopyEnvironmentPerCompany` | 0 | no | 0 |
 | codeunit | `OnAfterCopyEnvironmentPerDatabase` | 0 | no | 0 |
 | codeunit | `OnCompanyClose` | 0 | no | 0 |
-| codeunit | `OnCompanyOpen` | 0 | no | 0 |
-| codeunit | `OnCompanyOpenCompleted` | 0 | no | 0 |
 | codeunit | `OnCopilotFeedbackProperties` | 0 | no | 0 |
 | codeunit | `OnCopilotSystemActionInvokedProperties` | 0 | no | 0 |
 | codeunit | `OnDocumentDownload` | 0 | no | 0 |

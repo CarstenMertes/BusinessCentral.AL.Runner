@@ -20,6 +20,7 @@ pub mod flagged;
 pub mod host;
 pub mod impact_static;
 pub mod impact_trace;
+pub mod install;
 pub mod isolation;
 pub mod junit;
 pub mod observe;

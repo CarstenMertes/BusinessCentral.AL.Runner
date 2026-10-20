@@ -945,6 +945,7 @@ impl Session {
                     is_dirty_base: al_builtins::value::DirtyBase::Fresh,
                     last_modify: None,
                     globals: Default::default(),
+                    unpinned_buffer: None,
                 })))
             }
             // Each element of an array is a variable of its own: an array of records holds records, not

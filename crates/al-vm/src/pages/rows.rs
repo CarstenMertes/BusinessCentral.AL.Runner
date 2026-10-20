@@ -522,7 +522,11 @@ impl Session {
         }
         let first = forward[0].clone();
         rec.borrow_mut().fields = first.stored.clone();
-        self.populate_current(st)?;
+        // A view of one row: nothing above it, so the row is not read again before `=` (PnF06FindListMoves.al:348
+        // PW_FindList_Descending_1Rows `F(=><);R1;N(1);N(-1);F(=);R1;C`; two rows read it again, :362).
+        if !above.is_empty() {
+            self.populate_current(st)?;
+        }
         self.nav_find(st, "=")?;
         above.reverse();
         above.extend(forward);
@@ -547,7 +551,9 @@ impl Session {
     /// `First` on a descending find list whose window was read up from its last row (see `read_rows_up_from_the_last`) and
     /// holds a full block: the client reads the top row it holds again, then asks OnNextRecord(-1) and reads each row above until
     /// it answers 0, asks OnFindRecord(`=`) for the top row and reads it again (misc/lt-probes-needed-6/PnF06FindListMoves.al:318
-    /// FindList_Descending_25Rows `desc25_first` = `R21;N(-1);R22;...;R25;N(-1);F(=);R25;C`). A second full block is refused.
+    /// FindList_Descending_25Rows `desc25_first` = `R21;N(-1);R22;...;R25;N(-1);F(=);R25;C`). When there is no row above, the top
+    /// row is read once more before `=` (:404 PW_FindList_Descending_21Rows `desc21_first` = `R21;N(-1);R21;F(=);R21;C`). A second
+    /// full block is refused.
     fn first_above_the_window(&mut self, st: &St) -> Result<Option<bool>, Signal> {
         let before = self.xrec_before_move(st);
         let rec = self.page_rec(st);
@@ -569,6 +575,9 @@ impl Session {
                     "First on a descending list with a second full block of rows above the window (not pinned)",
                 );
             }
+        }
+        if new_rows.is_empty() {
+            self.populate_current(st)?;
         }
         new_rows.reverse();
         {
@@ -790,6 +799,28 @@ impl Session {
             return self.move_on_open_new_list(how);
         }
         let answer_used = self.ret_used;
+        // A list row whose OnValidate refused an entry: Next() raises nothing, runs no OnModify and stores nothing of the row
+        // (pages/lt-ah-pages/PwCloseRevalidate.al:270 PW_List_RefusedOnValidate_ThenNext_ThenClose). Where the cursor lands
+        // and what Next() answers are not pinned, and neither are the other moves.
+        let refused_entry = {
+            let s = st.borrow();
+            !s.trigger_errors.is_empty() && !s.errors.is_empty() && s.dirty
+        };
+        if refused_entry && self.is_list(st) {
+            if how != PageMethod::Next || answer_used {
+                return unsupported(format!(
+                    "{how}() on a list row whose OnValidate refused an entry (only Next() with its answer unused is pinned)"
+                ));
+            }
+            let mut s = st.borrow_mut();
+            s.draft = false;
+            s.dirty = false;
+            s.unpinned_state = Some(
+                "a list after Next() dropped a row whose OnValidate refused an entry (where it stands is not pinned)"
+                    .into(),
+            );
+            return Ok(Value::Boolean(false));
+        }
         // Leaving a row saves it.
         let anchor = st.borrow_mut().after_new.take();
         let writes = self.write_mark();
@@ -998,6 +1029,22 @@ impl Session {
             }
             if how == PageMethod::First && !st.borrow().window_whole {
                 return self.first_above_the_window(st);
+            }
+            // First on the top row of a view the client holds whole reads nothing either (PnF06FindListMoves.al:362
+            // PW_FindList_Descending_2Rows `desc2_first` empty, after Previous landed on the top row).
+            let at_first = st.borrow().window.first().is_some_and(|w| Self::same_key(&w.key, &key));
+            if how == PageMethod::First && at_first {
+                return Ok(Some(true));
+            }
+            // Previous on a view of one row asks nothing (PnF06FindListMoves.al:348 PW_FindList_Descending_1Rows `desc1_prev`
+            // empty); with more rows it is not pinned and refused.
+            if how == PageMethod::Previous && at_first && st.borrow().window.len() == 1 {
+                return Ok(Some(false));
+            }
+            if how == PageMethod::Previous && at_first {
+                return unsupported(
+                    "Previous on the top row of a descending list with OnFindRecord that holds more than one row (not pinned)",
+                );
             }
         }
         if how == PageMethod::Last && st.borrow().window.len() == Self::WINDOW {
@@ -1900,10 +1947,22 @@ impl Session {
     /// `Page.RunModal(Id, Rec)` leaves the row the lookup was closed on in `Rec` (Gen. Journal Management's template
     /// selection reads it). Pinned by pages/lt-page-runmodal-rec/PageRunModalRecAfterClose.al:P174_NonTemp_StartA_HandlerGoToKeyCThenOk and siblings.
     fn hand_back_selection(&mut self, st: &St, handed: &Option<Rec>, answer: &Value) {
-        let closed_on_row = matches!(answer, Value::Option(n, m) if m.get(*n as usize).is_some_and(|a| a == "LookupOK" || a == "LookupCancel"));
+        let statement = st.borrow().statement_run;
+        let closed_on_row = matches!(answer, Value::Option(n, m) if m.get(*n as usize).is_some_and(|a| a == "LookupOK" || a == "LookupCancel"
+            || (statement && (a == "OK" || a == "Cancel"))));
         let picked = st.borrow_mut().selection.take();
         if let (true, Some(r), Some(fields)) = (closed_on_row, handed, picked) {
             if r.borrow().fields.len() == fields.len() {
+                // Called as a statement, whether Rec takes the row the page closed on is not pinned: when that row is not the
+                // one Rec holds, any later use of Rec refuses (docs/probes-needed.md, lane-lookups-30).
+                if statement {
+                    if !Self::same_values(&r.borrow().fields, &fields) {
+                        r.borrow_mut().unpinned_buffer = Some(
+                            "Rec after Page.RunModal(Id, Rec) called as a statement, closed on another row (whether Rec takes that row is not pinned)",
+                        );
+                    }
+                    return;
+                }
                 r.borrow_mut().fields = fields;
             }
         }

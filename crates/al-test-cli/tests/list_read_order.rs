@@ -226,8 +226,8 @@ fn a_part_with_rows_before_the_first_one_read_is_refused() {
 
 // Microsoft's Tests-ERM "ERM Accounts" (codeunit 134020) AnalysisViewWithUpdate: "Analysis by Dimensions" (page 554), a card over a
 // temporary table run with Page.Run(id, TempRec), sets Rec."Account Filter" in OnOpenPage without Modify; its ShowMatrix action
-// must see it. The card is asked OnFindRecord('=>') for the record as it holds it, as a list is (pages/lt-ai-list-order/
-// AiListOrderTests.al:871 PageRun_RecordOnFifthRow); for a card that is assumption page-run-record-onfindrecord-card.
+// must see it. The card is asked OnFindRecord('=') for the record as it holds it (pages/lt-be-card-onfindrecord/
+// BeCardOnFindRecord.al:292 CardTempFind_PageRun_TempRec `F:=:1/passed/in memory`).
 #[test]
 fn a_card_run_with_a_record_keeps_what_on_open_page_set_on_rec() {
     let o = outcomes(&format!(
@@ -237,7 +237,7 @@ fn a_card_run_with_a_record_keeps_what_on_open_page_set_on_rec() {
             D.\"Day No.\" := 7; D.Insert(); Log.Reset();
             Page.Run(Page::\"LRO Param Card\", D); end;
         [PageHandler] procedure H(var C: TestPage \"LRO Param Card\") var Log: Codeunit \"LRO Log\"; begin
-            Check('F=>;', Log.Trace());
+            Check('F=;', Log.Trace());
             Check('in memory', C.DescrCtl.Value());
             C.Show.Invoke(); end;"
     ));

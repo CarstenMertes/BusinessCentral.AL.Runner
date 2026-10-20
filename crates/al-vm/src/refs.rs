@@ -801,6 +801,15 @@ impl Session {
                     None => unsupported(format!("RecordRef.{method} on a table without {field}")),
                 }
             }
+            // A RecordRef write inside a TryFunction whose result is used is not pinned (only Record.Insert is,
+            // misc/lt-cu-odd-leads/CuTryTests.al:83-150).
+            "Insert" | "Modify" | "Delete" | "DeleteAll" | "Rename"
+                if !self.tx.used_tries.is_empty() && !rec.borrow().temporary =>
+            {
+                unsupported(format!(
+                    "RecordRef.{method} inside a TryFunction whose result is used (not pinned)"
+                ))
+            }
             "IsEmpty" | "Count" | "Init" | "Insert" | "Modify" | "Delete" | "DeleteAll" | "Find" | "FindFirst"
             | "FindLast" | "FindSet" | "Next" | "Reset" | "Rename" => self.record_op(record_method(method), &rec, args),
             "Field" => {

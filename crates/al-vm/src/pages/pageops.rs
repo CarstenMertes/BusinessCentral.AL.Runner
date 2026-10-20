@@ -10,6 +10,10 @@ impl Session {
         recv: Option<&mut Value>,
         args: &mut [Value],
     ) -> Result<Value, Signal> {
+        self.outside_used_tries(|s| s.page_op_outer(method, recv, args))
+    }
+
+    fn page_op_outer(&mut self, method: PageOp, recv: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
         // A TestPage begins a transaction of its own (see `in_page_transaction`). Page.Run and Page.RunModal with a handler that writes are allowed under None, and the
         // transaction the page began has ended afterwards
         // (codeunit/TestWriteTxNoneModelContracts.al:200-216 and :163-185).

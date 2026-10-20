@@ -12,9 +12,9 @@ pass rate is measured against: every `<testcase>` in it passed on real BC.
 
 | Major | Oracle leg | Corpus commit of the run | Workflow run | Artifact | Artifact id | Cases |
 |---|---|---|---|---|---|---|
-| 27 | 27.5 | `55f2db6` (head of corpus PR 693, same tree as the pin) | 39505560294 | `junit-test-results-27.5` | 12305582424 | 16876 |
-| 28 | 28.5 | `55f2db6` (head of corpus PR 693, same tree as the pin) | 39505560294 | `junit-test-results-28.5` | 12305337048 | 16965 (+26 `OnRun`) |
-| 29 | 29.0 | `55f2db6` (head of corpus PR 693, same tree as the pin) | 39505560294 | `junit-test-results-29.0` | 12304393351 | 17059 (+26 `OnRun`) |
+| 27 | 27.5 | `62268a9` (the pin) | 39505560294 | `junit-test-results-27.5` | 12305582424 | 16876 |
+| 28 | 28.5 | `62268a9` (the pin) | 39505560294 | `junit-test-results-28.5` | 12305337048 | 16965 (+26 `OnRun`) |
+| 29 | 29.0 | `62268a9` (the pin) | 39505560294 | `junit-test-results-29.0` | 12304393351 | 17059 (+26 `OnRun`) |
 
 The files come from the green pull request run of PR 693, whose head `55f2db6` has the same tree as the pin `62268a9`.
 The master push run of the pin (39511257589) was still running when the pin was set.

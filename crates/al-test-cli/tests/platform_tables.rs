@@ -1270,7 +1270,7 @@ codeunit 50000 "T" { Subtype = Test;
     );
     passes(&o, "ReadsAllObj");
     let why = not_run(&o, "ReadsSeed");
-    assert!(why.contains("install codeunit Inst could not run"), "{why}");
+    assert!(why.contains("\"Inst\".OnInstallAppPerCompany could not run"), "{why}");
 }
 
 /// Table Metadata DataCaptionFields lists the ids of the fields named, a table extension's included; LinkedObject reads the

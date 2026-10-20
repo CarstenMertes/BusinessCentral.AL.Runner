@@ -549,6 +549,9 @@ pub struct Session {
     /// Media objects a Modify or Delete removed from Tenant Media: `.0` since the last commit (a rollback puts them back),
     /// `.1` committed since the test runner's checkpoint (its restore puts them back). See `Session::release_media`.
     pub(crate) media_removed: (Vec<RemovedMedia>, Vec<RemovedMedia>),
+    /// Records a TransferFields from another table wrote into, with that row's version: the next Modify refuses when the stale
+    /// check would answer differently with it (records.rs `take_foreign_transfer`).
+    pub(crate) foreign_transfers: Vec<(std::rc::Weak<RefCell<RecordState>>, Value)>,
     /// The host session behind `DotNet` values; ends with the session (ADR-014 section 6).
     pub(crate) dotnet: dotnet::DotNetState,
     /// The session's application areas as `ApplicationArea()` reads them: `#Basic,#Suite`, or the
@@ -729,6 +732,7 @@ impl Session {
             adhoc_tables: Default::default(),
             media,
             media_removed: Default::default(),
+            foreign_transfers: Vec::new(),
             dotnet: Default::default(),
             application_areas: String::new(),
             tx: TxState {

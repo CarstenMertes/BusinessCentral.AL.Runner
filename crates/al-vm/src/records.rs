@@ -539,13 +539,32 @@ impl Session {
             Vec::new()
         } else {
             let positions: Vec<usize> = (0..t.fields.len()).filter(|&i| is_media_field(t, i)).collect();
-            match positions.is_empty() {
+            let sets: Vec<usize> = (0..t.fields.len())
+                .filter(|&i| {
+                    t.fields[i].stored
+                        && matches!(
+                            t.fields[i].ty,
+                            RtType::Library(al_builtins::library_kind::LibraryKind::MediaSet)
+                        )
+                })
+                .collect();
+            match positions.is_empty() && sets.is_empty() {
                 true => Vec::new(),
                 false => {
                     let stored = self
                         .store_for(rec)
                         .get(&cx, t, &pk)
                         .map_err(|e| Signal::Unsupported(format!("{e}")))?;
+                    // What a Delete does to the Tenant Media rows of a MediaSet is not pinned (media/TestMediaPngImport.al:337-375
+                    // pins it, but that test is refused earlier): refused while the set holds anything.
+                    if sets
+                        .iter()
+                        .any(|&i| matches!(stored.as_ref().map(|r| &r[i]), Some(Value::Guid(g)) if *g != [0; 16]))
+                    {
+                        return unsupported(
+                            "a Delete of a row whose MediaSet holds media (what happens to its Tenant Media rows is not pinned)",
+                        );
+                    }
                     positions
                         .into_iter()
                         .filter_map(|i| match stored.as_ref().map(|r| &r[i]) {
@@ -1219,6 +1238,23 @@ impl Session {
     /// a temporary table's rows hold the record's own Blob objects
     /// (TempBlob_UncommittedWrite_SameInstanceReGet_KeepsWrite).
     pub(crate) fn load(&mut self, rec: &Rec, mut row: Vec<Value>) -> Result<(), Signal> {
+        // Whether a temporary table keeps milliseconds that the SQL column of a database table rounds is not pinned
+        // (errors/lt-ms-refusals-130/P130DateFilters.al pins database tables only): reading such a row is refused.
+        if rec.borrow().temporary {
+            let table = rec.borrow().table as usize;
+            if let Some(t) = self.engine.tables[table].as_ref() {
+                let off_grid = t.fields.iter().zip(&row).any(|(f, v)| {
+                    f.id < 2_000_000_000
+                        && matches!(v, Value::Time(_) | Value::DateTime(_))
+                        && !ops::compare(&crate::sqltime::rounded(v), v).is_ok_and(|o| o.is_eq())
+                });
+                if off_grid {
+                    return unsupported(
+                        "reading a temporary row whose Time or DateTime holds milliseconds a database column would round (not pinned)",
+                    );
+                }
+            }
+        }
         if rec.borrow().temp_id.is_none() {
             for v in &mut row {
                 if let Value::Blob(b) = v {
@@ -1288,6 +1324,15 @@ impl Session {
             crate::sqltime::Stored::Fits => Ok(None),
             crate::sqltime::Stored::Bad(e) => Ok(Some(e)),
         }
+    }
+
+    /// The row version a TransferFields from another table left aside for `rec` (see `foreign_transfers`), taken out.
+    fn take_foreign_transfer(&mut self, rec: &Rec) -> Option<Value> {
+        let i = self
+            .foreign_transfers
+            .iter()
+            .position(|(w, _)| w.upgrade().is_some_and(|r| Rc::ptr_eq(&r, rec)))?;
+        Some(self.foreign_transfers.swap_remove(i).1)
     }
 
     /// The row to hand to the store: a database table keeps its own copy of every Blob.
@@ -1920,11 +1965,21 @@ impl Session {
                     // transaction was rolled back to the last Commit after the buffer's own Modify, as an asserterror
                     // does) is not stale (corpus record/lt-record-conversion-assumptions/StaleBuffer.al:
                     // P98_Stale_AfterAsserterror_SameBuffer, P98_Stale_CommitThenErrorThenModify_Rec).
-                    if !rec.borrow().temporary
-                        && version(&mine) != 0
-                        && version(&mine) < version(&theirs)
-                        && version(&theirs) <= self.tx.committed_row_version
-                    {
+                    let foreign = self.take_foreign_transfer(rec);
+                    let committed = self.tx.committed_row_version;
+                    let stale =
+                        |m: &Value| version(m) != 0 && version(m) < version(&theirs) && version(&theirs) <= committed;
+                    // After a TransferFields from another table, whether the buffer took that row's version is not pinned
+                    // (record/lt-cn-transferfields-modify/CnTransferFieldsModify.al:194-214 pins a buffer that is current
+                    // either way): a Modify whose outcome depends on it is refused.
+                    if let Some(other) = foreign {
+                        if !rec.borrow().temporary && stale(&mine) != stale(&other) {
+                            return unsupported(
+                                "a Modify after a TransferFields from another table, whose outcome depends on which row version the buffer took (not pinned)",
+                            );
+                        }
+                    }
+                    if !rec.borrow().temporary && stale(&mine) {
                         let identification = self.identification(&t, &rec.borrow().fields)?;
                         return Err(Signal::Error(Box::new(AlError {
                             message: format!(

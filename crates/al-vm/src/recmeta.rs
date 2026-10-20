@@ -1245,6 +1245,16 @@ impl Session {
                 updates.push((i, src_fields[i].clone()));
             }
         }
+        // From another table the version stays, which is not pinned beyond a current buffer: the next Modify checks whether the
+        // source row's version would have answered differently (records.rs `take_foreign_transfer`).
+        self.foreign_transfers
+            .retain(|(w, _)| w.upgrade().is_some_and(|r| !Rc::ptr_eq(&r, rec)));
+        if src_table != t.object as usize {
+            if let Some(sp) = from.fields.iter().position(|f| f.id == 2_000_000_005) {
+                self.foreign_transfers
+                    .push((Rc::downgrade(rec), src_fields[sp].clone()));
+            }
+        }
         let mut r = rec.borrow_mut();
         for (dp, v) in updates {
             r.fields[dp] = v;

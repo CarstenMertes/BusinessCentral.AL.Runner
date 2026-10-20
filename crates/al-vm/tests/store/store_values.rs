@@ -14,6 +14,15 @@ table 69980 "SV Row"
     }
     keys { key(PK; Id) { } }
 }
+table 69990 "SV Other Row"
+{
+    fields
+    {
+        field(1; Id; Integer) { }
+        field(2; Amount; Decimal) { }
+    }
+    keys { key(PK; Id) { } }
+}
 table 69982 "SV Code Key"
 {
     fields
@@ -66,6 +75,34 @@ codeunit 69981 C
         R1.Modify();
         R2.Get(1);
         exit(Format(R2.Amount));
+    end;
+
+    // Not pinned: whether TransferFields from another table takes that row's version. A Modify whose outcome depends on it is
+    // refused (CnTransferFieldsModify.al:194-214 pins only a buffer that is current either way).
+    procedure TransferFromOtherTableStale()
+    var R1: Record "SV Row"; R2: Record "SV Row"; O: Record "SV Other Row";
+    begin
+        R1.Id := 1; R1.Amount := 1; R1.Insert();
+        Commit();
+        R2.Get(1); R2.Amount := 2; R2.Modify();
+        O.Id := 1; O.Amount := 3; O.Insert();
+        Commit();
+        O.Get(1);
+        R1.TransferFields(O);
+        R1.Modify();
+    end;
+
+    procedure TransferFromOtherTableCurrent(): Text
+    var R1: Record "SV Row"; O: Record "SV Other Row";
+    begin
+        R1.Id := 1; R1.Amount := 1; R1.Insert();
+        O.Id := 1; O.Amount := 3; O.Insert();
+        Commit();
+        O.Get(1);
+        R1.TransferFields(O);
+        R1.Modify();
+        R1.Get(1);
+        exit(Format(R1.Amount));
     end;
 
     // misc/lt-cv-odd-leads/CvReadIsolationState.al:36-66.
@@ -230,6 +267,11 @@ table 69984 "SV Media Other"
     fields { field(1; Id; Integer) { } field(2; Pic; Media) { } }
     keys { key(PK; Id) { } }
 }
+table 69989 "SV Media Set"
+{
+    fields { field(1; Id; Integer) { } field(2; Pics; MediaSet) { } field(3; Src; Blob) { } }
+    keys { key(PK; Id) { } }
+}
 codeunit 69985 M
 {
     local procedure Import(var Row: Record "SV Media"; Content: Text)
@@ -269,6 +311,17 @@ codeunit 69985 M
         end;
         Row.Get(1);
         exit(Format(TenantMedia.Get(First)) + Format(Row.Pic.HasValue()));
+    end;
+
+    // Not pinned: what a Delete does to the Tenant Media rows of a MediaSet.
+    procedure DeleteWithMediaSet()
+    var Row: Record "SV Media Set"; ins: InStream; outs: OutStream;
+    begin
+        Row.Id := 1; Row.Insert();
+        Row.Src.CreateOutStream(outs); outs.WriteText('one'); Row.Src.CreateInStream(ins);
+        Row.Pics.ImportStream(ins, 'one');
+        Row.Modify();
+        Row.Delete();
     end;
 
     // Not pinned: the media is still held by a row of another table.
@@ -396,6 +449,21 @@ codeunit 69988 D
         R.Id := 1; R.Tm := 235959.999T; R.Insert();
         R.Get(1);
         exit(Format(R.Tm, 0, 9));
+    end;
+
+    procedure TempOnTheGrid(): Text
+    var R: Record "SV Dates" temporary;
+    begin
+        R.Id := 1; R.Tm := 120000.003T; R.Insert();
+        R.Get(1);
+        exit(Format(R.Tm, 0, 9));
+    end;
+
+    procedure FilterSeconds(): Text
+    var R: Record "SV Dates";
+    begin
+        R.SetRange(Dtm, CreateDateTime(20240301D, 120030T));
+        exit(R.GetFilters());
     end;
 
     procedure TempKeepsMilliseconds(): Text
@@ -532,8 +600,32 @@ fn a_time_that_rounds_to_midnight_reads_midnight() {
     assert_eq!(text(dates("TimeRollsOver", vec![])), "00:00:00");
 }
 
-// Not pinned, kept as it was: a temporary record keeps the milliseconds.
+// Not pinned: whether a temporary record keeps milliseconds the SQL column would round. Reading such a row is refused; one on
+// the 1/300 s grid reads as written.
 #[test]
-fn a_temporary_record_keeps_the_milliseconds() {
-    assert_eq!(text(dates("TempKeepsMilliseconds", vec![])), "12:00:00.001");
+fn reading_a_temporary_row_with_unrounded_milliseconds_is_refused() {
+    let r = dates("TempKeepsMilliseconds", vec![]);
+    assert!(matches!(r, Err(Signal::Unsupported(_))), "{r:?}");
+    assert_eq!(text(dates("TempOnTheGrid", vec![])), "12:00:00.003");
+}
+
+// Not pinned: GetFilters of a DateTime with seconds and no milliseconds.
+#[test]
+fn getfilters_of_a_datetime_with_seconds_is_refused() {
+    let r = dates("FilterSeconds", vec![]);
+    assert!(matches!(r, Err(Signal::Unsupported(_))), "{r:?}");
+}
+
+#[test]
+fn a_delete_of_a_row_with_a_media_set_is_refused() {
+    let r = al_testkit::run_in(MEDIA, "M", "DeleteWithMediaSet");
+    assert!(matches!(r, Err(Signal::Unsupported(_))), "{r:?}");
+}
+
+#[test]
+fn a_modify_that_depends_on_the_row_version_of_another_tables_transferfields_is_refused() {
+    let r = run("TransferFromOtherTableStale");
+    assert!(matches!(r, Err(Signal::Unsupported(_))), "{r:?}");
+    // CnTransferFieldsModify.al:194-214: a current buffer modifies either way.
+    assert_eq!(text(run("TransferFromOtherTableCurrent")), "3");
 }

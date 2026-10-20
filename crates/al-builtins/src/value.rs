@@ -400,6 +400,9 @@ pub struct PageState {
     pub draft_stored: bool,
     /// On a new row whose key fields were still blank, a field outside the key was typed.
     pub typed_before_key: bool,
+    /// The page reached a state whose behavior is not pinned: every later call on it or its parts except Close is refused
+    /// with this reason.
+    pub unpinned_state: Option<String>,
     /// The row a new line was started below (`New()` on a stored row of a list): after the new row
     /// is saved, `Next()` goes to the row below that one, as the client's own row order has it.
     pub after_new: Option<Vec<Value>>,
@@ -514,6 +517,7 @@ impl PageState {
             caption_assigned_closed: false,
             draft_stored: false,
             typed_before_key: false,
+            unpinned_state: None,
             after_new: None,
             opening: false,
             editable_off: false,

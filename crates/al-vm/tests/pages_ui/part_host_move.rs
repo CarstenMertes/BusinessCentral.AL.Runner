@@ -287,3 +287,42 @@ fn a_part_write_saves_the_unsaved_host_first() {
     let r = text(al_testkit::run_in(UNSAVED_SRC, "UH Test", "Write"));
     assert!(r.starts_with("V:D3;") && r.ends_with("|D3"), "{r}");
 }
+
+const TWO_PARTS_SRC: &str = r#"
+table 51440 "TP Host" { fields { field(1; "Code"; Code[10]) { } } keys { key(PK; "Code") { } } }
+table 51445 "TP Group" { fields { field(1; "Code"; Code[10]) { } } keys { key(PK; "Code") { } } }
+table 51441 "TP Line" { fields { field(1; "Host Code"; Code[10]) { } field(2; "Line No."; Integer) { } field(3; Descr; Text[30]) { } } keys { key(PK; "Host Code", "Line No.") { } } }
+table 51446 "TP Line G" { fields { field(1; "Group Code"; Code[10]) { TableRelation = "TP Group"; } field(2; "Line No."; Integer) { } field(3; Descr; Text[30]) { } } keys { key(PK; "Group Code", "Line No.") { } } }
+page 51442 "TP Lines" { PageType = ListPart; SourceTable = "TP Line"; AutoSplitKey = true; layout { area(Content) { repeater(R) { field(Descr; Rec.Descr) { } } } } }
+page 51447 "TP Lines G" { PageType = ListPart; SourceTable = "TP Line G"; AutoSplitKey = true; layout { area(Content) { repeater(R) { field(Descr; Rec.Descr) { } } } } }
+page 51443 "TP Card"
+{
+    PageType = Card;
+    SourceTable = "TP Host";
+    layout { area(Content) { field(Code; Rec.Code) { } part(A; "TP Lines") { SubPageLink = "Host Code" = field(Code); } part(B; "TP Lines G") { SubPageLink = "Group Code" = field(Code); } } }
+}
+codeunit 51444 "TP Test"
+{
+    procedure KeyThenClose(): Integer
+    var H: Record "TP Host"; G: Record "TP Group"; C: TestPage "TP Card"; N: Integer;
+    begin
+        G.Code := 'G1'; G.Insert();
+        C.OpenNew(); C.Code.SetValue('G1'); N := H.Count(); C.Close(); exit(N * 10 + H.Count());
+    end;
+    procedure KeyThenRead(): Text
+    var G: Record "TP Group"; C: TestPage "TP Card";
+    begin
+        G.Code := 'G1'; G.Insert();
+        C.OpenNew(); C.Code.SetValue('G1'); exit(C.Code.Value());
+    end;
+}
+"#;
+
+/// A new Card row whose key is typed while two parts link on it, one through a relation to another table, is stored at once (pages/lt-part-link-unsaved-host/
+/// PagePartLinkUnsavedHost.al:178, :218); what the page shows afterwards is refused.
+#[test]
+fn a_new_card_with_two_parts_linked_on_its_key_stores_the_row_when_the_key_is_typed() {
+    assert_eq!(al_testkit::int(al_testkit::run_in(TWO_PARTS_SRC, "TP Test", "KeyThenClose")), 11);
+    let r = al_testkit::run_in(TWO_PARTS_SRC, "TP Test", "KeyThenRead");
+    assert!(matches!(r, Err(al_builtins::native::Signal::Unsupported(_))), "{r:?}");
+}

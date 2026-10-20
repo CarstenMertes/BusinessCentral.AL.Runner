@@ -491,6 +491,48 @@ impl Session {
         Ok(found)
     }
 
+    /// Whether a part linked on host field `pos` links a field whose TableRelation names a table other than the host's.
+    fn part_link_relates_elsewhere(&self, st: &St, pos: usize) -> Result<bool, Signal> {
+        let engine = self.engine();
+        let page = page_of(&engine, st);
+        let host_table = self.table(&self.page_rec(st))?.name.to_ascii_lowercase();
+        let parts = st.borrow().parts.clone();
+        for (i, child) in &parts {
+            let Some(link) = page.controls[*i].part_link.as_ref() else { continue };
+            if link.provider.is_some() || !self.has_source(child) {
+                continue;
+            }
+            let ti = self.page_rec(child).borrow().table as usize;
+            let Some(table) = engine.program.objects[ti].table.as_ref() else { continue };
+            for e in &link.entries {
+                if let ir::LinkEntry::Field(pf, hf) = e
+                    && *hf == pos
+                    && table.fields[*pf]
+                        .relation_table
+                        .as_ref()
+                        .is_some_and(|t| *t != host_table)
+                {
+                    return Ok(true);
+                }
+            }
+        }
+        Ok(false)
+    }
+
+    /// Refuses a call on a page, or on a part of a page, that reached a state whose behavior is not pinned.
+    pub(super) fn refuse_unpinned_state(&self, st: &St) -> Result<(), Signal> {
+        let host = st.borrow().host.as_ref().and_then(|(h, _)| h.upgrade());
+        let why = st
+            .borrow()
+            .unpinned_state
+            .clone()
+            .or_else(|| host.and_then(|h| h.borrow().unpinned_state.clone()));
+        match why {
+            Some(why) => unsupported(why),
+            None => Ok(()),
+        }
+    }
+
     /// A write into part `child` (SetValue, New) while its host stands on a typed row that is not stored yet: the host row is
     /// saved first, and the parts link to it (pages/lt-part-line-before-host-key/PartLineBeforeHostKey.al:406
     /// `HP.OnInsertRecord:D2 | H.OnInsert:D2 | L.OnValidate(Document No.):D2 | ...` for New(); handlers/
@@ -674,6 +716,35 @@ impl Session {
         } && self.has_source(st)
             && self.table(&self.page_rec(st))?.keys[0].contains(&pos)
             && st.borrow().typed_before_key;
+        // A new Card row whose key is typed while two or more parts link on it: BC stores the row at once
+        // (pages/lt-part-link-unsaved-host/PagePartLinkUnsavedHost.al:178, :201, :218 `a_hosts = 1`), and then shows a blank key
+        // and parts without rows (:181-183); what the page does after that is not understood (the shape conflicts with
+        // pages/lt-part-line-before-host-key/PartLineBeforeHostKey.al:401, a Document page that stores nothing). The row is
+        // stored, and every later call on the page or its parts but Close is refused.
+        let linked_on_key = parts_linked_on(&page, &st.borrow().parts, pos);
+        let new_card = {
+            let s = st.borrow();
+            s.host.is_none() && s.draft && !s.draft_stored && s.cursor != Cursor::None
+        } && matches!(
+            self.engine.object_facts[st.borrow().object as usize].page_type,
+            Some(al_ir::PageType::Card)
+        ) && self.has_source(st)
+            && self.table(&self.page_rec(st))?.keys[0].contains(&pos);
+        // Only the shape of that file: one of the parts links a field whose TableRelation names another table than the
+        // host's (its "Group Code"). A Card whose two parts both relate to the host (pages/lt-new-line-stamps-filters/
+        // NewLineStampsFilters.al:289 PartB_OpenNewHeader_NoThenType) carries on as before.
+        let foreign_relation = new_card
+            && linked_on_key >= 2
+            && self.part_link_relates_elsewhere(st, pos)?;
+        if foreign_relation {
+            st.borrow_mut().dirty = true;
+            self.save_row(st)?;
+            st.borrow_mut().unpinned_state = Some(
+                "a new Card row whose key was typed while two parts link on it (what the page shows afterwards is not pinned)"
+                    .into(),
+            );
+            return Ok(());
+        }
         let parts = st.borrow().parts.clone();
         for (i, child) in &parts {
             if key_of_stored_row
@@ -764,4 +835,19 @@ impl Session {
         }
         Ok(())
     }
+}
+
+/// How many of `parts` take a SubPageLink value from host field `pos`.
+fn parts_linked_on(page: &ir::Page, parts: &[(usize, St)], pos: usize) -> usize {
+    parts
+        .iter()
+        .filter(|(i, _)| {
+            page.controls[*i].part_link.as_ref().is_some_and(|l| {
+                l.provider.is_none()
+                    && l.entries
+                        .iter()
+                        .any(|e| matches!(e, ir::LinkEntry::Field(_, hf) if *hf == pos))
+            })
+        })
+        .count()
 }

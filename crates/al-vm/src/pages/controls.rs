@@ -685,6 +685,7 @@ impl Session {
         args: &mut [Value],
     ) -> Result<Value, Signal> {
         self.require_open(&c.page)?;
+        self.refuse_unpinned_state(&c.page)?;
         let st = &c.page;
         let m = method.method();
         let idx = match &c.target {

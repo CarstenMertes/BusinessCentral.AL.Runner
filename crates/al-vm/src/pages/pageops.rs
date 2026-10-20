@@ -164,6 +164,9 @@ impl Session {
 
     pub(super) fn test_page_op(&mut self, method: PageOp, st: &St, args: &mut [Value]) -> Result<Value, Signal> {
         let name = method.method();
+        if name != PageMethod::Close {
+            self.refuse_unpinned_state(st)?;
+        }
         // The row the host stands on before a First or Last, to tell a move from a stay (see below).
         let before = if matches!(name, PageMethod::First | PageMethod::Last)
             && st.borrow().host.is_none()

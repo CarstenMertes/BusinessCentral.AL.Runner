@@ -9,6 +9,17 @@ use al_builtins::filter::{FieldFilter, FilterExpr};
 /// (corpus handlers/TestPagePartLinkFilterGroup.al: `FilterGroup(4)` answers the link).
 pub(super) const LINK_GROUP: i32 = 4;
 
+/// Which parts [`Session::sync_parts_with`] re-points, and how they read.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Sync {
+    /// The host opens: hidden parts read too.
+    Open,
+    /// Every visible part, first to last.
+    Plain,
+    /// The host moved with First, Last, Next or Previous: only the linked parts, hidden ones included.
+    Move { backward: bool },
+}
+
 impl Session {
     /// Sets `open = false` on `st` and on the pages it shows as parts.
     pub(super) fn mark_closed(&mut self, st: &St) {
@@ -288,23 +299,58 @@ impl Session {
     /// Reads the link of every part off the host's current row and loads the parts' first rows.
     /// Providers go first: a part linked through `Provider` reads the provider's current row.
     pub(super) fn sync_parts(&mut self, st: &St) -> Result<(), Signal> {
-        self.sync_parts_with(st, false)
+        self.sync_parts_with(st, Sync::Plain)
     }
 
     /// [`Self::sync_parts`] as the host opens: the parts hidden by a Visible expression read their rows too, in the order of the
     /// controls (pages/lt-page-filtergroup-assumptions/P99InvisiblePart.al:P99_FlagFalseAtOpen).
     pub(super) fn sync_parts_at_open(&mut self, st: &St) -> Result<(), Signal> {
-        self.sync_parts_with(st, true)
+        self.sync_parts_with(st, Sync::Open)
     }
 
-    fn sync_parts_with(&mut self, st: &St, opening: bool) -> Result<(), Signal> {
+    /// [`Self::sync_parts`] after the host moved to another row with First, Last, Next or Previous. Only the parts with a
+    /// SubPageLink read their rows again; a part without one keeps what it shows and runs no trigger
+    /// (pages/lt-part-reads/PartReadsOpen.al:269-283 and :336-379, `-Plain` and `-View` empty;
+    /// pages/lt-part-subpageview-filter/PartViewFilter.al:381 `next-GtOnly`; types/lt-conversions-hidden-parts-doctype/
+    /// P142HiddenPartArea.al:386, :420). A linked part hidden by a Visible expression reads too (PartReadsOpen.al `-Hidden`).
+    /// After Previous and First the linked parts read their rows last to first, once each (PartReadsOpen.al:358-379: 1, 2
+    /// and 3 rows; PartViewFilter.al:387-389); after Next and Last first to last, then the first row once more.
+    pub(super) fn sync_parts_after_move(&mut self, st: &St, backward: bool) -> Result<(), Signal> {
+        self.sync_parts_with(st, Sync::Move { backward })
+    }
+
+    fn sync_parts_with(&mut self, st: &St, how: Sync) -> Result<(), Signal> {
         let engine = self.engine();
         let page = page_of(&engine, st);
+        let opening = how == Sync::Open;
         let mut parts = st.borrow().parts.clone();
-        if opening {
+        if opening || matches!(how, Sync::Move { .. }) {
             let hidden = st.borrow().hidden_parts.clone();
-            parts.extend(hidden.into_iter().filter(|(i, _)| !self.control_eliminated(st, *i)));
+            parts.extend(
+                hidden
+                    .into_iter()
+                    .filter(|(i, c)| !self.control_eliminated(st, *i) && (opening || c.borrow().open)),
+            );
             parts.sort_by_key(|(i, _)| *i);
+        }
+        if let Sync::Move { .. } = how {
+            let mut linked = Vec::new();
+            for (i, child) in parts {
+                let entries = page.controls[i].part_link.as_ref().map(|l| &l.entries[..]).unwrap_or(&[]);
+                if entries.is_empty() {
+                    continue;
+                }
+                // A part linked by `const` and `filter` terms only reads nothing off the host's row; whether it reads its rows
+                // again after a move is not pinned.
+                let reads_a_field = entries.iter().any(|e| matches!(e, ir::LinkEntry::Field(..)));
+                if !reads_a_field && child.borrow().open {
+                    return unsupported(
+                        "a host move with a part linked by const or filter terms only (whether it reads its rows again is not pinned)",
+                    );
+                }
+                linked.push((i, child));
+            }
+            parts = linked;
         }
         let has_provider = |i: usize| {
             page.controls[i]
@@ -316,9 +362,20 @@ impl Session {
             for (i, child) in &parts {
                 if has_provider(*i) == pass {
                     if opening && self.view_names_link_field(st, *i, child)? {
-                        child.borrow_mut().read_backwards = true;
+                        child.borrow_mut().read_backwards = Some(al_builtins::value::ReadBackwards::AtOpen);
+                    }
+                    if let Sync::Move { backward: true } = how {
+                        // The pinned parts walk the table; a part with its own OnFindRecord or OnNextRecord is not pinned.
+                        if self.declares(child, "onfindrecord") || self.declares(child, "onnextrecord") {
+                            return unsupported(
+                                "a host moved back with a linked part that declares OnFindRecord or OnNextRecord (reads not pinned)",
+                            );
+                        }
+                        child.borrow_mut().read_backwards = Some(al_builtins::value::ReadBackwards::AfterMove);
                     }
                     self.sync_part(st, *i, child)?;
+                    // A part that found no row to fill does not carry the order to a later fill.
+                    child.borrow_mut().read_backwards = None;
                 }
             }
         }

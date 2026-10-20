@@ -1,0 +1,104 @@
+//! What the parts of a host read when the host moves to another row (lane L3).
+//! Mirrors pages/lt-part-reads/PartReadsOpen.al (Next_SixParts_ReadsPerPartAfterHostMove,
+//! LastPrevious_SixParts_ReadsPerPartAfterHostMove) and pages/lt-part-subpageview-filter/PartViewFilter.al:381.
+
+use al_testkit::text;
+
+const SRC: &str = r#"
+table 51400 "MV Head" { fields { field(1; "Code"; Code[20]) { } } keys { key(PK; "Code") { } } }
+table 51401 "MV Line"
+{
+    fields { field(1; "Head Code"; Code[20]) { } field(2; "Line No."; Integer) { } }
+    keys { key(PK; "Head Code", "Line No.") { } }
+}
+codeunit 51402 "MV Log"
+{
+    SingleInstance = true;
+    var T: Text;
+    procedure Add(S: Text) begin T += S + ';'; end;
+    procedure Reset() begin T := ''; end;
+    procedure Dump(): Text begin exit(T); end;
+}
+page 51403 "MV Plain"
+{
+    PageType = ListPart;
+    SourceTable = "MV Line";
+    layout { area(Content) { repeater(R) { field(L; Rec."Line No.") { } } } }
+    trigger OnAfterGetRecord() var Log: Codeunit "MV Log"; begin Log.Add('P:' + Rec."Head Code" + '/' + Format(Rec."Line No.")); end;
+}
+page 51404 "MV Linked"
+{
+    PageType = ListPart;
+    SourceTable = "MV Line";
+    layout { area(Content) { repeater(R) { field(L; Rec."Line No.") { } } } }
+    trigger OnAfterGetRecord() var Log: Codeunit "MV Log"; begin Log.Add('L:' + Rec."Head Code" + '/' + Format(Rec."Line No.")); end;
+}
+page 51405 "MV Filtered"
+{
+    PageType = ListPart;
+    SourceTable = "MV Line";
+    layout { area(Content) { repeater(R) { field(L; Rec."Line No.") { } } } }
+    trigger OnAfterGetRecord() var Log: Codeunit "MV Log"; begin Log.Add('F:' + Rec."Head Code" + '/' + Format(Rec."Line No.")); end;
+}
+page 51406 "MV Hidden"
+{
+    PageType = ListPart;
+    SourceTable = "MV Line";
+    layout { area(Content) { repeater(R) { field(L; Rec."Line No.") { } } } }
+    trigger OnAfterGetRecord() var Log: Codeunit "MV Log"; begin Log.Add('H:' + Rec."Head Code" + '/' + Format(Rec."Line No.")); end;
+}
+page 51407 "MV Host"
+{
+    PageType = Card;
+    SourceTable = "MV Head";
+    layout
+    {
+        area(Content)
+        {
+            field(CodeCtl; Rec."Code") { }
+            part(PlainP; "MV Plain") { }
+            part(LinkedP; "MV Linked") { SubPageLink = "Head Code" = field("Code"); }
+            part(FilteredP; "MV Filtered") { SubPageView = where("Line No." = filter('>10000')); SubPageLink = "Head Code" = field("Code"); }
+            part(HiddenP; "MV Hidden") { Visible = ShowHidden; SubPageLink = "Head Code" = field("Code"); }
+        }
+    }
+    var ShowHidden: Boolean;
+}
+codeunit 51408 "MV Test"
+{
+    local procedure Seed()
+    var H: Record "MV Head"; L: Record "MV Line";
+    begin
+        H."Code" := 'H1'; H.Insert(); H."Code" := 'H2'; H.Insert(); H."Code" := 'H3'; H.Insert();
+        L."Head Code" := 'H1'; L."Line No." := 10000; L.Insert(); L."Line No." := 20000; L.Insert(); L."Line No." := 30000; L.Insert();
+        L."Head Code" := 'H2'; L."Line No." := 10000; L.Insert(); L."Line No." := 20000; L.Insert();
+        L."Head Code" := 'H3'; L."Line No." := 10000; L.Insert();
+    end;
+    procedure Moves(): Text
+    var Log: Codeunit "MV Log"; Doc: TestPage "MV Host"; T: Text;
+    begin
+        Seed();
+        Doc.OpenView();
+        Log.Reset(); Doc.Next(); T := 'next=' + Log.Dump();
+        Log.Reset(); Doc.Last(); T += '|last=' + Log.Dump();
+        Log.Reset(); Doc.Previous(); T += '|previous=' + Log.Dump();
+        Log.Reset(); Doc.First(); T += '|first=' + Log.Dump();
+        Doc.Close();
+        exit(T);
+    end;
+}
+"#;
+
+/// PartReadsOpen.al:269-283 (Next: no Plain reads, linked parts read forward and put the first row back), :336-379
+/// (Last forward; Previous and First read the linked parts last to first, a one-row part once).
+#[test]
+fn a_host_move_reads_only_its_linked_parts() {
+    let r = al_testkit::run_in(SRC, "MV Test", "Moves");
+    assert_eq!(
+        text(r),
+        "next=L:H2/10000;L:H2/20000;L:H2/10000;F:H2/20000;H:H2/10000;H:H2/20000;H:H2/10000;\
+         |last=L:H3/10000;H:H3/10000;\
+         |previous=L:H2/20000;L:H2/10000;F:H2/20000;H:H2/20000;H:H2/10000;\
+         |first=L:H1/30000;L:H1/20000;L:H1/10000;F:H1/30000;F:H1/20000;H:H1/30000;H:H1/20000;H:H1/10000;"
+    );
+}

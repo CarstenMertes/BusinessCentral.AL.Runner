@@ -295,6 +295,15 @@ pub enum Cursor {
     NewLine,
 }
 
+/// Why a part reads its rows last to first (see `PageState::read_backwards`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReadBackwards {
+    /// The host opens and the part's SubPageView names its linked field with `const`: 2 or 3 rows are pinned.
+    AtOpen,
+    /// The host moved back with Previous or First: 1, 2 and 3 rows are pinned.
+    AfterMove,
+}
+
 /// The test client's state for one page (ADR-012). Fields grow with the
 /// behaviours the corpus pins.
 pub struct PageState {
@@ -342,8 +351,9 @@ pub struct PageState {
     /// The page opened for edit over an empty view and ran its new-record triggers on a blank record; it shows no row and its
     /// field controls are not editable.
     pub blank_on_open: bool,
-    /// The part opens with its host and reads its rows last to first, once each (see `view_names_link_field`).
-    pub read_backwards: bool,
+    /// The part reads its rows last to first, once each, at its next fill: as it opens with its host (see
+    /// `view_names_link_field`), or after its host moved back (see `sync_parts_after_move`).
+    pub read_backwards: Option<ReadBackwards>,
     /// `CurrPage.SetSelectionFilter(Rec)` ran on this page while it stood on no row: the part's next refresh with its host
     /// drops the filter (pages/lt-hidden-part-selection-filter/HiddenPartSelectionFilter.al).
     pub selection_on_rec: bool,
@@ -480,7 +490,7 @@ impl PageState {
             window_read_up: false,
             landing_first: false,
             blank_on_open: false,
-            read_backwards: false,
+            read_backwards: None,
             selection_on_rec: false,
             focus: None,
             focus_in_row: false,

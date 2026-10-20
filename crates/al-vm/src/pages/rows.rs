@@ -229,7 +229,12 @@ impl Session {
     /// The window of a part that reads its rows last to first, once each, without reading the first row again. Pinned
     /// for 2 and 3 rows (pages/lt-part-reads/PartReadsOpen.al:OpenView_SixParts_ReadsPerPartLogged `open-Same`;
     /// misc/lt-probes-needed-7/PnGPartTriggers.al:OpenOrderOfHostWithSixParts); one row or more than 3 is refused.
-    fn populate_window_backwards(&mut self, st: &St, start: Vec<Value>) -> Result<(), Signal> {
+    fn populate_window_backwards(
+        &mut self,
+        st: &St,
+        start: Vec<Value>,
+        why: al_builtins::value::ReadBackwards,
+    ) -> Result<bool, Signal> {
         let rec = self.page_rec(st);
         let mut rows: Vec<al_builtins::value::WindowRow> = Vec::new();
         loop {
@@ -244,10 +249,19 @@ impl Session {
                 break;
             }
         }
-        if rows.len() == 1 || rows.len() > 3 {
-            return unsupported(
-                "a part viewing its linked field with a number of rows other than 2 or 3 (reads not pinned)",
-            );
+        // At open 2 and 3 rows are pinned (see `view_names_link_field`); after a move back 1, 2 and 3
+        // (pages/lt-part-reads/PartReadsOpen.al:358-379).
+        let after_move = why == al_builtins::value::ReadBackwards::AfterMove;
+        if after_move && rows.len() > 3 {
+            // Kept, not pinned: a part of more than 3 rows after its host moved back reads first to last, as every
+            // refill did before the backward order was pinned (keeps misc/lt-probes-needed-7/PnGPartRows.al:
+            // PendingPartRowSavedWhenHostMoves, which does not log those reads).
+            self.ret_used = true;
+            self.record_op(RecordOp::Get, &rec, &mut start.clone())?;
+            return Ok(false);
+        }
+        if (rows.len() == 1 && !after_move) || rows.len() > 3 {
+            return unsupported("a part viewing its linked field with a number of rows other than 2 or 3 (reads not pinned)");
         }
         for row in rows.iter_mut().rev() {
             rec.borrow_mut().fields = row.stored.clone();
@@ -260,7 +274,7 @@ impl Session {
         let first_stored = rows[0].stored.clone();
         self.set_xrec_fields(st, first_stored);
         st.borrow_mut().window = rows;
-        Ok(())
+        Ok(true)
     }
 
     pub(super) fn populate_window(&mut self, st: &St) -> Result<(), Signal> {
@@ -275,8 +289,11 @@ impl Session {
         let mut walked = 0;
         let mut end_reached = false;
         let opening = std::mem::take(&mut st.borrow_mut().landing_first);
-        if std::mem::take(&mut st.borrow_mut().read_backwards) {
-            return self.populate_window_backwards(st, start);
+        let backwards = st.borrow_mut().read_backwards.take();
+        if let Some(why) = backwards
+            && self.populate_window_backwards(st, start.clone(), why)?
+        {
+            return Ok(());
         }
         for i in 0..Self::WINDOW {
             let key = self.row_key(&rec)?;

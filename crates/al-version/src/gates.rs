@@ -329,6 +329,10 @@ impl Gate {
             }],
             Gate::ReportSaveAsXmlHeaderHasCompanyBlock => &[
                 Evidence {
+                    file: "report/lt-bd-format-region/BdRegionTests.al",
+                    lines: "125,142,159,176",
+                },
+                Evidence {
                     file: "handlers/TestReportSaveAsDatasetContracts.al",
                     lines: "243",
                 },
@@ -425,6 +429,10 @@ impl Gate {
             }],
             Gate::FullyQualifiedNameRunAndOpenFrom28 => &[
                 Evidence {
+                    file: "misc/lt-cu-odd-leads/CuWriteTxTests.al",
+                    lines: "235",
+                },
+                Evidence {
                     file: "report/lt-bj-fqn-page-run/BjFqnPageRun.al",
                     lines: "8",
                 },
@@ -438,6 +446,10 @@ impl Gate {
                 lines: "99",
             }],
             Gate::JsonSelectTokensListFrom28 => &[
+                Evidence {
+                    file: "json/lt-dc-json-leads/DcJsonLeads.al",
+                    lines: "388",
+                },
                 Evidence {
                     file: "json/lt-ay-json/AyJsonTokenSelectTokens.al",
                     lines: "12",
@@ -555,6 +567,14 @@ impl Gate {
             }],
             Gate::ProbedValuesDifferFrom28 => &[
                 Evidence {
+                    file: "network/lt-http-send-failure/LtDaSendFailure.al",
+                    lines: "10,140",
+                },
+                Evidence {
+                    file: "pages/lt-cc-page-leads/CcPageLeads.al",
+                    lines: "801",
+                },
+                Evidence {
                     file: "install/lt-bf-install-probes/BfInstallTests.al",
                     lines: "84,89,124,131",
                 },
@@ -620,6 +640,22 @@ impl Gate {
                 },
             ],
             Gate::ProbedValuesDifferFrom29 => &[
+                Evidence {
+                    file: "misc/lt-cq-odd-leads/CqOddLeadObjects.al",
+                    lines: "40,52",
+                },
+                Evidence {
+                    file: "misc/lt-cq-odd-leads/CqOddLeads.al",
+                    lines: "259,289",
+                },
+                Evidence {
+                    file: "network/lt-cz-http-leads/CzHttpOutbound.al",
+                    lines: "268",
+                },
+                Evidence {
+                    file: "query/lt-cf-query-leads/CfQueryLeads.al",
+                    lines: "283",
+                },
                 Evidence {
                     file: "types/lt-bu-property-conversions/BuPropertyConversions.al",
                     lines: "25,83",

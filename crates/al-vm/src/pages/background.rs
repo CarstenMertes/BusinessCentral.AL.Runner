@@ -236,30 +236,41 @@ impl Session {
     }
 
     /// The error a write by a background task worker raises: the session is read-only. Only the
-    /// three pinned writes have a text (corpus handlers/TestPageBgTask_Tests.al, the three
-    /// `..._RefusedByReadOnlySession` arms).
+    /// pinned writes have a text (corpus handlers/TestPageBgTask_Tests.al, the three
+    /// `..._RefusedByReadOnlySession` arms; bgtasks/W2BackgroundTasks.al:487-496 Worker_Delete).
     pub(crate) fn bg_refuse_write(&self, table: usize, method: &str) -> Result<(), Signal> {
         if self.pages.bg_worker.is_none() {
             return Ok(());
         }
-        if !matches!(method, "Insert" | "Modify" | "Rename") {
+        if !matches!(method, "Insert" | "Modify" | "Rename" | "Delete") {
             return unsupported(format!(
                 "{method} in a page background task (the refusal text is not pinned)"
             ));
         }
         let o = &self.engine.program.objects[table];
+        Err(self.bg_read_only_error(o.id.unwrap_or(0), &o.name, o.app, method))
+    }
+
+    /// `Sorry, the current permissions prevented the action. (TableData <id> <name> <method>: <app>)`, code
+    /// `DB:ReadOnlySession` for Insert (session/lt-cn-session-leads/CnIsolatedStorageLeads.al:136-150), Modify
+    /// (pages/lt-ao-testpage/AoTests.al:118-123) and Delete (bgtasks/W2BackgroundTasks.al:487-496). The code of a
+    /// refused Rename is not pinned: it carries the unpinned mark.
+    pub(crate) fn bg_read_only_error(&self, id: u32, name: &str, app: u32, method: &str) -> Signal {
         let app = self
             .engine
             .program
             .apps
-            .get(o.app as usize)
+            .get(app as usize)
             .map(|a| a.name.clone())
             .unwrap_or_default();
-        Err(error(format!(
-            "Sorry, the current permissions prevented the action. (TableData {} {} {method}: {app})",
-            o.id.unwrap_or(0),
-            o.name
-        )))
+        let code = match method {
+            "Insert" | "Modify" | "Delete" => "DB:ReadOnlySession",
+            _ => al_builtins::native::UNPINNED_ERROR,
+        };
+        crate::transactions::al_error_code(
+            &format!("Sorry, the current permissions prevented the action. (TableData {id} {name} {method}: {app})"),
+            code,
+        )
     }
 
     /// The calls inside a worker whose transaction effect is not pinned: a direct `Commit` and an

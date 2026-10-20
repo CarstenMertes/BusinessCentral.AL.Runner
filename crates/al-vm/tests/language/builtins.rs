@@ -862,6 +862,84 @@ fn isolated_storage_takes_secret_text_and_the_user_scopes() {
     assert!(r.is_ok(), "{r:?}");
 }
 
+#[test]
+fn isolated_storage_set_and_delete_open_the_write_transaction_and_contains_does_not() {
+    // session/lt-cn-session-leads/CnIsolatedStorageLeads.al:238-263 (IsoSet_OpensWriteTransaction).
+    let r = storage(
+        "a := Format(Database.IsInWriteTransaction());
+         IsolatedStorage.Set('k', 'v', DataScope::User); a += Format(Database.IsInWriteTransaction()); Commit();
+         IsolatedStorage.Set('k', 'v'); a += Format(Database.IsInWriteTransaction()); Commit();
+         IsolatedStorage.Delete('k'); a += Format(Database.IsInWriteTransaction()); Commit();
+         ok := IsolatedStorage.Contains('k', DataScope::User); a += Format(Database.IsInWriteTransaction());
+         exit(a);",
+    );
+    assert_eq!(r.unwrap(), "NoYesYesYesNo");
+}
+
+#[test]
+fn isolated_storage_set_then_guarded_codeunit_run_fails() {
+    // session/lt-cn-session-leads/CnIsolatedStorageLeads.al:265-277 (IsoSet_ThenGuardedCodeunitRun) and :279-290 after a Commit.
+    let src = "codeunit 50101 Noop { trigger OnRun() begin end; }
+        codeunit 50100 C {
+            procedure F(): Boolean begin IsolatedStorage.Set('k', 'v', DataScope::User); exit(Codeunit.Run(50101)); end;
+            procedure G(): Boolean begin IsolatedStorage.Set('k', 'v', DataScope::User); Commit(); exit(Codeunit.Run(50101)); end;
+        }";
+    let e = al_testkit::run(src, "F").unwrap_err();
+    assert!(
+        format!("{e:?}").contains("An error occurred and the transaction is stopped."),
+        "{e:?}"
+    );
+    assert!(matches!(al_testkit::run(src, "G"), Ok(Value::Boolean(true))));
+}
+
+#[test]
+fn set_encrypted_keeps_214_bytes_and_refuses_216() {
+    // session/lt-cn-session-leads/CnIsolatedStorageLeads.al:368-424: 214 ASCII and 107 two-byte characters are kept,
+    // 216 ASCII and 108 two-byte characters fail with EncryptionDataTooLong.
+    let set = |value: &str| {
+        storage(&format!(
+            "ok := IsolatedStorage.SetEncrypted('e', PadStr('', {value})); ok := IsolatedStorage.Get('e', v); exit(Format(StrLen(v)));"
+        ))
+    };
+    assert_eq!(set("214, 'a'").unwrap(), "214");
+    assert_eq!(set("107, 'é'").unwrap(), "107");
+    for long in ["216, 'a'", "108, 'é'", "300, 'a'"] {
+        let e = set(long).unwrap_err();
+        let s = format!("{e:?}");
+        assert!(
+            s.contains("Unable to encrypt data. The provided string is too long.")
+                && s.contains("EncryptionDataTooLong"),
+            "{s}"
+        );
+    }
+    // 215 bytes is a Linux suspect (:380-388), and characters of three UTF-8 bytes are not pinned.
+    for refused in ["215, 'a'", "10, '€'"] {
+        assert!(matches!(set(refused), Err(Signal::Unsupported(_))), "{refused}");
+    }
+}
+
+#[test]
+fn isolated_storage_get_into_text_of_a_secret_value_fails() {
+    // misc/lt-cu-odd-leads/CuTryTests.al:181-232: a value stored from a SecretText (SetEncrypted or Set) cannot be read into a Text.
+    for set in ["SetEncrypted", "Set"] {
+        let e = storage(&format!(
+            "s := SecretStrSubstNo('x'); ok := IsolatedStorage.{set}('k', s, DataScope::Module); IsolatedStorage.Get('k', DataScope::Module, v); exit(v);"
+        ))
+        .unwrap_err();
+        let s = format!("{e:?}");
+        assert!(
+            s.contains("The operation was aborted to prevent exposing a secret value.")
+                && s.contains("ForbiddenSecretAccess"),
+            "{s}"
+        );
+    }
+    // Into a SecretText it still reads.
+    let r = storage(
+        "s := SecretStrSubstNo('x'); ok := IsolatedStorage.SetEncrypted('k', s); exit(Format(IsolatedStorage.Get('k', s)));",
+    );
+    assert_eq!(r.unwrap(), "Yes");
+}
+
 // ---------------------------------------------------------------- NavApp module info
 
 const DEP_ID: &str = "f1e2d3c4-b5a6-7890-fedc-ba9876543210";

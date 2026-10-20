@@ -118,3 +118,28 @@ codeunit 50100 C {
     }
     assert_eq!(out(al_testkit::run_in(src, "C", "Global")), "kept");
 }
+
+/// The InStream-of-a-local refusal looks at calls in the syntax tree, with names resolved: a comment or a string that
+/// spells the call, a stream created on a local but not handed back, and a handed-back stream created on a parameter
+/// record do not refuse the routine (they hand back no stream owned by a local).
+#[test]
+fn an_instream_handed_back_not_owned_by_a_local_runs() {
+    let src = r#"table 50101 B { fields { field(1; Id; Integer) { } field(2; Data; Blob) { } } }
+codeunit 50100 C {
+  var G: Record B temporary;
+  local procedure Commented() Result: InStream var R: Record B temporary; O: OutStream; T: Text; begin
+    // R.Data.CreateInStream(Result);
+    T := 'R.Data.CreateInStream(Result)';
+    G.Data.CreateOutStream(O); O.WriteText('global'); G.Data.CreateInStream(Result); end;
+  local procedure NotHanded() Result: InStream var R: Record B temporary; S: InStream; O: OutStream; begin
+    R.Data.CreateOutStream(O); O.WriteText('x'); R.Data.CreateInStream(S);
+    G.Data.CreateOutStream(O); O.WriteText('global2'); G.Data.CreateInStream(Result); end;
+  local procedure FromParam(var P: Record B temporary) Result: InStream var O: OutStream; begin
+    P.Data.CreateOutStream(O); O.WriteText('param'); P.Data.CreateInStream(Result); end;
+  procedure A(): Text var S: InStream; T: Text; begin S := Commented(); S.ReadText(T); exit(T); end;
+  procedure B2(): Text var S: InStream; T: Text; begin S := NotHanded(); S.ReadText(T); exit(T); end;
+  procedure P2(): Text var S: InStream; T: Text; R: Record B temporary; begin S := FromParam(R); S.ReadText(T); exit(T); end; }"#;
+    assert_eq!(out(al_testkit::run_in(src, "C", "A")), "global");
+    assert_eq!(out(al_testkit::run_in(src, "C", "B2")), "global2");
+    assert_eq!(out(al_testkit::run_in(src, "C", "P2")), "param");
+}

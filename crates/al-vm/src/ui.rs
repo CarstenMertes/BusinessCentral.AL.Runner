@@ -195,7 +195,7 @@ impl Session {
             ));
         }
         // `[SendNotificationHandler(true)]` and `[RecallNotificationHandler(true)]` are optional: one that never runs does not fail
-        // the test (pages/lt-ca-odd-667/CaNotificationTests.al:14-38).
+        // the test (al-language/pages/lt-ca-odd-667/CaNotificationTests.al:14-38, handlers at :61 and :70).
         let optional = matches!(kind, UiKind::SendNotification | UiKind::RecallNotification)
             && r.attributes.iter().any(|a| {
                 UiKind::from_attribute(&a.name) == Some(kind) && a.args.as_slice() == [al_ir::Const::Boolean(true)]

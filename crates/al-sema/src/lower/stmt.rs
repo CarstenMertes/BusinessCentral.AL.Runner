@@ -145,18 +145,10 @@ impl Lowerer<'_> {
                 .flat_map(|v| v.names())
                 .map(|n| n.to_lowercase())
                 .collect();
-            let body: String = r
+            if let Some(why) = r
                 .body()
-                .map(|b| {
-                    b.text()
-                        .to_string()
-                        .to_lowercase()
-                        .chars()
-                        .filter(|c| !c.is_whitespace())
-                        .collect()
-                })
-                .unwrap_or_default();
-            if let Some(why) = stream_of_a_local_handed_back(&body, &handed, &local_names) {
+                .and_then(|b| self.stream_of_a_local_handed_back(&b, &handed, &local_names))
+            {
                 self.reasons.push(why);
             }
         }
@@ -1659,29 +1651,54 @@ fn continue_else(n: &SyntaxNode) -> bool {
         })
 }
 
-/// The refusal for a routine whose body (lower case, without white space) runs `<local>....CreateInStream(<name>` with
-/// `<name>` one of `handed` (an InStream the caller gets back) and the receiver rooted at one of `locals`. A match inside a
-/// string or a comment only makes the check stricter.
-fn stream_of_a_local_handed_back(body: &str, handed: &[String], locals: &[String]) -> Option<String> {
-    const CALL: &str = ".createinstream(";
-    let mut from = 0;
-    while let Some(i) = body[from..].find(CALL).map(|i| i + from) {
-        from = i + CALL.len();
-        let arg_end = body[from..].find([',', ')']).map_or(body.len(), |e| e + from);
-        let arg = body[from..arg_end].trim_matches('"');
-        if !handed.iter().any(|h| h == arg) {
-            continue;
+impl Lowerer<'_> {
+    /// The refusal for a routine whose body runs `<receiver>.CreateInStream(<name>, ...)` (a call in the syntax tree, so
+    /// comments and strings never match) with `<name>` resolving to one of `handed` (an InStream the caller gets back) and
+    /// the receiver's root name resolving to one of `locals` (a variable declared in the routine's own `var` section).
+    fn stream_of_a_local_handed_back(&self, body: &SyntaxNode, handed: &[String], locals: &[String]) -> Option<String> {
+        let local_named = |n: &SyntaxNode, names: &[String]| match self.res(n) {
+            Some(Res::Local(v)) => names.iter().any(|h| h.eq_ignore_ascii_case(v)),
+            _ => false,
+        };
+        for call in body.descendants().filter(|n| n.kind() == SyntaxKind::CallExpr) {
+            let mut kids = call.children();
+            let (Some(callee), Some(args)) = (kids.next(), kids.find(|k| k.kind() == SyntaxKind::ArgList)) else {
+                continue;
+            };
+            if callee.kind() != SyntaxKind::MemberExpr {
+                continue;
+            }
+            let mut parts = callee.children();
+            let (Some(recv), Some(member)) = (parts.next(), parts.next()) else {
+                continue;
+            };
+            if !member.text().to_string().trim().eq_ignore_ascii_case("CreateInStream") {
+                continue;
+            }
+            let Some(first) = args.children().next() else {
+                continue;
+            };
+            if first.kind() != SyntaxKind::NameRef || !local_named(&first, handed) {
+                continue;
+            }
+            let mut root = recv;
+            while matches!(
+                root.kind(),
+                SyntaxKind::MemberExpr | SyntaxKind::IndexExpr | SyntaxKind::CallExpr | SyntaxKind::ParenExpr
+            ) {
+                match root.children().next() {
+                    Some(c) => root = c,
+                    None => break,
+                }
+            }
+            if root.kind() == SyntaxKind::NameRef && local_named(&root, locals) {
+                return Some(format!(
+                    "an InStream handed back to the caller is created on the local variable `{}`: BC reads it as empty once \
+                     the local is out of scope, the runtime keeps the bytes",
+                    root.text().to_string().trim()
+                ));
+            }
         }
-        let start = body[..i]
-            .rfind(|c: char| !(c.is_alphanumeric() || c == '_' || c == '.' || c == '"'))
-            .map_or(0, |s| s + 1);
-        let root = body[start..i].split('.').next().unwrap_or("").trim_matches('"');
-        if locals.iter().any(|l| l == root) {
-            return Some(format!(
-                "an InStream handed back to the caller is created on the local variable `{root}`: BC reads it as empty once \
-                 the local is out of scope, the runtime keeps the bytes"
-            ));
-        }
+        None
     }
-    None
 }

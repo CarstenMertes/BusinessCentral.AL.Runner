@@ -55,7 +55,7 @@ fn recall_after_a_handled_send_does_not_throw() {
     ));
 }
 
-// pages/lt-ca-odd-667/CaNotificationTests.al:14-38: a [SendNotificationHandler(true)] or [RecallNotificationHandler(true)]
+// al-language/pages/lt-ca-odd-667/CaNotificationTests.al:14-38 (handlers at :61, :70): a [SendNotificationHandler(true)] or [RecallNotificationHandler(true)]
 // that never runs lets the test pass (HandlerIsOptional).
 #[test]
 fn an_optional_notification_handler_that_never_fires_passes() {

@@ -211,3 +211,74 @@ fn transferfields_within_a_table_copies_a_flowfield() {
 fn a_temporary_row_keeps_the_flowfield_value_of_a_modify() {
     assert_eq!(text(run_in(SRC, "T", "TemporaryRow")), "0/7/2/7");
 }
+
+const OR: &str = r#"
+table 50340 O
+{
+    fields
+    {
+        field(1; Id; Integer) { }
+        field(2; Name; Text[30]) { }
+        field(3; Total; Integer) { FieldClass = FlowField; CalcFormula = count(O where(Id = field(Id))); }
+    }
+    keys { key(PK; Id) { } }
+}
+
+codeunit 50341 T
+{
+    procedure F(): Text
+    var
+        O: Record O;
+    begin
+        O.Id := 1; O.Name := 'one'; O.Insert();
+        O.Id := 2; O.Name := ''; O.Insert();
+        O.FilterGroup(-1);
+        O.SetRange(Name, '');
+        O.SetRange(Total, 0);
+        O.SetFilter(Total, '>6');
+        exit(O.GetFilters() + '|' + Format(O.Count()));
+    end;
+}
+"#;
+
+// record/PWFilterGroupOr.al:OrGroup_FlowFieldFilter_BQ: a FlowField filter in the OR group is dropped.
+#[test]
+fn a_flowfield_filter_in_the_or_group_is_dropped() {
+    assert_eq!(text(run_in(OR, "T", "F")), "Name: ''|1");
+}
+
+const BULK: &str = r#"
+table 50350 M
+{
+    fields { field(1; Id; Integer) { } field(2; Amount; Decimal) { } }
+    keys { key(PK; Id) { } }
+}
+
+codeunit 50351 T
+{
+    procedure F(): Text
+    var
+        M: Record M;
+        Before: DateTime;
+        R: Text;
+    begin
+        M.Id := 1; M.Amount := 10; M.Insert();
+        M.Get(1);
+        Before := M.SystemModifiedAt;
+        Sleep(50);
+        M.ModifyAll(Amount, 10, true);
+        M.Get(1);
+        R := Format(M.SystemModifiedAt <> Before);
+        Sleep(50);
+        M.ModifyAll(Amount, 10, false);
+        M.Get(1);
+        exit(R + '/' + Format(M.SystemModifiedAt <> Before));
+    end;
+}
+"#;
+
+// record/lt-record-write/RcBTriggers.al:ModifyAll_Equal_Value_Rows_BQ: ModifyAll(.., false) stamps a row that keeps its value.
+#[test]
+fn modifyall_without_triggers_stamps_a_row_that_keeps_its_value() {
+    assert_eq!(text(run_in(BULK, "T", "F")), "No/Yes");
+}

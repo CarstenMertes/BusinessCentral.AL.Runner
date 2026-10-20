@@ -555,6 +555,9 @@ pub struct Session {
     /// Records a TransferFields from another table wrote into, with that row's version: the next Modify refuses when the stale
     /// check would answer differently with it (records.rs `take_foreign_transfer`).
     pub(crate) foreign_transfers: Vec<(std::rc::Weak<RefCell<RecordState>>, Value)>,
+    /// A `ModifyAll(Field, Value, false)` of a table without modify events is running: every row is written, also one whose value
+    /// does not change (recmeta.rs `modify_all`).
+    pub(crate) bulk_modify: bool,
     /// The host session behind `DotNet` values; ends with the session (ADR-014 section 6).
     pub(crate) dotnet: dotnet::DotNetState,
     /// The session's application areas as `ApplicationArea()` reads them: `#Basic,#Suite`, or the
@@ -741,6 +744,7 @@ impl Session {
             media,
             media_removed: Default::default(),
             foreign_transfers: Vec::new(),
+            bulk_modify: false,
             dotnet: Default::default(),
             application_areas: String::new(),
             tx: TxState {

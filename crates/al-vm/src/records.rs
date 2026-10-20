@@ -766,6 +766,17 @@ impl Session {
         Ok(any)
     }
 
+    /// Whether field `pos` of `t` is a FlowField (not stored, not a FlowFilter, not a system field).
+    pub(crate) fn is_flowfield(&self, t: &TableDef, pos: usize) -> bool {
+        let f = &t.fields[pos];
+        !f.stored
+            && f.id < 2_000_000_000
+            && !self.engine.program.objects[t.object as usize]
+                .table
+                .as_ref()
+                .is_some_and(|s| s.fields[pos].flow_filter)
+    }
+
     pub(crate) fn table_trigger(&self, t: &TableDef, name: &str) -> Option<usize> {
         self.engine.program.objects[t.object as usize]
             .routines
@@ -2133,7 +2144,11 @@ impl Session {
                 self.check_code_storage(&t, &rec.borrow().fields, true)?;
                 self.sql_timestamp_before(&t, rec, stored_row.as_deref())?;
                 let old_version = match stored_row.as_deref() {
-                    Some(old) if !rec.borrow().temporary && Session::modify_changes_nothing(&t, old, rec) => {
+                    Some(old)
+                        if !rec.borrow().temporary
+                            && !self.bulk_modify
+                            && Session::modify_changes_nothing(&t, old, rec) =>
+                    {
                         if let Some(i) = t.fields.iter().position(|f| f.id == 2_000_000_005) {
                             rec.borrow_mut().fields[i] = old[i].clone();
                         }
@@ -2693,10 +2708,16 @@ impl Session {
             RecordOp::SetRange => {
                 let pos = arg_pos(args, 0)?;
                 let ty = t.fields[pos].ty.clone();
+                let or_flowfield = self.is_flowfield(&t, pos);
                 let mut r = rec.borrow_mut();
                 r.position = None;
                 let group = r.filter_group;
                 r.filters.retain(|f| !(f.field == pos && f.group == group));
+                // A FlowField filter in the OR group is dropped: GetFilters does not show it and no row is filtered by it
+                // (record/PWFilterGroupOr.al:OrGroup_FlowFieldFilter_BQ, `getFilters`, `flowFieldOnly`, `nameOrFlowField`).
+                if group == al_builtins::filter::OR_GROUP && or_flowfield {
+                    return Ok(Value::Null);
+                }
                 if let Some(from) = args.get(1) {
                     let from = ops::convert(from.clone(), &ty)?;
                     let to = match args.get(2) {
@@ -2888,9 +2909,14 @@ impl Session {
                     }
                     Err(e) => return Err(Signal::Unsupported(format!("SetFilter: {e}"))),
                 };
+                let or_flowfield = self.is_flowfield(&t, pos);
                 let mut r = rec.borrow_mut();
                 let group = r.filter_group;
                 r.filters.retain(|f| !(f.field == pos && f.group == group));
+                // PWFilterGroupOr.al:OrGroup_FlowFieldFilter_BQ (`nameOrFlowField`: SetFilter too).
+                if group == al_builtins::filter::OR_GROUP && or_flowfield {
+                    return Ok(Value::Null);
+                }
                 r.filters.push(FieldFilter {
                     field: pos,
                     expr,

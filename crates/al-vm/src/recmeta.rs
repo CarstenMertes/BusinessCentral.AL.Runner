@@ -1452,6 +1452,39 @@ impl Session {
         // One fresh set of table globals for all rows, not the caller's (ADR-021 decision 6; corpus
         // probe TableGlobals_ModifyAll_WhatTheTriggersAndSubscribersSee).
         let shared = al_builtins::value::TableGlobals::new_shared();
+        // Without triggers, events and database triggers, ModifyAll writes every row, also a row that has the value already: its
+        // SystemModifiedAt changes (record/lt-record-write/RcBTriggers.al:ModifyAll_Equal_Value_Rows_BQ, `row1StampChangedFalse`),
+        // while ModifyAll(.., true) leaves such a row as a Modify does (`row1StampChanged`). With events or database triggers an
+        // unchanged row is not pinned.
+        let bulk = !run_trigger
+            && !rec.borrow().temporary
+            && !self.listened(t, "onbeforemodifyevent", None)?
+            && !self.listened(t, "onaftermodifyevent", None)?
+            && !self.global_enabled(t, crate::globaltriggers::GlobalOp::Modify)?;
+        if !run_trigger && !bulk && !rec.borrow().temporary {
+            for row in &rows {
+                if ops::compare(&row[pos], &value).ok() == Some(std::cmp::Ordering::Equal) {
+                    return unsupported(
+                        "ModifyAll(.., false) of a row that has the value already, on a table with modify events or database triggers (not pinned)",
+                    );
+                }
+            }
+        }
+        let outer = std::mem::replace(&mut self.bulk_modify, bulk);
+        let r = self.modify_all_rows(rec, rows, pos, &value, run_trigger, shared);
+        self.bulk_modify = outer;
+        r
+    }
+
+    fn modify_all_rows(
+        &mut self,
+        rec: &Rec,
+        rows: Vec<Vec<Value>>,
+        pos: usize,
+        value: &Value,
+        run_trigger: bool,
+        shared: al_builtins::value::TableGlobals,
+    ) -> Result<Value, Signal> {
         for mut row in rows {
             row[pos] = value.clone();
             let copy = {

@@ -313,7 +313,7 @@ impl Session {
         if rec.borrow().temporary {
             return Vec::new();
         }
-        if changed(t, stored, &rec.borrow().fields) {
+        if self.bulk_modify || changed(t, stored, &rec.borrow().fields) {
             return self.stamp_modified_pair(t, rec);
         }
         let keep: Vec<(u32, Value)> = [SYSTEM_MODIFIED_AT, SYSTEM_MODIFIED_BY]

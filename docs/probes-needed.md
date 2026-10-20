@@ -1005,7 +1005,7 @@ Refused or kept until a probe pins them:
 - Published Application.Description: the manifest's description (onprem session/PZPublishedApplicationColumns.al:55, :59). Refused: `AppInfo` does not keep the description yet.
 - Session "Login Type" of a session that is not the test's web client session: unknown.
 - A table declared ObsoleteState = Moved (no other app has it): no AllObj row and RecordRef.Open fails with AL:MetadataNotFound (platform/lt-aw-fresh-tenant/AwTests.al:413-442). The error text names `Test Runner - Mgt.` on Windows and the test codeunit on Linux (AwTests.al:434-438, held): its text is refused. A Record operation on such a table is refused. Probe: Record.Get/Insert/IsEmpty on a moved table; AllObjWithCaption and Table Metadata rows of it.
-- AllObj rows of the Test Runner app's codeunits 130450-130455 (BaTpEnv.al:26-28): refused, the runtime does not load that app. Owner decision: compile Microsoft's Test Runner app from source, or keep refusing.
+- AllObj rows of the Test Runner app's codeunits 130450-130455 (BaTpEnv.al:26-28): every run loads Microsoft's Test Runner app from source (ADR-013, "The test environment's apps"), so the rows are the app's. A run that finds no package for it refuses the reads, as before. Not pinned: whether the corpus environment has Library Assert (130002) and Library Variable Storage (131004) installed (bc-linux's entrypoint handles them together with the Test Runner, but BaTpEnv.al does not ask); the runtime answers as the dependencies say. Probe: add 130002, 131004 and 130500 to BaTpEnv's id list.
 
 ## Page control text and captions (refused shapes, 2026-10-19)
 

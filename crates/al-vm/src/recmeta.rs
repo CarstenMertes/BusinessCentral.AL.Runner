@@ -1461,13 +1461,14 @@ impl Session {
             && !self.listened(t, "onbeforemodifyevent", None)?
             && !self.listened(t, "onaftermodifyevent", None)?
             && !self.global_enabled(t, crate::globaltriggers::GlobalOp::Modify)?;
-        if !run_trigger && !bulk && !rec.borrow().temporary {
-            if rows
+        if !run_trigger
+            && !bulk
+            && !rec.borrow().temporary
+            && rows
                 .iter()
                 .any(|row| ops::compare(&row[pos], &value).ok() == Some(std::cmp::Ordering::Equal))
-            {
-                al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::ModifyAllWithEventsUnchangedRow);
-            }
+        {
+            al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::ModifyAllWithEventsUnchangedRow);
         }
         let outer = std::mem::replace(&mut self.bulk_modify, bulk);
         let r = self.modify_all_rows(rec, rows, pos, &value, run_trigger, shared);

@@ -66,6 +66,13 @@ impl Session {
         let t = self.engine.tables[r.table as usize]
             .clone()
             .map_or_else(|| unsupported("record of a table without a schema"), Ok)?;
+        if let Some(why) = self.engine.program.objects[t.object as usize]
+            .table
+            .as_ref()
+            .and_then(|x| x.unsupported.first())
+        {
+            return unsupported(format!("table {}: {why}", t.name));
+        }
         // A key set on fields no key starts with is one more key, as far as ordering goes.
         if let Some((index, fields)) = &r.adhoc {
             if r.key == *index && *index == t.keys.len() {

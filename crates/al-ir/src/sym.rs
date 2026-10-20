@@ -276,6 +276,10 @@ pub struct FieldModify {
     pub after_validate: Vec<(usize, usize)>,
 }
 
+/// The property name a [`TableContribution`] uses for a reason that refuses its table: link adds the value to
+/// `Table::unsupported`.
+pub const UNSUPPORTED_TABLE_PROPERTY: &str = "\0unsupported";
+
 /// What a table extension adds to its table.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct TableContribution {

@@ -1008,6 +1008,10 @@ impl Merges {
                 exts.iter().filter_map(|&e| contributions[e].table.take()).collect();
             for c in &adds {
                 for (k, v) in &c.properties {
+                    if k == al_ir::sym::UNSUPPORTED_TABLE_PROPERTY {
+                        table.unsupported.push(v.clone());
+                        continue;
+                    }
                     match obj.properties.iter_mut().find(|(pk, _)| pk.eq_ignore_ascii_case(k)) {
                         Some(slot) => slot.1 = v.clone(),
                         None => obj.properties.push((k.clone(), v.clone())),
@@ -1551,6 +1555,7 @@ mod tests {
                     key_props: vec![vec![]],
                     per_company: true,
                     extensions: vec![],
+                    unsupported: vec![],
                 }),
                 ..Default::default()
             },

@@ -597,6 +597,7 @@ fn walk_table<V: RefVisitor>(t: &mut Table, v: &mut V) {
         key_props: _,
         per_company: _,
         extensions,
+        unsupported: _,
     } = t;
     for k in keys {
         for f in k {

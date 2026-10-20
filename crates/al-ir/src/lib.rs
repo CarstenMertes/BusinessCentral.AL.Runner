@@ -931,6 +931,9 @@ pub struct Table {
     pub per_company: bool,
     /// Object index of each table extension (their triggers are not run yet).
     pub extensions: Vec<usize>,
+    /// Why a use of the table is refused; empty = it is not (a text property longer than its MaxLength: not pinned).
+    #[serde(default)]
+    pub unsupported: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

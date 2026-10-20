@@ -158,10 +158,11 @@ pub struct DotNetTypeDecl {
 }
 
 /// `'text', Locked = true` / `, MaxLength = 40` / `, Comment = '..'`: a text property keeps its literal and drops the attributes that follow
-/// it (corpus pageext/lt-page-ext-properties/TableKeyProps.al:P123_TableCaptionsLocked, P123_MaxLengthCaptions). `MaxLength = n` cuts
-/// the literal to n characters, as it cuts a Label (record/lt-u-table-field-props/UTableTextSearch.al:41-44: a table caption and a
-/// field caption; text/lt-label-textbuilder/TxCLabel.al:282).
-pub(crate) fn strip_text_attributes(text: String) -> String {
+/// it (corpus pageext/lt-page-ext-properties/TableKeyProps.al:P123_TableCaptionsLocked, P123_MaxLengthCaptions). On a `Caption`,
+/// `MaxLength = n` cuts the literal to n characters, as it cuts a Label (record/lt-u-table-field-props/UTableTextSearch.al:41-44: a
+/// table caption and a field caption; text/lt-label-textbuilder/TxCLabel.al:282). On any other property a text longer than its
+/// MaxLength is not pinned: the value keeps its attributes, [`text_over_max_length`] finds it and the readers refuse it.
+pub(crate) fn strip_text_attributes(property: &str, text: String) -> String {
     if !text.starts_with('\'') {
         return text;
     }
@@ -186,6 +187,10 @@ pub(crate) fn strip_text_attributes(text: String) -> String {
                 {
                     let literal = &text[..=i];
                     return match max_length_attribute(&text[i + 1..]) {
+                        Some(n) if !property.eq_ignore_ascii_case("Caption") => {
+                            let len = literal[1..literal.len() - 1].replace("''", "'").chars().count();
+                            if len > n { text } else { literal.to_string() }
+                        }
                         Some(n) => {
                             let inner = literal[1..literal.len() - 1].replace("''", "'");
                             let cut: String = inner.chars().take(n).collect();
@@ -200,6 +205,12 @@ pub(crate) fn strip_text_attributes(text: String) -> String {
         i += 1;
     }
     text
+}
+
+/// A property value that kept its attributes because its text is longer than its `MaxLength` (see [`strip_text_attributes`]).
+pub fn text_over_max_length(value: &str) -> bool {
+    value.starts_with('\'')
+        && strip_text_attributes("Caption", value.to_string()) != strip_text_attributes("x", value.to_string())
 }
 
 /// The `n` of a `MaxLength = n` among the attributes after a text literal (`, Comment = '..', MaxLength = 5`).
@@ -483,7 +494,7 @@ impl Property {
             .find(|n| n.kind() == SyntaxKind::PropertyValue)
             .map(|v| trimmed_code(&v))
             .unwrap_or_default();
-        strip_text_attributes(text)
+        strip_text_attributes(&self.name(), text)
     }
 }
 

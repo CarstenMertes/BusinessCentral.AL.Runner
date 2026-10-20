@@ -236,12 +236,14 @@ impl Lowerer<'_> {
     /// caption, not the member name (corpus fieldref/TestPrecompiledFieldOptionCaption.al:47-55,
     /// a Base Application table whose caption differs from its member). The value keeps its
     /// ordinal and takes the caption list. Other Format forms on such a field are not pinned.
+    /// `number9`: the call is `Format(x, 0, 9)`.
     ///
     /// A member named through the field, `Format(Row.Opt::Two)`, shows its caption too (misc/lt-probes-needed-2/
     /// PnBRecordMisc.al:96, :113: `Dos`).
-    pub(crate) fn format_option_field(&mut self, plain: bool, arg: &SyntaxNode) -> L<ir::Expr> {
+    pub(crate) fn format_option_field(&mut self, plain: bool, number9: bool, arg: &SyntaxNode) -> L<ir::Expr> {
         let value = self.expr(arg)?;
-        let field_node = if arg.kind() == SyntaxKind::ScopeExpr {
+        let member = arg.kind() == SyntaxKind::ScopeExpr;
+        let field_node = if member {
             match arg.children().next() {
                 Some(lhs) => lhs,
                 None => return Ok(value),
@@ -263,6 +265,13 @@ impl Lowerer<'_> {
                 .iter()
                 .find(|(k, _)| k.eq_ignore_ascii_case("OptionCaptionML")),
         ) {
+            if member && !plain && !number9 {
+                return Err(format!(
+                    "Format of member {} of option field {} with a length or format number (only the plain form and `0, 9` are pinned)",
+                    arg.text(),
+                    f.name
+                ));
+            }
             let ml = ml.clone();
             return Ok(ir::Expr::Builtin {
                 id: super::call::builtin_id("System.OptionCaptionML#1")?,
@@ -282,6 +291,12 @@ impl Lowerer<'_> {
         ) else {
             return Ok(value);
         };
+        if al_syntax::ast::text_over_max_length(text) {
+            return Err(format!(
+                "Format of option field {} whose OptionCaption is longer than its MaxLength (whether it is cut is not pinned)",
+                f.name
+            ));
+        }
         let captions: Vec<String> = match crate::members::first_string_literal(text) {
             Some(list) => list.split(',').map(str::to_string).collect(),
             None => return Err(format!("Format of option field {} with OptionCaption `{text}`", f.name)),
@@ -291,7 +306,15 @@ impl Lowerer<'_> {
         }
         // Every form of Format reads the caption list (text/TestProbeTextDateFormatContracts.al:
         // Format_OptionFieldAndOptionVariable): standard formats 2 and 9 the ordinal, a length cuts or pads the caption.
-        let _ = plain;
+        // A member named through the field is pinned in the plain form (PnBRecordMisc.al:96) and with format number 9, which
+        // gives the ordinal (misc/lt-probes-needed-5/PnE10Formats.al:96-97, :127).
+        if member && !plain && !number9 {
+            return Err(format!(
+                "Format of member {} of option field {} with a length or format number (only the plain form and `0, 9` are pinned)",
+                arg.text(),
+                f.name
+            ));
+        }
         if captions.len() != names.len() {
             return Err(format!(
                 "Format of option field {} whose OptionCaption has another number of entries than its members is not pinned",
@@ -316,6 +339,16 @@ impl Lowerer<'_> {
         {
             return Err(format!(
                 "Evaluate into option field {} with OptionCaptionML (which captions it takes is not pinned)",
+                f.name
+            ));
+        }
+        if matches!(f.ty, Ty::Option(_))
+            && f.properties
+                .iter()
+                .any(|(k, v)| k.eq_ignore_ascii_case("OptionCaption") && al_syntax::ast::text_over_max_length(v))
+        {
+            return Err(format!(
+                "Evaluate into option field {} whose OptionCaption is longer than its MaxLength (not pinned)",
                 f.name
             ));
         }

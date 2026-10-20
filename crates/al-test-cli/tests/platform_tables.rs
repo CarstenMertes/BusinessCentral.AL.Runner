@@ -1583,9 +1583,11 @@ fn company_table_reads_that_could_list_another_company_are_refused() {
     );
     // Count stays answered: refusing it loses the baseline case session/TestProbeSessionMiscContracts.al:Company_Names.
     passes(&o, "CountAll");
-    for t in ["FindSetAll"] {
-        assert!(not_run(&o, t).contains("ADR-046"), "{t}: {}", not_run(&o, t));
-    }
+    assert!(
+        not_run(&o, "FindSetAll").contains("ADR-046"),
+        "FindSetAll: {}",
+        not_run(&o, "FindSetAll")
+    );
     passes(&o, "FilteredToSession");
     passes(&o, "GetSession");
 }

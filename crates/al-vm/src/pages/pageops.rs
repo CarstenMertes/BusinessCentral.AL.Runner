@@ -491,7 +491,11 @@ impl Session {
                     // their effect on Rec-bound controls is docs/probes-needed.md).
                     Some(v) => {
                         if st.borrow().opening && !ops::truthy(v)? {
-                            st.borrow_mut().editable_off = true;
+                            let mut s = st.borrow_mut();
+                            if !s.editable_off {
+                                s.editable_off_in_open = true;
+                            }
+                            s.editable_off = true;
                         }
                         Ok(Value::Null)
                     }

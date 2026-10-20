@@ -35,6 +35,11 @@ impl Session {
         if let Some(why) = page.unsupported.first() {
             return unsupported(why.clone());
         }
+        if let Some(why) = page.big_integer_expressions.first() {
+            if !self.has(al_version::Gate::BigIntegerLiteralInControlExpressionFrom28) {
+                return unsupported(why.clone());
+            }
+        }
         let inst = self.instance(object);
         inst.borrow_mut().globals[page.curr_page_slot] = Value::TestPage(st.clone());
         // Each extension runs on an instance of its own that shares the page's Rec, xRec and CurrPage.
@@ -184,6 +189,7 @@ impl Session {
             s.pending = None;
             s.result = None;
             s.editable_off = false;
+            s.editable_off_in_open = false;
             s.expanded = Vec::new();
             // A caption assigned to the variable before its first run stays.
             // It stays for a second run too (types/lt-caption-assigned-before-run/CaptionAssignedBeforeRun.al:P187_SecondRun_NoReassign,
@@ -326,6 +332,7 @@ impl Session {
             {
                 let mut s = st.borrow_mut();
                 s.editable_off = s.editable_preset == Some(false);
+                s.editable_off_in_open = false;
             }
             // The parts' OnInit runs between the host's OnInit and its OnOpenPage (corpus
             // testpart/TestPartTriggerOrderAndRefresh.al:236-247).

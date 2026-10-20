@@ -413,6 +413,9 @@ pub struct PageState {
     /// OnInit/OnOpenPage are running, and `CurrPage.Editable(false)` has been called in them.
     pub opening: bool,
     pub editable_off: bool,
+    /// `editable_off` came from `CurrPage.Editable(false)` in OnInit/OnOpenPage (not from a preset): its effect depends on
+    /// the open mode (see `PageOps::page_editable`).
+    pub editable_off_in_open: bool,
     /// `P.Editable(false)` or `P.Editable := false` on a Page variable before it runs: the page
     /// opens non-editable (handlers/TestPageVariableEditableContracts.al).
     pub editable_preset: Option<bool>,
@@ -526,6 +529,7 @@ impl PageState {
             after_new: None,
             opening: false,
             editable_off: false,
+            editable_off_in_open: false,
             editable_preset: None,
             caption: None,
             parts: Vec::new(),

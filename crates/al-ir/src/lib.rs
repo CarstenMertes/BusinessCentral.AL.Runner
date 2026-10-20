@@ -742,6 +742,10 @@ pub struct Page {
     /// The `area(...)` sections of `actions` (what the Page Action table lists as action containers).
     #[serde(default)]
     pub action_areas: Vec<ActionArea>,
+    /// Why the page is refused on a BC version whose client fails to compile a BigInteger literal in a control expression
+    /// (al_version::Gate::BigIntegerLiteralInControlExpressionFrom28); empty = no such expression.
+    #[serde(default)]
+    pub big_integer_expressions: Vec<String>,
 }
 
 /// An `area(Name)` of a page's `actions` section.

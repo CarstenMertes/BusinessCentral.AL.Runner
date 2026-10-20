@@ -423,8 +423,11 @@ fn run_unit(
     crate::dotnet::take_start_time();
     let baseline = baseline.filter(|_| !u.without_baseline);
     crate::events::install(u.hooks.clone());
+    // A crash of the process names this codeunit (and, once it starts, the test).
+    crate::crash::running(u.id, "");
     // A cancelled run starts no further codeunit.
     if crate::events::cancelled() {
+        crate::crash::idle();
         crate::events::uninstall();
         return UnitResult {
             si: u.si,
@@ -524,6 +527,7 @@ fn run_unit(
     }
     let took = started.elapsed();
     let sidecar_start = crate::dotnet::take_start_time();
+    crate::crash::idle();
     crate::events::uninstall();
     UnitResult {
         si: u.si,

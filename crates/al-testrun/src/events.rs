@@ -95,6 +95,7 @@ pub(crate) fn cancel_flag() -> Option<Arc<AtomicBool>> {
 
 /// Tells the run's hook that a test is about to run.
 pub(crate) fn starting(codeunit: u32, test: &str) {
+    crate::crash::running(codeunit, test);
     let hook = CURRENT.with(|c| c.borrow().0.on_start.clone());
     if let Some(h) = hook {
         h(codeunit, test);

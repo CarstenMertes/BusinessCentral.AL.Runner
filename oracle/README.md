@@ -12,11 +12,11 @@ pass rate is measured against: every `<testcase>` in it passed on real BC.
 
 | Major | Oracle leg | Corpus commit of the run | Workflow run | Artifact | Artifact id | Cases |
 |---|---|---|---|---|---|---|
-| 27 | 27.5 | `fdfe3d8` (head of corpus PR 691, same tree as the pin) | 39484019125 | `junit-test-results-27.5` | 12296606163 | 16854 |
-| 28 | 28.5 | `fdfe3d8` (head of corpus PR 691, same tree as the pin) | 39484019125 | `junit-test-results-28.5` | 12294644248 | 16943 (+26 `OnRun`) |
-| 29 | 29.0 | `fdfe3d8` (head of corpus PR 691, same tree as the pin) | 39484019125 | `junit-test-results-29.0` | 12294548738 | 17037 (+26 `OnRun`) |
+| 27 | 27.5 | `4990f3f` (the pin) | 39484019125 | `junit-test-results-27.5` | 12296606163 | 16854 |
+| 28 | 28.5 | `4990f3f` (the pin) | 39484019125 | `junit-test-results-28.5` | 12294644248 | 16943 (+26 `OnRun`) |
+| 29 | 29.0 | `4990f3f` (the pin) | 39484019125 | `junit-test-results-29.0` | 12294548738 | 17037 (+26 `OnRun`) |
 
-The files come from the green pull request run of PR 691, whose head `fdfe3d8` has the same tree as the pin.
+The files come from the green pull request run of PR 691, whose head `fdfe3d8` has the same tree as the pin `4990f3f`.
 The master push run of the pin (39492219467) was still running when the pin was set.
 Every file has 0 failures. Each run published two artifacts with the same name; the
 oracle is the large one (the main suite, `junit-al-language.xml`). The small one is

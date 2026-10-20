@@ -106,7 +106,10 @@ pub enum Gate {
     /// `Base64Convert.FromBase64` of text that is not Base64 raises from BC 28 (types/PVBase64.al, corpus bump 9).
     /// Not consumed yet.
     FromBase64InvalidTextRaises,
-    /// Exporting a Media from BC 29 writes the imported bytes back (types/W7Media.al, corpus bump 9). Not consumed yet.
+    /// Exporting a Media from BC 29 writes the imported bytes back (types/W7Media.al, corpus bump 9). Consumed by
+    /// Media.ExportStream (al-builtins media.rs). Corpus bump 34 shows this was the Linux image before bc-linux #161: Windows
+    /// BC 29 re-encodes an imported PNG to 99 bytes as 27 and 28 do (types/W7Media.al:141-145, DdStreamLeads.al:283-285). Only
+    /// the first exported bytes still differ on BC 29 (W7Media.al:145). The consumer is wrong on BC 29 and is the next lane's.
     MediaExportKeepsTheImportedBytes,
     /// The platform metadata tables (All Obj, All Obj with Caption, Field, Key, Table and Codeunit Metadata) list other
     /// columns and rows from BC 29 (metadata/W6*.al, corpus bump 9). Consumed by `RecordRef.FieldExist(2000000005)`
@@ -147,8 +150,8 @@ pub enum Gate {
     /// BigInteger/Integer FlowField type mismatch, the report dataset header bytes and lines and a second SaveAs on one variable,
     /// Report/Field metadata rows, Media import, BigInteger into an Enum field. Corpus bump 30 adds the RDLC Pdf output tests,
     /// asserted only below BC 29 (`#if not BC29PLUS`): the BC 29 Linux container has no renderer, which is not BC behavior
-    /// (report/lt-am-rdlc-output/AMRdlcOutput.al:9-11). Corpus bumps 31 and 32 add SaveAs Word/Excel of an RDLC-only report, held on
-    /// Linux under a different hold id from BC 29 (report/lt-ci-report-leads/CiReportRunLeads.al:670). Not consumed yet.
+    /// (report/lt-am-rdlc-output/AMRdlcOutput.al:9-11). Corpus bump 34 lifts the RDLC holds of
+    /// report/lt-ci-report-leads/CiReportRunLeads.al, which then has no guard left. Not consumed yet.
     ProbedValuesDifferFrom29,
     /// `Base64Convert.ToBase64` of a Text with `TextEncoding::Windows` or `MSDos` and no code page gives the code page 1252
     /// bytes from BC 28 (`äöü` is `5Pb8`); before, the UTF-8 bytes (`w6TDtsO8`) (types/PVBase64.al, corpus bump 13).
@@ -710,10 +713,6 @@ impl Gate {
                     lines: "286",
                 },
                 Evidence {
-                    file: "report/lt-ci-report-leads/CiReportRunLeads.al",
-                    lines: "670",
-                },
-                Evidence {
                     file: "report/lt-am-rdlc-output/AMRdlcOutput.al",
                     lines: "313,386",
                 },
@@ -833,20 +832,10 @@ impl Gate {
                 file: "../al-language-onprem/lt-file-type/FileQProbes.al",
                 lines: "92",
             }],
-            Gate::MediaExportKeepsTheImportedBytes => &[
-                Evidence {
-                    file: "streams/lt-dd-stream-leads/DdStreamLeads.al",
-                    lines: "271,290",
-                },
-                Evidence {
-                    file: "report/lt-bc-xml-blob/BcXmlBlob.al",
-                    lines: "213,222",
-                },
-                Evidence {
-                    file: "types/W7Media.al",
-                    lines: "134,141,146",
-                },
-            ],
+            Gate::MediaExportKeepsTheImportedBytes => &[Evidence {
+                file: "types/W7Media.al",
+                lines: "134,145",
+            }],
             Gate::FeatureKeyListChangedFrom28 => &[Evidence {
                 file: "record/TestFieldLenAndFeatureKeyContracts.al",
                 lines: "97",

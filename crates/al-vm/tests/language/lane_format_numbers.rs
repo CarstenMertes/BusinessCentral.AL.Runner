@@ -130,3 +130,55 @@ fn power_results_keep_18_significant_digits_into_big_integer() {
         "Yes|0|0|1|Yes|0|0|4611686018427387900|4611686018427387900|9007199254740993"
     );
 }
+
+const UNPINNED_DIGITS: &str = r#"
+codeunit 69914 UD
+{
+    procedure NegativeSum(): Text
+    var
+        V: Decimal;
+    begin
+        V := -Power(2, 63);
+        V := V + 5;
+        exit('');
+    end;
+
+    procedure FractionSum(): Text
+    var
+        V: Decimal;
+    begin
+        V := -100000000000000000.5 - 0.25;
+        exit('');
+    end;
+
+    procedure LongProduct(): Text
+    var
+        V: Decimal;
+    begin
+        V := 200000000000000001.0 * -5;
+        exit('');
+    end;
+
+    procedure NegativeBigCompare(): Text
+    begin
+        exit(Format(-Power(2, 60) = -1152921504606846976L));
+    end;
+
+    procedure ShortSum(): Text
+    begin
+        exit(Format(-1.5 + 0.25) + '|' + Format(2.5 * 4));
+    end;
+}
+"#;
+
+// Only non-negative sums and differences (CqOddLeads.al:419-446, Round.al:370-409, DecimalDigits.al:116-137) and
+// comparisons of non-negative whole numbers are pinned: a negative sum, difference or product of more than 18 significant
+// digits is refused.
+#[test]
+fn more_than_18_digits_outside_the_pinned_shape_is_refused() {
+    for r in ["NegativeSum", "FractionSum", "LongProduct", "NegativeBigCompare"] {
+        let got = run_in(UNPINNED_DIGITS, "UD", r);
+        assert!(matches!(got, Err(Signal::Unsupported(_))), "{r}: {got:?}");
+    }
+    assert_eq!(text(run_in(UNPINNED_DIGITS, "UD", "ShortSum")), "-1.25|10");
+}

@@ -286,11 +286,34 @@ pub(super) fn truncate(s: &str, max: usize) -> String {
     s.chars().take(max).collect()
 }
 
-/// The object caption: the `Caption` property's literal, else the object name.
+/// The object caption: the `Caption` property's literal, else the object name. A tableextension's row names it by its name:
+/// its Caption is the caption of the table it extends (tableextension/TestTableExtFieldModify.al:174-179).
 pub(super) fn caption(o: &Object) -> String {
+    if o.kind == al_ir::ObjKind::TableExtension {
+        return o.name.clone();
+    }
     prop(o, "Caption")
         .and_then(string_lit)
         .unwrap_or_else(|| o.name.clone())
+}
+
+/// [`caption`] as a column value, cut to `max` characters: unknown where a tableextension sets the table's caption over another
+/// (`al_ir::CAPTION_REFUSED`).
+fn caption_value(o: &Object, max: usize) -> Value {
+    match o.properties.iter().find(|(k, _)| k == al_ir::CAPTION_REFUSED) {
+        Some((_, why)) => Value::Unknown(why.clone().into()),
+        None => Value::Text(truncate(&caption(o), max).into()),
+    }
+}
+
+/// `is_platform`, for the Field table's package columns.
+pub(super) fn platform_object(o: &Object) -> bool {
+    is_platform(o)
+}
+
+/// The App Package ID and App Runtime Package ID AllObj reports for `o`.
+pub(super) fn package_ids(c: &Catalog, o: &Object) -> ([u8; 16], [u8; 16]) {
+    (package_of(c, o), runtime_package_id(c, o))
 }
 
 fn namespace(o: &Object) -> String {
@@ -483,7 +506,7 @@ pub(super) fn all_obj_with_caption_rows(p: &Providers, t: &TableDef) -> Vec<Entr
             let owner = c.owner(o);
             let pkg = package_of(&c, o);
             r[pos(t, 4)] = Value::Text(o.name.clone().into());
-            r[pos(t, 20)] = Value::Text(truncate(&caption(o), 249).into());
+            r[pos(t, 20)] = caption_value(o, 249);
             // A subtype the runtime has no pinned text for (a CDS table) leaves only that column unknown: the other
             // columns still answer a filter or a count (install/lt-cm-install-leads/CmInstallObjects.al:73-79).
             r[pos(t, 30)] = match subtype_text(&c, o) {
@@ -649,7 +672,19 @@ pub(super) fn table_metadata_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
                 }
             };
             r[pos(t, 2)] = Value::Text(o.name.clone().into());
-            r[pos(t, 3)] = Value::Text(truncate(&caption(o), 80).into());
+            // Caption is a Text[80] field that holds a 120-character caption whole (metadata/lt-cy-long-caption/CyLongCaption.al:
+            // 47-56); a longer one is not pinned.
+            r[pos(t, 3)] = if caption(o).chars().count() > 120 {
+                Value::Unknown(
+                    format!(
+                        "Table Metadata.Caption of table '{}', longer than 120 characters (not pinned)",
+                        o.name
+                    )
+                    .into(),
+                )
+            } else {
+                caption_value(o, 120)
+            };
             // DataPerCompany defaults to true (TestTableMetadataVirtualTable.al, `DeclaredTable_ReturnsMatchingRow`).
             r[pos(t, 4)] = Value::Boolean(prop(o, "DataPerCompany").is_none_or(truthy));
             r[pos(t, 5)] = Value::Integer(page("LookupPageId")?);

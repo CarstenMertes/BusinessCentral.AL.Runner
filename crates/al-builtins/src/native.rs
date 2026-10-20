@@ -466,8 +466,6 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     // Telemetry goes to the server's log, which AL cannot read (ADR-009).
     ("Session.LogMessage#1", |_, _, _| Ok(Value::Null)),
     ("Session.LogMessage#2", |_, _, _| Ok(Value::Null)),
-    ("Database.SelectLatestVersion#1", |_, _, _| Ok(Value::Null)),
-    ("Database.SelectLatestVersion#2", |_, _, _| Ok(Value::Null)),
     // Unique and not null is all the corpus asks (session/TestSystemExtended.al:306-328).
     ("Guid.CreateSequentialGuid#1", |c, _, _| Ok(Value::Guid(c.new_guid()))),
     // A TextBuilder is bounded by the Integer range; the corpus needs at least a million
@@ -938,7 +936,8 @@ pub fn unpinned_text_error(code: &str, probe: &str) -> AlError {
 /// Whether the text of `e` is not pinned ([`unpinned_error`], [`unpinned_error_for`]). Some errors have a pinned text and an
 /// unpinned code (the code alone is the mark).
 pub fn text_unpinned(e: &AlError) -> bool {
-    e.message.starts_with(UNPINNED_ERROR)
+    // Anywhere in the text: a text built around a value whose text is not pinned (a refused table caption) holds the mark inside.
+    e.message.contains(UNPINNED_ERROR)
 }
 
 fn unpinned_refusal(e: &AlError, what: &str) -> Signal {

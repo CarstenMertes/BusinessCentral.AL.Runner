@@ -1,0 +1,135 @@
+//! Table captions, RecordId texts and caption classes (lane T4 of the 2026-10-20 failure triage, bump 29).
+
+use al_builtins::native::Signal;
+use al_builtins::value::Value;
+use al_testkit::text;
+
+fn refused(r: Result<Value, Signal>, needle: &str) {
+    match r {
+        Err(Signal::Unsupported(why)) => assert!(why.contains(needle), "{why}"),
+        other => panic!("expected a refusal that names `{needle}`, got {other:?}"),
+    }
+}
+
+/// `Format(RecordId, 0, 1)` names the table by its caption; no number, 0, 2 and 9 name it by its name
+/// (record/lt-record-write/RcBMeta.al:556-579).
+#[test]
+fn format_1_of_a_record_id_names_the_table_caption() {
+    let src = "table 50100 \"LT Meta\" { Caption = 'Meta Caption'; fields { field(1; Id; Integer) { } } keys { key(PK; Id) { } } } \
+        codeunit 50100 C { procedure F(): Text var R: Record \"LT Meta\"; Id: RecordId; Back: RecordId; begin R.Id := 7; Id := R.RecordId(); \
+        exit(Format(Id) + '|' + Format(Id, 0, 0) + '|' + Format(Id, 0, 1) + '|' + Format(Id, 0, 2) + '|' + Format(Id, 0, 9) + '|' + Format(Evaluate(Back, Format(Id, 0, 1)))); end; }";
+    assert_eq!(
+        text(al_testkit::run_in(src, "C", "F")),
+        "LT Meta: 7|LT Meta: 7|Meta Caption: 7|LT Meta: 7|LT Meta: 7|No"
+    );
+}
+
+/// `Format(RecordId, 0, 9)` of a table in a namespace writes `[<namespace>.<name>]`, and Evaluate reads that text back; the
+/// other numbers write the plain name (misc/lt-inferred-behaviors/P69NsConsumers.al:194-217).
+#[test]
+fn format_9_of_a_record_id_of_a_namespaced_table_names_it_qualified() {
+    let src = "namespace LT.Data; table 50100 \"LT Ns Row\" { fields { field(1; Id; Integer) { } } keys { key(PK; Id) { } } } \
+        codeunit 50100 C { procedure F(): Text var R: Record \"LT Ns Row\"; Id: RecordId; Back: RecordId; Ok: Boolean; begin R.Id := 2; Id := R.RecordId(); \
+        Ok := Evaluate(Back, Format(Id, 0, 9)); \
+        exit(Format(Id, 0, 1) + '|' + Format(Id, 0, 9) + '|' + Format(Ok) + '|' + Format(Back = Id) + '|' + Format(Evaluate(Back, 'LT.Data.LT Ns Row: 2'))); end; }";
+    assert_eq!(
+        text(al_testkit::run_in(src, "C", "F")),
+        "LT Ns Row: 2|[LT.Data.LT Ns Row]: 2|Yes|Yes|No"
+    );
+}
+
+/// Only a namespaced table whose name holds a space is pinned for format 9: the brackets around a name without one are refused.
+#[test]
+fn format_9_of_a_record_id_of_a_namespaced_table_without_a_space_is_refused() {
+    let src = "namespace LT.Data; table 50100 LTRow { fields { field(1; Id; Integer) { } } keys { key(PK; Id) { } } } \
+        codeunit 50100 C { procedure F(): Text var R: Record LTRow; begin R.Id := 2; exit(Format(R.RecordId(), 0, 9)); end; }";
+    refused(al_testkit::run_in(src, "C", "F"), "namespace");
+}
+
+/// A tableextension's Caption is the caption of the table it extends when that table declares none
+/// (tableextension/TestTableExtFieldModify.al:168-178).
+#[test]
+fn a_table_extension_caption_is_the_table_caption() {
+    let src = "table 50100 Base { fields { field(1; Id; Integer) { } } keys { key(PK; Id) { } } } \
+        tableextension 50101 BaseExt extends Base { Caption = 'Ext Caption'; } \
+        codeunit 50100 C { procedure F(): Text var R: Record Base; RR: RecordRef; begin RR.Open(Database::Base); exit(R.TableCaption() + '|' + RR.Caption()); end; }";
+    assert_eq!(text(al_testkit::run_in(src, "C", "F")), "Ext Caption|Ext Caption");
+}
+
+/// Which caption wins when the table declares one too, or when two extensions do, is not pinned: refused.
+#[test]
+fn a_table_extension_caption_over_another_caption_is_refused() {
+    let both = "table 50100 Base { Caption = 'Base Caption'; fields { field(1; Id; Integer) { } } keys { key(PK; Id) { } } } \
+        tableextension 50101 BaseExt extends Base { Caption = 'Ext Caption'; } \
+        codeunit 50100 C { procedure F(): Text var R: Record Base; begin exit(R.TableCaption()); end; }";
+    refused(al_testkit::run_in(both, "C", "F"), "caption");
+    let two = "table 50100 Base { fields { field(1; Id; Integer) { } } keys { key(PK; Id) { } } } \
+        tableextension 50101 ExtA extends Base { Caption = 'A Caption'; } \
+        tableextension 50102 ExtB extends Base { Caption = 'B Caption'; } \
+        codeunit 50100 C { procedure F(): Text var R: Record Base; begin exit(R.TableCaption()); end; }";
+    refused(al_testkit::run_in(two, "C", "F"), "caption");
+}
+
+const CAPTION_SUBSCRIBER: &str = "codeunit 50101 Sub { SingleInstance = true; var Log: Text; \
+    [EventSubscriber(ObjectType::Codeunit, Codeunit::\"Caption Class\", 'OnResolveCaptionClass', '', false, false)] \
+    local procedure OnResolve(CaptionArea: Text; CaptionExpr: Text; Language: Integer; var Caption: Text; var Resolved: Boolean) \
+    begin Log += 'resolve(' + CaptionArea + ')'; if CaptionArea = 'PS' then begin Caption := 'resolved:' + CaptionExpr; Resolved := true; end; end; \
+    procedure Take(): Text var T: Text; begin T := Log; Log := ''; exit(T); end; } \
+    codeunit 42 \"Caption Class\" { [IntegrationEvent(false, false)] procedure OnResolveCaptionClass(CaptionArea: Text; CaptionExpr: Text; Language: Integer; var Caption: Text; var Resolved: Boolean) begin end; }";
+
+/// CaptionClassTranslate keeps what it translated for the session: the same text a second time raises no
+/// OnResolveCaptionClass, claimed or not; after SelectLatestVersion it does again (types/PSCaptionClass.al:94-115).
+#[test]
+fn caption_class_translate_keeps_its_translations_until_select_latest_version() {
+    let src = format!(
+        "{CAPTION_SUBSCRIBER} codeunit 50100 C {{ procedure F(): Text var S: Codeunit Sub; R: Text; begin S.Take(); \
+        R := CaptionClassTranslate('PS,one') + '/' + S.Take() + '|'; \
+        R += CaptionClassTranslate('PS,one') + '/' + S.Take() + '|'; \
+        R += CaptionClassTranslate('ZZ,two') + '/' + S.Take() + '|'; \
+        R += CaptionClassTranslate('ZZ,two') + '/' + S.Take() + '|'; \
+        SelectLatestVersion(); \
+        R += CaptionClassTranslate('PS,one') + '/' + S.Take(); exit(R); end; }}"
+    );
+    assert_eq!(
+        text(al_testkit::run_in(&src, "C", "F")),
+        "resolved:one/resolve(PS)|resolved:one/|ZZ,two/resolve(ZZ)|ZZ,two/|resolved:one/resolve(PS)"
+    );
+}
+
+/// Whether the kept translation holds after GlobalLanguage changes is not pinned: refused.
+#[test]
+fn caption_class_translate_after_a_language_change_is_refused() {
+    let src = format!(
+        "{CAPTION_SUBSCRIBER} codeunit 50100 C {{ procedure F(): Text var R: Text; begin R := CaptionClassTranslate('PS,one'); \
+        GlobalLanguage(1031); exit(CaptionClassTranslate('PS,one')); end; }}"
+    );
+    refused(al_testkit::run_in(&src, "C", "F"), "GlobalLanguage");
+}
+
+/// A table field whose CaptionClass is an expression (a procedure call, pageext/lt-page-ext-properties/TableExtCaptionClass.al:
+/// 56-74, 124-134) is not evaluated by the runtime yet: FieldCaption and the page control's Caption refuse.
+#[test]
+fn a_caption_class_expression_on_a_table_field_is_refused() {
+    let src = "table 50100 Base { fields { field(1; Id; Integer) { } } keys { key(PK; Id) { } } } \
+        tableextension 50101 BaseExt extends Base { fields { modify(Id) { CaptionClass = Cc(FieldNo(Id)); } } \
+        procedure Cc(No: Integer): Text begin exit('3,Stand in ' + Format(No)); end; } \
+        page 50102 P { PageType = Card; SourceTable = Base; layout { area(Content) { field(Id; Rec.Id) { } } } } \
+        codeunit 50100 C { procedure F(): Text var R: Record Base; begin exit(R.FieldCaption(Id)); end; \
+        procedure G(): Text var R: Record Base; P: TestPage P; begin R.Id := 1; R.Insert(); P.OpenView(); exit(P.Id.Caption()); end; }";
+    refused(al_testkit::run_in(src, "C", "F"), "CaptionClass");
+    refused(al_testkit::run_in(src, "C", "G"), "CaptionClass");
+}
+
+/// An error text that names a table whose caption is refused (a tableextension sets one over the table's own) is not pinned:
+/// the error is raised, and a read of its text or code refuses.
+#[test]
+fn an_error_that_names_a_refused_table_caption_is_unpinned() {
+    let src = "table 50100 Base { Caption = 'Base Caption'; fields { field(1; Id; Integer) { } } keys { key(PK; Id) { } } } \
+        tableextension 50101 BaseExt extends Base { Caption = 'Ext Caption'; } \
+        codeunit 50100 C { procedure F(): Text var R: Record Base; begin asserterror R.Get(5); exit(GetLastErrorText()); end; \
+        procedure G(): Text var R: Record Base; begin asserterror R.Get(5); exit(GetLastErrorCode()); end; \
+        procedure H(): Boolean var R: Record Base; begin exit(R.Get(5)); end; }";
+    refused(al_testkit::run_in(src, "C", "F"), "not pinned");
+    refused(al_testkit::run_in(src, "C", "G"), "not pinned");
+    assert!(matches!(al_testkit::run_in(src, "C", "H"), Ok(Value::Boolean(false))));
+}

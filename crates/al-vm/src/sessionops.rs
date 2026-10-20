@@ -622,7 +622,14 @@ impl Session {
                 }
                 // Set opens the write transaction in every scope (session/lt-cn-session-leads/CnIsolatedStorageLeads.al:
                 // 238-263); a SetEncrypted is undone by a rollback (misc/lt-cu-odd-leads/CuTryTests.al:220-230), so it is
-                // a write of the transaction too.
+                // a write of the transaction too. Only a Set of a new key is pinned: an overwrite outside a write
+                // transaction would have to choose whether it opens one, so it is refused (probe wanted, docs/probes-needed.md,
+                // IsolatedStorage row); inside one the phase cannot change.
+                if self.isolated_storage.contains_key(&slot) && self.tx.tx_phase != crate::transactions::TX_WRITE {
+                    return unsupported(format!(
+                        "IsolatedStorage.{method} over an existing key outside a write transaction (whether it opens one is not pinned; probe wanted: IsolatedStorage overwrite and IsInWriteTransaction)"
+                    ));
+                }
                 self.tx.tx_phase = crate::transactions::TX_WRITE;
                 self.isolated_storage
                     .insert(slot, (value, method == "SetEncrypted", secret));

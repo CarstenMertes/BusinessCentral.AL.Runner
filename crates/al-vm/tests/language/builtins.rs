@@ -877,6 +877,21 @@ fn isolated_storage_set_and_delete_open_the_write_transaction_and_contains_does_
 }
 
 #[test]
+fn isolated_storage_set_over_an_existing_key_outside_a_write_transaction_is_refused() {
+    // Only a Set of a new key is pinned to open the write transaction (CnIsolatedStorageLeads.al:238-263).
+    let r = storage("IsolatedStorage.Set('k', 'v'); Commit(); IsolatedStorage.Set('k', 'w'); exit('');");
+    assert!(
+        matches!(r, Err(Signal::Unsupported(ref why)) if why.contains("existing key")),
+        "{r:?}"
+    );
+    // Inside a write transaction the phase cannot change: the overwrite runs.
+    let r = storage(
+        "IsolatedStorage.Set('k', 'v'); IsolatedStorage.Set('k', 'w'); ok := IsolatedStorage.Get('k', v); exit(v);",
+    );
+    assert_eq!(r.unwrap(), "w");
+}
+
+#[test]
 fn isolated_storage_set_then_guarded_codeunit_run_fails() {
     // session/lt-cn-session-leads/CnIsolatedStorageLeads.al:265-277 (IsoSet_ThenGuardedCodeunitRun) and :279-290 after a Commit.
     let src = "codeunit 50101 Noop { trigger OnRun() begin end; }

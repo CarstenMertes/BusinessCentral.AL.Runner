@@ -922,6 +922,19 @@ pub fn unpinned_error_for(probe: &str) -> AlError {
     }
 }
 
+/// Follows [`UNPINNED_ERROR`] in the text of an error whose code is pinned and whose text is not ([`unpinned_text_error`]):
+/// `GetLastErrorCode` answers the code, `GetLastErrorText` refuses.
+const PINNED_CODE: char = '\u{FDD2}';
+
+/// An error with a pinned `code` whose text the corpus does not pin, naming the probe that would pin the text.
+pub fn unpinned_text_error(code: &str, probe: &str) -> AlError {
+    AlError {
+        message: format!("{UNPINNED_ERROR}{PINNED_CODE}{probe}"),
+        code: code.into(),
+        ..unpinned_error()
+    }
+}
+
 /// Whether the text of `e` is not pinned ([`unpinned_error`], [`unpinned_error_for`]). Some errors have a pinned text and an
 /// unpinned code (the code alone is the mark).
 pub fn text_unpinned(e: &AlError) -> bool {
@@ -929,7 +942,11 @@ pub fn text_unpinned(e: &AlError) -> bool {
 }
 
 fn unpinned_refusal(e: &AlError, what: &str) -> Signal {
-    match e.message.strip_prefix(UNPINNED_ERROR).filter(|p| !p.is_empty()) {
+    let probe = e
+        .message
+        .strip_prefix(UNPINNED_ERROR)
+        .map(|p| p.trim_start_matches(PINNED_CODE));
+    match probe.filter(|p| !p.is_empty()) {
         Some(probe) => Signal::Unsupported(format!(
             "{what} of an error whose text is not pinned (probe wanted: {probe}, docs/probes-needed.md)"
         )),
@@ -949,7 +966,11 @@ pub fn refuse_unpinned_text(e: &AlError, what: &str) -> Result<(), Signal> {
 
 /// Refuses a read of the text or the code of an error when either is not pinned.
 pub fn refuse_unpinned(e: &AlError, what: &str) -> Result<(), Signal> {
-    if text_unpinned(e) || e.code == UNPINNED_ERROR {
+    let code_pinned = e
+        .message
+        .strip_prefix(UNPINNED_ERROR)
+        .is_some_and(|p| p.starts_with(PINNED_CODE));
+    if (text_unpinned(e) && !code_pinned) || e.code == UNPINNED_ERROR {
         Err(unpinned_refusal(e, what))
     } else {
         Ok(())

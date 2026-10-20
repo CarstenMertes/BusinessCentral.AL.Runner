@@ -37,6 +37,8 @@ pub fn load(path: &Path, build: Option<&str>) -> Result<AppInput, String> {
         version: m.version.to_string(),
         resources: Vec::new(),
         include_source: false,
+        // Not read here: a RecordRef.Open that depends on the target refuses.
+        target: String::new(),
         layout_files: Vec::new(),
         symbols: Vec::new(),
     };

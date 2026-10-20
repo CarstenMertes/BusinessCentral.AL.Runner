@@ -57,6 +57,8 @@ pub struct Manifest {
     pub resources: Vec<(String, Vec<u8>)>,
     /// `resourceExposurePolicy.includeSourceInSymbolFile`: the Code Coverage table shows the source lines.
     pub include_source: bool,
+    /// `target` (`Cloud` when the manifest leaves it out); empty when not known (a dependency package).
+    pub target: String,
     /// `preprocessorSymbols` of the app's own app.json. A dependency app is compiled with these;
     /// the project's symbols apply to the workspace apps only (the publisher compiled the dependency).
     pub symbols: Vec<String>,
@@ -166,6 +168,7 @@ pub fn load_manifest(dir: &std::path::Path) -> Result<Manifest, String> {
             .as_bool()
             .unwrap_or(false),
         layout_files: load_layout_files(dir),
+        target: manifest["target"].as_str().unwrap_or("Cloud").to_string(),
         symbols: manifest["preprocessorSymbols"]
             .as_array()
             .into_iter()

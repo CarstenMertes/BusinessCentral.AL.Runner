@@ -52,6 +52,9 @@ impl Lowerer<'_> {
             .then(|| callee.children().next())
             .flatten()
             .filter(|r| !crate::check::is_this_keyword(r));
+        if let Some(Res::Builtin(id)) = self.res(node) {
+            self.coverage_test_id_call(id, receiver_node.as_ref(), args)?;
+        }
         match self.res(node).cloned() {
             Some(Res::Proc { object, offset }) if self.ws.objects[object].kind == ObjKind::Interface => {
                 self.interface_call(object, offset, receiver_node.as_ref(), args)

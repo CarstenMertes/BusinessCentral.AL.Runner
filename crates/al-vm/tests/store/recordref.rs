@@ -821,3 +821,26 @@ fn decimal_to_text_is_the_default_format() {
     let parts: Vec<&str> = t.split('|').collect();
     assert_eq!(parts[0], parts[1], "{t}");
 }
+
+/// Agent Creation Control (2000000297), declared by the System app from BC 28 on, is refused to a Cloud-target app like
+/// Object Metadata: `RecordRef.Open` raises before any row is read (platform/lt-aw-fresh-tenant/AwTests.al:590-616). An
+/// OnPrem app opens it (onprem platform/lt-aw-fresh-tenant/AwOnPremTests.al:234-253); an app of no known target is refused.
+#[test]
+fn recordref_open_of_agent_creation_control_depends_on_the_app_target() {
+    let src = r#"
+table 2000000297 "Agent Creation Control" { fields { field(1; ID; Integer) { } } keys { key(PK; ID) { } } }
+codeunit 50100 C { procedure Run() var RR: RecordRef; begin RR.Open(2000000297); end; }"#;
+    let run = |target: Option<&str>| {
+        let mut l = al_testkit::compile(src);
+        for a in &mut std::sync::Arc::make_mut(&mut l.program).apps {
+            a.target = target.map(String::from);
+        }
+        al_testkit::Built::new(l).run("Run")
+    };
+    assert_eq!(
+        al_testkit::error_message(run(Some("Cloud"))),
+        "You cannot open record 2000000297 from a RecordRef data type when you are using target Cloud."
+    );
+    assert!(run(Some("OnPrem")).is_ok());
+    assert!(matches!(run(None), Err(Signal::Unsupported(_))));
+}

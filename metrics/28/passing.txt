@@ -4094,6 +4094,7 @@
 67334 MethodA
 67334 MethodAA
 67334 MethodB
+67334 MethodId_SameProcedure_TwoRecordings
 67334 MethodId_TestsRunVersusTestLookup
 67334 MethodOther
 67338 Row_TableFieldValidate_ForComparison
@@ -12923,13 +12924,18 @@
 80202 TwinMethod
 80203 CodeCoverageRefresh_Twice_WithCodeRunBetween
 80203 TwinMethod
+80351 ActiveSession_OwnRow_HostColumnValues
+80351 Session_OwnRow_HostColumnValues
 80353 LayoutList_RowCount
 80354 RecordRef_AddLink_CreatedAndCompany
 80354 RecordRef_DeleteLink_SameCompany
 80355 MovedTable_BaseApp_NoSeries_AllObjRows
+80355 MovedTable_OwnApp_AllObj
+80355 MovedTable_OwnApp_ReadAndWrite
 80356 FeatureKey_A_ModifyEnabled_ReadBack
 80356 FeatureKey_B_NextTest_SeesChange_ThenRestore
 80356 FeatureKey_C_ModifyUnchanged
+80357 AgentCreationControl_Rows
 80420 OptionDashMember_DirectField_English
 80420 OptionDashMember_DirectField_German
 80421 Evaluate_Time_DigitTexts_Format9

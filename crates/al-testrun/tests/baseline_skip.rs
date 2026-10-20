@@ -57,6 +57,7 @@ fn run(only: &[u32], cache: Option<&std::path::Path>) -> CorpusRuntime {
         version: "1.0.0.0".into(),
         resources: vec![],
         include_source: false,
+        target: String::new(),
         layout_files: Vec::new(),
         symbols: vec![],
     };
@@ -202,6 +203,7 @@ fn run_lazy(only: &[u32], cache: &std::path::Path, base: &str) -> (CorpusRuntime
         version: "1.0.0.0".into(),
         resources: vec![],
         include_source: false,
+        target: String::new(),
         layout_files: Vec::new(),
         symbols: vec![],
     };

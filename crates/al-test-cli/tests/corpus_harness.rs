@@ -452,7 +452,9 @@ fn all_versions_runs_each_oracle_writes_per_version_files_and_compares() {
     // Corpus bump 28 adds 31 more (the BC28PLUS and BC29PLUS guards that al-version/src/gates.rs cites for bump 28), which make it 154.
     // Corpus bump 29 adds 10 more (the BC28PLUS and BC29PLUS guards that al-version/src/gates.rs cites for bump 29), which make it 164.
     // Corpus bump 30 adds 22 more (the BC28PLUS and BC29PLUS guards that al-version/src/gates.rs cites for bump 30), which make it 186.
-    assert!(out.contains("oracle: 186 case(s) differ between versions"), "{out}");
+    // Corpus bumps 31 and 32 add 12 more: the PYD_IsDirty tests of codeunit 77504 in lt-ac/ACRecordIsDirty.al, whose
+    // `#if BC29PLUS` guard the gate RecordIsDirtyFrom29 cites (Record.IsDirty exists from BC 29), which make it 198.
+    assert!(out.contains("oracle: 198 case(s) differ between versions"), "{out}");
     // The known BC 29 differences are gated (ADR-015 3.4), so the runtime passes the same cases on every version, among the
     // cases every oracle has. One difference is known and open (corpus bump 10, backlog): the runtime passes
     // 71500 Get_Uses_Primary_Key_Not_Current_Key on BC 27 only. A new difference would be listed here.

@@ -366,6 +366,10 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("System.Format#2", format_2),
     ("System.FormatVariant#1", format_variant),
     ("TextBuilder.AppendVariant#1", crate::textfns::tb_append_variant),
+    // `RecordRef.GetTable(V)` with a Variant argument (lowering picks it): the VM drops the record's company.
+    ("RecordRef.GetTableVariant#1", |c, r, a| {
+        c.ref_op("RecordRef.GetTableVariant#1", r, a)
+    }),
     ("TextBuilder.AppendFieldValue#1", crate::textfns::tb_append_field_value),
     ("System.FormatDecimalField#1", format_decimal_field),
     ("System.OptionCaptionML#1", option_caption_ml),
@@ -2408,6 +2412,7 @@ pub(crate) mod tests {
             "System.EvaluateOptionField#1",
             "System.FormatVariant#1",
             "TextBuilder.AppendVariant#1",
+            "RecordRef.GetTableVariant#1",
             "System.FormatDecimalField#1",
             "System.OptionCaptionML#1",
             "Dialog.ErrorNotLiteral#1",

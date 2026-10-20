@@ -317,3 +317,41 @@ codeunit 50361 T
 fn fieldindex_lists_normal_fields_then_flowfilters_then_flowfields() {
     assert_eq!(text(run_in(ORDER, "T", "F")), "1;3;2;4;");
 }
+
+const VARIANT: &str = r#"
+table 50370 VR { fields { field(1; Id; Integer) { } } keys { key(PK; Id) { } } }
+table 2000000006 Company
+{
+    DataPerCompany = false;
+    fields { field(1; Name; Text[30]) { } field(8000; Id; Guid) { } }
+    keys { key(PK; Name) { } }
+}
+
+codeunit 50371 T
+{
+    procedure F(): Text
+    var
+        C: Record Company;
+        R: Record VR;
+        RecRef: RecordRef;
+        V: Variant;
+        Out: Text;
+    begin
+        C.Name := 'OTHER';
+        C.Insert();
+        R.ChangeCompany('OTHER');
+        R.SetFilter(Id, '>=2');
+        RecRef.GetTable(R);
+        Out := Format(RecRef.CurrentCompany() = 'OTHER');
+        V := R;
+        RecRef.GetTable(V);
+        exit(Out + '|' + Format(RecRef.CurrentCompany() = CompanyName()) + '|' + RecRef.GetFilters());
+    end;
+}
+"#;
+
+// types/lt-cw-variant-leads/CwVariantChangeCompany.al:CW_Variant_KeepsOrDropsChangeCompany: through a Variant, GetTable drops the company.
+#[test]
+fn gettable_through_a_variant_drops_the_company_and_keeps_the_filters() {
+    assert_eq!(text(run_in(VARIANT, "T", "F")), "Yes|Yes|Id: >=2");
+}

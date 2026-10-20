@@ -159,6 +159,12 @@ impl Session {
     }
 
     pub(crate) fn ref_op(&mut self, id: &str, recv: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
+        let id = if id == "RecordRef.GetTableVariant#1" {
+            self.get_table_from_variant = true;
+            "RecordRef.GetTable#1"
+        } else {
+            id
+        };
         let Some(sig) = catalog().by_id(id) else {
             return unsupported(format!("builtin {id}"));
         };
@@ -666,7 +672,20 @@ impl Session {
             // (recordref/TestRecordRefGetSetTableContracts.al:30-60).
             // A ref that was never opened takes its table from the record (Assert.RecordIsEmpty does this).
             "GetTable" => {
+                let from_variant = std::mem::take(&mut self.get_table_from_variant);
                 let src = match args.first() {
+                    // Through a Variant the record keeps its filters and loses its ChangeCompany
+                    // (types/lt-cw-variant-leads/CwVariantChangeCompany.al:CW_Variant_KeepsOrDropsChangeCompany `variant to recordref`,
+                    // record/TestChangeCompanyFiltersCopyDeleteContracts.al:248 `variantGetTableCompany`).
+                    Some(Value::Record(src)) if from_variant => {
+                        let mut copy = src.borrow().clone();
+                        copy.company = None;
+                        *lib.borrow_mut() = LibraryValue::RecordRef(Rc::new(RefCell::new(copy)));
+                        return Ok(Value::Null);
+                    }
+                    Some(Value::Library(..)) if from_variant => {
+                        return unsupported("RecordRef.GetTable of a Variant that holds a RecordRef (not pinned)");
+                    }
                     Some(Value::Record(src)) => src.clone(),
                     // A RecordRef as the source (Microsoft's Gen. Jnl.-Post Preview): the same copy of its record.
                     Some(Value::Library(_, other)) => match &*other.borrow() {

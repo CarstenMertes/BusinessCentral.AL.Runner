@@ -7,6 +7,11 @@ impl al_builtins::format::FormatCtx for Session {
     fn region(&self) -> Option<String> {
         self.report.format_region.clone()
     }
+    fn record_id_table(&self, table: u32) -> Option<(String, Option<String>)> {
+        let t = self.engine.tables.get(table as usize)?.clone()?;
+        let caption = self.caption_checked(&t).ok()?;
+        Some((caption, self.engine.program.objects[table as usize].namespace.clone()))
+    }
     /// `OnInitReport` of a report with the `FormatRegion` property: the corpus reports format their values only in
     /// `OnAfterGetRecord` (report/lt-y-report-props/YReports.al:32-48), so whether `Format` there already follows the
     /// region is not pinned (docs/probes-needed.md).

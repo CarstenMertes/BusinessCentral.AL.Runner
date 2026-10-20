@@ -647,6 +647,10 @@ impl VirtualTables for Providers {
                 Ok(self.with_event_stats(t, self.listed(t, Virtual::EventSubscription)?.get(t, pk)?))
             }
             Virtual::FeatureKey => self.feature_key_listing(store, cx, t)?.get(t, pk),
+            Virtual::Field => Ok(self
+                .listed(t, Virtual::Field)?
+                .get(t, pk)?
+                .map(|r| fields::field_get(t, r))),
             k => self.listed(t, k)?.get(t, pk),
         }
     }

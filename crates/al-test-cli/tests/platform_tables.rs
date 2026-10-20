@@ -1461,3 +1461,75 @@ fn all_obj_refuses_the_test_runner_codeunits_it_does_not_load() {
     assert!(not_run(&o, "RunnerCodeunit").contains("Test Runner"));
     passes(&o, "OtherCodeunit");
 }
+
+/// A tableextension's Caption is the table's Object Caption in AllObjWithCaption and its Table Metadata Caption; the row of the
+/// tableextension itself names it by its name (tableextension/TestTableExtFieldModify.al:172-179).
+#[test]
+fn a_table_extension_caption_is_the_object_caption_of_the_table() {
+    let o = outcomes(
+        r#"table 50005 "Probe Base" { fields { field(1; K; Integer) { } } }
+tableextension 50006 "Probe Base Ext" extends "Probe Base" { Caption = 'Probe Ext Caption'; }
+codeunit 50000 "T" { Subtype = Test;
+  [Test] procedure Captions() var A: Record AllObjWithCaption; M: Record "Table Metadata"; begin
+    A.Get(A."Object Type"::Table, 50005); if A."Object Caption" <> 'Probe Ext Caption' then Error('table %1', A."Object Caption");
+    A.Get(A."Object Type"::TableExtension, 50006); if A."Object Caption" <> 'Probe Base Ext' then Error('ext %1', A."Object Caption");
+    M.Get(50005); if M.Caption <> 'Probe Ext Caption' then Error('metadata %1', M.Caption); end; }"#,
+    );
+    passes(&o, "Captions");
+}
+
+/// Table Metadata.Caption (a Text[80] field) holds a 120-character caption whole (metadata/lt-cy-long-caption/CyLongCaption.al:
+/// 47-58); a longer caption is not pinned and its read is refused.
+#[test]
+fn table_metadata_holds_a_caption_of_120_characters_whole() {
+    let long = "c".repeat(120);
+    let longer = "d".repeat(121);
+    let o = outcomes(&format!(
+        r#"table 50005 "Probe Long" {{ Caption = '{long}'; fields {{ field(1; K; Integer) {{ }} }} }}
+table 50006 "Probe Longer" {{ Caption = '{longer}'; fields {{ field(1; K; Integer) {{ }} }} }}
+codeunit 50000 "T" {{ Subtype = Test;
+  [Test] procedure Whole() var M: Record "Table Metadata"; begin M.Get(50005); if StrLen(M.Caption) <> 120 then Error('len %1', StrLen(M.Caption)); end;
+  [Test] procedure Longer() var M: Record "Table Metadata"; T: Text; begin M.Get(50006); T := M.Caption; end; }}"#
+    ));
+    passes(&o, "Whole");
+    let why = not_run(&o, "Longer");
+    assert!(why.contains("120"), "{why}");
+}
+
+/// The Field table's FieldName is cut to its 30 characters; FieldName() and FieldRef.Name give the whole name
+/// (tableextension/TestTableExtFieldModify.al:200-216).
+#[test]
+fn the_field_table_cuts_a_field_name_to_30_characters() {
+    let o = outcomes(
+        r#"table 50005 "Probe Base" { fields { field(1; K; Integer) { } } }
+tableextension 50006 "Probe Base Ext" extends "Probe Base" { fields { field(50006; "Probe Field Name Longer Than Thirty"; Integer) { } } }
+codeunit 50000 "T" { Subtype = Test;
+  [Test] procedure Cut() var F: Record Field; R: Record "Probe Base"; begin
+    F.Get(50005, 50006); if F.FieldName <> 'Probe Field Name Longer Than T' then Error('field table %1', F.FieldName);
+    if R.FieldName("Probe Field Name Longer Than Thirty") <> 'Probe Field Name Longer Than Thirty' then Error('fieldname'); end; }"#,
+    );
+    passes(&o, "Cut");
+}
+
+/// The Field table's App Package ID and App Runtime Package ID are the table's AllObj ones after FindFirst and Next; a Get gives
+/// them for a Base Application table but leaves them null for a table of the app under test
+/// (metadata/lt-platform-metadata-columns/PlatformMetadataColumnValues.al:283-311).
+#[test]
+fn field_table_package_ids_follow_allobj_except_get_on_an_own_table() {
+    let o = outcomes_app(
+        "0f6a8f8e-0d43-4a0e-9bb3-1c3a6e2b5d71",
+        r#"table 50005 "Probe Base" { fields { field(1; K; Integer) { } } }
+codeunit 50000 "T" { Subtype = Test;
+  [Test] procedure Ids() var F: Record Field; A: Record AllObj; begin
+    A.Get(A."Object Type"::Table, 50005);
+    F.Get(50005, 1); if not IsNullGuid(F."App Package ID") or not IsNullGuid(F."App Runtime Package ID") then Error('get not null');
+    Clear(F); F.SetRange(TableNo, 50005); F.FindFirst();
+    if F."App Package ID" <> A."App Package ID" then Error('findfirst pkg');
+    if F."App Runtime Package ID" <> A."App Runtime Package ID" then Error('findfirst runtime');
+    if IsNullGuid(F."App Package ID") then Error('findfirst null');
+    F.Get(50005, 1); if F.Next(1) <> 0 then F.Next(-1);
+    if F."App Package ID" <> A."App Package ID" then Error('next pkg'); end; }"#,
+        al_sema::check::Roots::default(),
+    );
+    passes(&o, "Ids");
+}

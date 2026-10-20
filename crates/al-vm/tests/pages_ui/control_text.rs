@@ -290,9 +290,12 @@ fn refused(routine: &str) {
 }
 
 #[test]
-fn a_caption_class_expression_that_gives_the_same_text_at_a_later_fill_is_refused() {
-    // Whether BC raises OnResolveCaptionClass again is not pinned (misc/W2CaptionClass.al:174-178 pins a changed text only).
-    refused("SameTextAgain");
+fn a_caption_class_expression_that_gives_the_same_text_at_a_later_fill_keeps_its_caption() {
+    // The session keeps what it translated (types/PSCaptionClass.al:94-115): the next row's fill raises no event again.
+    assert_eq!(
+        text(al_testkit::run_in(UNPINNED_SRC, "C", "SameTextAgain")),
+        "resolved:"
+    );
 }
 
 #[test]
@@ -304,4 +307,72 @@ fn a_caption_class_expression_read_after_it_changed_without_a_fill_is_refused() 
 fn a_second_read_of_a_field_caption_class_that_raises_the_event_is_refused() {
     // XTablePropsTests.al:483-487 pins one read only.
     refused("FieldClassTwice");
+}
+
+/// A page field bound to a bare field name of the source table (no `Rec.`, warning AL0604) is that field: its caption is the
+/// field's (pages/lt-page-controls-aa/AaControls.al:684-692, `SystemId` gives 'System ID'), its value the record's, and
+/// SystemId is not editable.
+#[test]
+fn a_control_bound_to_a_bare_field_name_is_the_field() {
+    let src = r#"
+table 69990 "CT Row" { fields { field(1; K; Integer) { } field(2; Cde; Code[30]) { Caption = 'Code Caption'; } } keys { key(PK; K) { } } }
+page 69991 "CT Card" { PageType = Card; SourceTable = "CT Row";
+  layout { area(Content) { field(SystemId; SystemId) { } field(Cde; Cde) { } } } }
+codeunit 69992 C {
+  procedure F(): Text var R: Record "CT Row"; P: TestPage "CT Card"; T: Text; begin
+    R.K := 1; R.Cde := 'A1'; R.Insert(); P.OpenView();
+    T := P.SystemId.Caption() + '|' + Format(P.SystemId.Editable()) + '|' + P.Cde.Caption() + '|' + P.Cde.Value();
+    T += '|' + Format(P.SystemId.Value() = LowerCase(Format(R.SystemId)));
+    P.Close(); exit(T); end; }"#;
+    assert_eq!(
+        text(al_testkit::run_in(src, "C", "F")),
+        "System ID|No|Code Caption|A1|Yes"
+    );
+}
+
+/// A bare name that is also a procedure of the page, or of the source table, or a page variable, could mean either; which one
+/// BC binds is not pinned: the page is refused.
+#[test]
+fn a_bare_control_source_that_names_two_things_is_refused() {
+    let shapes = [
+        ("", "procedure Cde(): Code[30] begin exit('P'); end;", ""),
+        ("procedure Cde(): Code[30] begin exit('T'); end;", "", ""),
+        ("", "", "var Cde: Code[30];"),
+    ];
+    for (table_proc, page_proc, page_var) in shapes {
+        let src = format!(
+            r#"
+table 69990 "CT Row" {{ fields {{ field(1; K; Integer) {{ }} field(2; Cde; Code[30]) {{ }} }} keys {{ key(PK; K) {{ }} }} {table_proc} }}
+page 69991 "CT Card" {{ PageType = Card; SourceTable = "CT Row";
+  layout {{ area(Content) {{ field(CdeCtl; Cde) {{ }} }} }} {page_var} {page_proc} }}
+codeunit 69992 C {{ procedure F(): Text var P: TestPage "CT Card"; begin P.OpenView(); exit(P.CdeCtl.Value()); end; }}"#
+        );
+        match al_testkit::run_in(&src, "C", "F") {
+            Err(Signal::Unsupported(why)) => assert!(why.contains("not pinned"), "{why}"),
+            other => panic!("expected a refusal for {table_proc}{page_proc}{page_var}, got {other:?}"),
+        }
+    }
+}
+
+/// The session keeps what it translated (types/PSCaptionClass.al:94-115): a page fill after SetValue whose CaptionClass expression
+/// gives the text it gave before raises no OnResolveCaptionClass and keeps the caption (pageext/lt-z-modify-controls/
+/// ZModifyControls.al:424-440 runs through it).
+#[test]
+fn a_caption_class_that_gives_the_same_text_at_a_later_fill_is_kept() {
+    let src = r#"
+table 69990 "CT Row" { fields { field(1; K; Integer) { } field(2; Cde; Code[30]) { } } keys { key(PK; K) { } } }
+page 69991 "CT Card" { PageType = Card; SourceTable = "CT Row";
+  layout { area(Content) { field(CdeCtl; Rec.Cde) { CaptionClass = Cc(); } } }
+  local procedure Cc(): Text begin exit('PS,same'); end; }
+codeunit 69993 Sub { SingleInstance = true; var Log: Text;
+  [EventSubscriber(ObjectType::Codeunit, Codeunit::"Caption Class", 'OnResolveCaptionClass', '', false, false)]
+  local procedure OnResolve(CaptionArea: Text; CaptionExpr: Text; Language: Integer; var Caption: Text; var Resolved: Boolean)
+  begin Log += 'r'; Caption := 'resolved:' + CaptionExpr; Resolved := true; end;
+  procedure Take(): Text var T: Text; begin T := Log; Log := ''; exit(T); end; }
+codeunit 42 "Caption Class" { [IntegrationEvent(false, false)] procedure OnResolveCaptionClass(CaptionArea: Text; CaptionExpr: Text; Language: Integer; var Caption: Text; var Resolved: Boolean) begin end; }
+codeunit 69992 C {
+  procedure F(): Text var R: Record "CT Row"; P: TestPage "CT Card"; S: Codeunit Sub; T: Text; begin
+    R.K := 1; R.Insert(); S.Take(); P.OpenEdit(); T := S.Take() + '|';
+    P.CdeCtl.SetValue('X'); T += S.Take() + '|' + P.CdeCtl.Caption(); P.Close(); exit(T); end; }"#;
+    assert_eq!(text(al_testkit::run_in(src, "C", "F")), "r||resolved:same");
 }

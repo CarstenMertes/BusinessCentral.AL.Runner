@@ -613,6 +613,19 @@ impl Session {
         // The source field's CaptionClass beats its Caption (pageext/lt-page-ext-properties/TableExtCaptionClass.al:69) and is
         // resolved when the caption is read, not when the page opens (record/lt-x-table-props/XTablePropsTests.al:483-487).
         // Whether a Caption on the control beats it is not pinned.
+        // A CaptionClass of the source field that is an expression (TableExtCaptionClass.al:128-133) is not evaluated yet.
+        if let Some(raw) = field.as_ref().and_then(|f| {
+            f.properties
+                .iter()
+                .find(|(k, _)| k.eq_ignore_ascii_case("captionclass"))
+                .map(|(_, v)| v.trim().to_string())
+        }) {
+            if crate::recmeta::string_literal(&raw).is_none() {
+                return unsupported(format!(
+                    "the caption of a control whose source field's CaptionClass is the expression `{raw}` (table field property expressions are not evaluated yet)"
+                ));
+            }
+        }
         if let Some(c) = field_prop("captionclass") {
             if own_caption.is_some() {
                 return unsupported(
@@ -654,13 +667,9 @@ impl Session {
             .iter()
             .any(|(i, t, _)| *i == idx && t == text)
         {
-            // A later fill with the same class text: whether BC raises OnResolveCaptionClass again is not pinned
-            // (misc/W2CaptionClass.al:174-178 pins a changed text only).
-            if raises_resolve(text) {
-                return unsupported(
-                    "a CaptionClass that gives the same text at a later fill (whether BC resolves it again is not pinned)",
-                );
-            }
+            // A later fill with the same class text keeps the caption and raises no OnResolveCaptionClass: the session keeps
+            // what it translated (types/PSCaptionClass.al:94-115; misc/W2CaptionClass.al:174-178 pins that a changed text is
+            // resolved again).
             return Ok(());
         }
         let caption = self.caption_class_text(st, text)?;
@@ -989,7 +998,7 @@ impl Session {
 
 /// The text of the `ENU = '...'` entry of a `...ML` property value.
 /// The class text goes to OnResolveCaptionClass (see `caption_class_text`): not area 3, not a numeric or empty area, and with a comma.
-fn raises_resolve(text: &str) -> bool {
+pub(super) fn raises_resolve(text: &str) -> bool {
     match text.split_once(',') {
         Some((area, _)) => area != "3" && !area.is_empty() && area.trim().parse::<u32>().is_err(),
         None => false,

@@ -129,6 +129,10 @@ pub enum Gate {
     /// aggregates, Media import with three arguments. Each guarded test names its fact; split into one gate per fact when the
     /// runtime implements it. Not consumed yet.
     ProbedValuesDifferFrom28,
+    /// A BigInteger literal in a Boolean control expression (`Enabled = 0L <> Rec.Big`) compiles on the client and runs.
+    /// Before, the page fails to open ("Error compiling dynamic control expression ... Not a valid number."); the runtime
+    /// refuses the page there, because the error text's index rule is not pinned.
+    BigIntegerLiteralInControlExpressionFrom28,
     /// Probed values that are the same on BC 29 and differ on BC 27 and 28 (corpus bump 11): BLOB length after a fresh Get, the
     /// BigInteger/Integer FlowField type mismatch, the report dataset header bytes and lines and a second SaveAs on one variable,
     /// Report/Field metadata rows, Media import, BigInteger into an Enum field. Not consumed yet.
@@ -212,6 +216,7 @@ impl Gate {
         Gate::ConversionErrorTextsFrom28,
         Gate::InterfaceListCodeunitFrom29,
         Gate::ProbedValuesDifferFrom28,
+        Gate::BigIntegerLiteralInControlExpressionFrom28,
         Gate::ProbedValuesDifferFrom29,
         Gate::Base64TextIsWindows1252From28,
         Gate::TestFieldTypedValueTexts,
@@ -259,6 +264,7 @@ impl Gate {
             | Gate::TableFilterEvaluateError
             | Gate::ConversionErrorTextsFrom28
             | Gate::ProbedValuesDifferFrom28
+            | Gate::BigIntegerLiteralInControlExpressionFrom28
             | Gate::Base64TextIsWindows1252From28
             | Gate::TestFieldTypedValueTexts
             | Gate::FileDownloadWithoutClientFrom28
@@ -571,14 +577,14 @@ impl Gate {
                 file: "codeunit/lt-enums-interfaces/OjT71052.al",
                 lines: "43",
             }],
+            Gate::BigIntegerLiteralInControlExpressionFrom28 => &[Evidence {
+                file: "pages/lt-cc-page-leads/CcPageLeads.al",
+                lines: "801",
+            }],
             Gate::ProbedValuesDifferFrom28 => &[
                 Evidence {
                     file: "network/lt-http-send-failure/LtDaSendFailure.al",
                     lines: "10,140",
-                },
-                Evidence {
-                    file: "pages/lt-cc-page-leads/CcPageLeads.al",
-                    lines: "801",
                 },
                 Evidence {
                     file: "install/lt-bf-install-probes/BfInstallTests.al",

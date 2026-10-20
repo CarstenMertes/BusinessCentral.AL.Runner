@@ -747,6 +747,7 @@ fn walk_page<V: RefVisitor>(p: &mut Page, v: &mut V) {
         extensions,
         ext_triggers,
         action_areas: _,
+        big_integer_expressions: _,
     } = p;
     // The page each part shows, before the walk renumbers it (a `Provider` link reads the row of
     // another part).

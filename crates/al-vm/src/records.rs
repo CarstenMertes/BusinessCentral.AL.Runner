@@ -452,6 +452,59 @@ impl Session {
 
     /// `Record.Delete(run)` of the row `rec` holds: Before event, OnDelete, the
     /// delete, After event.
+    /// A Modify or Delete let go of media `id` that field `pos` of table `t` held: the media leaves Tenant Media unless another
+    /// row of the same field still holds it (media/TestMediaPngImport.al:297-334: kept while the other row holds it, removed with
+    /// the Delete of that row; record/lt-ar-records/ArRecordProbes.al:141-143: removed when no row holds it). A media another
+    /// table or field holds is not pinned and refused. The removal is undone by a rollback (`Session::rollback_transaction`).
+    fn release_media(
+        &mut self,
+        cx: &al_data::AccessContext,
+        t: &TableDef,
+        pos: usize,
+        id: [u8; 16],
+    ) -> Result<(), Signal> {
+        let held = |s: &mut Self, table: &TableDef, field: usize| -> Result<bool, Signal> {
+            let filters = [FieldFilter {
+                field,
+                expr: FilterExpr::Eq(Value::Guid(id)),
+                group: 0,
+            }];
+            let scan = Scan {
+                key: 0,
+                filters: &filters,
+                ascending: true,
+                after: None,
+            };
+            Ok(s.store
+                .next(cx, table, &scan)
+                .map_err(|e| Signal::Unsupported(format!("{e}")))?
+                .is_some())
+        };
+        if held(self, t, pos)? {
+            return Ok(());
+        }
+        let engine = self.engine.clone();
+        // The platform's own tables (ids from 2000000000, e.g. Media Resources) hold no row of AL code's.
+        let system = |o: u32| {
+            engine.program.objects[o as usize]
+                .id
+                .is_some_and(|id| id >= 2_000_000_000)
+        };
+        for other in engine.tables.iter().flatten().filter(|o| !system(o.object)) {
+            for i in (0..other.fields.len()).filter(|&i| is_media_field(other, i)) {
+                if (other.object, i) != (t.object, pos) && held(self, other, i)? {
+                    return Err(Signal::Unsupported(
+                        "a Media that a row of another table or field still holds, let go by a Modify or Delete (not pinned)".into(),
+                    ));
+                }
+            }
+        }
+        if let Some(obj) = self.media.objects.borrow_mut().remove(&id) {
+            self.media_removed.0.push((id, obj));
+        }
+        Ok(())
+    }
+
     fn delete_row(&mut self, t: &TableDef, rec: &Rec, run: bool) -> Result<Value, Signal> {
         let cx = self.cx_for(rec, t)?;
         self.table_event(t, "onbeforedeleteevent", rec, None, run, None)?;
@@ -480,12 +533,57 @@ impl Session {
         } else {
             None
         };
+        // The Media fields of the stored row: the Delete of the last row that holds a media removes it from Tenant Media
+        // (media/TestMediaPngImport.al:326-332).
+        let media: Vec<(usize, [u8; 16])> = if rec.borrow().temporary {
+            Vec::new()
+        } else {
+            let positions: Vec<usize> = (0..t.fields.len()).filter(|&i| is_media_field(t, i)).collect();
+            let sets: Vec<usize> = (0..t.fields.len())
+                .filter(|&i| {
+                    t.fields[i].stored
+                        && matches!(
+                            t.fields[i].ty,
+                            RtType::Library(al_builtins::library_kind::LibraryKind::MediaSet)
+                        )
+                })
+                .collect();
+            match positions.is_empty() && sets.is_empty() {
+                true => Vec::new(),
+                false => {
+                    let stored = self
+                        .store_for(rec)
+                        .get(&cx, t, &pk)
+                        .map_err(|e| Signal::Unsupported(format!("{e}")))?;
+                    // What a Delete does to the Tenant Media rows of a MediaSet is not pinned (media/TestMediaPngImport.al:337-375
+                    // pins it, but that test is refused earlier): refused while the set holds anything.
+                    if sets
+                        .iter()
+                        .any(|&i| matches!(stored.as_ref().map(|r| &r[i]), Some(Value::Guid(g)) if *g != [0; 16]))
+                    {
+                        return unsupported(
+                            "a Delete of a row whose MediaSet holds media (what happens to its Tenant Media rows is not pinned)",
+                        );
+                    }
+                    positions
+                        .into_iter()
+                        .filter_map(|i| match stored.as_ref().map(|r| &r[i]) {
+                            Some(Value::Guid(g)) if *g != [0; 16] => Some((i, *g)),
+                            _ => None,
+                        })
+                        .collect()
+                }
+            }
+        };
         match self
             .store_for(rec)
             .delete(&cx, t, &pk)
             .map_err(|e| Signal::Unsupported(format!("{e}")))?
         {
             WriteOutcome::Done => {
+                for (i, g) in media {
+                    self.release_media(&cx, t, i, g)?;
+                }
                 if let Some(name) = company {
                     self.after_company_row_delete(&name);
                 }
@@ -1140,6 +1238,23 @@ impl Session {
     /// a temporary table's rows hold the record's own Blob objects
     /// (TempBlob_UncommittedWrite_SameInstanceReGet_KeepsWrite).
     pub(crate) fn load(&mut self, rec: &Rec, mut row: Vec<Value>) -> Result<(), Signal> {
+        // Whether a temporary table keeps milliseconds that the SQL column of a database table rounds is not pinned
+        // (errors/lt-ms-refusals-130/P130DateFilters.al pins database tables only): reading such a row is refused.
+        if rec.borrow().temporary {
+            let table = rec.borrow().table as usize;
+            if let Some(t) = self.engine.tables[table].as_ref() {
+                let off_grid = t.fields.iter().zip(&row).any(|(f, v)| {
+                    f.id < 2_000_000_000
+                        && matches!(v, Value::Time(_) | Value::DateTime(_))
+                        && !ops::compare(&crate::sqltime::rounded(v), v).is_ok_and(|o| o.is_eq())
+                });
+                if off_grid {
+                    return unsupported(
+                        "reading a temporary row whose Time or DateTime holds milliseconds a database column would round (not pinned)",
+                    );
+                }
+            }
+        }
         if rec.borrow().temp_id.is_none() {
             for v in &mut row {
                 if let Value::Blob(b) = v {
@@ -1196,6 +1311,28 @@ impl Session {
                 b.inserted = inserted && !b.bytes.is_empty();
             }
         }
+    }
+
+    /// The Date, Time and DateTime values of a database table's row as its SQL columns hold them (`sqltime`): `Some` error
+    /// for a value the column cannot hold. A temporary table keeps the values as they are.
+    fn sql_columns(&self, rec: &Rec, t: &TableDef, row: &mut [Value]) -> Result<Option<AlError>, Signal> {
+        if rec.borrow().temporary {
+            return Ok(None);
+        }
+        let caption = self.caption(t);
+        match crate::sqltime::store(t, &|i| self.field_caption(t, i), &caption, row)? {
+            crate::sqltime::Stored::Fits => Ok(None),
+            crate::sqltime::Stored::Bad(e) => Ok(Some(e)),
+        }
+    }
+
+    /// The row version a TransferFields from another table left aside for `rec` (see `foreign_transfers`), taken out.
+    fn take_foreign_transfer(&mut self, rec: &Rec) -> Option<Value> {
+        let i = self
+            .foreign_transfers
+            .iter()
+            .position(|(w, _)| w.upgrade().is_some_and(|r| Rc::ptr_eq(&r, rec)))?;
+        Some(self.foreign_transfers.swap_remove(i).1)
     }
 
     /// The row to hand to the store: a database table keeps its own copy of every Blob.
@@ -1609,6 +1746,8 @@ impl Session {
                 r.ascending = true;
                 r.field_descending = 0;
                 r.position = None;
+                // Clear sets ReadIsolation back to Default (misc/lt-cv-odd-leads/CvReadIsolationState.al:58, :64).
+                r.read_isolation = 0;
                 // A Clear leaves the record's record of what it fetched: the fields in hand stay loaded for a later
                 // partial fetch (session/TestProbeSessionMiscContracts.al:PartialRecords_AreFieldsLoaded: a full Get,
                 // Clear, SetLoadFields(Cd) and Get still reports Txt loaded).
@@ -1725,7 +1864,33 @@ impl Session {
                     }
                     return self.fail_unique(&t, unique_key, &row);
                 }
-                let stored = Self::to_store(rec, self.stored_view(&t, &row));
+                let mut stored = Self::to_store(rec, self.stored_view(&t, &row));
+                if let Some(e) = self.sql_columns(rec, &t, &mut stored)? {
+                    // A value the SQL column cannot hold: the Insert does not fail, the next access of the table does
+                    // (errors/lt-ms-refusals-130/P130DateFilters.al:255-275, stage `get`), as for a duplicate key. With a Blob
+                    // field, an AutoIncrement field, the result used, an after-insert trigger or event, or a page write it is
+                    // not pinned.
+                    let has_blob = t
+                        .fields
+                        .iter()
+                        .any(|f| matches!(&f.ty, RtType::Library(al_builtins::library_kind::LibraryKind::Blob)));
+                    if self.ret_used
+                        || has_blob
+                        || auto.is_some()
+                        || self.tx.immediate_errors
+                        || (run && !self.ext_triggers(&t, "OnAfterInsert").is_empty())
+                        || self.listened(&t, "onafterinsertevent", None)?
+                    {
+                        return unsupported(format!(
+                            "an Insert into {} of a value its SQL column cannot hold, in a form the corpus does not pin",
+                            t.name
+                        ));
+                    }
+                    Self::restore_row_version(rec, old_version);
+                    Self::unstamp(rec, stamped);
+                    self.tx.deferred_insert.get_or_insert((t.object as usize, e));
+                    return Ok(Value::Boolean(true));
+                }
                 Self::mark_blobs_inserted(rec, &stored, true);
                 match self
                     .store_for(rec)
@@ -1822,11 +1987,21 @@ impl Session {
                     // transaction was rolled back to the last Commit after the buffer's own Modify, as an asserterror
                     // does) is not stale (corpus record/lt-record-conversion-assumptions/StaleBuffer.al:
                     // P98_Stale_AfterAsserterror_SameBuffer, P98_Stale_CommitThenErrorThenModify_Rec).
-                    if !rec.borrow().temporary
-                        && version(&mine) != 0
-                        && version(&mine) < version(&theirs)
-                        && version(&theirs) <= self.tx.committed_row_version
-                    {
+                    let foreign = self.take_foreign_transfer(rec);
+                    let committed = self.tx.committed_row_version;
+                    let stale =
+                        |m: &Value| version(m) != 0 && version(m) < version(&theirs) && version(&theirs) <= committed;
+                    // After a TransferFields from another table, whether the buffer took that row's version is not pinned
+                    // (record/lt-cn-transferfields-modify/CnTransferFieldsModify.al:194-214 pins a buffer that is current
+                    // either way): a Modify whose outcome depends on it is refused.
+                    if let Some(other) = foreign {
+                        if !rec.borrow().temporary && stale(&mine) != stale(&other) {
+                            return unsupported(
+                                "a Modify after a TransferFields from another table, whose outcome depends on which row version the buffer took (not pinned)",
+                            );
+                        }
+                    }
+                    if !rec.borrow().temporary && stale(&mine) {
                         let identification = self.identification(&t, &rec.borrow().fields)?;
                         return Err(Signal::Error(Box::new(AlError {
                             message: format!(
@@ -1943,7 +2118,11 @@ impl Session {
                     Self::unstamp(rec, stamped);
                     return self.fail_unique(&t, unique_key, &row);
                 }
-                let stored = Self::to_store(rec, self.stored_view(&t, &row));
+                let mut stored = Self::to_store(rec, self.stored_view(&t, &row));
+                // Only the Insert of a value the SQL column cannot hold is pinned (errors/lt-ms-refusals-130/P130DateFilters.al:234-275).
+                if self.sql_columns(rec, &t, &mut stored)?.is_some() {
+                    return unsupported("a Modify of a value its SQL column cannot hold (not pinned)");
+                }
                 Self::mark_blobs_inserted(rec, &stored, false);
                 match self
                     .store_for(rec)
@@ -1969,7 +2148,7 @@ impl Session {
                                     && *was != [0; 16]
                                     && *now != [0; 16]
                                 {
-                                    self.media.objects.borrow_mut().remove(was);
+                                    self.release_media(&cx, &t, i, *was)?;
                                 }
                             }
                         }
@@ -2135,6 +2314,29 @@ impl Session {
                                     ));
                                 }
                             }
+                        }
+                        // An Integer (literal or variable) for a Code key reads as its digits: found, not found and the
+                        // not-found error (record/lt-at-partner-gaps/AtGetIntegerOnCodeKey.al:86-140, Integer 123 on a
+                        // Code[20] key). A negative number, one longer than the field and a Text key are not pinned.
+                        Some(Value::Integer(i)) if matches!(ty, RtType::Code(_)) => {
+                            let digits = i.to_string();
+                            let fits =
+                                matches!(ty, RtType::Code(len) if len.is_none_or(|l| digits.len() <= l as usize));
+                            if *i < 0 || !fits {
+                                return unsupported(
+                                    "Get with a negative or too long Integer on a Code key (not pinned)",
+                                );
+                            }
+                            Value::Code(digits.into())
+                        }
+                        // A Time or DateTime key value the SQL column would round: what Get finds is not pinned (sqltime.rs).
+                        Some(v @ (Value::Time(_) | Value::DateTime(_)))
+                            if !rec.borrow().temporary
+                                && !ops::compare(&crate::sqltime::rounded(v), v).is_ok_and(|o| o.is_eq()) =>
+                        {
+                            return unsupported(
+                                "Get with a Time or DateTime key value the SQL column rounds (not pinned)",
+                            );
                         }
                         Some(v) => ops::convert(v.clone(), &ty)?,
                         None => self.default_value(&ty),
@@ -2663,6 +2865,8 @@ impl Session {
                 r.adhoc = None;
                 r.ascending = true;
                 r.field_descending = 0;
+                // Reset sets ReadIsolation back to Default (misc/lt-cv-odd-leads/CvReadIsolationState.al:43-44, :58).
+                r.read_isolation = 0;
                 Ok(Value::Null)
             }
             RecordOp::SetCurrentKey => {
@@ -2895,7 +3099,10 @@ impl Session {
                     rec.borrow_mut().fields = old.clone();
                     return self.fail_unique(&t, unique_key, &row);
                 }
-                let stored = Self::to_store(rec, self.stored_view(&t, &row));
+                let mut stored = Self::to_store(rec, self.stored_view(&t, &row));
+                if self.sql_columns(rec, &t, &mut stored)?.is_some() {
+                    return unsupported("a Rename with a value its SQL column cannot hold (not pinned)");
+                }
                 // A rename to the key the row has succeeds and writes the row again, which is what
                 // stamps it (record/TestRecordSystemId.al:752-775).
                 let same_key = ops::compare_keys(&old_pk, &t.primary_key(&row));
@@ -3010,4 +3217,13 @@ impl Session {
                 .zip(pos.iter())
                 .all(|(a, b)| al_builtins::ops::compare(a, b).is_ok_and(|o| o == std::cmp::Ordering::Equal))
     }
+}
+
+/// Field `i` of `t` is a stored Media field.
+fn is_media_field(t: &TableDef, i: usize) -> bool {
+    t.fields[i].stored
+        && matches!(
+            t.fields[i].ty,
+            RtType::Library(al_builtins::library_kind::LibraryKind::Media)
+        )
 }

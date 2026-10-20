@@ -751,6 +751,13 @@ impl Session {
                 flow_fields.push(f.clone());
             }
         }
+        // A database table compares its Time and DateTime columns with the filter values rounded as the columns hold them
+        // (errors/lt-ms-refusals-130/P130DateFilters.al:206-227).
+        if !r.temporary {
+            if let Some(t) = self.engine.tables[r.table as usize].as_ref() {
+                crate::sqltime::round_filters(t, &mut stored);
+            }
+        }
         (stored, flow_fields)
     }
 

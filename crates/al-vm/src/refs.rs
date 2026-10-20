@@ -757,11 +757,22 @@ impl Session {
             }
             // Doc (RecordRef.Duplicate): a new ref with the same table, buffer and filters, independent of the original.
             "RecordId" => Ok(self.record_id(&rec, &t)),
-            "LockTable" | "ReadConsistency" | "RecordLevelLocking" | "ReadPermission" | "WritePermission"
-            | "CountApprox" | "ReadIsolation" | "SecurityFiltering" | "GetPosition" | "SetPosition" | "Ascending"
-            | "SetRecFilter" | "Mark" | "MarkedOnly" | "ClearMarks" => {
-                self.record_meta_op(record_method(method), &rec, &t, args)
+            "LockTable" => {
+                // RecordRef.LockTable(true, true) raises the Wait = FALSE error (recordref/lt-refs/RfTViews.al:314-322).
+                if matches!(args, [Value::Boolean(true), Value::Boolean(true)]) {
+                    return Err(crate::recmeta::lock_table_bad_parm(&t));
+                }
+                // What a RecordRef's LockTable does to its ReadIsolation is not pinned (only Record's is,
+                // misc/lt-cv-odd-leads/CvReadIsolationState.al:47-48).
+                if rec.borrow().read_isolation != 0 && !matches!(args.first(), Some(Value::Boolean(false))) {
+                    return unsupported("RecordRef.LockTable after a ReadIsolation was set (not pinned)");
+                }
+                let mut a: Vec<Value> = args.iter().take(1).cloned().collect();
+                self.record_meta_op(RecordOp::LockTable, &rec, &t, &mut a)
             }
+            "ReadConsistency" | "RecordLevelLocking" | "ReadPermission" | "WritePermission" | "CountApprox"
+            | "ReadIsolation" | "SecurityFiltering" | "GetPosition" | "SetPosition" | "Ascending" | "SetRecFilter"
+            | "Mark" | "MarkedOnly" | "ClearMarks" => self.record_meta_op(record_method(method), &rec, &t, args),
             // Doc (RecordRef.Get): loads the row a RecordId names; the table must be the ref's own.
             "Get" => {
                 let key = match args.first() {

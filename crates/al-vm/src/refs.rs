@@ -394,7 +394,8 @@ impl Session {
                 Some(t) if t.eq_ignore_ascii_case("OnPrem") => {}
                 other => {
                     return unsupported(format!(
-                        "RecordRef.Open(2000000297) from an app whose target is {other:?} (only Cloud and OnPrem are pinned)"
+                        "RecordRef.Open(2000000297) from an app whose target is {} (only Cloud and OnPrem are pinned)",
+                        other.unwrap_or("not known")
                     ));
                 }
             }
@@ -874,13 +875,13 @@ impl Session {
             | "FindLast" | "FindSet" | "Next" | "Reset" | "Rename" => self.record_op(record_method(method), &rec, args),
             "Field" => {
                 let no = int_arg(args, 0)?;
-                // BC 29 has the user-name FlowFields at 2000000005-8 (platform/fields.rs `BC29_USER_NAME_FIELDS`); the
+                // BC 29 has the user-name FlowFields at 2000000005-8 (platform/fields.rs `USER_NAME_SYSTEM_FIELDS`); the
                 // runtime does not hold them.
                 if (2_000_000_005..=2_000_000_008).contains(&no)
-                    && self.engine.target.as_ref().is_none_or(|x| x.bc.major >= 29)
+                    && self.has(al_version::Gate::PlatformMetadataColumnsFrom29)
                 {
                     return unsupported(format!(
-                        "RecordRef.Field({no}): the user-name system FlowFields of BC 29 (SystemCreatedByUserName and the others) are not modelled"
+                        "RecordRef.Field({no}): the user-name system FlowFields (SystemCreatedByUserName and the others) are not modelled"
                     ));
                 }
                 match t.fields.iter().position(|f| i64::from(al_field_no(f.id)) == no) {

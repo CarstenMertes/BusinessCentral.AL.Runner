@@ -1363,7 +1363,7 @@ codeunit 50000 "T" { Subtype = Test;
     passes(&o, "Columns");
     passes(&o, "RelationAndState");
     assert!(not_run(&o, "Caption").contains("not known"));
-    assert!(not_run(&o, "FieldRef").contains("BC 29"));
+    assert!(not_run(&o, "FieldRef").contains("user-name system FlowFields"));
     // BC 27 has none of them (W6FieldKeyRows.al:169-170).
     let o = outcomes(&src.replace("<> 5", "<> 1"));
     passes(&o, "TextCount");

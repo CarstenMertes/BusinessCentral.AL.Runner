@@ -237,6 +237,9 @@ pub(crate) fn run_codeunit_core(
             skipped
         }
     };
+    // What install code wrote is known only in part (ADR-046): the tests read it through the facts of this engine.
+    crate::install::ensure_facts(engine, lowered);
+    session.mark_install_end();
     session.in_test_codeunit = true;
     session.test_object = Some(object);
     // What BC's AL test runner does around each test method (runner_reset.rs). A scratch run has no runner.

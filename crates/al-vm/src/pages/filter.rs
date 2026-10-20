@@ -28,6 +28,33 @@ impl Session {
             PageMethod::GetFilter => {
                 let pos = field_arg(args, 0)?;
                 let first = rec.borrow().filters.iter().find(|f| f.field == pos).cloned();
+                if st.borrow().or_group_dropped {
+                    return unsupported(
+                        "TestFilter.GetFilter on a page whose OnOpenPage left FilterGroup(-1) filters (not pinned)",
+                    );
+                }
+                use al_builtins::filter::FilterExpr;
+                use al_builtins::value::RtType;
+                match (&table.fields[pos].ty, first.as_ref().map(|f| &f.expr)) {
+                    // A typed single value on an Enum field (SetRange on the record handed to the page, a RunPageLink `field()`, a
+                    // SourceTableView `const`) reads as the ordinal; a filter given as text keeps the names (pages/lt-ce-page-run/
+                    // CePageRun.al SetTableView_ConflictingFilterOnTheSameField `Kind=1`, SetTableView_FilterOnAnotherField `Kind=0`,
+                    // SetTableView_WiderFilterOnTheSameField `Kind=A|B`; pages/lt-cd-testpage-leads/CdTestPageLeads.al:626
+                    // Item61_RunPageLinkEnumKey_ByField_New `2`, :650 _ByConst_New `Second`).
+                    (RtType::Enum(_), Some(FilterExpr::Range(Some(a), Some(b)))) => {
+                        let (Value::Enum(_, x), Value::Enum(_, y)) = (a, b) else {
+                            return unsupported("TestFilter.GetFilter of an Enum range that holds no Enum value");
+                        };
+                        if x != y {
+                            return unsupported("TestFilter.GetFilter of an Enum range of two values (not pinned)");
+                        }
+                        return Ok(Value::Text(x.to_string().into()));
+                    }
+                    (RtType::Option(_), Some(FilterExpr::Range(Some(_), Some(_)))) => {
+                        return unsupported("TestFilter.GetFilter of an Option field filtered by a value (not pinned)");
+                    }
+                    _ => {}
+                }
                 match first {
                     Some(f) => Ok(Value::Text(self.filter_text(&f.expr)?.into())),
                     None => Ok(Value::Text(String::new().into())),

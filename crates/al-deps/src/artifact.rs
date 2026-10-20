@@ -13,7 +13,7 @@
 
 use crate::build::{BuildId, BuildQuery, Origin, Selection, parse_index, select_build};
 use crate::cache::{BuildDir, Store, local_builds_for, local_country_files, local_platform_files};
-use crate::load::{Loaded, Planned, Request, ScanCache, plan_dependencies, read_planned};
+use crate::load::{Found, Loaded, Planned, Request, ScanCache, plan_dependencies_labeled, read_planned};
 use crate::package::{Vars, read_info_with};
 use crate::remote::{HttpSource, RangeSource, RemoteError, RemoteZip, fetch_all, http_agent};
 use crate::select::{DepDecl, MICROSOFT_PLATFORM_APP_IDS, MissingPolicy, SelectError};
@@ -209,6 +209,50 @@ fn rank_by_name<'a, T>(items: &'a [T], name_of: impl Fn(&T) -> &str, dep: &DepDe
     out
 }
 
+/// A project's `.alpackages` folder: what its developer compiled against, often symbols of older builds.
+fn is_alpackages(dir: &Path) -> bool {
+    dir.file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(|n| n.eq_ignore_ascii_case(".alpackages"))
+}
+
+/// The BC major and, when given, the minor of `--bc-version` (`29`, `29.0` or an exact build).
+fn requested_major_minor(prefix: &str) -> Option<(u32, Option<u32>)> {
+    let mut parts = prefix.split('.');
+    let major = parts.next()?.parse().ok()?;
+    let minor = match parts.next() {
+        Some(m) => Some(m.parse().ok()?),
+        None => None,
+    };
+    Some((major, minor))
+}
+
+/// A Microsoft package older than the BC version `target` (major, and minor when known). The platform's
+/// `System` carries the platform version, whose minor is 0 in every build of a major (the corpus's `.alpackages`
+/// holds System 27.0.46760.0 beside the 27.5 apps), so only its major is compared.
+fn older_microsoft(f: &Found, target: (u32, Option<u32>)) -> bool {
+    let v = f.manifest.version;
+    let target = if f.manifest.id.eq_ignore_ascii_case(crate::select::SYSTEM_APP_ID) {
+        (target.0, None)
+    } else {
+        target
+    };
+    f.manifest.publisher.eq_ignore_ascii_case("Microsoft")
+        && match target {
+            (major, Some(minor)) => (v.0, v.1) < (major, minor),
+            (major, None) => v.0 < major,
+        }
+}
+
+/// The key of a package's app, as `dep_key` spells a dependency on it: the id, else publisher and name.
+fn found_keys(f: &Found) -> [String; 2] {
+    let m = &f.manifest;
+    [
+        m.id.to_ascii_lowercase(),
+        format!("{}/{}", m.publisher, m.name).to_ascii_lowercase(),
+    ]
+}
+
 fn dep_key(d: &DepDecl) -> String {
     if d.id.is_empty() {
         format!("{}/{}", d.publisher, d.name).to_ascii_lowercase()
@@ -335,6 +379,17 @@ fn open_country<C: Cdn>(cdn: &C, fetch: &Fetch, cbd: &BuildDir, build: &BuildId)
     })
 }
 
+/// A version error without the feed says that the feed was not asked.
+fn offline_hint(e: String, download: bool) -> String {
+    if download || !e.contains("or higher") {
+        e
+    } else {
+        format!(
+            "{e}; downloading is off (--no-download), so an older Microsoft package in .alpackages is not replaced by the artifact feed's version"
+        )
+    }
+}
+
 /// Resolves the dependencies of `req.project`, downloading from the feed what no directory supplies.
 ///
 /// `req.missing` is the caller's policy for what is still missing at the end: `Error` fails the
@@ -356,6 +411,21 @@ pub fn load_with_artifacts<C: Cdn>(req: &Request<'_>, fetch: &Fetch, cdn: &C) ->
     let mut tried: HashSet<String> = HashSet::new();
     let mut scans = ScanCache::new();
     let mut planned: Option<Planned> = None;
+    // Microsoft packages of a project's `.alpackages` held back for the feed's copy (see below), by folder.
+    let mut held: Vec<(PathBuf, Found)> = Vec::new();
+    let mut last_dirs: Vec<PathBuf> = Vec::new();
+    let cache_root = store.dir().to_path_buf();
+    let label = |p: &Path| {
+        if p.starts_with(&cache_root) {
+            Some(format!("the artifact feed, cached at {}", p.display()))
+        } else {
+            fetch
+                .local_artifacts
+                .as_deref()
+                .filter(|r| p.starts_with(r))
+                .map(|_| format!("the local artifacts at {}", p.display()))
+        }
+    };
     for _ in 0..ROUNDS {
         let mut dirs = req.search_dirs.to_vec();
         if let Some((bd, sel)) = &chosen {
@@ -406,8 +476,32 @@ pub fn load_with_artifacts<C: Cdn>(req: &Request<'_>, fetch: &Fetch, cdn: &C) ->
                 }
             }
         }
+        // Owner 2026-10-20: a project's `.alpackages` holds compile symbols, often of older builds. A Microsoft app there
+        // that is older than the BC version of the run does not win over the feed's copy for that version: it is held
+        // back, so that the feed is asked for it (a test library of the run's build needs its own build of `Any`). The
+        // target is the chosen build, before that `--bc-version`. Without the feed (`--no-download`) nothing changes.
+        // A held package the feed does not have is put back after the last round. `--dep` and `--package-cache` keep
+        // their packages: the user chose them.
+        let target = match &chosen {
+            Some((_, sel)) => (fetch.download || local.is_some()).then(|| (sel.build.major(), Some(sel.build.minor()))),
+            None if fetch.download && fetch.query.explicit => requested_major_minor(&fetch.query.prefix),
+            None => None,
+        };
+        if let Some(target) = target {
+            for dir in dirs.iter().filter(|d| is_alpackages(d)) {
+                let (found, _) = scans
+                    .entry(dir.clone())
+                    .or_insert_with(|| crate::load::scan_path(dir, req.source_build));
+                let (old, keep): (Vec<Found>, Vec<Found>) = std::mem::take(found)
+                    .into_iter()
+                    .partition(|f| older_microsoft(f, target));
+                *found = keep;
+                held.extend(old.into_iter().map(|f| (dir.clone(), f)));
+            }
+        }
+        last_dirs = dirs.clone();
         // Only the choice is made here; the sources are read once, after the last round.
-        let round = plan_dependencies(
+        let round = plan_dependencies_labeled(
             &Request {
                 project: req.project,
                 workspace_apps: req.workspace_apps,
@@ -418,7 +512,9 @@ pub fn load_with_artifacts<C: Cdn>(req: &Request<'_>, fetch: &Fetch, cdn: &C) ->
                 lazy_sources: req.lazy_sources,
             },
             &mut scans,
-        )?;
+            &label,
+        )
+        .map_err(|e| offline_hint(e, fetch.download))?;
         let required: Vec<DepDecl> = round
             .skipped
             .iter()
@@ -642,6 +738,47 @@ pub fn load_with_artifacts<C: Cdn>(req: &Request<'_>, fetch: &Fetch, cdn: &C) ->
         }
         if !progress {
             break;
+        }
+    }
+    // What the feed did not supply comes from the held-back packages after all.
+    if !held.is_empty() {
+        let p = planned.as_ref().expect("at least one round ran");
+        let wanted: HashSet<String> = p
+            .skipped
+            .iter()
+            .filter_map(|e| match e {
+                SelectError::Missing { dep, .. } => Some(dep),
+                _ => None,
+            })
+            .chain(p.optional_missing.iter())
+            .map(dep_key)
+            .collect();
+        let mut restored = false;
+        for (dir, f) in held {
+            if found_keys(&f).iter().any(|k| wanted.contains(k)) {
+                if let Some((found, _)) = scans.get_mut(&dir) {
+                    found.push(f);
+                    restored = true;
+                }
+            }
+        }
+        if restored {
+            planned = Some(
+                plan_dependencies_labeled(
+                    &Request {
+                        project: req.project,
+                        workspace_apps: req.workspace_apps,
+                        search_dirs: &last_dirs,
+                        missing: MissingPolicy::Skip,
+                        source_build: req.source_build,
+                        application_implies_dependencies: req.application_implies_dependencies,
+                        lazy_sources: req.lazy_sources,
+                    },
+                    &mut scans,
+                    &label,
+                )
+                .map_err(|e| offline_hint(e, fetch.download))?,
+            );
         }
     }
     let final_req = Request {
@@ -1796,6 +1933,167 @@ mod tests {
         )
         .unwrap_err();
         assert!(e.contains("No Such Microsoft App"), "{e}");
+    }
+
+    /// A Microsoft package with source in `.alpackages` (a test library kept there as compile symbols).
+    fn ms_package(alpkg: &Path, id: &str, name: &str, version: &str) -> PathBuf {
+        let manifest = format!(
+            r#"<Package><App Id="{id}" Name="{name}" Publisher="Microsoft" Version="{version}" /><Dependencies/></Package>"#
+        );
+        let zip = Builder::new()
+            .add("NavxManifest.xml", manifest.as_bytes(), true)
+            .add("src/A.al", b"codeunit 130500 Any { }", true)
+            .finish();
+        let path = alpkg.join(format!("Microsoft_{name}_{version}.app"));
+        std::fs::write(&path, navx(&zip)).unwrap();
+        path
+    }
+
+    /// The project asks for `Any` (low floor) and a test library from the feed that needs `Any` of the
+    /// requested build. `.alpackages` holds an older `Any`.
+    fn any_and_library_project() -> AppJson {
+        let mut any = dep(ANY, "Any");
+        any.min = Version(25, 0, 0, 0);
+        let mut p = project();
+        p.dependencies = vec![
+            any,
+            dep(SA, "System Application"),
+            dep(SATL, "System Application Test Library"),
+        ];
+        p
+    }
+
+    /// Owner 2026-10-20: with --bc-version, a Microsoft app in `.alpackages` that is older than the
+    /// requested BC version does not win over the feed's copy for that version.
+    #[test]
+    fn an_older_microsoft_package_in_alpackages_gives_way_to_the_feed_of_the_requested_version() {
+        let dir = tempfile::tempdir().unwrap();
+        let cdn = FixtureCdn::new(dir.path(), &["27.5.46862.56249"]);
+        let alpkg = alpackages(dir.path());
+        ms_package(&alpkg, ANY, "Any", "27.1.41698.42333");
+        let p = run(
+            &alpkg,
+            &fetch(&dir.path().join("cache"), true, Some("27.5")),
+            &cdn,
+            MissingPolicy::Error,
+            &any_and_library_project(),
+        )
+        .unwrap();
+        let any: Vec<_> = p.loaded.apps.iter().filter(|a| a.app.name == "Any").collect();
+        assert_eq!(any.len(), 1, "{:?}", names(&p));
+        assert!(!any[0].path.starts_with(&alpkg), "{}", any[0].path.display());
+        // System Application of the requested version stays the project's own.
+        let sa = p
+            .loaded
+            .apps
+            .iter()
+            .find(|a| a.app.name == "System Application")
+            .unwrap();
+        assert!(sa.path.starts_with(&alpkg), "{}", sa.path.display());
+    }
+
+    /// The same major and minor as the request: the project's package stays.
+    #[test]
+    fn a_microsoft_package_in_alpackages_of_the_requested_version_is_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let cdn = FixtureCdn::new(dir.path(), &["27.5.46862.56249"]);
+        let alpkg = alpackages(dir.path());
+        ms_package(&alpkg, ANY, "Any", "27.5.46862.56249");
+        let p = run(
+            &alpkg,
+            &fetch(&dir.path().join("cache"), true, Some("27.5")),
+            &cdn,
+            MissingPolicy::Error,
+            &any_and_library_project(),
+        )
+        .unwrap();
+        let any = p.loaded.apps.iter().find(|a| a.app.name == "Any").unwrap();
+        assert!(any.path.starts_with(&alpkg), "{}", any.path.display());
+    }
+
+    /// The platform's `System` carries the platform version, whose minor is 0 in every build of a major (the
+    /// corpus's `.alpackages` holds System 27.0.46760.0 beside the 27.5 apps): only its major counts.
+    #[test]
+    fn the_system_app_of_the_requested_major_is_kept_whatever_its_minor() {
+        let dir = tempfile::tempdir().unwrap();
+        let cdn = FixtureCdn::new(dir.path(), &["27.5.46862.56249"]);
+        let alpkg = alpackages(dir.path());
+        let own = ms_package(&alpkg, SYS, "System", "27.0.46760.0");
+        let out = run(
+            &alpkg,
+            &fetch(&dir.path().join("cache"), true, Some("27.5")),
+            &cdn,
+            MissingPolicy::Error,
+            &any_and_library_project(),
+        )
+        .unwrap();
+        let sys = out.loaded.apps.iter().find(|a| a.app.name == "System").unwrap();
+        assert_eq!(sys.path, own);
+        let used = out.artifact.as_ref().unwrap();
+        assert!(
+            !used.fetched.iter().any(|f| f.ends_with("System.app")),
+            "{:?}",
+            used.fetched
+        );
+    }
+
+    /// An older Microsoft package the feed does not have is still used.
+    #[test]
+    fn an_older_microsoft_package_the_feed_lacks_is_still_taken_from_alpackages() {
+        let dir = tempfile::tempdir().unwrap();
+        let cdn = FixtureCdn::new(dir.path(), &["27.5.46862.56249"]);
+        let alpkg = alpackages(dir.path());
+        let own = ms_package(&alpkg, "aa", "Not In The Feed", "27.1.41698.42333");
+        let mut p = project();
+        p.dependencies = vec![dep(SA, "System Application"), dep("aa", "Not In The Feed")];
+        let out = run(
+            &alpkg,
+            &fetch(&dir.path().join("cache"), true, Some("27.5")),
+            &cdn,
+            MissingPolicy::Error,
+            &p,
+        )
+        .unwrap();
+        let app = out
+            .loaded
+            .apps
+            .iter()
+            .find(|a| a.app.name == "Not In The Feed")
+            .unwrap();
+        assert_eq!(app.path, own);
+    }
+
+    /// Without the feed the project's older package is used as before, and a conflict names where
+    /// each version came from.
+    #[test]
+    fn offline_a_conflict_names_the_alpackages_package_and_the_cached_feed_app() {
+        let dir = tempfile::tempdir().unwrap();
+        let cdn = FixtureCdn::new(dir.path(), &["27.5.46862.56249"]);
+        let cache = dir.path().join("cache");
+        // A first run fills the cache with the build's test library and `Any`.
+        let first = dir.path().join("first");
+        std::fs::create_dir_all(&first).unwrap();
+        run(
+            &alpackages(&first),
+            &fetch(&cache, true, Some("27.5")),
+            &cdn,
+            MissingPolicy::Error,
+            &any_and_library_project(),
+        )
+        .unwrap();
+        let alpkg = alpackages(dir.path());
+        let old = ms_package(&alpkg, ANY, "Any", "27.1.41698.42333");
+        let e = run(
+            &alpkg,
+            &fetch(&cache, false, Some("27.5")),
+            &NoNetwork,
+            MissingPolicy::Error,
+            &any_and_library_project(),
+        )
+        .unwrap_err();
+        assert!(e.contains(&old.display().to_string()), "{e}");
+        assert!(e.contains("artifact feed"), "{e}");
+        assert!(e.contains("--no-download"), "{e}");
     }
 
     #[test]

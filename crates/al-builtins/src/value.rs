@@ -75,6 +75,9 @@ pub struct ListVec {
     /// Reads by List methods whose effect on a `foreach` over the list is not pinned (`collections.rs`, `read_list_unpinned`):
     /// a foreach that sees this change refuses (`exec/run.rs`).
     pub unpinned_reads: u64,
+    /// The list `Enum.Ordinals()` and `Enum.Names()` answer: every change raises NotSupportedOperation
+    /// (collections/lt-cs-odd-leads/CsCollections.al:EnumOrdinals_Mutations, EnumNames_Mutations).
+    pub read_only: bool,
 }
 
 impl From<Vec<Value>> for ListVec {
@@ -83,6 +86,7 @@ impl From<Vec<Value>> for ListVec {
             items,
             version: 0,
             unpinned_reads: 0,
+            read_only: false,
         }
     }
 }
@@ -153,6 +157,8 @@ pub enum Value {
     /// A column of a platform table row whose value nothing pins (ADR-013 decision 7, hard rule 3): the
     /// provider leaves it unknown instead of giving it a default. It only ever sits in a record buffer or a
     /// listed row; every read of it is refused with the reason it holds, and writing the field replaces it.
+    /// An event argument the platform leaves unknown (RequestPageXml of SubstituteReport for an Html SaveAs) is
+    /// the one exception: it sits in a by-value parameter, can be passed on by value, and any other use is refused.
     Unknown(std::sync::Arc<str>),
 }
 

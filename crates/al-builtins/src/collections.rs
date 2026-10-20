@@ -18,12 +18,14 @@ pub const REGISTRY: &[(&str, NativeFn)] = &[
         })
     }),
     ("List.AddRange#1", |_, r, a| {
+        refuse_read_only(&r, "List.AddRange")?;
         with_list(r, |l| {
             l.extend(a.iter().cloned());
             Ok(Value::Null)
         })
     }),
     ("List.AddRange#2", |_, r, a| {
+        refuse_read_only(&r, "List.AddRange")?;
         let items = list_items(&a[0])?;
         with_list(r, |l| {
             l.extend(items);
@@ -64,6 +66,11 @@ pub const REGISTRY: &[(&str, NativeFn)] = &[
         })
     }),
     ("List.LastIndexOf#1", |_, r, a| {
+        if matches!(a[0], Value::Dictionary(_)) {
+            return Err(Signal::Unsupported(
+                "List.LastIndexOf of a Dictionary (not pinned)".into(),
+            ));
+        }
         read_list_unpinned(r, |l| {
             Ok(Value::Integer(
                 l.iter().rposition(|x| eq(x, &a[0])).map_or(0, |p| p as i32 + 1),
@@ -81,8 +88,15 @@ pub const REGISTRY: &[(&str, NativeFn)] = &[
         })
     }),
     ("List.Remove#1", |_, r, a| {
+        let dictionary = matches!(a[0], Value::Dictionary(_));
         with_list(r, |l| {
-            Ok(Value::Boolean(match position(l, &a[0]) {
+            // A Dictionary is found by identity, any other one cannot be compared (CsCollections.al:DictionaryList_ContainsAndIndexOf).
+            let at = if dictionary {
+                position_checked(l, &a[0])?
+            } else {
+                position(l, &a[0])
+            };
+            Ok(Value::Boolean(match at {
                 Some(p) => {
                     l.remove(p);
                     true
@@ -94,6 +108,9 @@ pub const REGISTRY: &[(&str, NativeFn)] = &[
     // With the result used a bad index or range answers false and removes nothing (collections/ListInt.al:Int_Remove
     // `removeat 10 ret`, Int_RemoveRange `removerange 4,3`); the statement form raises.
     ("List.RemoveAt#1", |c, r, a| {
+        if c.ret_used() {
+            refuse_read_only(&r, "the result of a change")?;
+        }
         let done = (|| {
             let i = index(&a[0])?;
             with_list(r, |l| {
@@ -107,6 +124,9 @@ pub const REGISTRY: &[(&str, NativeFn)] = &[
         false_when_used(c.ret_used(), done)
     }),
     ("List.RemoveRange#1", |c, r, a| {
+        if c.ret_used() {
+            refuse_read_only(&r, "the result of a change")?;
+        }
         let done = (|| {
             let i = index(&a[0])?;
             let n = count(&a[1])?;
@@ -283,6 +303,23 @@ fn position_checked(l: &[Value], v: &Value) -> Result<Option<usize>, Signal> {
         }
         return Ok(None);
     }
+    // The same for a Dictionary: the same one is found, any other raises (collections/lt-cs-odd-leads/CsCollections.al:
+    // DictionaryList_ContainsAndIndexOf, `contains second`, `contains equal contents`).
+    if let Value::Dictionary(want) = v {
+        for (i, x) in l.iter().enumerate() {
+            match x {
+                Value::Dictionary(have) if Rc::ptr_eq(have, want) => return Ok(Some(i)),
+                Value::Dictionary(_) => {
+                    return error_code(
+                        "Unable to compare operands of type NavDictionary`2 with NavDictionary`2.",
+                        "InvalidComparison",
+                    );
+                }
+                _ => {}
+            }
+        }
+        return Ok(None);
+    }
     Ok(position(l, v))
 }
 
@@ -379,8 +416,22 @@ fn read_list_unpinned<T>(r: Option<&mut Value>, f: impl FnOnce(&[Value]) -> Resu
 
 fn with_list<T>(r: Option<&mut Value>, f: impl FnOnce(&mut Vec<Value>) -> Result<T, Signal>) -> Result<T, Signal> {
     match r {
+        // CsCollections.al:EnumOrdinals_Mutations (Reverse, Add, RemoveAt, Insert, Set, Remove, RemoveRange), EnumNames_Mutations.
+        Some(Value::List(l)) if l.borrow().read_only => {
+            error_code("The requested operation is not supported.", "NotSupportedOperation")
+        }
         Some(Value::List(l)) => f(&mut l.borrow_mut()),
         other => Err(Signal::Unsupported(format!("list method on {}", other.describe()))),
+    }
+}
+
+/// A change to a read-only list that is not pinned is refused (`ListVec::read_only`).
+fn refuse_read_only(r: &Option<&mut Value>, what: &str) -> Result<(), Signal> {
+    match r {
+        Some(Value::List(l)) if l.borrow().read_only => Err(Signal::Unsupported(format!(
+            "{what} on the list of Enum.Names or Enum.Ordinals (not pinned)"
+        ))),
+        _ => Ok(()),
     }
 }
 

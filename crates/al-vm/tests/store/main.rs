@@ -1,10 +1,12 @@
 //! The tests of one area in one binary (ADR-037 item 5): fewer binaries to link. Each module is a file of store/.
 
+mod autoinc_non_key;
 mod companies;
 mod delete_all_cascade;
 mod find_directions;
 mod find_other_key;
 mod fix_records;
+mod flowfield_write;
 mod flowfields;
 mod general_journal;
 mod hostvalues;

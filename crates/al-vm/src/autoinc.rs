@@ -108,12 +108,19 @@ impl Session {
         };
         // Texts and code: corpus record/TestCalcFieldsTruncateUniqueContracts.al:Truncate_Refusals_Texts.
         if rec.borrow().temporary {
-            return Err(Signal::Error(Box::new(AlError {
+            let e = AlError {
                 message: "Temporary tables does not support truncation.".into(),
                 code: "DB:Ok".into(),
                 call_stack: String::new(),
                 ..Default::default()
-            })));
+            };
+            // With the result used it answers false, keeps the rows and leaves the text in GetLastErrorText
+            // (record/lt-truncate-guards/TruncateGuards.al:P163_Truncate_Temporary_ReturnValueUsed_BQ).
+            if self.ret_used {
+                self.last_error = e;
+                return Ok(Value::Boolean(false));
+            }
+            return Err(Signal::Error(Box::new(e)));
         }
         let has_media = self.engine.program.objects[t.object as usize]
             .table
@@ -182,6 +189,51 @@ impl Session {
             .delete_subscribed
             .get_or_init(|| tables_with_delete_subscribers(&self.engine.program))
             .contains(&table.to_ascii_lowercase())
+    }
+
+    /// A Modify may not change an AutoIncrement field outside the primary key (record/TestAutoIncrementEdges.al:552-566, and :583-600
+    /// after a TransferFields from another row). Pinned on a database table without triggers: with a trigger, an event subscriber or
+    /// a database trigger the order of the check is not known, and on a temporary record nothing is pinned.
+    pub(crate) fn check_modify_auto_increment(
+        &mut self,
+        t: &TableDef,
+        rec: &crate::records::Rec,
+        old: &[Value],
+        run: bool,
+    ) -> Result<(), Signal> {
+        let Some(field) = self.auto_increment_field(t)? else {
+            return Ok(());
+        };
+        let new = rec.borrow().fields.clone();
+        if t.keys[0].contains(&field) || number(&old[field]) == number(&new[field]) {
+            return Ok(());
+        }
+        let mut trigger = run && self.table_trigger(t, "OnModify").is_some();
+        for n in ["OnBeforeModify", "OnModify", "OnAfterModify"] {
+            trigger |= run && !self.ext_triggers(t, n).is_empty();
+        }
+        if rec.borrow().temporary
+            || trigger
+            || self.listened(t, "onbeforemodifyevent", None)?
+            || self.listened(t, "onaftermodifyevent", None)?
+            || self.global_enabled(t, crate::globaltriggers::GlobalOp::Modify)?
+        {
+            return unsupported(
+                "a Modify that changes an AutoIncrement field of a temporary record or a table with triggers or events (not pinned)",
+            );
+        }
+        let br = crate::records::BR;
+        Err(Signal::Error(Box::new(AlError {
+            message: format!(
+                "You cannot change the value of an AutoIncrement field.{br}{br}Field: {}{br}Table: {}{br}{br}Identification fields and values:{br}{}",
+                t.fields[field].name,
+                self.caption(t),
+                self.identification(t, &new)?
+            ),
+            code: "DB:ModifyOnIdentityField".into(),
+            call_stack: String::new(),
+            ..Default::default()
+        })))
     }
 
     /// Rename may not change an AutoIncrement value (record/TestAutoIncrementExplicitKey.al:147,

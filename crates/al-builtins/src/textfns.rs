@@ -28,6 +28,10 @@ fn from_u16(u: &[u16]) -> String {
 }
 
 fn text(a: &[Value], i: usize) -> Result<crate::text::Txt, Signal> {
+    // An unknown value (`Value::Unknown`) is refused with the reason it holds.
+    if let Some(why) = a.get(i).and_then(Value::unknown) {
+        return unsupported(why);
+    }
     a.get(i)
         .and_then(text_of)
         .ok_or_else(|| Signal::Unsupported(format!("text argument {i} of type {}", a.get(i).describe())))
@@ -37,7 +41,10 @@ fn text(a: &[Value], i: usize) -> Result<crate::text::Txt, Signal> {
 fn recv_text(r: &Option<&mut Value>) -> Result<crate::text::Txt, Signal> {
     match r.as_deref().and_then(text_of) {
         Some(s) => Ok(s),
-        None => unsupported("Text method on something that is not text"),
+        None => match r.as_deref().and_then(Value::unknown) {
+            Some(why) => unsupported(why),
+            None => unsupported("Text method on something that is not text"),
+        },
     }
 }
 

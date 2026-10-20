@@ -145,7 +145,46 @@ pub(crate) struct Header {
     pub company_line1: String,
     /// The second line: the Address of the Company Information record when it is the only address field set.
     pub company_line2: String,
+    /// The values of the other company elements (`COMPANY_ELEMENTS`) that are not empty, by element name.
+    pub company_values: Vec<(&'static str, String)>,
 }
+
+/// The company elements after the address lines, in order, with the caption element each one has (en-US), and the
+/// field of the Company Information record that holds the value. The captions and the values of the CRONUS company:
+/// misc/lt-probes-needed-2/PnBReportSaveAs.al:568-592 (`0666-666-6666` is its Phone No., `World Wide Bank` its Bank Name).
+/// `CompanyLogo` (the Picture field, base64) has no caption.
+pub(crate) const COMPANY_ELEMENTS: [(&str, Option<&str>); 13] = [
+    ("CompanyPhone", Some("Phone No.")),
+    ("CompanyFaxNo", Some("Fax No.")),
+    ("CompanyEmail", Some("Email")),
+    ("CompanyHomePage", Some("Home Page")),
+    ("CompanyLogo", None),
+    ("CompanyVATRegistrationNo", Some("VAT Registration No.")),
+    ("CompanyRegistrationNo", Some("Registration No.")),
+    ("CompanyBankName", Some("Bank Name")),
+    ("CompanyBankAccountNo", Some("Bank Account No.")),
+    ("CompanyBankBranchNo", Some("Bank Branch No.")),
+    ("CompanyIBAN", Some("IBAN")),
+    ("CompanyBankSWIFT", Some("SWIFT Code")),
+    ("CompanyGiroNo", Some("Giro No.")),
+];
+
+/// The field of the Company Information record whose value an element of `COMPANY_ELEMENTS` writes.
+pub(crate) const COMPANY_FIELDS: [(&str, &str); 13] = [
+    ("CompanyPhone", "Phone No."),
+    ("CompanyFaxNo", "Fax No."),
+    ("CompanyEmail", "E-Mail"),
+    ("CompanyHomePage", "Home Page"),
+    ("CompanyLogo", "Picture"),
+    ("CompanyVATRegistrationNo", "VAT Registration No."),
+    ("CompanyRegistrationNo", "Registration No."),
+    ("CompanyBankName", "Bank Name"),
+    ("CompanyBankAccountNo", "Bank Account No."),
+    ("CompanyBankBranchNo", "Bank Branch No."),
+    ("CompanyIBAN", "IBAN"),
+    ("CompanyBankSWIFT", "SWIFT Code"),
+    ("CompanyGiroNo", "Giro No."),
+];
 
 /// The language and format region of the session. Only en-US is pinned.
 pub(crate) const LANGUAGE: &str = "en-US";
@@ -162,8 +201,7 @@ impl Header {
     /// The declaration, the root element and the information block, up to the data items.
     /// Elements: handlers/TestReportSaveAsDatasetContracts.al:SaveAs_Xml_WritesAByteOrderMarkDeclarationAndHeader;
     /// `BCReportInformation/ReportMetadata/...` for the report's own: handlers/TestReportDatasetHelpLink.al.
-    /// How the other elements are grouped is not pinned: they follow `ReportMetadata` in the
-    /// order the probe lists them, directly under `BCReportInformation`.
+    /// `ReportRequest` and, from BC 29, `CompanyMetadata` follow `ReportMetadata` under `BCReportInformation`.
     fn write(&self, out: &mut String) -> Result<(), Signal> {
         out.push_str("<?xml version=\"1.0\" standalone=\"yes\"?>\r\n");
         out.push_str(&format!(
@@ -206,20 +244,29 @@ impl Header {
         )?;
         element(out, 6, "Language", LANGUAGE)?;
         element(out, 6, "FormatRegion", LANGUAGE)?;
-        element(out, 6, "Year", &y.to_string())?;
-        element(out, 6, "MonthNumber", &mo.to_string())?;
-        element(out, 6, "DayNumber", &d.to_string())?;
-        element(out, 6, "Hour", &h.to_string())?;
-        element(out, 6, "Minute", &mi.to_string())?;
+        // The clock parts sit in `DateTimeValues`, two spaces further in, and `ReportRequest` closes after it
+        // (misc/lt-probes-needed-2/PnBReportSaveAs.al:542-549, report/W3ReportDataset.al:524-534 on BC 29; on BC 27 and
+        // 28 report/W3ReportDataset.al:256 counts 46 line ends, the two lines of this element more than a flat list).
+        out.push_str("      <DateTimeValues>\r\n");
+        element(out, 8, "Year", &y.to_string())?;
+        element(out, 8, "MonthNumber", &mo.to_string())?;
+        element(out, 8, "DayNumber", &d.to_string())?;
+        element(out, 8, "Hour", &h.to_string())?;
+        element(out, 8, "Minute", &mi.to_string())?;
+        out.push_str("      </DateTimeValues>\r\n");
+        out.push_str("    </ReportRequest>\r\n");
         if self.company_block {
-            // The company information block: after `Minute`, in the order the probe lists it. The
-            // corpus company has no information record whose values a test reads.
+            // BC 29: the company information is a sibling of `ReportRequest`, the address lines one element of their
+            // own (misc/lt-probes-needed-2/PnBReportSaveAs.al:558-596, report/W3ReportDataset.al:532-590). The captions
+            // are the texts those probes read (en-US); the values are the fields of the Company Information record.
+            out.push_str("    <CompanyMetadata>\r\n");
             element(out, 6, "CompanyName", &self.company_name)?;
             element(out, 6, "CompanyDisplayName", &self.company_name)?;
+            out.push_str("      <CompanyAddressLines>\r\n");
             for n in 1..=8 {
                 element(
                     out,
-                    6,
+                    8,
                     &format!("CompanyAddressLine{n}"),
                     match n {
                         1 => &self.company_line1,
@@ -228,28 +275,20 @@ impl Header {
                     },
                 )?;
             }
-            for (name, caption) in [
-                ("CompanyPhone", true),
-                ("CompanyFaxNo", true),
-                ("CompanyEmail", true),
-                ("CompanyHomePage", true),
-                ("CompanyLogo", false),
-                ("CompanyVATRegistrationNo", true),
-                ("CompanyRegistrationNo", true),
-                ("CompanyBankName", true),
-                ("CompanyBankAccountNo", true),
-                ("CompanyBankBranchNo", true),
-                ("CompanyIBAN", true),
-                ("CompanyBankSWIFT", true),
-                ("CompanyGiroNo", true),
-            ] {
-                element(out, 6, name, "")?;
-                if caption {
-                    element(out, 6, &format!("{name}Caption"), "")?;
+            out.push_str("      </CompanyAddressLines>\r\n");
+            for (name, caption) in COMPANY_ELEMENTS {
+                let value = self
+                    .company_values
+                    .iter()
+                    .find(|(n, _)| *n == name)
+                    .map_or("", |(_, v)| v.as_str());
+                element(out, 6, name, value)?;
+                if let Some(caption) = caption {
+                    element(out, 6, &format!("{name}Caption"), caption)?;
                 }
             }
+            out.push_str("    </CompanyMetadata>\r\n");
         }
-        out.push_str("    </ReportRequest>\r\n");
         out.push_str("  </BCReportInformation>\r\n");
         Ok(())
     }

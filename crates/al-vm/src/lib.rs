@@ -559,6 +559,11 @@ pub struct Session {
     /// Records a TransferFields from another table wrote into, with that row's version: the next Modify refuses when the stale
     /// check would answer differently with it (records.rs `take_foreign_transfer`).
     pub(crate) foreign_transfers: Vec<(std::rc::Weak<RefCell<RecordState>>, Value)>,
+    /// A `ModifyAll(Field, Value, false)` of a table without modify events is running: every row is written, also one whose value
+    /// does not change (recmeta.rs `modify_all`).
+    pub(crate) bulk_modify: bool,
+    /// The `RecordRef.GetTable` that runs was given a Variant (refs.rs `ref_op`).
+    pub(crate) get_table_from_variant: bool,
     /// The host session behind `DotNet` values; ends with the session (ADR-014 section 6).
     pub(crate) dotnet: dotnet::DotNetState,
     /// The session's application areas as `ApplicationArea()` reads them: `#Basic,#Suite`, or the
@@ -746,6 +751,8 @@ impl Session {
             media,
             media_removed: Default::default(),
             foreign_transfers: Vec::new(),
+            bulk_modify: false,
+            get_table_from_variant: false,
             dotnet: Default::default(),
             application_areas: String::new(),
             tx: TxState {
@@ -788,6 +795,7 @@ impl Session {
                 sender_refused: None,
                 var_origins: Vec::new(),
                 next_aliases: Vec::new(),
+                next_is_subscriber: false,
                 next_var_lens: Vec::new(),
                 publisher_var_lens: Vec::new(),
                 unpinned_event_depth: 0,
@@ -1262,6 +1270,7 @@ impl Session {
         args: Vec<Value>,
     ) -> Result<(Value, Vec<Value>), Signal> {
         let aliases = std::mem::take(&mut self.events.next_aliases);
+        let subscriber_call = std::mem::take(&mut self.events.next_is_subscriber);
         self.first_use(&instance)?;
         let engine = self.engine.clone();
         let r = &engine.program.objects[object].routines[routine];
@@ -1304,6 +1313,23 @@ impl Session {
                     let mut st = rc.borrow().clone();
                     st.temporary = false;
                     st.temp_id = None;
+                    Value::Record(Rc::new(RefCell::new(st)))
+                }
+                // A record of the stored table handed by value to a parameter declared `temporary` gives the callee a temporary
+                // record with the record's values over an empty table of its own (events/lt-cl-event-leads/ClEventLeads.al:70
+                // `ins.temporary temp=Yes count=0 id=103`, an OnAfterInsertEvent subscriber). Pinned only for a subscriber; a plain
+                // procedure call does the same and marks the assumption stored-record-to-temporary-parameter (Tests-Bank needs it).
+                (Value::Record(rc), false)
+                    if !rc.borrow().temporary && matches!(r.locals[i].ty, RtType::Record(_, true)) =>
+                {
+                    if !subscriber_call {
+                        al_builtins::assumptions::assume(
+                            al_builtins::assumptions::Assumption::StoredRecordToTemporaryParameter,
+                        );
+                    }
+                    let mut st = rc.borrow().clone();
+                    st.temporary = true;
+                    st.temp_id = Some(self.new_temp_id());
                     Value::Record(Rc::new(RefCell::new(st)))
                 }
                 (Value::Record(rc), false) => self.record_by_value(&rc),
@@ -1349,6 +1375,9 @@ impl Session {
                 ) if matches!(r.locals[i].ty, RtType::Text(_) | RtType::Code(_)) => {
                     return Err(self.variant_to_text_error(matches!(r.locals[i].ty, RtType::Code(_))));
                 }
+                // An event argument the platform leaves unknown (RequestPageXml of SubstituteReport for an Html SaveAs, reports.rs)
+                // is passed on by value as it is: a routine that never reads it runs, a read is refused where it happens.
+                (a @ Value::Unknown(_), false) => a,
                 (a, _) => ops::convert_plain(a, &r.locals[i].ty)?,
             };
         }

@@ -981,6 +981,10 @@ impl Parser<'_> {
                 self.root_at = self.i;
                 children.push(self.element()?);
                 root_seen = true;
+            } else if !self.starts("<") && root_seen && self.peek() == Some('\0') {
+                // The zero byte `OutStream.Write(Text)` adds after the text, read back after the root element: .NET names the
+                // character `.` (xml/lt-de-xml-leads/DeXmlWriteLeads.al:85-89, positions 155 and 32).
+                return self.fail_at("'.', hexadecimal value 0x00, is an invalid character.", self.i);
             } else if !self.starts("<") {
                 return self.fail_at("Data at the root level is invalid.", self.i);
             } else {
@@ -1283,6 +1287,24 @@ impl Writer {
                 } else {
                     format!(" xmlns:{declared}=\"{s}\"")
                 });
+            } else if ap.is_empty() && al == "xmlns" && ans.is_empty() {
+                // `XmlAttribute.Create('xmlns', Uri)` on an element: the same URI as the element's own namespace is written once,
+                // another one raises when the start tag is written (xml/lt-de-xml-leads/DeXmlWriteLeads.al:246-310). On an element
+                // with a prefix it is not pinned.
+                if !prefix.is_empty() {
+                    return unsupported("an xmlns attribute on an element with a prefix (not pinned)");
+                }
+                if av != ns {
+                    return Err(error(
+                        format!(
+                            "The following exception was encountered when processing XML data: 'The prefix '' cannot be redefined from '{ns}' to '{av}' within the same start element tag.' at line 0 and position 0."
+                        ),
+                        "Xml:Xml",
+                    ));
+                }
+                if ns.is_empty() {
+                    return unsupported("an empty xmlns attribute on an element without a namespace (not pinned)");
+                }
             } else {
                 plain.push((ap, al, ans, av));
             }

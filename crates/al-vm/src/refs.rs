@@ -130,13 +130,15 @@ fn enumerable_fields(s: &Session, t: &TableDef) -> Vec<usize> {
         return v;
     }
     // The FlowFields come after the other fields: Custom Report Layout lists 1, 2, 4, ..., 15 and then its FlowField 3
-    // (metadata/lt-custom-report-layout-columns/CustomReportLayoutColumns.al:33-44). Where a FlowFilter goes is not pinned.
-    let flow = |i: usize| {
-        s.field_property(t, i, "FieldClass")
-            .is_some_and(|c| c.trim().eq_ignore_ascii_case("FlowField"))
+    // (metadata/lt-custom-report-layout-columns/CustomReportLayoutColumns.al:33-44). The FlowFilters come between the normal
+    // fields and the FlowFields (the same file, PW_FieldIndex_FlowFilterAmongNormalFields: `1, 3, 5, 7, 20`, then `2, 6`, then `4, 8`).
+    let class = |i: usize| match s.field_property(t, i, "FieldClass") {
+        Some(c) if c.trim().eq_ignore_ascii_case("FlowField") => 2,
+        Some(c) if c.trim().eq_ignore_ascii_case("FlowFilter") => 1,
+        _ => 0,
     };
-    if v.iter().any(|&i| flow(i)) {
-        v.sort_by_key(|&i| (flow(i), t.fields[i].id));
+    if v.iter().any(|&i| class(i) > 0) {
+        v.sort_by_key(|&i| (class(i), t.fields[i].id));
     }
     v
 }
@@ -157,6 +159,12 @@ impl Session {
     }
 
     pub(crate) fn ref_op(&mut self, id: &str, recv: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
+        let id = if id == "RecordRef.GetTableVariant#1" {
+            self.get_table_from_variant = true;
+            "RecordRef.GetTable#1"
+        } else {
+            id
+        };
         let Some(sig) = catalog().by_id(id) else {
             return unsupported(format!("builtin {id}"));
         };
@@ -664,7 +672,17 @@ impl Session {
             // (recordref/TestRecordRefGetSetTableContracts.al:30-60).
             // A ref that was never opened takes its table from the record (Assert.RecordIsEmpty does this).
             "GetTable" => {
+                let from_variant = std::mem::take(&mut self.get_table_from_variant);
                 let src = match args.first() {
+                    // Through a Variant the record keeps its filters and loses its ChangeCompany
+                    // (types/lt-cw-variant-leads/CwVariantChangeCompany.al:CW_Variant_KeepsOrDropsChangeCompany `variant to recordref`,
+                    // record/TestChangeCompanyFiltersCopyDeleteContracts.al:248 `variantGetTableCompany`).
+                    Some(Value::Record(src)) if from_variant => {
+                        let mut copy = src.borrow().clone();
+                        copy.company = None;
+                        *lib.borrow_mut() = LibraryValue::RecordRef(Rc::new(RefCell::new(copy)));
+                        return Ok(Value::Null);
+                    }
                     Some(Value::Record(src)) => src.clone(),
                     // A RecordRef as the source (Microsoft's Gen. Jnl.-Post Preview): the same copy of its record.
                     Some(Value::Library(_, other)) => match &*other.borrow() {

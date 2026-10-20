@@ -130,13 +130,15 @@ fn enumerable_fields(s: &Session, t: &TableDef) -> Vec<usize> {
         return v;
     }
     // The FlowFields come after the other fields: Custom Report Layout lists 1, 2, 4, ..., 15 and then its FlowField 3
-    // (metadata/lt-custom-report-layout-columns/CustomReportLayoutColumns.al:33-44). Where a FlowFilter goes is not pinned.
-    let flow = |i: usize| {
-        s.field_property(t, i, "FieldClass")
-            .is_some_and(|c| c.trim().eq_ignore_ascii_case("FlowField"))
+    // (metadata/lt-custom-report-layout-columns/CustomReportLayoutColumns.al:33-44). The FlowFilters come between the normal
+    // fields and the FlowFields (the same file, PW_FieldIndex_FlowFilterAmongNormalFields: `1, 3, 5, 7, 20`, then `2, 6`, then `4, 8`).
+    let class = |i: usize| match s.field_property(t, i, "FieldClass") {
+        Some(c) if c.trim().eq_ignore_ascii_case("FlowField") => 2,
+        Some(c) if c.trim().eq_ignore_ascii_case("FlowFilter") => 1,
+        _ => 0,
     };
-    if v.iter().any(|&i| flow(i)) {
-        v.sort_by_key(|&i| (flow(i), t.fields[i].id));
+    if v.iter().any(|&i| class(i) > 0) {
+        v.sort_by_key(|&i| (class(i), t.fields[i].id));
     }
     v
 }

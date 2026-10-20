@@ -108,12 +108,19 @@ impl Session {
         };
         // Texts and code: corpus record/TestCalcFieldsTruncateUniqueContracts.al:Truncate_Refusals_Texts.
         if rec.borrow().temporary {
-            return Err(Signal::Error(Box::new(AlError {
+            let e = AlError {
                 message: "Temporary tables does not support truncation.".into(),
                 code: "DB:Ok".into(),
                 call_stack: String::new(),
                 ..Default::default()
-            })));
+            };
+            // With the result used it answers false, keeps the rows and leaves the text in GetLastErrorText
+            // (record/lt-truncate-guards/TruncateGuards.al:P163_Truncate_Temporary_ReturnValueUsed_BQ).
+            if self.ret_used {
+                self.last_error = e;
+                return Ok(Value::Boolean(false));
+            }
+            return Err(Signal::Error(Box::new(e)));
         }
         let has_media = self.engine.program.objects[t.object as usize]
             .table

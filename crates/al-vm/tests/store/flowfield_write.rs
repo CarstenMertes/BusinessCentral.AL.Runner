@@ -282,3 +282,38 @@ codeunit 50351 T
 fn modifyall_without_triggers_stamps_a_row_that_keeps_its_value() {
     assert_eq!(text(run_in(BULK, "T", "F")), "No/Yes");
 }
+
+const ORDER: &str = r#"
+table 50360 F
+{
+    fields
+    {
+        field(1; A; Integer) { }
+        field(2; DF; Date) { FieldClass = FlowFilter; }
+        field(3; B; Integer) { }
+        field(4; N; Integer) { FieldClass = FlowField; CalcFormula = count(F); }
+    }
+    keys { key(PK; A) { } }
+}
+
+codeunit 50361 T
+{
+    procedure F(): Text
+    var
+        RR: RecordRef;
+        i: Integer;
+        R: Text;
+    begin
+        RR.Open(Database::F);
+        for i := 1 to RR.FieldCount() do
+            R += Format(RR.FieldIndex(i).Number()) + ';';
+        exit(R);
+    end;
+}
+"#;
+
+// metadata/lt-custom-report-layout-columns/CustomReportLayoutColumns.al:PW_FieldIndex_FlowFilterAmongNormalFields.
+#[test]
+fn fieldindex_lists_normal_fields_then_flowfilters_then_flowfields() {
+    assert_eq!(text(run_in(ORDER, "T", "F")), "1;3;2;4;");
+}

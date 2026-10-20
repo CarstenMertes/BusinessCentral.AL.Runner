@@ -73,3 +73,30 @@ fn modifyall_cannot_change_a_non_key_autoincrement_field() {
         "You cannot change the value of the Seq field.\\\\Table: A|DB:Ok"
     );
 }
+
+const TRUNC: &str = r#"
+table 50322 TT { fields { field(1; Id; Integer) { } } keys { key(PK; Id) { } } }
+
+codeunit 50323 T
+{
+    procedure F(): Text
+    var
+        Temp: Record TT temporary;
+        Ok: Boolean;
+    begin
+        Temp.Id := 1;
+        Temp.Insert();
+        Ok := Temp.Truncate();
+        exit(Format(Ok) + '|' + GetLastErrorText() + '|' + Format(Temp.Count()));
+    end;
+}
+"#;
+
+// record/lt-truncate-guards/TruncateGuards.al:P163_Truncate_Temporary_ReturnValueUsed_BQ.
+#[test]
+fn truncate_of_a_temporary_record_with_the_result_used_answers_false() {
+    assert_eq!(
+        text(run_in(TRUNC, "T", "F")),
+        "No|Temporary tables does not support truncation.|1"
+    );
+}

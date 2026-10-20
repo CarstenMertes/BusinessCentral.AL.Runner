@@ -157,10 +157,12 @@ impl Session {
             al_builtins::assumptions::assume(*a);
         }
         self.page_instance(st)?;
+        let language = al_builtins::format::FormatCtx::language(&*self);
         {
             let mut s = st.borrow_mut();
             let first_run = !s.ran;
             s.open = true;
+            s.open_language = Some(language);
             s.ran = true;
             s.mode = mode;
             s.cursor = Cursor::None;

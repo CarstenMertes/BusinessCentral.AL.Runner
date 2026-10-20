@@ -91,6 +91,7 @@ impl Lowerer<'_> {
                     None if self.supplied_by_with(node) => Some(Box::new(ir::Expr::Load(self.implicit_rec(node)?))),
                     None if object == self.oi => {
                         self.declared_in_both_proc(object, offset)?;
+                        self.bare_is_dirty_unpinned(node, object, offset)?;
                         None
                     }
                     // A page or report extension calling a procedure of the page or report it extends.
@@ -231,6 +232,9 @@ impl Lowerer<'_> {
                     None
                 };
                 let option_captions = if id == "System.Evaluate#1" {
+                    if let Some(a) = args.first() {
+                        self.refuse_evaluate_option_caption_ml(a)?;
+                    }
                     args.first().and_then(|a| self.option_field_captions(a))
                 } else {
                     None
@@ -491,7 +495,13 @@ impl Lowerer<'_> {
                     // 'Variant' (corpus types/lt-scalars/ScT70052.al): `System.FormatVariant#1` checks the number when it runs,
                     // a literal, a variable or an expression alike.
                     } else if id.starts_with("System.Format#") && i == 0 {
-                        ir::Arg::Value(self.format_option_field(args.len() == 1, a)?)
+                        ir::Arg::Value(self.format_option_field(
+                            args.len() == 1,
+                            args.len() == 3
+                                && args[1].text().to_string().trim() == "0"
+                                && args[2].text().to_string().trim() == "9",
+                            a,
+                        )?)
                     // The substituted values of StrSubstNo, Message and Error are `Format`ted: an Option
                     // field shows its caption (corpus xmlport/PWXmlPortFormatEvaluate.al:Import_Xml_Option,
                     // `%3` of a field with OptionCaption).
@@ -500,7 +510,7 @@ impl Lowerer<'_> {
                             || id.starts_with("Dialog.Message#")
                             || id.starts_with("Dialog.Error#"))
                     {
-                        ir::Arg::Value(self.format_option_field(true, a)?)
+                        ir::Arg::Value(self.format_option_field(true, false, a)?)
                     } else {
                         ir::Arg::Value(self.expr(a)?)
                     });
@@ -564,6 +574,30 @@ impl Lowerer<'_> {
                 }
             )),
         }
+    }
+
+    /// A bare call of a codeunit's own IsDirty in a codeunit with TableNo, outside its OnRun: whether the call is the
+    /// codeunit's procedure or Record.IsDirty of the implicit Rec is not pinned (only OnRun is:
+    /// events/lt-with-statement-scopes/WithStatementAmbiguous.al:277-279, see `Checker::lookup_callable`).
+    fn bare_is_dirty_unpinned(&self, node: &SyntaxNode, object: usize, offset: usize) -> L<()> {
+        if self.ws.objects[object].kind != ObjKind::Codeunit || self.rec_slot.is_none() {
+            return Ok(());
+        }
+        let named_is_dirty = self.members[object]
+            .procedures
+            .iter()
+            .any(|p| p.offset == offset && p.name.eq_ignore_ascii_case("IsDirty"));
+        if !named_is_dirty {
+            return Ok(());
+        }
+        let in_on_run = node
+            .ancestors()
+            .find_map(ast::Routine::cast)
+            .is_some_and(|r| r.is_trigger() && r.name().eq_ignore_ascii_case("OnRun"));
+        if in_on_run {
+            return Ok(());
+        }
+        Err("a bare IsDirty() outside OnRun of a codeunit with TableNo: its own procedure or Record.IsDirty is not pinned".into())
     }
 
     /// The checker's AR1005 on this call, if any.

@@ -5,6 +5,7 @@ mod control_entry;
 mod control_text;
 mod curr_field_no_assign;
 mod filterpage;
+mod flowfield_drilldown;
 mod gone_row;
 mod pageext;
 mod pages;

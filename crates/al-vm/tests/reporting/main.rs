@@ -8,6 +8,7 @@ mod report_custom_layout;
 mod report_link_filter;
 mod report_no_output;
 mod report_obsolete_properties;
+mod report_option_caption_ml;
 mod report_properties;
 mod report_saveas;
 mod report_saveas_events;

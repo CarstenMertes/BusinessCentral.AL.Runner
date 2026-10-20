@@ -327,6 +327,10 @@ pub struct PageState {
     /// `Visible` of each control as it was when the page opened (the property is frozen then,
     /// corpus handlers/TestPageControlPropertyLiveness_Tests.al:56).
     pub frozen_visible: Vec<bool>,
+    /// The session language when the page opened: OptionCaptionML shows the captions of that language, whatever
+    /// `GlobalLanguage` says later (pages/lt-page-controls-aa/AaFieldProps.al:179-219, pageext/lt-z-modify-controls/
+    /// ZModifyControls.al:322-360). `None` before the first open.
+    pub open_language: Option<i32>,
     /// The caption each control's CaptionClass resolved to when the page filled: (control index, class text, caption).
     /// `Caption()` reads it without raising OnResolveCaptionClass again (corpus misc/W2CaptionClass.al:113-116).
     pub control_captions: Vec<(usize, String, String)>,
@@ -486,6 +490,7 @@ impl PageState {
             draft: false,
             dirty: false,
             frozen_visible: Vec::new(),
+            open_language: None,
             control_captions: Vec::new(),
             window: Vec::new(),
             window_from_start: false,

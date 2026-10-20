@@ -1064,3 +1064,22 @@ pub(crate) fn var_attribute_names(v: &ast::VarDecl) -> Vec<String> {
         .filter(|n| matches!(n.as_str(), "runonclient" | "withevents" | "securityfiltering"))
         .collect()
 }
+
+/// The text properties of `obj` (its controls, fields, columns and actions included) whose text is longer than their
+/// `MaxLength`, as refusal reasons. Only a `Caption` and a Label are pinned (they are cut: record/lt-u-table-field-props/
+/// UTableTextSearch.al:41-44, text/lt-label-textbuilder/TxCLabel.al:282); on any other property whether BC cuts the text is
+/// not pinned, so the object that holds it is refused where it is used.
+pub(crate) fn over_max_length(obj: &ast::Object) -> Vec<String> {
+    obj.syntax()
+        .descendants()
+        .filter_map(ast::Property::cast)
+        .filter(|p| al_syntax::ast::text_over_max_length(&p.value_text()))
+        .map(|p| {
+            format!(
+                "property {} of {} has a text longer than its MaxLength (whether it is cut is not pinned)",
+                p.name(),
+                obj.name()
+            )
+        })
+        .collect()
+}

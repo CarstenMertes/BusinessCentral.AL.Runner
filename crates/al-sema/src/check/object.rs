@@ -583,6 +583,9 @@ impl<'a> Checker<'a> {
                 base_obj: *base_obj,
                 base_vars: base_vars.clone(),
                 withs: Vec::new(),
+                codeunit_on_run: self.ws.objects[oi].kind == ObjKind::Codeunit
+                    && r.is_trigger()
+                    && r.name().eq_ignore_ascii_case("OnRun"),
             };
             let mut locals = super::posmap::FxMap::default();
             for p in r.params() {

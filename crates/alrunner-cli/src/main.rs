@@ -23,6 +23,8 @@ use std::process::ExitCode;
 static ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 fn main() -> ExitCode {
+    // A crash (SIGSEGV and the like) names the test it hit instead of ending the run without a word.
+    al_testrun::crash::install();
     // An AL call nests native frames of the bytecode loop; give the runner thread room.
     let worker = std::thread::Builder::new()
         .stack_size(512 << 20)

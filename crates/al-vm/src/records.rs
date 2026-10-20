@@ -2151,7 +2151,20 @@ impl Session {
                     Self::unstamp(rec, stamped);
                     return self.fail_unique(&t, unique_key, &row);
                 }
-                let mut stored = Self::to_store(rec, self.stored_view(&t, &row));
+                let mut view = self.stored_view(&t, &row);
+                // A temporary row keeps the FlowField values a Modify wrote: a Get, a Find and a later CalcFields-free read show them
+                // (record/lt-flowfield-write/DiFwWriteTests.al:606-616, `after Modify`, `after Get`, `Get after CalcFields`).
+                // An Insert does not (`insert then Get` = 0).
+                if rec.borrow().temporary {
+                    let engine = self.engine.clone();
+                    let schema = engine.program.objects[t.object as usize].table.as_ref().expect("table");
+                    for (i, f) in t.fields.iter().enumerate() {
+                        if !f.stored && f.id < 2_000_000_000 && !schema.fields[i].flow_filter {
+                            view[i] = row[i].clone();
+                        }
+                    }
+                }
+                let mut stored = Self::to_store(rec, view);
                 // Only the Insert of a value the SQL column cannot hold is pinned (errors/lt-ms-refusals-130/P130DateFilters.al:234-275).
                 if self.sql_columns(rec, &t, &mut stored)?.is_some() {
                     return unsupported("a Modify of a value its SQL column cannot hold (not pinned)");
@@ -3033,6 +3046,12 @@ impl Session {
                 let engine = self.engine.clone();
                 let schema = engine.program.objects[t.object as usize].table.as_ref().expect("table");
                 let field = &schema.fields[pos];
+                // A FlowField (record/lt-flowfield-write/DiFwWriteTests.al): flowfields.rs `validate_flowfield`.
+                if !field.stored && !field.flow_filter && field.id < 2_000_000_000 {
+                    let value = args.get(1).cloned();
+                    self.validate_flowfield(rec, &t, pos, value.as_ref())?;
+                    return Ok(Value::Null);
+                }
                 // A Validate nested in an OnValidate of the same record keeps the outer call's
                 // before-image as xRec (corpus record/TestXRecContracts.al:133).
                 // `handle` is the address of `rec`, which this call borrows for as long as the entry exists, and the

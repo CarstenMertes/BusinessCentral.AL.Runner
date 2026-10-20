@@ -1199,7 +1199,15 @@ impl Session {
             std::mem::discriminant(a) == std::mem::discriminant(b)
         };
         let mut updates = Vec::new();
+        let engine = self.engine.clone();
+        let schema = engine.program.objects[t.object as usize].table.as_ref().expect("table");
         for (dp, df) in t.fields.iter().enumerate() {
+            // Within one table a FlowField's value moves too, assigned or calculated; from or into another table it does not
+            // (record/lt-flowfield-write/DiFwWriteTests.al:504-513, `assigned to normal`, `normal to flow`).
+            if df.id < 2_000_000_000 && !df.stored && !schema.fields[dp].flow_filter && src_table == t.object as usize {
+                updates.push((dp, src_fields[dp].clone()));
+                continue;
+            }
             if df.id >= 2_000_000_000 || !df.stored {
                 continue;
             }

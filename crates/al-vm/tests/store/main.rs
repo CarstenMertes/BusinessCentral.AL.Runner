@@ -5,6 +5,7 @@ mod delete_all_cascade;
 mod find_directions;
 mod find_other_key;
 mod fix_records;
+mod flowfield_write;
 mod flowfields;
 mod general_journal;
 mod hostvalues;

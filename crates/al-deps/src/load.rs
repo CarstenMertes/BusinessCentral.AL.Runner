@@ -358,6 +358,16 @@ pub type ScanCache = std::collections::HashMap<PathBuf, (Vec<Found>, Vec<String>
 /// Looks at the packages in the search directories and chooses one for every dependency; reads
 /// only their manifests. `scans` remembers entries already looked at.
 pub fn plan_dependencies(req: &Request<'_>, scans: &mut ScanCache) -> Result<Planned, String> {
+    plan_dependencies_labeled(req, scans, &|_| None)
+}
+
+/// [`plan_dependencies`] where `label` may name where a package came from for messages (for
+/// example "the artifact feed"); `None` names it by its path.
+pub fn plan_dependencies_labeled(
+    req: &Request<'_>,
+    scans: &mut ScanCache,
+    label: &dyn Fn(&Path) -> Option<String>,
+) -> Result<Planned, String> {
     let mut pool: Vec<Candidate> = Vec::new();
     let mut paths: Vec<Option<PathBuf>> = Vec::new();
     let mut notes = Vec::new();
@@ -393,7 +403,7 @@ pub fn plan_dependencies(req: &Request<'_>, scans: &mut ScanCache) -> Result<Pla
                 has_source: f.has_source,
                 tier,
                 from_workspace: false,
-                origin: f.path.display().to_string(),
+                origin: label(&f.path).unwrap_or_else(|| f.path.display().to_string()),
                 deps: m.dependencies,
                 platform: m.platform,
                 application: m.application,

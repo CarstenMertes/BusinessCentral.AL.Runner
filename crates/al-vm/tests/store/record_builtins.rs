@@ -595,14 +595,15 @@ fn locking_isolation_and_security_settings_round_trip() {
 }
 
 #[test]
-fn lock_table_without_waiting_is_refused_not_guessed() {
-    // corpus record/TestRecordLock.al:33-41 expects an error containing 'not supported'; the rest of the text is unpinned
+fn lock_table_without_waiting_fails() {
+    // record/TestRecordLock.al:38 and record/lt-record-write/RcBMeta.al:415-419 pin the text and code.
     let r = run(
         "procedure F() var R: Record \"ALT T\"; begin R.LockTable(false, true); end;",
         "F",
     );
     assert!(
-        matches!(r, Err(Signal::Unsupported(ref m)) if m.contains("LockTable")),
+        matches!(r, Err(Signal::Error(ref e)) if e.code.as_str() == "AL:LockTableBadParm"
+            && e.message == "The request to lock the ALT T table with a Wait parameter of FALSE is not supported."),
         "{r:?}"
     );
 }

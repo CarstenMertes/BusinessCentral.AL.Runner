@@ -379,6 +379,35 @@ impl Checker<'_> {
         }
     }
 
+    /// The roots the install run adds (ADR-046 step A): with `baseline`, a dependency app's subscribers to the install
+    /// events of `Extension Triggers`, which run with its install codeunits; with `install_code` (an app under test has
+    /// install code that runs), the dependency apps' subscribers to `OnCompanyOpen` and `OnCompanyOpenCompleted` of
+    /// `Company Triggers`, which the install session raises before the per-company install code.
+    pub(super) fn reach_install_events(&self, baseline: bool, install_code: bool) {
+        if baseline {
+            for (o, k) in self.ws.extension_triggers_subscribers() {
+                let event = &self.ws.objects[o].subscribers[k].event;
+                if self.ws.is_dependency(o)
+                    && (event.eq_ignore_ascii_case("OnInstallAppPerCompany")
+                        || event.eq_ignore_ascii_case("OnInstallAppPerDatabase"))
+                {
+                    self.reach_subscriber(o, k);
+                }
+            }
+        }
+        if install_code {
+            for (o, k) in self.ws.company_triggers_subscribers() {
+                let event = &self.ws.objects[o].subscribers[k].event;
+                if self.ws.is_dependency(o)
+                    && (event.eq_ignore_ascii_case("OnCompanyOpen")
+                        || event.eq_ignore_ascii_case("OnCompanyOpenCompleted"))
+                {
+                    self.reach_subscriber(o, k);
+                }
+            }
+        }
+    }
+
     /// The codeunits the test runner runs around every test method ([`TEST_RUNNER_CODEUNITS`]): their OnRun is a root
     /// whenever a dependency app holds them, as nothing in the apps names them.
     pub(super) fn reach_test_runner(&self) {

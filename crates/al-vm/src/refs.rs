@@ -757,11 +757,22 @@ impl Session {
             }
             // Doc (RecordRef.Duplicate): a new ref with the same table, buffer and filters, independent of the original.
             "RecordId" => Ok(self.record_id(&rec, &t)),
-            "LockTable" | "ReadConsistency" | "RecordLevelLocking" | "ReadPermission" | "WritePermission"
-            | "CountApprox" | "ReadIsolation" | "SecurityFiltering" | "GetPosition" | "SetPosition" | "Ascending"
-            | "SetRecFilter" | "Mark" | "MarkedOnly" | "ClearMarks" => {
-                self.record_meta_op(record_method(method), &rec, &t, args)
+            "LockTable" => {
+                // RecordRef.LockTable(true, true) raises the Wait = FALSE error (recordref/lt-refs/RfTViews.al:314-322).
+                if matches!(args, [Value::Boolean(true), Value::Boolean(true)]) {
+                    return Err(crate::recmeta::lock_table_bad_parm(&t));
+                }
+                // What a RecordRef's LockTable does to its ReadIsolation is not pinned (only Record's is,
+                // misc/lt-cv-odd-leads/CvReadIsolationState.al:47-48).
+                if rec.borrow().read_isolation != 0 && !matches!(args.first(), Some(Value::Boolean(false))) {
+                    return unsupported("RecordRef.LockTable after a ReadIsolation was set (not pinned)");
+                }
+                let mut a: Vec<Value> = args.iter().take(1).cloned().collect();
+                self.record_meta_op(RecordOp::LockTable, &rec, &t, &mut a)
             }
+            "ReadConsistency" | "RecordLevelLocking" | "ReadPermission" | "WritePermission" | "CountApprox"
+            | "ReadIsolation" | "SecurityFiltering" | "GetPosition" | "SetPosition" | "Ascending" | "SetRecFilter"
+            | "Mark" | "MarkedOnly" | "ClearMarks" => self.record_meta_op(record_method(method), &rec, &t, args),
             // Doc (RecordRef.Get): loads the row a RecordId names; the table must be the ref's own.
             "Get" => {
                 let key = match args.first() {
@@ -800,6 +811,15 @@ impl Session {
                     Some(f) => Ok(Value::Integer(f.id as i32)),
                     None => unsupported(format!("RecordRef.{method} on a table without {field}")),
                 }
+            }
+            // A RecordRef write inside a TryFunction whose result is used is not pinned (only Record.Insert is,
+            // misc/lt-cu-odd-leads/CuTryTests.al:83-150).
+            "Insert" | "Modify" | "Delete" | "DeleteAll" | "Rename"
+                if !self.tx.used_tries.is_empty() && !rec.borrow().temporary =>
+            {
+                unsupported(format!(
+                    "RecordRef.{method} inside a TryFunction whose result is used (not pinned)"
+                ))
             }
             "IsEmpty" | "Count" | "Init" | "Insert" | "Modify" | "Delete" | "DeleteAll" | "Find" | "FindFirst"
             | "FindLast" | "FindSet" | "Next" | "Reset" | "Rename" => self.record_op(record_method(method), &rec, args),
@@ -1032,6 +1052,13 @@ impl Session {
                     // A column the platform row leaves unknown (its value nothing pins) is refused, naming the table and the field.
                     if let Value::Unknown(why) = &v {
                         return unsupported(why.to_string());
+                    }
+                    let order = {
+                        let r = rec.borrow();
+                        self.install_row_order(r.table, r.temporary, pos, &r.fields)
+                    };
+                    if let Some(why) = order {
+                        return unsupported(why);
                     }
                     // A read loads a field the partial buffer left out (RecordRefIsDirtyEdges.al:IsDirty_SetLoadFields_ReadUnloadedThenCompare).
                     if rec.borrow().load.partial {

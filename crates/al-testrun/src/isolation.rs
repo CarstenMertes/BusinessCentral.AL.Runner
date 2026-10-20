@@ -102,6 +102,7 @@ impl Checkpoint {
     /// The session's committed data now.
     pub fn take(session: &mut Session) -> Checkpoint {
         session.commit_transaction();
+        session.media_checkpoint();
         Checkpoint(al_data::SnapshotStore::snapshot(session.store_mut()))
     }
 
@@ -109,6 +110,7 @@ impl Checkpoint {
     pub fn restore(&self, session: &mut Session) {
         session.rollback_transaction();
         al_data::SnapshotStore::restore(session.store_mut(), self.0.clone());
+        session.restore_media_checkpoint();
     }
 }
 

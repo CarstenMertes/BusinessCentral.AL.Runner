@@ -59,9 +59,10 @@ pub struct Registry {
     /// `UI Helper Triggers`. Where BC raises such an event, the runtime refuses (`Registry::unraised_subscriber`).
     pub unraised: HashMap<(String, String), Vec<Unraised>>,
     /// Subscribers (object, routine, lower-case event) to `OnInstallAppPerCompany` and `OnInstallAppPerDatabase` of the
-    /// platform codeunit `Extension Triggers` (2000000010), in program order. BC raises them when the subscriber's app is
-    /// installed (events/lt-platform-events-v/PeVFixtures.al:395-407, PeVTests.al:284); the runtime does not yet (ADR-046
-    /// steps A and B), so the install run refuses the tests that read what they write (`al-testrun`, `run_install_codeunits`).
+    /// platform codeunit `Extension Triggers` (2000000010), in program order. BC raises them when the subscriber's own app
+    /// is installed (events/lt-platform-events-v/PeVFixtures.al:395-407, PeVTests.al:284;
+    /// install/lt-bf-install-probes/BfInstallTests.al:148-170), so the install run calls them with the app's install
+    /// codeunits (`al-testrun` `install.rs`, ADR-046 decision 1).
     pub install_subscribers: Vec<(usize, usize, String)>,
     /// Publisher object -> (object, routine) of every subscriber of any of its events: `subscribers` grouped by
     /// object, built at the first [`Registry::subscribers_of`]. The registry does not change once the engine holds it
@@ -140,6 +141,12 @@ pub const REPORTING_TRIGGERS: usize = usize::MAX - 2;
 /// The object key under which subscribers to the platform codeunit `Filter Helper Triggers` are registered: the runtime
 /// raises its `MakeDateFilter` when a Date filter text has a piece it cannot read (events/lt-platform-triggers/PtObserve.al:157).
 pub const FILTER_HELPER_TRIGGERS: usize = usize::MAX - 3;
+
+/// The object key under which subscribers to `OnCompanyOpen` and `OnCompanyOpenCompleted` of the platform codeunit
+/// `Company Triggers` (2000000003) are registered: the install session of an app runs the app's own ones in each company
+/// before the install routines run there (install/lt-bf-install-probes/BfInstallTests.al:125-140, `company open calls`;
+/// ADR-046 amendment 1, A4 item 4; `al-testrun` `install.rs`).
+pub const COMPANY_TRIGGERS: usize = usize::MAX - 4;
 
 fn is_global_triggers(target: &str) -> bool {
     target.eq_ignore_ascii_case("Global Triggers") || target == "2000000002"
@@ -270,6 +277,20 @@ impl Registry {
                                 && (event == "oninstallapppercompany" || event == "oninstallappperdatabase")
                             {
                                 reg.install_subscribers.push((oi, ri, event.clone()));
+                            }
+                            if kind == ObjKind::Codeunit
+                                && (target.eq_ignore_ascii_case("Company Triggers") || target == "2000000003")
+                                && (event == "oncompanyopen" || event == "oncompanyopencompleted")
+                            {
+                                reg.subscribers
+                                    .entry((COMPANY_TRIGGERS, event.clone()))
+                                    .or_default()
+                                    .push(Subscriber {
+                                        object: oi,
+                                        routine: ri,
+                                        manual: is_manual(o),
+                                        element: String::new(),
+                                    });
                             }
                             if kind == ObjKind::Codeunit && target.eq_ignore_ascii_case("UI Helper Triggers") {
                                 let mut witnesses = vec![oi];

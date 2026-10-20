@@ -77,6 +77,14 @@ struct Compiler<'a> {
 type R<T> = Result<T, ()>;
 
 /// Evaluating `e` cannot write a local or a global: no call, no builtin, no tree node.
+/// An expression whose evaluation cannot fail: a constant or a plain variable.
+fn trivial(e: &ir::Expr) -> bool {
+    matches!(
+        e,
+        ir::Expr::Const(_) | ir::Expr::Load(ir::Place::Local(_) | ir::Place::Global(_))
+    )
+}
+
 fn pure(e: &ir::Expr) -> bool {
     use ir::Expr as E;
     match e {
@@ -97,6 +105,7 @@ fn special(id: al_builtins::builtin_id::BuiltinId) -> bool {
             | ids::RECORD_CURRFIELDNO_1
             | ids::SYSTEM_CLEARALL_1
             | ids::SESSION_APPLICATIONAREA_1
+            | ids::TEXT_MAXSTRLENOFVARPARAMETER_1
     )
 }
 
@@ -327,6 +336,12 @@ impl<'a> Compiler<'a> {
                 place = Some(self.rplace(p)?);
             }
             ids::SYSTEM_CLEARALL_1 => {}
+            ids::TEXT_MAXSTRLENOFVARPARAMETER_1 => {
+                let Some(ir::Arg::Ref(p)) = args.first() else {
+                    return Ok(false);
+                };
+                place = Some(self.rplace(p)?);
+            }
             ids::SESSION_APPLICATIONAREA_1 => match args.first() {
                 None => {}
                 Some(ir::Arg::Value(e)) => arg = Some(self.expr_copy(e)?),
@@ -412,11 +427,25 @@ impl<'a> Compiler<'a> {
                 args,
                 try_call,
             } => {
+                // Arguments that can fail are evaluated inside the try when the result is used (`Op::TryArgs`).
+                let guard = (*try_call
+                    && (instance.as_ref().is_some_and(|i| !trivial(i))
+                        || !args.iter().all(|a| match a {
+                            ir::Arg::Value(e) => trivial(e),
+                            ir::Arg::Ref(p) => matches!(p, ir::Place::Local(_) | ir::Place::Global(_)),
+                        })))
+                .then(|| self.emit(Op::TryArgs { end: 0, d }));
                 let instance = match instance {
                     Some(i) => Some(self.expr_copy(i)?),
                     None => None,
                 };
                 let (arg_regs, site_args) = self.arg_regs(args)?;
+                if let Some(at) = guard {
+                    let end = self.here();
+                    if let Op::TryArgs { end: e, .. } = &mut self.chunk.code[at] {
+                        *e = end;
+                    }
+                }
                 self.chunk.calls.push(CallSite {
                     object: *object,
                     routine: *routine,

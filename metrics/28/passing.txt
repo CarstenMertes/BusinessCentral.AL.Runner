@@ -253,6 +253,7 @@
 60060 Record_Consistent_SetFalse_IsCallable
 60060 Record_Consistent_SetTrue_AllowsInconsistency
 60060 Record_LockTable_Called_TableIsLocked
+60060 Record_LockTable_WaitFalse_CloudSandbox_Throws
 60060 Record_LockTable_WaitTrue_WaitsForLock
 60060 Record_ReadConsistency_Default_ReturnsFalse
 60060 Record_ReadIsolation_Get_IsCallable
@@ -874,6 +875,7 @@
 60130 Media_ImportStream_TruncatedMidIhdr_Succeeds
 60130 Media_ImportStream_ValidPng_HasValueTrue
 60130 Media_ImportStream_ZeroWidthIhdr_Succeeds
+60130 Media_Replace_WhileAnotherRowSharesTheMedia
 60131 FieldRef_EnumValueCount_ReturnsCount
 60131 FieldRef_GetEnumValueCaptionFromOrdinalValue_ReturnsCaption
 60131 FieldRef_GetEnumValueCaption_ByIndex_ReturnsCaption
@@ -1539,6 +1541,7 @@
 60176 Consistent_SetFalse_IsCallable
 60176 Consistent_SetTrue_DoesNotThrow
 60176 LockTable_AllowsSubsequentFind
+60176 LockTable_WithWaitFalse_CloudSandbox_Throws
 60176 ReadConsistency_AfterInsert_ReturnsFalse
 60176 ReadConsistency_Default_ReturnsFalse
 60176 ReadIsolation_Default_IsCallable
@@ -2923,6 +2926,8 @@
 60687 EditableBoundToPageVariable_FollowsTheRow
 60687 NoEditableProperty_StaysEditable
 60687 NotEditableControl_StillReadsItsValue
+60691 Enum_SparseOrdinals_PageOptionCaption
+60691 Enum_SparseOrdinals_PageOptionCaption_SetValue
 60691 SetValue_AcceptsTheOrdinalOfAnEnumMember
 60691 SetValue_OnAPlainTextFieldPersistsToTheRow
 60691 SetValue_RejectsAStringThatIsNotAnEnumMember
@@ -4813,6 +4818,7 @@
 68100 CodeunitRun_GuardedWithPendingWrite_FullTextAndCode
 68100 CodeunitRun_MissingId_Guarded_SameCode
 68100 CodeunitRun_MissingId_TextShapeAndCode
+68100 CodeunitRun_TableNoCodeunit_RecordOfAnotherTable_BP
 68100 CodeunitRun_TableNoCodeunit_RunReceivesTheCallersRecord
 68100 CodeunitRun_TestCodeunitFromTest_Guarded_FullTextAndCode
 68100 CodeunitRun_TestCodeunitFromTest_Unguarded_FullTextAndCode
@@ -5377,6 +5383,7 @@
 68703 RunPageBackgroundTask_CompletionTriggerAndTaskId
 68703 TwoTasks_NewPageVariableCountsFromOneAgain
 68703 TwoTasks_OrderAndIds_AcrossRows
+68703 Worker_Delete
 68703 Worker_GuardedRunFails
 68703 Worker_GuardedRunSucceeds
 68703 Worker_IsInWriteTransaction
@@ -5685,6 +5692,7 @@
 69338 Continue_InForeach_AndNestedLoops
 69338 Continue_InRecordLoop_AndWithCase
 69338 Continue_InWhileAndRepeat
+69338 Continue_WithProcedureNamedContinue
 69339 Base64Url_Forms
 69339 Base64_Streams
 69339 FromBase64_Invalid_Text
@@ -7327,6 +7335,7 @@
 70511 SubstNoPercent
 70511 SubstNoTen
 70511 SubstNoTypes
+70512 LT_BU_MaxStrLen_TextParameters
 70512 MaxStrLenSubstTemp
 70512 MaxStrLenVariables
 70513 CodeNAssign
@@ -9377,6 +9386,7 @@
 72009 Fields_Metadata_Misc
 72009 GetPosition_SetPosition
 72009 IsTemporary_Variants
+72009 LockTable_Variants
 72009 ReadIsolation_Assign
 72009 RecordId_Basics
 72009 RecordId_Empty_And_Composite
@@ -9898,6 +9908,7 @@
 72515 WhileRepeat_Semantics
 72516 Exit_DefaultValues
 72516 Exit_Forms
+72516 LT_BU_ForLoop_BigIntegerEndBoundOnInteger
 72516 Recursion_Values
 72518 Asserterror_RollsBackWrites
 72518 CodeunitRun_Error_RollsBack
@@ -10322,6 +10333,10 @@
 73023 Filter_Info
 73023 GetTable_Temporary
 73023 LockTable_And_ReadPermission
+73023 LockTable_WaitArgument_Overloads
+73023 LockTable_WaitFalse_OneArgument
+73023 LockTable_WaitFalse_VersionCheckFalse
+73023 LockTable_WaitFalse_VersionCheckTrue
 73023 Marks
 73023 Marks_Reset_And_Delete
 73023 SetRecFilter_Cases
@@ -11150,6 +11165,10 @@
 73544 P130_Modal_TestPagePair_AThenB
 73544 P130_Modal_TestPagePair_BThenA
 73544 P130_Modal_TestPagePair_ListOrderReversed
+73549 BT_DateAndDateTime_SqlRangeOnInsert
+73549 BT_DateAndDateTime_SqlRangeOnInsert_Max
+73549 BT_DateTimeAndTime_MillisecondsAfterWrite
+73549 BT_DateTimeFilter_999Milliseconds
 73549 P130_DateFilter_OperatorsWithSessionFormat
 73551 P130_GuidFilter_ValueForms
 73551 P130_GuidFilter_ViaFormatOfAGuidVariable
@@ -12802,6 +12821,8 @@
 79450 An08_DateShorthands
 79450 An14_RelationLookup_BlankField
 79451 An07_RemovedAction_InvokeFullText
+79590 Bg_ModifyOtherRow
+79590 Bg_ModifyShownRow
 79590 FindCard_OpenNew_EmptyTable
 79590 FindCard_OpenNew_WithRows
 79590 FindList_OpenNew_EmptyTable
@@ -12827,6 +12848,7 @@
 79650 Ap11_SaveRecordAndUpdate
 79650 Ap11_SaveRecordAndUpdateFalse
 79650 Ap12_PageVar_SetRecordTemp_KeyBefore
+79650 Ap15_SetSelectionFilter_IntoMarkedRecord
 79650 Ap17_NotBlank_CardOnEmptyTable
 79650 Ap17_NotBlank_List
 79650 Ap17_NotBlank_PageWithoutSourceTable
@@ -12883,6 +12905,9 @@
 79931 UnknownFieldNo_WithoutTables
 80002 AT_SystemId_OnInsert_InsertFalse_Control
 80002 AT_SystemId_OnInsert_Preset_InsertTrueTrue
+80006 AT_GetInteger_CodeKey_RowExists
+80006 AT_GetInteger_CodeKey_RowMissing_Bare
+80006 AT_GetInteger_CodeKey_RowMissing_ReturnValueUsed
 80011 AT_FieldAttribute_EmptyField_Export
 80150 Array_CopyArray_OneDimIntoRow
 80150 Case_OnlyElseBranch
@@ -13053,6 +13078,7 @@
 81959 BM_CalcFormula_BigIntegerFilterFromInteger
 81959 BM_CalcFormula_IntegerFilterFromBigInteger
 81959 BM_LookupFlowField_ShorterThanSource
+81961 BM_Preprocessor_DefineUndefScope
 82356 ListElementTypeOverloads_WhichRuns
 82356 SameNamedLabelInOverloads_EachKeepsItsText
 82357 CodeLengthListOverloads_WhichRuns
@@ -13068,6 +13094,8 @@
 83855 BN3_ProcedureNamedArray_Calls
 83862 BN3_KeyOf16FieldsPlusPrimaryKey
 83871 BN3_KeyOf17Fields
+84110 Ca01_AsDecimal_BlankZeroControlAndEmptyText
+84110 Ca01_AsDecimal_TextControlWithNumberAndNonNumber
 84110 Ca03_RoleCenter_OpenView
 84110 Ca07_CaptionWithoutParentheses
 84110 Ca09_EditableList_New_TrappedCard
@@ -13118,7 +13146,12 @@
 84282 Item54_EditableAfterAction_OpenView
 84282 Item54_EditableOnReleasedRow_SetValue
 84282 Item55_VariableControl_OpenView_SetValue
+84282 Item56_ValuesAllowedEmpty_SetValueEmptyAfterA
+84282 Item56_ValuesAllowed_SetValueNotAllowed
+84282 Item56_ValuesAllowed_ValidateInCode
 84282 Item57_NavigatePageLabels
+84282 Item60_SelectionFilter_AscendingFalseInOnOpenPage
+84282 Item60_SelectionFilter_SourceTableViewDescending
 84282 Item61_RunPageLinkEnumKey_ByConst_New
 84282 Item62_FilterGroup2_TestPageFilter
 84282 Item62_FilterGroup4_TestPageFilter
@@ -13196,15 +13229,23 @@
 84835 Item44_SetAllUpgradeTags_WithSubscriber
 84886 Control_StaleModify
 84886 Copy_FromNewerCopy_ThenModify
+84886 TF_FromNewerCopy_ThenModify
 84886 TF_InMemorySource_ThenModify
 84886 TF_NoKey_FromNewerCopy_ThenModify
 84886 TF_OtherTable_ThenModify
 84886 TF_SourceReadFromDb_ThenModify
+84888 BgTask_IsolatedStorageDelete
+84888 BgTask_IsolatedStorageSet
+84888 BgTask_RecordInsert_Control
 84892 IsoSet_Commit_ThenGuardedCodeunitRun
+84892 IsoSet_OpensWriteTransaction
+84892 IsoSet_ThenGuardedCodeunitRun
 84892 IsoSet_ThenPageRunModal
 84892 IsoSet_ThenReportRunModal
 84893 SetEncrypted_107NonAscii
+84893 SetEncrypted_108NonAscii
 84893 SetEncrypted_214Ascii
+84893 SetEncrypted_216Ascii
 84893 SetEncrypted_EncryptionEnabled
 84893 Set_Plain_1000Ascii_Control
 84895 GetCurrUTCDateTime_IsCurrentDateTime
@@ -13216,6 +13257,7 @@
 85060 Item32_DurationNegation
 85060 Item33_RoundFollowsAmountRoundingPrecision
 85060 Item34_DefaultTimeAgainst0TAndMidnight
+85060 Item36_ForLoopBoundsAndCounterAfterLoop
 85060 Item37_DecimalPlacesAndStoredValue
 85060 Item38_BigIntegerSumIntoIntegerFlowField
 85060 Item39_IntegerProductAssignedToBigInteger
@@ -13223,6 +13265,7 @@
 85060 Item42_OptionAndEnumNegatedByMultiplication
 85060 Item43_CodeVariableLengths
 85060 Item44_IncStrWithDecimalPoint
+85060 Item45_MaxStrLenOfParameters
 85060 Item46_BackslashAndAppendLineInMessageAndError
 85120 CaseConversion_UnderGlobalLanguage
 85120 IndexAssign_CodeAndText
@@ -13245,8 +13288,14 @@
 85240 Item24_CodeunitRun_InCollectScope
 85240 Item25_ClearCollectedErrors_KeepsWrites_ScopeEndRollsBack
 85240 Item26_TryFunction_CallForms_EmptyError
+85240 Item27_TryFunction_ArgumentRaises
 85240 Item29_TryFunctionOnTest
 85240 Item29_TryFunctionOnTest_CalledFromCode
+85310 SecretText_GetIntoText_Direct
+85310 SecretText_GetIntoText_InTryFunction
+85310 TryInsertOnly_ExpressionForm
+85310 TryInsertThenError_ExpressionForm
+85310 TryInsertThenError_IfNotForm
 85310 TryInsertThenError_StatementForm
 85310 TryTemporaryWrites_ExpressionForm
 85311 CommitBehaviorError_GuardedRun_Commit
@@ -13257,11 +13306,21 @@
 85311 Commit_InOnInsertTrigger
 85311 Commit_InOnModifyTrigger
 85311 Commit_InTableEventSubscriber
+85311 Commit_InTryFunction
 85311 Consistent_FalseThenTrue_ThenCommit
+85311 Consistent_False_ThenCommit
+85311 Nested_ErrorOuter_IgnoreInner
 85311 Nested_IgnoreOuter_ErrorInner
 85311 TryFunction_WithCommitBehavior
+85312 CodeunitRun_TableNo_RecordOfAnotherTable
+85312 CodeunitRun_TableNo_RecordOfAnotherTable_Guarded
 85312 IsolatedStorageSet_Commit_ThenGuardedCodeunitRun
+85312 IsolatedStorageSet_ThenGuardedCodeunitRun_Company
+85312 IsolatedStorageSet_ThenGuardedCodeunitRun_CompanyAndUser
+85312 IsolatedStorageSet_ThenGuardedCodeunitRun_Module
+85312 IsolatedStorageSet_ThenGuardedCodeunitRun_User
 85312 IsolatedStorageSet_ThenPageRunModal
+85312 IsolatedStorageSet_ThenReportRunModal
 85312 ReportRunModal_NoRequestPage_AfterWrite
 85312 ReportRun_NoRequestPage_AfterWrite
 85363 CodeunitReturnThroughCallLevels
@@ -13275,6 +13334,7 @@
 85364 IntegerAndOptionToEnum
 85365 FieldRefOptionStrings
 85365 FormatAndEvaluate
+85365 TestPageSetValueByCaption
 85366 EachEnumKeepsItsValues
 85366 FieldRefOptionStrings
 85368 A_RunOrder_Third
@@ -13285,6 +13345,7 @@
 85368 Z_RunOrder_Second
 85369 CallbacksAfterWriteBeforeCommit
 85370 CalcFieldsWithReadUncommittedAfterLockTable
+85370 GetterAfterRecordOperations
 85481 GuidText_ToCode20
 85481 MixedExpressions_TypeAndValue
 85481 OptionWithBlankMembers_IntegerAssignment

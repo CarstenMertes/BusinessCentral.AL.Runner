@@ -829,6 +829,21 @@ pub fn feature_key_rows(target: Option<&Target>) -> Option<FeatureKeyRows> {
     }
 }
 
+/// The name of the test runner's outermost method, which the TryFunctionWrite error names when the test method itself uses
+/// the result of the TryFunction: 'RunTests' (the classic runner "Test Runner - Mgt.") on BC 27.5, 'RootMethodScope' (the
+/// TestRunnerHub runner) on 28.5 and 29.0. The corpus masks the name in its asserts; the measured names are recorded in
+/// corpus commit ff42e3d3 ("CU: mask the test-runner scope name in the TryFunction write errors", BC 27.5 full run
+/// 39322214364) and in misc/lt-cu-odd-leads/CuTryTests.al:236-238 and CuCommitTests.al:437-439. Not a [`Gate`]: the corpus
+/// has no `#if` guard for it. A major that was not measured gets `None` (the name is not pinned there); no target means the
+/// newest behaviour, as [`has`] does.
+pub fn test_runner_root_scope(target: Option<&Target>) -> Option<&'static str> {
+    match target.map(|t| t.bc.major) {
+        Some(27) => Some("RunTests"),
+        Some(28 | 29) | None => Some("RootMethodScope"),
+        Some(_) => None,
+    }
+}
+
 /// Whether the platform tables of System.app that are `Scope = OnPrem`, internal or removed are known for
 /// this BC major: corpus must-not-compile 0020 to 0024 hold the lists for the symbols of BC 27 only, so
 /// the AL0296 / AL0161 / AL0433 verdicts for them are not given for another major.
@@ -843,6 +858,16 @@ mod tests {
 
     fn target(bc: &str) -> Target {
         Target::for_bc(BcVersion::parse(bc).unwrap())
+    }
+
+    /// Corpus commit ff42e3d3, misc/lt-cu-odd-leads/CuTryTests.al:236-238.
+    #[test]
+    fn the_test_runner_root_scope_is_named_per_measured_major() {
+        assert_eq!(test_runner_root_scope(Some(&target("27.5"))), Some("RunTests"));
+        assert_eq!(test_runner_root_scope(Some(&target("28.5"))), Some("RootMethodScope"));
+        assert_eq!(test_runner_root_scope(Some(&target("29.0"))), Some("RootMethodScope"));
+        assert_eq!(test_runner_root_scope(None), Some("RootMethodScope"));
+        assert_eq!(test_runner_root_scope(Some(&target("30.0"))), None);
     }
 
     #[test]

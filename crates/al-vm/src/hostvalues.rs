@@ -104,10 +104,10 @@ impl Session {
             },
             ids::DATABASE_USERID_1 => Ok(Value::Text(self.host.identity.user_id().into())),
             ids::DATABASE_USERSECURITYID_1 => Ok(Value::Guid(self.host.identity.user_security_id())),
-            ids::DATABASE_SESSIONID_1 => Ok(Value::Integer(self.host.identity.session_id())),
+            ids::DATABASE_SESSIONID_1 => Ok(Value::Integer(self.session_id())),
             // Only an id no session has is pinned (session/TestSessionComplete.al:45-52: 99999 is not active).
             ids::SESSION_ISSESSIONACTIVE_1 => match args.first() {
-                Some(Value::Integer(n)) if *n != self.host.identity.session_id() => Ok(Value::Boolean(false)),
+                Some(Value::Integer(n)) if *n != self.session_id() => Ok(Value::Boolean(false)),
                 other => unsupported(format!(
                     "Session.IsSessionActive({other}): only an id other than the running session's is pinned",
                     other = other.describe()
@@ -117,7 +117,7 @@ impl Session {
             // 0, a negative id, a huge id and the id a refused StartSession left (platform/lt-xmlport-session-navapp-cookie/
             // P94Session.al:Stop_*). The running session's own id is never stopped there and is not pinned: refused.
             ids::SESSION_STOPSESSION_1 => match args.first() {
-                Some(Value::Integer(n)) if *n != self.host.identity.session_id() => Ok(Value::Boolean(false)),
+                Some(Value::Integer(n)) if *n != self.session_id() => Ok(Value::Boolean(false)),
                 other => unsupported(format!(
                     "Session.StopSession({other}): only an id other than the running session's is pinned",
                     other = other.describe()

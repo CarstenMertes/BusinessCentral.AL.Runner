@@ -140,7 +140,7 @@ fn a_failure_after_a_test_that_was_refused_mid_run_is_not_trusted() {
     // reads nothing the refused test can change stays a failure.
     let src = "table 60901 T9 { fields { field(1; K; Code[10]) { } } }
             codeunit 60103 T { Subtype = Test; var Flag: Boolean; Count: Integer;
-                [Test] procedure T1() var R: Record T9; begin Flag := true; R.LockTable(false); Count += 1; end;
+                [Test] procedure T1() var R: Record T9; begin Flag := true; R.LockTable(true, true); Count += 1; end;
                 [Test] procedure T2() begin if not Flag then Error('flag lost'); end;
                 [Test] procedure T3() begin if Count = 0 then Error('real failure'); end;
                 [Test] procedure T4() begin Error('real failure'); end; }
@@ -367,13 +367,236 @@ fn a_passing_test_commits_so_a_later_asserterror_rolls_back_only_to_that_point()
 
 #[test]
 fn install_codeunits_run_before_the_tests() {
-    // OnInstallAppPerDatabase has no company, so it writes a DataPerCompany = false table.
+    // OnInstallAppPerDatabase has no company, so it writes a DataPerCompany = false table. A shared table the per-company
+    // trigger wrote would not be known (ADR-046 decision 4c), so it writes a per-company one.
     let o = outcomes("table 60900 S { DataPerCompany = false; fields { field(1; K; Code[10]) { } } }
+            table 60901 C { fields { field(1; K; Code[10]) { } } }
             codeunit 60901 Inst { Subtype = Install;
-                trigger OnInstallAppPerCompany() var R: Record S; begin R.K := 'CO'; R.Insert(); end;
+                trigger OnInstallAppPerCompany() var R: Record C; begin R.K := 'CO'; R.Insert(); end;
                 trigger OnInstallAppPerDatabase() var R: Record S; begin R.K := 'DB'; R.Insert(); end; }
             codeunit 60102 T { Subtype = Test;
-                [Test] procedure A() var R: Record S; begin if R.Count() <> 2 then Error('install did not run'); end; }");
+                [Test] procedure A() var R: Record S; C: Record C; begin if (R.Count() <> 1) or (C.Count() <> 1) then Error('install did not run'); end; }");
+    assert_eq!(o[0].1, Outcome::Pass, "{o:?}");
+}
+
+/// The outcomes of the test codeunit `codeunit` of a program of several apps (id, dependencies, source), in order.
+fn outcomes_of_apps(apps: &[(&str, &[&str], &str)], codeunit: &str) -> Vec<(String, Outcome)> {
+    let (ws, l) = al_sema::lower::compile(
+        apps.iter()
+            .map(|(id, deps, src)| AppSource {
+                id: (*id).into(),
+                name: (*id).into(),
+                dependencies: deps.iter().map(|d| (*d).to_string()).collect(),
+                files: vec![(format!("{id}.al"), (*src).into())],
+            })
+            .collect(),
+        &Default::default(),
+    );
+    assert!(ws.diagnostics.is_empty(), "{:?}", ws.diagnostics);
+    let blocked = l
+        .unsupported
+        .iter()
+        .map(|o| o.iter().map(|r| r.first().cloned()).collect())
+        .collect();
+    let engine = Engine::new(l.program.clone(), blocked);
+    let oi = l.program.objects.iter().position(|o| o.name == codeunit).unwrap();
+    run_codeunit(&engine, &l, oi)
+}
+
+// ADR-046 decision 1: an ordinary codeunit's subscribers to "Extension Triggers" run at its app's install
+// (events/lt-platform-events-v/PeVFixtures.al:395-407, PeVTests.al:284-285): the per-company one in the session company,
+// the per-database one with CompanyName() empty (install/lt-bf-install-probes/BfInstallTests.al:138-140, `blank`).
+#[test]
+fn an_extension_triggers_subscriber_of_the_app_runs_per_company_then_per_database() {
+    let o = outcomes(
+        "table 60900 Db { DataPerCompany = false; fields { field(1; K; Code[10]) { } field(2; Info; Text[50]) { } } }
+            table 60903 Co { fields { field(1; K; Code[10]) { } field(2; Info; Text[50]) { } } }
+            codeunit 60905 Subs {
+                [EventSubscriber(ObjectType::Codeunit, Codeunit::\"Extension Triggers\", 'OnInstallAppPerCompany', '', false, false)]
+                local procedure PerCompany() var R: Record Co; begin R.K := 'CO'; R.Info := CompanyName(); R.Insert(); end;
+                [EventSubscriber(ObjectType::Codeunit, Codeunit::\"Extension Triggers\", 'OnInstallAppPerDatabase', '', false, false)]
+                local procedure PerDatabase() var R: Record Db; begin R.K := 'DB'; R.Info := CompanyName(); R.Insert(); end; }
+            codeunit 60102 T { Subtype = Test;
+                [Test] procedure PerCompanyRow() var R: Record Co; begin R.Get('CO'); if R.Info <> CompanyName() then Error('company %1', R.Info); end;
+                [Test] procedure PerDatabaseRow() var R: Record Db; begin R.Get('DB'); if R.Info <> '' then Error('company %1', R.Info); end; }",
+    );
+    assert_eq!(o[0].1, Outcome::Pass, "{o:?}");
+    assert_eq!(o[1].1, Outcome::Pass, "{o:?}");
+}
+
+// ADR-046 decision 4c: BC runs per-company install code once in each company of the database (two in the corpus CI,
+// PeVTests.al:284, :313-314), this runtime in one. A shared table that code writes holds one write per company on BC: a read
+// whose answer depends on its rows is refused, a Get that finds its row and an insert are answered.
+#[test]
+fn a_shared_table_that_per_company_install_code_writes_is_not_known() {
+    let o = outcomes(
+        "table 60900 Log { DataPerCompany = false; fields { field(1; K; Code[10]) { } } }
+            codeunit 60905 Subs {
+                [EventSubscriber(ObjectType::Codeunit, Codeunit::\"Extension Triggers\", 'OnInstallAppPerCompany', '', false, false)]
+                local procedure PerCompany() var R: Record Log; begin R.K := 'CO'; R.Insert(); end; }
+            codeunit 60102 T { Subtype = Test;
+                [Test] procedure Counts() var R: Record Log; begin if R.Count() <> 1 then Error('rows'); end;
+                [Test] procedure GetsItsRow() var R: Record Log; begin R.Get('CO'); end;
+                [Test] procedure Inserts() var R: Record Log; begin R.K := 'T'; R.Insert(); end; }",
+    );
+    assert!(
+        matches!(&o[0].1, Outcome::NotRun(r) if r.contains("once in each company") && r.contains("4c")),
+        "{o:?}"
+    );
+    assert_eq!(o[1].1, Outcome::Pass, "{o:?}");
+    assert_eq!(o[2].1, Outcome::Pass, "{o:?}");
+}
+
+// ADR-046 amendment 1, A2: the order of the install routines of one app and part is not known
+// (install/lt-bf-install-probes/BfInstallTests.al:239 fits no pinned rule). A table two of them write (a), the tables a
+// routine writes that reads what another writes (b), and those of routines sharing a SingleInstance codeunit (c) are refused.
+#[test]
+fn tables_whose_install_rows_depend_on_the_order_of_the_routines_are_not_known() {
+    let o = outcomes(
+        "table 60900 Both { fields { field(1; K; Code[10]) { } } }
+            table 60901 Src { fields { field(1; K; Code[10]) { } } }
+            table 60902 Dst { fields { field(1; K; Code[10]) { } } }
+            table 60903 ViaState { fields { field(1; K; Code[10]) { } } }
+            table 60904 Alone { fields { field(1; K; Code[10]) { } } }
+            codeunit 60906 State { SingleInstance = true; var N: Integer; procedure Next(): Integer begin N += 1; exit(N); end; }
+            codeunit 60907 Inst { Subtype = Install;
+                trigger OnInstallAppPerCompany() var B: Record Both; S: Record Src; V: Record ViaState; St: Codeunit State;
+                begin B.K := 'I'; B.Insert(); S.K := 'S'; S.Insert(); V.K := Format(St.Next()); V.Insert(); end; }
+            codeunit 60905 Subs {
+                [EventSubscriber(ObjectType::Codeunit, Codeunit::\"Extension Triggers\", 'OnInstallAppPerCompany', '', false, false)]
+                local procedure PerCompany() var B: Record Both; S: Record Src; D: Record Dst; St: Codeunit State;
+                begin B.K := 'S'; B.Insert(); D.K := Format(S.Count()); D.Insert(); St.Next(); end;
+                [EventSubscriber(ObjectType::Codeunit, Codeunit::\"Extension Triggers\", 'OnInstallAppPerDatabase', '', false, false)]
+                local procedure PerDatabase() var A: Record Alone; begin end; }
+            codeunit 60102 T { Subtype = Test;
+                [Test] procedure ReadsBoth() var R: Record Both; begin if R.Count() <> 2 then Error('rows'); end;
+                [Test] procedure ReadsDst() var R: Record Dst; begin if R.IsEmpty() then Error('rows'); end;
+                [Test] procedure ReadsViaState() var R: Record ViaState; begin if not R.FindFirst() then Error('rows'); end;
+                [Test] procedure ReadsAlone() var R: Record Alone; begin if not R.IsEmpty() then Error('rows'); end; }",
+    );
+    for i in 0..3 {
+        assert!(
+            matches!(&o[i].1, Outcome::NotRun(r) if r.contains("order BC runs them in is not pinned")),
+            "{i}: {o:?}"
+        );
+    }
+    assert_eq!(o[3].1, Outcome::Pass, "{o:?}");
+}
+
+// ADR-046 amendment 1, A2 d: SystemRowVersion orders rows across tables (install/lt-bf-install-probes/BfInstallTests.al:8-9),
+// so in an app with two install routines in one part, the row version of a row install code wrote shows their order. A row
+// the test wrote itself is answered.
+#[test]
+fn the_row_version_of_an_install_row_is_refused_when_the_order_of_the_routines_is_not_known() {
+    let o = outcomes(
+        "table 60900 A { fields { field(1; K; Code[10]) { } } }
+            table 60901 B { fields { field(1; K; Code[10]) { } } }
+            codeunit 60907 Inst { Subtype = Install;
+                trigger OnInstallAppPerCompany() var R: Record A; begin R.K := 'A'; R.Insert(); end; }
+            codeunit 60905 Subs {
+                [EventSubscriber(ObjectType::Codeunit, Codeunit::\"Extension Triggers\", 'OnInstallAppPerCompany', '', false, false)]
+                local procedure PerCompany() var R: Record B; begin R.K := 'B'; R.Insert(); end; }
+            codeunit 60102 T { Subtype = Test;
+                [Test] procedure GetsTheRow() var R: Record A; begin R.Get('A'); end;
+                [Test] procedure ReadsItsVersion() var R: Record A; V: BigInteger; begin R.Get('A'); V := R.SystemRowVersion; end;
+                [Test] procedure ReadsOwnRowVersion() var R: Record A; V: BigInteger; begin R.K := 'T'; R.Insert(); V := R.SystemRowVersion; if V = 0 then Error('no version'); end; }",
+    );
+    assert_eq!(o[0].1, Outcome::Pass, "{o:?}");
+    assert!(
+        matches!(&o[1].1, Outcome::NotRun(r) if r.contains("SystemRowVersion") && r.contains("not pinned")),
+        "{o:?}"
+    );
+    assert_eq!(o[2].1, Outcome::Pass, "{o:?}");
+}
+
+// ADR-046 amendment 1, A4 items 1 and 2: the install runs in a session of its own, not the test session
+// (install/lt-bf-install-probes/BfInstallTests.al:142-144), and a SingleInstance codeunit starts again in each company and in
+// the per-database part (`counter=1` in rows #1, #4 and #7, BfInstallTests.al:125-140); the test session does not see the
+// install run's SingleInstance state (events/lt-platform-events-v/PeVTests.al:297).
+#[test]
+fn the_install_session_is_its_own_and_single_instance_state_starts_again_per_part() {
+    let o = outcomes(
+        "table 60900 Db { DataPerCompany = false; fields { field(1; K; Code[10]) { } field(2; N; Integer) { } } }
+            table 60901 Co { fields { field(1; K; Code[10]) { } field(2; N; Integer) { } field(3; Sid; Integer) { } } }
+            codeunit 60906 State { SingleInstance = true; var N: Integer; procedure Next(): Integer begin N += 1; exit(N); end; }
+            codeunit 60907 Inst { Subtype = Install;
+                trigger OnInstallAppPerCompany() var R: Record Co; S: Codeunit State; begin R.K := 'CO'; R.N := S.Next(); R.Sid := SessionId(); R.Insert(); end;
+                trigger OnInstallAppPerDatabase() var R: Record Db; S: Codeunit State; begin R.K := 'DB'; R.N := S.Next(); R.Insert(); end; }
+            codeunit 60102 T { Subtype = Test;
+                [Test] procedure PerCompanyCounter() var R: Record Co; begin R.Get('CO'); if R.N <> 1 then Error('counter %1', R.N); end;
+                [Test] procedure PerDatabaseCounter() var R: Record Db; begin R.Get('DB'); if R.N <> 1 then Error('counter %1', R.N); end;
+                [Test] procedure TestSessionCounter() var S: Codeunit State; begin if S.Next() <> 1 then Error('counter'); end;
+                [Test] procedure NotTheTestSession() var R: Record Co; begin R.Get('CO'); if (R.Sid = SessionId()) or (R.Sid <= 0) then Error('session %1', R.Sid); end; }",
+    );
+    for (n, r) in &o {
+        assert_eq!(*r, Outcome::Pass, "{n}: {o:?}");
+    }
+}
+
+// ADR-046 amendment 1, A3: one app's whole install (per company, then per database) ends before the next app's begins
+// (install/lt-bf-install-probes/BfInstallTests.al:239, the fixture app's three rows come first), in dependency order.
+#[test]
+fn two_apps_under_test_install_one_after_the_other() {
+    let dep = "table 60900 DbA { DataPerCompany = false; fields { field(1; K; Code[10]) { } } }
+        codeunit 60901 InstA { Subtype = Install;
+            trigger OnInstallAppPerDatabase() var R: Record DbA; begin R.K := 'A'; R.Insert(); end; }";
+    let main = "table 60910 CoB { fields { field(1; K; Code[10]) { } } }
+        codeunit 60911 InstB { Subtype = Install;
+            trigger OnInstallAppPerCompany() var A: Record DbA; R: Record CoB; begin if A.Get('A') then R.K := 'SEEN' else R.K := 'NOT'; R.Insert(); end; }
+        codeunit 60912 T { Subtype = Test;
+            [Test] procedure SawTheFirstApp() var R: Record CoB; begin R.Get('SEEN'); end; }";
+    let o = outcomes_of_apps(&[("dep", &[], dep), ("main", &["dep"], main)], "T");
+    assert_eq!(o[0].1, Outcome::Pass, "{o:?}");
+}
+
+// ADR-046 amendment 1, A4 item 4: the install session raises Company Triggers OnCompanyOpen and OnCompanyOpenCompleted in
+// each company before the install routines run there, and not in the per-database part
+// (install/lt-bf-install-probes/BfInstallTests.al:125-140, `company open calls=2` and `=0`, subscribers at
+// events/lt-bf-company-open/BfCompanyOpenFixtures.al:51-71).
+#[test]
+fn company_triggers_run_in_the_install_session_before_the_per_company_routines() {
+    let o = outcomes(
+        "table 60900 Db { DataPerCompany = false; fields { field(1; K; Code[10]) { } field(2; N; Integer) { } } }
+            table 60901 Co { fields { field(1; K; Code[10]) { } field(2; N; Integer) { } } }
+            codeunit 60906 Opens { SingleInstance = true; var N: Integer; procedure Add() begin N += 1; end; procedure Calls(): Integer begin exit(N); end; }
+            codeunit 60908 OpenSubs {
+                [EventSubscriber(ObjectType::Codeunit, Codeunit::\"Company Triggers\", 'OnCompanyOpen', '', false, false)]
+                local procedure Open() var S: Codeunit Opens; begin S.Add(); end;
+                [EventSubscriber(ObjectType::Codeunit, Codeunit::\"Company Triggers\", 'OnCompanyOpenCompleted', '', false, false)]
+                local procedure Completed() var S: Codeunit Opens; begin S.Add(); end; }
+            codeunit 60907 Inst { Subtype = Install;
+                trigger OnInstallAppPerCompany() var R: Record Co; S: Codeunit Opens; begin R.K := 'CO'; R.N := S.Calls(); R.Insert(); end;
+                trigger OnInstallAppPerDatabase() var R: Record Db; S: Codeunit Opens; begin R.K := 'DB'; R.N := S.Calls(); R.Insert(); end; }
+            codeunit 60102 T { Subtype = Test;
+                [Test] procedure PerCompany() var R: Record Co; begin R.Get('CO'); if R.N <> 2 then Error('calls %1', R.N); end;
+                [Test] procedure PerDatabase() var R: Record Db; begin R.Get('DB'); if R.N <> 0 then Error('calls %1', R.N); end; }",
+    );
+    assert_eq!(o[0].1, Outcome::Pass, "{o:?}");
+    assert_eq!(o[1].1, Outcome::Pass, "{o:?}");
+}
+
+// ADR-046 amendment 1, A5: in the per-database part, IsEmpty and FindFirst of a per-company table fail with the text BC
+// gives (install/lt-bf-install-probes/BfInstallTests.al:138-139; reads in TryFunctions at BfInstallFixtures.al:131-146).
+// The code BC gave (DB:Ok) is not pinned yet, so a read of it is refused.
+#[test]
+fn a_per_company_read_in_the_per_database_part_fails_with_the_pinned_text() {
+    let o = outcomes(
+        "table 60900 Db { DataPerCompany = false; fields { field(1; K; Code[10]) { } field(2; Info; Text[250]) { } } }
+            table 60901 Pc { fields { field(1; K; Code[10]) { } } }
+            codeunit 60907 Inst { Subtype = Install;
+                trigger OnInstallAppPerDatabase() var R: Record Db; begin R.K := 'DB';
+                    if TryIsEmpty() then R.Info := 'ok' else R.Info := CopyStr(GetLastErrorText(), 1, 250);
+                    R.Insert();
+                    R.K := 'FF';
+                    if TryFindFirst() then R.Info := 'ok' else R.Info := CopyStr(GetLastErrorText(), 1, 250);
+                    R.Insert(); end;
+                [TryFunction] local procedure TryIsEmpty() var P: Record Pc; begin if P.IsEmpty() then; end;
+                [TryFunction] local procedure TryFindFirst() var P: Record Pc; begin if P.FindFirst() then; end; }
+            codeunit 60102 T { Subtype = Test;
+                [Test] procedure Text() var R: Record Db; begin
+                    R.Get('DB'); if R.Info <> 'You must choose a company before you can access the \"Pc\" table.' then Error('%1', R.Info);
+                    R.Get('FF'); if R.Info <> 'You must choose a company before you can access the \"Pc\" table.' then Error('%1', R.Info); end; }",
+    );
     assert_eq!(o[0].1, Outcome::Pass, "{o:?}");
 }
 
@@ -394,32 +617,6 @@ fn an_installer_trigger_that_ran_keeps_its_rows_when_the_next_one_cannot_run() {
         );
     assert_eq!(o[0].1, Outcome::Pass, "{o:?}");
     assert!(matches!(&o[1].1, Outcome::NotRun(r) if r.contains("install")), "{o:?}");
-}
-
-// ADR-046 decision 1: an ordinary codeunit's subscriber to "Extension Triggers" OnInstallAppPerCompany runs at install
-// (events/lt-platform-events-v/PeVFixtures.al:395-407, PeVTests.al:284). On BC it runs once per company of the database
-// (two in the corpus CI, PeVTests.al:313-314), which this runtime does not model yet (ADR-046 steps A and B are not
-// built). So the subscriber does not run, and a test on a table it writes is not run, never answered from a store
-// that lacks its rows.
-#[test]
-fn a_test_on_a_table_an_extension_triggers_install_subscriber_writes_is_not_run() {
-    let o = outcomes(
-        "table 60900 Log { DataPerCompany = false; fields { field(1; K; Integer) { AutoIncrement = true; } field(2; Info; Text[30]) { } } }
-            table 60903 Other { fields { field(1; K; Code[10]) { } } }
-            codeunit 60905 Subs {
-                [EventSubscriber(ObjectType::Codeunit, Codeunit::\"Extension Triggers\", 'OnInstallAppPerCompany', '', false, false)]
-                local procedure PerCompany() var R: Record Log; begin R.Info := CompanyName(); R.Insert(); end;
-                [EventSubscriber(ObjectType::Codeunit, Codeunit::\"Extension Triggers\", 'OnInstallAppPerDatabase', '', false, false)]
-                local procedure PerDatabase() var R: Record Log; begin R.Info := 'DB'; R.Insert(); end; }
-            codeunit 60102 T { Subtype = Test;
-                [Test] procedure ReadsTheLog() var R: Record Log; begin if R.Count() <> 3 then Error('rows: %1', R.Count()); end;
-                [Test] procedure OtherTable() var R: Record Other; begin if not R.IsEmpty() then Error('rows'); end; }",
-    );
-    assert!(
-        matches!(&o[0].1, Outcome::NotRun(r) if r.contains("Extension Triggers") && r.contains("Subs")),
-        "{o:?}"
-    );
-    assert_eq!(o[1].1, Outcome::Pass, "{o:?}");
 }
 
 #[test]
@@ -1194,9 +1391,10 @@ codeunit 50120 "Lib" { procedure ReadSetup(): Text var S: Record "Setup"; begin 
 "#;
 
 #[test]
-fn the_projects_own_install_codeunits_run_per_company_first_then_per_database_with_no_company() {
-    // Measured on BC 27.5 (docs/probes-needed.md): every OnInstallAppPerCompany, then every
-    // OnInstallAppPerDatabase, which has no company, so a per-company table is refused there.
+fn a_shared_log_the_projects_own_install_codeunits_write_in_turn_is_not_known() {
+    // Every OnInstallAppPerCompany, then every OnInstallAppPerDatabase (install/lt-bf-install-probes/BfInstallTests.al:239),
+    // but the order of the two per-company triggers is not pinned (ADR-046 amendment 1, A2 a), and BC writes the shared
+    // log once per company of the database (decision 4c): the read is refused.
     let o = outcomes(
         r#"
 table 50101 "Shared Log" { DataPerCompany = false; fields { field(1; "No."; Integer) { AutoIncrement = true; } field(2; What; Text[30]) { } } keys { key(PK; "No.") { } } }
@@ -1211,7 +1409,10 @@ codeunit 50001 "T" { Subtype = Test;
     if T <> 'A-company;B-company;A-db;' then Error(T); end; }
 "#,
     );
-    assert_eq!(o, vec![("Order".to_string(), Outcome::Pass)], "{o:?}");
+    assert!(
+        matches!(&o[0].1, Outcome::NotRun(r) if r.contains("Shared Log")),
+        "{o:?}"
+    );
 }
 
 /// A dependency app whose `Global Triggers` subscribers cannot run (they reach an unimplemented
@@ -1283,8 +1484,10 @@ fn install_triggers_and_company_initialize_seed_the_rows_every_test_codeunit_sta
 
 #[test]
 fn per_company_triggers_run_first_in_codeunit_order_then_per_database_with_no_company() {
-    // Measured on BC 27.5 (docs/probes-needed.md): every OnInstallAppPerCompany, then
-    // OnInstallAppPerDatabase, which has no company (a DataPerCompany = false table works there).
+    // Every OnInstallAppPerCompany, then OnInstallAppPerDatabase, which has no company (a DataPerCompany = false table
+    // works there): install/lt-bf-install-probes/BfInstallTests.al:138-140, :239. The order of the dependency app's two
+    // per-company triggers is not pinned (ADR-046 amendment 1, A2 a); for dependency apps the refusal is not applied
+    // (kept, not pinned: it would lose a baseline case, docs/owner-review.md), so program order is what the test sees.
     let outcome = with_baseline(
         "codeunit 50001 \"T\" { Subtype = Test; \
              [Test] procedure Order() var L: Record \"Order Log\"; Sh: Record \"Shared Log\"; T: Text; begin \

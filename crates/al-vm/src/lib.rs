@@ -6,6 +6,9 @@ use al_builtins::native::{AlError, Signal};
 use al_builtins::ops;
 use al_builtins::value::{Instance, RecordState, RtType, Value};
 use al_ir as ir;
+
+/// A media object a Modify or Delete removed from Tenant Media, kept so a rollback can put it back.
+type RemovedMedia = (al_builtins::media::Id, al_builtins::media::MediaObject);
 use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::rc::Rc;
@@ -55,6 +58,7 @@ mod relations;
 mod rename;
 mod reports;
 mod sessionops;
+mod sqltime;
 mod testdata;
 mod transactions;
 mod ui;
@@ -116,6 +120,23 @@ pub struct Engine {
     pub(crate) served_tables: std::sync::OnceLock<Arc<[Option<al_builtins::platform::Virtual>]>>,
     /// What crates above the VM work out from this engine's program once, by type (see [`Engine::derived`]).
     derived: std::sync::Mutex<std::collections::HashMap<std::any::TypeId, Arc<dyn std::any::Any + Send + Sync>>>,
+    /// What the install code of the program leaves that this runtime cannot know (ADR-046), worked out from the program
+    /// once by the runner (`al-testrun` `install.rs`) before the first install routine runs.
+    pub install_facts: std::sync::OnceLock<InstallFacts>,
+}
+
+/// The tables whose install rows a test may not read (ADR-046), found from the static closures of the install routines.
+#[derive(Debug, Default, Clone)]
+pub struct InstallFacts {
+    /// Table object -> why its rows are not known: a shared table that per-company install code of an app under test
+    /// writes (BC writes it once in each company of the database, decision 4c), or a table whose rows depend on the order
+    /// of the install routines of one app and part (amendment 1, A2 items a to c). A read whose answer depends on the rows
+    /// is refused outside install code, as for `Engine::unseeded`.
+    pub unknown: std::collections::HashMap<usize, String>,
+    /// Table object -> why the order of its install rows is not known: tables an app with two or more install routines
+    /// in one part writes (A2 item d). A read of `SystemRowVersion`, `SystemCreatedAt` or `SystemModifiedAt` of a row
+    /// install code wrote is refused.
+    pub row_order: std::collections::HashMap<usize, String>,
 }
 
 /// The codeunit objects with one id, first in program order.
@@ -142,6 +163,9 @@ pub(crate) struct RoutineFacts {
     /// An attribute is declared that the runtime does not understand (`CommitBehavior` other than Ignore and Error,
     /// `ErrorBehavior` other than Collect, or more than one of either): the call takes the slow path, which reports it.
     pub odd_attributes: bool,
+    /// A call hands the routine the declared lengths of its `var` Text and Code arguments (`ir::Routine::reads_var_max_len`;
+    /// never for a publisher, whose subscribers would see them).
+    pub var_lens: bool,
 }
 
 fn routine_facts(r: &ir::Routine, publisher: bool) -> RoutineFacts {
@@ -165,6 +189,7 @@ fn routine_facts(r: &ir::Routine, publisher: bool) -> RoutineFacts {
         }
     }
     f.odd_attributes |= commits > 1 || collects > 1;
+    f.var_lens = r.reads_var_max_len && !publisher;
     f
 }
 
@@ -332,6 +357,7 @@ impl Engine {
             codeunits,
             served_tables: Default::default(),
             derived: Default::default(),
+            install_facts: Default::default(),
         })
     }
 
@@ -422,11 +448,12 @@ pub struct Session {
     /// `faultsite.rs`: whether to record where errors and refusals leave from, and the last one.
     fault_trace: bool,
     fault_site: Vec<faultsite::FaultFrame>,
-    /// `IsolatedStorage` by (scope, key): the value and whether it was stored encrypted.
-    pub(crate) isolated_storage: std::collections::HashMap<(String, String), (String, bool)>,
+    /// `IsolatedStorage` by (scope, key): the value, whether it was stored encrypted, and whether it was stored from a
+    /// SecretText (misc/lt-cu-odd-leads/CuTryTests.al:181-232: such a value cannot be read into a Text).
+    pub(crate) isolated_storage: std::collections::HashMap<(String, String), (String, bool, bool)>,
     /// What the isolated storage held at the last commit: a rollback goes back to it (session/
     /// TestProbeSessionMiscContracts.al:IsolatedStorage_NotRolledBack, whose name is the opposite of its result).
-    pub(crate) isolated_committed: std::collections::HashMap<(String, String), (String, bool)>,
+    pub(crate) isolated_committed: std::collections::HashMap<(String, String), (String, bool, bool)>,
     /// An install codeunit is running.
     install_scope: bool,
     /// Registered table connections by (type member, lower-case name), and the default name per type.
@@ -462,6 +489,11 @@ pub struct Session {
     /// How many `Randomize()` calls without a seed the session has seen.
     pub(crate) unseeded_randomizes: i32,
     pub(crate) next_row_version: i64,
+    /// The highest SystemRowVersion install code gave a row (`Session::mark_install_end`): a row at or below it was
+    /// written by install code (ADR-046 amendment 1, A2 item d).
+    pub(crate) install_row_version: i64,
+    /// `SessionId()` of an install session, which is not the test session (ADR-046 amendment 1, A4 item 1).
+    session_id_override: Option<i32>,
     /// Last AutoIncrement value handed out per table (and company). It is not part of the
     /// store: a rollback undoes rows but not the counter (corpus
     /// record/TestAutoIncrementExplicitKey.al:154).
@@ -515,6 +547,12 @@ pub struct Session {
     pub(crate) adhoc_tables: RefCell<AdhocTables>,
     /// Imported media objects and media sets (the platform tables behind Media fields).
     pub(crate) media: al_builtins::media::MediaStore,
+    /// Media objects a Modify or Delete removed from Tenant Media: `.0` since the last commit (a rollback puts them back),
+    /// `.1` committed since the test runner's checkpoint (its restore puts them back). See `Session::release_media`.
+    pub(crate) media_removed: (Vec<RemovedMedia>, Vec<RemovedMedia>),
+    /// Records a TransferFields from another table wrote into, with that row's version: the next Modify refuses when the stale
+    /// check would answer differently with it (records.rs `take_foreign_transfer`).
+    pub(crate) foreign_transfers: Vec<(std::rc::Weak<RefCell<RecordState>>, Value)>,
     /// The host session behind `DotNet` values; ends with the session (ADR-014 section 6).
     pub(crate) dotnet: dotnet::DotNetState,
     /// The session's application areas as `ApplicationArea()` reads them: `#Basic,#Suite`, or the
@@ -657,6 +695,8 @@ impl Session {
             inherited_draws: 0,
             unseeded_randomizes: 0,
             next_row_version: 0,
+            install_row_version: 0,
+            session_id_override: None,
             autoinc: Default::default(),
             truncate_undo: Default::default(),
             validating: Vec::new(),
@@ -692,6 +732,8 @@ impl Session {
             initial_cache: Default::default(),
             adhoc_tables: Default::default(),
             media,
+            media_removed: Default::default(),
+            foreign_transfers: Vec::new(),
             dotnet: Default::default(),
             application_areas: String::new(),
             tx: TxState {
@@ -707,6 +749,8 @@ impl Session {
                 deferred_raised: 0,
                 immediate_errors: false,
                 try_depth: 0,
+                used_tries: Vec::new(),
+                inconsistent: Vec::new(),
             },
             ui_state: UiState {
                 scope: None,
@@ -728,6 +772,7 @@ impl Session {
                 sender_refused: None,
                 var_origins: Vec::new(),
                 next_aliases: Vec::new(),
+                next_var_lens: Vec::new(),
                 unpinned_event_depth: 0,
                 skip_dependency_subscribers: false,
                 global_setups: Default::default(),
@@ -781,13 +826,28 @@ impl Session {
         self.tx.committed_row_version = self.next_row_version;
         self.tx.last_commit_wrote = self.tx.tx_phase == crate::transactions::TX_WRITE;
         self.isolated_committed = self.isolated_storage.clone();
+        let removed = std::mem::take(&mut self.media_removed.0);
+        self.media_removed.1.extend(removed);
         self.end_write_phase();
+    }
+
+    /// The test runner took a checkpoint of the committed data: what was removed before it stays removed.
+    pub fn media_checkpoint(&mut self) {
+        self.media_removed.1.clear();
+    }
+
+    /// The test runner went back to its checkpoint: the media removed since come back, as the rows that held them do.
+    pub fn restore_media_checkpoint(&mut self) {
+        let removed = std::mem::take(&mut self.media_removed.1);
+        self.media.objects.borrow_mut().extend(removed);
     }
 
     /// The transaction a write call started has ended (record/TestProbeRecordRefContracts.al:WriteTransaction_State starts
     /// it with a write that changes nothing; codeunit/TestWriteTxTestBoundary.al:Test10 to Test13d end it with the run or
     /// the page operation, and a rollback ends it too).
+    /// The `Consistent(false)` marks end with the transaction too.
     fn end_write_phase(&mut self) {
+        self.tx.inconsistent.clear();
         if self.tx.tx_phase == crate::transactions::TX_WRITE {
             self.tx.tx_phase = crate::transactions::TX_FRESH;
         }
@@ -796,10 +856,26 @@ impl Session {
     /// Discards every change since the last commit. The AutoIncrement counters are not
     /// part of the data and stay (corpus record/TestAutoIncrementExplicitKey.al:154), except
     /// those a Truncate of this transaction changed.
+    /// A rollback inside the run (asserterror, a guarded `Codeunit.Run`): refused while a Feature Key change of this
+    /// transaction is pending, since whether BC undoes it is not settled (platform/lt-aw-fresh-tenant/AwTests.al:557-576
+    /// says it does not, on the Linux CI only).
+    pub(crate) fn rollback_in_run(&mut self) -> Result<(), Signal> {
+        if self.store.virtual_write_pending() {
+            return Err(Signal::Unsupported(
+                "a rollback of an uncommitted Feature Key change (whether it is undone is a Linux suspect, not settled)".into(),
+            ));
+        }
+        self.rollback_transaction();
+        Ok(())
+    }
+
     pub fn rollback_transaction(&mut self) {
         self.tx.deferred_insert = None;
         al_data::Store::rollback(&mut self.store);
         self.isolated_storage = self.isolated_committed.clone();
+        // The Tenant Media rows a Modify or Delete of this transaction removed come back with the rows.
+        let removed = std::mem::take(&mut self.media_removed.0);
+        self.media.objects.borrow_mut().extend(removed);
         // The code coverage tables keep their rows through a rollback (codeunit/PWCodeCoverageRows.al:
         // Rollback_RowsReadBeforeAnAsserterror, Rollback_RowsFirstReadInsideFailingScope): what was
         // recorded is written into them again at the next read.
@@ -957,6 +1033,55 @@ impl Session {
     pub fn set_install_scope(&mut self, on: bool) {
         self.install_scope = on;
         self.store.record_restored_changes(on);
+    }
+
+    /// Whether an install routine runs (`set_install_scope`).
+    pub fn in_install_scope(&self) -> bool {
+        self.install_scope
+    }
+
+    /// Install code has ended: every row whose SystemRowVersion is at or below the current one was written by it, or
+    /// before it (ADR-046 amendment 1, A2 item d).
+    pub fn mark_install_end(&mut self) {
+        self.install_row_version = self.next_row_version;
+    }
+
+    /// The `SessionId()` this session answers: an install session's own id, else the host's.
+    pub(crate) fn session_id(&self) -> i32 {
+        self.session_id_override
+            .unwrap_or_else(|| self.host.identity.session_id())
+    }
+
+    /// The session runs as an install session with id `id`, or again as the host's session (`None`). BC installs each
+    /// app in a session of its own, which is not the test session (install/lt-bf-install-probes/BfInstallTests.al:142-144,
+    /// :168; ADR-046 amendment 1, A4 item 1).
+    pub fn set_install_session_id(&mut self, id: Option<i32>) {
+        self.session_id_override = id;
+    }
+
+    /// Drops the session's SingleInstance codeunit instances: the next use starts from the initial state. BC's install
+    /// session does this at the start of each company and of the per-database part
+    /// (install/lt-bf-install-probes/BfInstallTests.al:125-140; ADR-046 amendment 1, A4 item 2).
+    pub fn reset_single_instances(&mut self) {
+        self.singletons.clear();
+    }
+
+    /// Runs one subscriber of a platform event that has no parameters (the install events of `Extension Triggers`) on
+    /// the instance the event would give it: the session's one instance of a SingleInstance codeunit, else a fresh one.
+    pub fn call_parameterless_subscriber(&mut self, object: usize, routine: usize) -> Result<(), Signal> {
+        let r = &self.engine.program.objects[object].routines[routine];
+        if r.params != 0 {
+            return Err(Signal::Unsupported(format!(
+                "subscriber {}.{} declares parameters, and the event it subscribes to has none",
+                self.engine.program.objects[object].name, r.name
+            )));
+        }
+        let fresh = Rc::new(RefCell::new(Instance {
+            object: object as u32,
+            ..Default::default()
+        }));
+        let inst = self.shared_instance(fresh);
+        self.call(object, routine, inst, Vec::new()).map(|_| ())
     }
 
     /// The changes made to restored rows since install scope was last entered.
@@ -1209,14 +1334,20 @@ impl Session {
             };
         }
         self.return_vec(args);
+        let facts = engine.facts[object][routine];
+        let var_lens = if facts.var_lens {
+            std::mem::take(&mut self.events.next_var_lens)
+        } else {
+            Vec::new()
+        };
         let mut frame = Frame {
             object,
             routine,
             instance,
             locals,
             aliases,
+            var_lens,
         };
-        let facts = engine.facts[object][routine];
         let is_try = facts.is_try;
         // [CommitBehavior] governs the whole dynamic extent of the procedure and ends when it
         // returns (error-handling/TestCommitBehaviorAttribute.al:CommitBehavior_Ignore_ScopeIsPoppedOnReturn).
@@ -1229,7 +1360,7 @@ impl Session {
                 .filter(|a| a.name.eq_ignore_ascii_case("CommitBehavior"))
             {
                 match transactions::CommitBehavior::from_attribute(&a.text) {
-                    Some(b) => self.tx.commit_behavior = b,
+                    Some(b) => self.tx.commit_behavior = self.tx.commit_behavior.nested(b),
                     None => {
                         return Err(Signal::Unsupported(format!(
                             "{} (only Ignore and Error are pinned)",
@@ -1241,7 +1372,7 @@ impl Session {
             errorcollect::declares_collect(&r.attributes)?
         } else {
             if let Some(b) = facts.commit_behavior {
-                self.tx.commit_behavior = b;
+                self.tx.commit_behavior = self.tx.commit_behavior.nested(b);
             }
             facts.collects
         };
@@ -1437,6 +1568,9 @@ struct Frame {
     /// slot). Kept in step with the global around every call the frame makes (`finish_call`), so a change the sender makes to
     /// the global shows in the parameter and the other way round (corpus events/lt-event-var-through-sender).
     aliases: Vec<(usize, Rc<RefCell<Instance>>, usize)>,
+    /// Per parameter: what `MaxStrLen` of a `var` Text or Code parameter answers, the declared length of the variable or
+    /// field the caller passed (set by `finish_call`; `None`: not known, and `MaxStrLen` refuses).
+    var_lens: Vec<Option<i32>>,
 }
 
 fn int(v: &Value) -> Result<i64, Signal> {

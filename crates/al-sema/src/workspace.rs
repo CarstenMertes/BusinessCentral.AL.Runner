@@ -609,6 +609,18 @@ impl Workspace {
         self.codeunit_subscribers(&["filter helper triggers"])
     }
 
+    /// Subscribers to the platform's `Extension Triggers` codeunit (2000000010): its `OnInstallAppPerCompany` and
+    /// `OnInstallAppPerDatabase` run at the subscriber's app's install (ADR-046 decision 1).
+    pub fn extension_triggers_subscribers(&self) -> Vec<(usize, usize)> {
+        self.codeunit_subscribers(&["extension triggers", "2000000010"])
+    }
+
+    /// Subscribers to the platform's `Company Triggers` codeunit (2000000003): the install session raises its
+    /// `OnCompanyOpen` and `OnCompanyOpenCompleted` before the per-company install code (ADR-046 amendment 1, A4 item 4).
+    pub fn company_triggers_subscribers(&self) -> Vec<(usize, usize)> {
+        self.codeunit_subscribers(&["company triggers", "2000000003"])
+    }
+
     fn codeunit_subscribers(&self, keys: &[&str]) -> Vec<(usize, usize)> {
         keys.iter()
             .flat_map(|k| {

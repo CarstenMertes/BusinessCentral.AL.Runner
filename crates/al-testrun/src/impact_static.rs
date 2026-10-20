@@ -865,11 +865,16 @@ pub fn select(
     sel
 }
 
-/// The routines the install baseline runs: Base Application's `Company-Initialize` (its `OnRun`) and the install
-/// triggers of every install codeunit of an app `is_dependency` accepts (the extension's own install codeunits are
-/// impact points of their own).
+/// The routines the install baseline runs: Base Application's `Company-Initialize` (its `OnRun`), the install
+/// triggers of every install codeunit of an app `is_dependency` accepts, and that app's subscribers to the install events
+/// of `Extension Triggers` (ADR-046 decision 1; the extension's own install code is an impact point of its own).
 pub fn baseline_roots(program: &Program, is_dependency: impl Fn(usize) -> bool) -> Vec<(usize, usize)> {
-    let mut out = Vec::new();
+    let mut out: Vec<(usize, usize)> = al_vm::events::Registry::build(program)
+        .install_subscribers
+        .iter()
+        .filter(|(so, _, _)| is_dependency(*so))
+        .map(|(so, sr, _)| (*so, *sr))
+        .collect();
     for (oi, o) in program.objects.iter().enumerate() {
         if o.kind != ObjKind::Codeunit || !is_dependency(oi) {
             continue;
@@ -892,5 +897,6 @@ pub fn baseline_roots(program: &Program, is_dependency: impl Fn(usize) -> bool) 
             }
         }
     }
+    out.sort_unstable();
     out
 }

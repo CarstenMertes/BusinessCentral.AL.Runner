@@ -152,6 +152,9 @@ pub struct MemStore {
     /// (`Value::Unknown`, a record copied from one). Never cleared: a filter or an order on such a column checks the
     /// rows (`unknown_read`).
     unknown_cols: std::collections::HashMap<u32, Vec<usize>>,
+    /// A virtual table took a change (a Feature Key's Enabled) since the last commit: whether a rollback undoes it is
+    /// not settled (platform/lt-aw-fresh-tenant/AwTests.al:557-576, a Linux suspect), so the session refuses that rollback.
+    virtual_write_pending: bool,
 }
 
 /// One table of an exported store ([`MemStore::export_committed`]): its company (empty for a table that is not per
@@ -1005,6 +1008,7 @@ impl Store for MemStore {
                         let k = Key(t.primary_key(&row));
                         self.table_mut(cx, t).insert(k, row);
                         self.touch(cx, t);
+                        self.virtual_write_pending = true;
                         al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::FeatureKeyEnabledModify);
                     } else {
                         al_builtins::assumptions::assume(
@@ -1237,15 +1241,24 @@ impl Store for MemStore {
     }
 
     fn commit(&mut self) {
+        self.virtual_write_pending = false;
         self.committed = self.tables.clone();
         self.committed_versions = self.versions.clone();
         self.committed_shapes = self.shapes.clone();
     }
 
     fn rollback(&mut self) {
+        self.virtual_write_pending = false;
         self.tables = self.committed.clone();
         self.versions = self.committed_versions.clone();
         self.shapes = self.committed_shapes.clone();
+    }
+}
+
+impl MemStore {
+    /// A virtual table took a change since the last commit (see the field).
+    pub fn virtual_write_pending(&self) -> bool {
+        self.virtual_write_pending
     }
 }
 

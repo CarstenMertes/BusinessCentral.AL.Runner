@@ -237,6 +237,9 @@ pub(crate) fn run_codeunit_core(
             skipped
         }
     };
+    // What install code wrote is known only in part (ADR-046): the tests read it through the facts of this engine.
+    crate::install::ensure_facts(engine, lowered);
+    session.mark_install_end();
     session.in_test_codeunit = true;
     session.test_object = Some(object);
     // What BC's AL test runner does around each test method (runner_reset.rs). A scratch run has no runner.
@@ -255,6 +258,11 @@ pub(crate) fn run_codeunit_core(
         match session.call(object, on_run, instance.clone(), Vec::new()) {
             // NavTestCodeunit.DoRunAsync commits after a declared OnRun
             // (codeunit/TestTestCodeunitOnRun.al).
+            Ok(_) if session.inconsistent_table().is_some() => {
+                return all(Outcome::NotRun(
+                    "OnRun: ends while Consistent(false) marks a table (the runner's commit is not pinned)".into(),
+                ));
+            }
             Ok(_) => session.commit_transaction(),
             Err(Signal::Unsupported(r)) => return all(Outcome::NotRun(format!("OnRun: {r}"))),
             Err(Signal::Error(e)) => {
@@ -405,6 +413,19 @@ pub(crate) fn run_codeunit_core(
                     committed = session.commits != commits_before;
                     session.tx_model = al_vm::TxModel::AutoCommit;
                     let unexecuted = session.end_ui_scope();
+                    // The runner commits a test that passes: with a table still marked by Consistent(false) what BC does there
+                    // is not pinned (only Commit() is, misc/lt-cu-odd-leads/CuCommitTests.al:405-419), so the test is not run.
+                    let result = match result {
+                        Ok(_) if model != al_vm::TxModel::AutoRollback && unexecuted.is_empty() => {
+                            match session.inconsistent_table() {
+                                Some(t) => Err(Signal::Unsupported(format!(
+                                    "the test ends while Consistent(false) marks table {t}: the runner's commit is not pinned"
+                                ))),
+                                None => result,
+                            }
+                        }
+                        r => r,
+                    };
                     let outcome = match result {
                         // AutoRollback rolls the test's work back the moment it finishes, pass
                         // or fail (record/TestTransactionModelAutoRollback.al:Test01-Test03).

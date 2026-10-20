@@ -37,6 +37,11 @@ pub(crate) struct TxState {
     pub(crate) immediate_errors: bool,
     /// Try functions on the call stack (Truncate is refused inside them).
     pub(crate) try_depth: usize,
+    /// The TryFunction calls on the call stack whose result is used, innermost last: a write inside one fails with
+    /// TryFunctionWrite (`transactions::try_write_error`).
+    pub(crate) used_tries: Vec<transactions::UsedTry>,
+    /// The tables (object indexes) `Consistent(false)` marked in the open transaction: `Commit` fails while one is marked.
+    pub(crate) inconsistent: Vec<u32>,
 }
 
 /// Handler functions and notifications of the running test method.
@@ -87,6 +92,8 @@ pub(crate) struct EventState {
     pub(crate) var_origins: Vec<Option<(Rc<RefCell<crate::Instance>>, usize)>>,
     /// Set just before a subscriber is called, taken by its frame: (parameter slot, instance, global slot).
     pub(crate) next_aliases: Vec<(usize, Rc<RefCell<crate::Instance>>, usize)>,
+    /// Set by `finish_call` just before the call, taken by the callee's frame (`Frame::var_lens`).
+    pub(crate) next_var_lens: Vec<Option<i32>>,
     /// Events being raised that have no publisher routine (table, page and Global Triggers
     /// events): BC puts frames between the subscriber and its caller that are not pinned, so the
     /// live call stack is not answered while one runs.

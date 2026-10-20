@@ -207,6 +207,9 @@ pub(crate) fn make_lowerer<'a>(sh: &'a Shared<'a>, tl: &'a Local<'a>, seq: &'a S
         hidden_locals: Vec::new(),
         hidden_base: 0,
         curr_field_args: None,
+        loops: Vec::new(),
+        var_params: Vec::new(),
+        reads_var_max_len: false,
         ret_decl: None,
         routine_nodes: &tl.nodes,
         ext_slots: &sh.ext_slots,
@@ -322,6 +325,17 @@ pub(crate) fn lower_object<'a>(
     });
     let mut globals = Vec::new();
     let mut global_reasons = Vec::new();
+    // An `#undef` of a symbol defined only in another case (the preprocessor reports it, see `al_syntax::preprocessor`):
+    // which branches the file keeps is not pinned, so nothing in it runs.
+    let path = &ws.files[o.file].path;
+    if let Some(d) = ws.diagnostics.iter().find(|d| {
+        d.code == "AR0000"
+            && &d.file == path
+            && d.message.starts_with("#undef ")
+            && d.message.contains("only in another case")
+    }) {
+        global_reasons.push(d.message.clone());
+    }
     if let Some(l) = seq.xml(oi) {
         for n in &l.nodes {
             let (ty, table) = match n.kind {

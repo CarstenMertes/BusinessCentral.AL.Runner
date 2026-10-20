@@ -517,10 +517,14 @@ impl Session {
     /// The key a data scope names. Module is the default and is one app's store; Company adds the
     /// session company, and the app boundary holds there too (session/TestIsolatedStoragePerApp.al:
     /// 100-120). The user scopes need a user identity, which the runtime does not have.
+    /// The app that owns the code calling IsolatedStorage, not the app that raised the event it handles
+    /// (session/TestIsolatedStoragePerApp.al:140-160).
+    fn calling_app(&self) -> u32 {
+        self.frames.last().map_or(0, |o| self.engine.program.objects[*o].app)
+    }
+
     fn storage_scope(&self, scope: Option<&Value>) -> Result<String, Signal> {
-        // The module is the app that owns the code calling IsolatedStorage, not the app that raised
-        // the event it handles (session/TestIsolatedStoragePerApp.al:140-160).
-        let app = self.frames.last().map_or(0, |o| self.engine.program.objects[*o].app);
+        let app = self.calling_app();
         match scope {
             None => Ok(format!("app{app}")),
             Some(Value::Option(0, _)) => Ok(format!("app{app}")),
@@ -538,8 +542,8 @@ impl Session {
         }
     }
 
-    /// `IsolatedStorage.<rest>` (`Get#4`, `SetEncrypted#2`, ...): a text store per scope, outside
-    /// the transaction (not pinned either way). Corpus: session/TestIsolatedStorage.al:30-125.
+    /// `IsolatedStorage.<rest>` (`Get#4`, `SetEncrypted#2`, ...): a text store per scope, part of the transaction
+    /// (a rollback undoes it, see `Session::isolated_committed`). Corpus: session/TestIsolatedStorage.al:30-125.
     fn isolated_storage_op(&mut self, method: &str, n: u32, args: &mut [Value]) -> Result<Value, Signal> {
         // A Guid key is its text form `{XXXXXXXX-...}`, for Set, Contains, Get and Delete in every scope
         // (session/lt-isolated-storage-guid/IsoStorageGuidKey.al). Other key types are not pinned (probe wanted).
@@ -576,29 +580,101 @@ impl Session {
         let found = self.ret_used;
         match method {
             "Set" | "SetEncrypted" => {
-                let value = match args.get(1) {
-                    Some(v) => al_builtins::textfns::secret_or_text(v)?.to_string(),
-                    None => return unsupported("IsolatedStorage.Set without a value"),
+                let Some(arg) = args.get(1) else {
+                    return unsupported("IsolatedStorage.Set without a value");
                 };
-                self.isolated_storage.insert(slot, (value, method == "SetEncrypted"));
+                let secret = al_builtins::native::text_of(arg).is_none();
+                let value = al_builtins::textfns::secret_or_text(arg)?;
+                if self.pages.bg_worker.is_some() {
+                    // A worker runs read-only: a Set of a new key is refused as an Insert into table 2000000107
+                    // (session/lt-cn-session-leads/CnIsolatedStorageLeads.al:104-117). A Set over an existing key and a
+                    // SetEncrypted are not pinned there.
+                    if method != "Set" || self.isolated_storage.contains_key(&slot) {
+                        return unsupported(format!(
+                            "IsolatedStorage.{method} in a page background task over an existing key or encrypted (the refusal text is not pinned)"
+                        ));
+                    }
+                    return Err(self.bg_read_only_error(2000000107, "Isolated Storage", self.calling_app(), "Insert"));
+                }
+                if method == "SetEncrypted" {
+                    // The limit is on the UTF-8 bytes: 214 ASCII and 107 two-byte characters are kept, 216 ASCII and 108
+                    // two-byte characters fail (session/lt-cn-session-leads/CnIsolatedStorageLeads.al:368-424; the header at
+                    // :12-13 says 216 and more fail with BC's own length check). 215 bytes fails on the Linux container with
+                    // an OpenSSL error (:380-388, Linux suspect), characters of three or four bytes and SecretText values
+                    // near the limit are not pinned.
+                    let bytes = value.len();
+                    if value.chars().any(|c| c.len_utf8() > 2) {
+                        return unsupported(
+                            "IsolatedStorage.SetEncrypted of characters of three or more UTF-8 bytes (the length limit is pinned for one- and two-byte characters only)",
+                        );
+                    }
+                    if bytes == 215 || (secret && bytes >= 215) {
+                        return unsupported(
+                            "IsolatedStorage.SetEncrypted of 215 bytes or of a long SecretText (not pinned; 215 is a Linux suspect)",
+                        );
+                    }
+                    if bytes >= 216 {
+                        return al_builtins::native::raise(
+                            "Unable to encrypt data. The provided string is too long.",
+                            "EncryptionDataTooLong",
+                        );
+                    }
+                }
+                // Set opens the write transaction in every scope (session/lt-cn-session-leads/CnIsolatedStorageLeads.al:
+                // 238-263); a SetEncrypted is undone by a rollback (misc/lt-cu-odd-leads/CuTryTests.al:220-230), so it is
+                // a write of the transaction too. Only a Set of a new key is pinned: an overwrite outside a write
+                // transaction would have to choose whether it opens one, so it is refused (probe wanted, docs/probes-needed.md,
+                // IsolatedStorage row); inside one the phase cannot change.
+                if self.isolated_storage.contains_key(&slot) && self.tx.tx_phase != crate::transactions::TX_WRITE {
+                    return unsupported(format!(
+                        "IsolatedStorage.{method} over an existing key outside a write transaction (whether it opens one is not pinned; probe wanted: IsolatedStorage overwrite and IsInWriteTransaction)"
+                    ));
+                }
+                self.tx.tx_phase = crate::transactions::TX_WRITE;
+                self.isolated_storage
+                    .insert(slot, (value, method == "SetEncrypted", secret));
                 Ok(Value::Boolean(true))
             }
             "Contains" => {
                 let hit = self.isolated_storage.get(&slot).cloned();
                 if n == 2 {
-                    args[2] = Value::Boolean(hit.as_ref().is_some_and(|(_, enc)| *enc));
+                    args[2] = Value::Boolean(hit.as_ref().is_some_and(|(_, enc, _)| *enc));
                 }
                 Ok(Value::Boolean(hit.is_some()))
             }
-            "Delete" => match self.isolated_storage.remove(&slot) {
-                Some(_) => Ok(Value::Boolean(true)),
-                None if found => Ok(Value::Boolean(false)),
-                None => unsupported("IsolatedStorage.Delete of a missing key as a statement (error text not pinned)"),
-            },
+            "Delete" => {
+                if self.pages.bg_worker.is_some() {
+                    // A worker runs read-only: a Delete of a stored key is refused as a Delete on table 2000000107
+                    // (session/lt-cn-session-leads/CnIsolatedStorageLeads.al:119-134). A missing key is not pinned there.
+                    if !self.isolated_storage.contains_key(&slot) {
+                        return unsupported(
+                            "IsolatedStorage.Delete of a missing key in a page background task (not pinned)",
+                        );
+                    }
+                    return Err(self.bg_read_only_error(2000000107, "Isolated Storage", self.calling_app(), "Delete"));
+                }
+                match self.isolated_storage.remove(&slot) {
+                    Some(_) => {
+                        // A Delete opens the write transaction (session/lt-cn-session-leads/CnIsolatedStorageLeads.al:254-255).
+                        self.tx.tx_phase = crate::transactions::TX_WRITE;
+                        Ok(Value::Boolean(true))
+                    }
+                    None if found => Ok(Value::Boolean(false)),
+                    None => {
+                        unsupported("IsolatedStorage.Delete of a missing key as a statement (error text not pinned)")
+                    }
+                }
+            }
             "Get" => {
                 let target = if n <= 2 { 2 } else { 1 };
                 match self.isolated_storage.get(&slot) {
-                    Some((value, _)) => {
+                    // A value stored from a SecretText cannot be read into a Text, also in a TryFunction; the target keeps
+                    // its value (misc/lt-cu-odd-leads/CuTryTests.al:181-232).
+                    Some((_, _, true)) if n == 2 || n == 4 => al_builtins::native::raise(
+                        "The operation was aborted to prevent exposing a secret value.",
+                        "ForbiddenSecretAccess",
+                    ),
+                    Some((value, _, _)) => {
                         args[target] = if n == 1 || n == 3 {
                             secret_text(value.clone())
                         } else {

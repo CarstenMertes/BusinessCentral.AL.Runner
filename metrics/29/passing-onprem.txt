@@ -115,6 +115,9 @@
 98550 Handler_RaisesError
 98550 NoBaseAddress_RelativePaths_1
 98550 NoBaseAddress_RelativePaths_2
+98550 PY_BaseAddress_Joins_1
+98550 PY_BaseAddress_Joins_3
+98550 PY_UnusedResult_MockedAndErrors
 98940 Handler_BaseAddressAbsoluteUrlBearer
 98940 Handler_BlockedByEnvironment
 98940 Handler_RaisesError

@@ -53,3 +53,4 @@ mod typed_ops;
 mod var_attribute_refusals;
 mod version_gates;
 mod xml_doctype;
+mod xml_xpath_axes;

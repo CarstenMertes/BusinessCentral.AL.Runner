@@ -1724,6 +1724,12 @@ enum Axis {
     AncestorOrSelf,
     FollowingSibling,
     PrecedingSibling,
+    /// Every node after the context node in document order, without its descendants (xml/lt-ay-xml/
+    /// AyXPathAxesVariables.al:101 XPath_Axes_3).
+    Following,
+    /// Every node before the context node in document order, without its ancestors; positions count from the
+    /// nearest node (AyXPathAxesVariables.al:116 XPath_Axes_4, :176 XPath_Axes_8).
+    Preceding,
     Attribute,
 }
 
@@ -2080,6 +2086,16 @@ impl XParser<'_> {
                             "following-sibling" => Axis::FollowingSibling,
                             "preceding-sibling" => Axis::PrecedingSibling,
                             "attribute" => Axis::Attribute,
+                            "following" => Axis::Following,
+                            "preceding" => Axis::Preceding,
+                            // AyXPathAxesVariables.al:161 XPath_Axes_7 pins only the names of the namespace nodes
+                            // (`xmlns:p`, `xmlns:xml`), not what they are (value, owner element, identity with the
+                            // declaring attribute, order of several declarations).
+                            "namespace" => {
+                                return Err(XFail::Signal(Signal::Unsupported(
+                                    "the XPath namespace:: axis (only the node names are pinned)".into(),
+                                )));
+                            }
                             other => return malformed(format!("axis {other}")),
                         };
                     } else {
@@ -2325,6 +2341,35 @@ fn axis_nodes(node: &Handle, step: &Step, ctx: &XCtx) -> XRes<Vec<Handle>> {
                         cand = sibs[..at].iter().rev().cloned().collect();
                     }
                 }
+            }
+        }
+        Axis::Following | Axis::Preceding => {
+            // Pinned only from an element (AyXPathAxesVariables.al:93-180); from an attribute the axes would also
+            // reach the owner's children, which no corpus test shows.
+            if with(node, |d| matches!(d, XData::Attribute { .. })) {
+                return Err(XFail::Signal(Signal::Unsupported(
+                    "the XPath following:: or preceding:: axis from an attribute".into(),
+                )));
+            }
+            let mut cur = node.clone();
+            while let Some(p) = parent_of(&cur) {
+                let sibs = children_of(&p);
+                if let Some(at) = sibs.iter().position(|c| Rc::ptr_eq(c, &cur)) {
+                    if step.axis == Axis::Following {
+                        for s in &sibs[at + 1..] {
+                            cand.push(s.clone());
+                            descendants(s, &mut cand);
+                        }
+                    } else {
+                        for s in sibs[..at].iter().rev() {
+                            let mut sub = Vec::new();
+                            descendants(s, &mut sub);
+                            cand.extend(sub.into_iter().rev());
+                            cand.push(s.clone());
+                        }
+                    }
+                }
+                cur = p;
             }
         }
         Axis::Attribute => cand = attrs_of(node),
@@ -2690,6 +2735,14 @@ fn read_from_stream(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> 
         let body = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(&bytes);
         std::str::from_utf8(body).ok().map(str::to_string)
     };
+    if let Some(text) = &decoded {
+        let utf16 = bytes.len() >= 2 && (bytes[0] == 0xFF || bytes[0] == 0xFE || bytes[1] == 0);
+        if utf16 {
+            if let Some(r) = utf16_declared_encoding(c, text, bytes.starts_with(&[0xFF, 0xFE])) {
+                return r;
+            }
+        }
+    }
     let Some(text) = decoded else {
         return if c.ret_used() {
             Ok(Value::Boolean(false))
@@ -2703,6 +2756,42 @@ fn read_from_stream(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> 
     let result = read_from_text(c, None, &mut args)?;
     a[1] = args[1].clone();
     Ok(result)
+}
+
+/// The encoding a declaration names in a UTF-16 document. `None`: no declaration, no encoding or UTF-16; the document
+/// reads as UTF-16 (xml/lt-ay-xml/AyXmlReadFromStream.al:90-98 ReadFrom_le_bom_decl16). With a UTF-16 LE byte order
+/// mark and exactly `<?xml version="1.0" encoding="utf-8"?>` followed by `<`, BC switches to UTF-8 after the declaration
+/// and meets the zero byte of `<` (AyXmlReadFromStream.al:103-112 ReadFrom_le_bom_decl8, statement form in a
+/// TryFunction). Every other shape is refused: no byte order mark, big endian, other text after the declaration, another
+/// declaration or encoding, the form whose result is used.
+fn utf16_declared_encoding(c: &mut dyn Ctx, text: &str, le_bom: bool) -> Option<NResult> {
+    let rest = text.strip_prefix("<?xml")?;
+    let end = rest.find("?>")?;
+    let decl = &rest[..end];
+    let enc_at = decl.find("encoding")?;
+    let after = decl[enc_at + "encoding".len()..]
+        .trim_start()
+        .strip_prefix('=')?
+        .trim_start();
+    let quote = after.chars().next()?;
+    let value = after[1..].split(quote).next().unwrap_or("");
+    if value.eq_ignore_ascii_case("utf-16") {
+        return None;
+    }
+    const DECL8: &str = "<?xml version=\"1.0\" encoding=\"utf-8\"?>";
+    if le_bom && !c.ret_used() && text.starts_with(DECL8) && text[DECL8.len()..].starts_with('<') {
+        // `<` is at position 39 of line 1, its zero byte at 40.
+        let pos = DECL8.chars().count() + 2;
+        return Some(Err(error(
+            format!(
+                "The following exception was encountered when processing XML data: 'Name cannot begin with the '.' character, hexadecimal value 0x00. Line 1, position {pos}.' at line 1 and position {pos}."
+            ),
+            "Xml:Xml",
+        )));
+    }
+    Some(unsupported(format!(
+        "XmlDocument.ReadFrom of UTF-16 bytes whose declaration names the encoding `{value}` (only a UTF-16 LE byte order mark with exactly a utf-8 declaration followed by `<`, statement form, is pinned)"
+    )))
 }
 
 fn doc_create(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> NResult {

@@ -1431,6 +1431,24 @@ impl Session {
                 "DB:Ok",
             ));
         }
+        // An AutoIncrement field outside the key cannot be changed (record/TestAutoIncrementEdges.al:569-580, two rows, names as
+        // captions). Over no rows, and for a name that differs from its caption, the text is not pinned.
+        if self.auto_increment_field(t)? == Some(pos) {
+            let (field, table) = (t.fields[pos].name.clone(), t.name.clone());
+            if rows.is_empty() || self.field_caption(t, pos) != field || self.caption(t) != table {
+                return unsupported(
+                    "ModifyAll on an AutoIncrement field with no rows or with a caption (error text not pinned)",
+                );
+            }
+            return Err(error(
+                format!(
+                    "You cannot change the value of the {field} field.{}{}Table: {table}",
+                    crate::records::BR,
+                    crate::records::BR
+                ),
+                "DB:Ok",
+            ));
+        }
         // One fresh set of table globals for all rows, not the caller's (ADR-021 decision 6; corpus
         // probe TableGlobals_ModifyAll_WhatTheTriggersAndSubscribersSee).
         let shared = al_builtins::value::TableGlobals::new_shared();

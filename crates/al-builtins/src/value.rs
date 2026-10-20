@@ -75,6 +75,9 @@ pub struct ListVec {
     /// Reads by List methods whose effect on a `foreach` over the list is not pinned (`collections.rs`, `read_list_unpinned`):
     /// a foreach that sees this change refuses (`exec/run.rs`).
     pub unpinned_reads: u64,
+    /// The list `Enum.Ordinals()` and `Enum.Names()` answer: every change raises NotSupportedOperation
+    /// (collections/lt-cs-odd-leads/CsCollections.al:EnumOrdinals_Mutations, EnumNames_Mutations).
+    pub read_only: bool,
 }
 
 impl From<Vec<Value>> for ListVec {
@@ -83,6 +86,7 @@ impl From<Vec<Value>> for ListVec {
             items,
             version: 0,
             unpinned_reads: 0,
+            read_only: false,
         }
     }
 }

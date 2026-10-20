@@ -184,6 +184,51 @@ impl Session {
             .contains(&table.to_ascii_lowercase())
     }
 
+    /// A Modify may not change an AutoIncrement field outside the primary key (record/TestAutoIncrementEdges.al:552-566, and :583-600
+    /// after a TransferFields from another row). Pinned on a database table without triggers: with a trigger, an event subscriber or
+    /// a database trigger the order of the check is not known, and on a temporary record nothing is pinned.
+    pub(crate) fn check_modify_auto_increment(
+        &mut self,
+        t: &TableDef,
+        rec: &crate::records::Rec,
+        old: &[Value],
+        run: bool,
+    ) -> Result<(), Signal> {
+        let Some(field) = self.auto_increment_field(t)? else {
+            return Ok(());
+        };
+        let new = rec.borrow().fields.clone();
+        if t.keys[0].contains(&field) || number(&old[field]) == number(&new[field]) {
+            return Ok(());
+        }
+        let mut trigger = run && self.table_trigger(t, "OnModify").is_some();
+        for n in ["OnBeforeModify", "OnModify", "OnAfterModify"] {
+            trigger |= run && !self.ext_triggers(t, n).is_empty();
+        }
+        if rec.borrow().temporary
+            || trigger
+            || self.listened(t, "onbeforemodifyevent", None)?
+            || self.listened(t, "onaftermodifyevent", None)?
+            || self.global_enabled(t, crate::globaltriggers::GlobalOp::Modify)?
+        {
+            return unsupported(
+                "a Modify that changes an AutoIncrement field of a temporary record or a table with triggers or events (not pinned)",
+            );
+        }
+        let br = crate::records::BR;
+        Err(Signal::Error(Box::new(AlError {
+            message: format!(
+                "You cannot change the value of an AutoIncrement field.{br}{br}Field: {}{br}Table: {}{br}{br}Identification fields and values:{br}{}",
+                t.fields[field].name,
+                self.caption(t),
+                self.identification(t, &new)?
+            ),
+            code: "DB:ModifyOnIdentityField".into(),
+            call_stack: String::new(),
+            ..Default::default()
+        })))
+    }
+
     /// Rename may not change an AutoIncrement value (record/TestAutoIncrementExplicitKey.al:147,
     /// TestAutoIncrementEdges.al:296).
     pub(crate) fn check_rename_auto_increment(&self, t: &TableDef, old: &[Value], new: &[Value]) -> Result<(), Signal> {

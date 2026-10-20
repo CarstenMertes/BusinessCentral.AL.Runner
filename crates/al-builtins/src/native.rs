@@ -2100,24 +2100,30 @@ fn enum_receiver(ctx: &dyn Ctx, r: Option<&mut Value>, what: &str) -> Result<(u3
     )
 }
 
-fn list_of(items: Vec<Value>) -> Value {
-    Value::List(Rc::new(std::cell::RefCell::new(items.into())))
-}
-
 /// `Enum.Names()`: every declared name, the blank ordinal included
 /// (types/TestEnumNamesContracts.al:19-60). The order is the declaration order, which matches
 /// `Ordinals()` position by position; BC's order is not pinned (docs/probes-needed.md).
 fn enum_names(ctx: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
     let (_, members) = enum_receiver(ctx, r, "Enum.Names")?;
-    Ok(list_of(
+    Ok(read_only_list(
         members.into_iter().map(|(_, n)| Value::Text(n.into())).collect(),
     ))
+}
+
+/// The lists of `Enum.Names()` and `Enum.Ordinals()` cannot be changed (collections/lt-cs-odd-leads/CsCollections.al:
+/// EnumOrdinals_Mutations, EnumNames_Mutations).
+fn read_only_list(items: Vec<Value>) -> Value {
+    let mut l: crate::value::ListVec = items.into();
+    l.read_only = true;
+    Value::List(Rc::new(std::cell::RefCell::new(l)))
 }
 
 /// `Enum.Ordinals()` (session/TestSystemExtended.al:381-390, types/TestLanguageEdgeCases.al:91-105).
 fn enum_ordinals(ctx: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
     let (_, members) = enum_receiver(ctx, r, "Enum.Ordinals")?;
-    Ok(list_of(members.into_iter().map(|(o, _)| Value::Integer(o)).collect()))
+    Ok(read_only_list(
+        members.into_iter().map(|(o, _)| Value::Integer(o)).collect(),
+    ))
 }
 
 /// `Enum.FromInteger(n)`: any number is carried, declared or not (types/TestEnum.al:83-91,

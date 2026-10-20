@@ -15,6 +15,7 @@ mod corpus_failures_1;
 mod dataformats;
 mod duration_date_arith;
 mod enum_in_set;
+mod enum_list_dictionary_list;
 mod erm_builtins;
 mod erm_builtins_2;
 mod erm_defects;

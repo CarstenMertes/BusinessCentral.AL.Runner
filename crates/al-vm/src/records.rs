@@ -334,7 +334,7 @@ impl Session {
     /// The table-level trigger `name` (`OnBeforeInsert`, `OnInsert`, ...) of every table extension that declares it,
     /// in the order of the extensions' object ids: two extensions run the same trigger one after the other
     /// (corpus events/TestProbeEventContracts.al:ExtensionTriggers_TwoExtensionsSameTrigger_Order, ids 69800 and 69801).
-    fn ext_triggers(&self, t: &TableDef, name: &str) -> Vec<(usize, usize)> {
+    pub(crate) fn ext_triggers(&self, t: &TableDef, name: &str) -> Vec<(usize, usize)> {
         let mut found = Vec::new();
         if let Some(schema) = &self.engine.program.objects[t.object as usize].table {
             for &e in &schema.extensions {
@@ -359,7 +359,7 @@ impl Session {
 
     /// Whether `event` of table `t` would reach a subscriber now (static ones, and
     /// manual ones with a bound instance).
-    fn listened(&mut self, t: &TableDef, event: &str, element: Option<&str>) -> Result<bool, Signal> {
+    pub(crate) fn listened(&mut self, t: &TableDef, event: &str, element: Option<&str>) -> Result<bool, Signal> {
         self.has_listeners(t.object as usize, event, element)
     }
 
@@ -766,7 +766,7 @@ impl Session {
         Ok(any)
     }
 
-    fn table_trigger(&self, t: &TableDef, name: &str) -> Option<usize> {
+    pub(crate) fn table_trigger(&self, t: &TableDef, name: &str) -> Option<usize> {
         self.engine.program.objects[t.object as usize]
             .routines
             .iter()
@@ -2097,6 +2097,9 @@ impl Session {
                 // same for the events). A row a page saves carries the page's own previous row
                 // (record/TestXRecDriverContracts.al:32-51 Record_Modify_FromPage_xRecHoldsPreviousValue).
                 let stored_row = stored.clone();
+                if let Some(old) = &stored {
+                    self.check_modify_auto_increment(&t, rec, old, run)?;
+                }
                 // A Modify loads every field of a partially loaded record: the subscribers' Rec and xRec and the caller's record
                 // report all fields loaded afterwards, for Modify(true) and Modify(false)
                 // (record/lt-af-record-events/AfModifyLoadFields.al:92, :112, :130). A record nothing was fetched into is not pinned

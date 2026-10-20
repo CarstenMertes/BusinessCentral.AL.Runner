@@ -123,8 +123,14 @@ pub enum Gate {
     /// 28 Argument, 29 Format). Not consumed yet (corpus bump 10).
     ConversionErrorTextsFrom28,
     /// A test codeunit that runs a `List of [Interface ...]` is compiled only for BC 29: on BC 27 the server's generated C# does not
-    /// compile and on BC 28 no result comes back (codeunit/lt-enums-interfaces/OjT71052.al, corpus bump 10). Not consumed yet.
+    /// compile and on BC 28 no result comes back (codeunit/lt-enums-interfaces/OjT71052.al, corpus bump 10). Corpus bump 30 adds
+    /// `List of [Interface ...]`.AddRange and a `Dictionary of [..., Interface ...]` (collections/lt-cs-odd-leads/CsCollections.al:332,
+    /// CsDictInterface.al:9), compiled only from BC 29 for the same reason. Not consumed yet.
     InterfaceListCodeunitFrom29,
+    /// Default interface methods (an interface member with a body) exist from app runtime 18.0 (BC 29); BC 27 and 28 refuse the
+    /// body at compile time (must-not-compile case 0325), so the test file is compiled only from BC 29
+    /// (codeunit/lt-cw-interface-leads/CwDefaultInterfaceMethods.al:19, corpus bump 30). Not consumed yet.
+    DefaultInterfaceMethodsFrom29,
     /// Probed values that are the same on BC 28 and 29 and differ on BC 27 (the laptop writer's probes-needed files, corpus
     /// bump 11): the date control shorthands, metadata table rows and keys, report dataset rows and names, the SystemRowVersion
     /// aggregates, Media import with three arguments. Each guarded test names its fact; split into one gate per fact when the
@@ -136,7 +142,9 @@ pub enum Gate {
     BigIntegerLiteralInControlExpressionFrom28,
     /// Probed values that are the same on BC 29 and differ on BC 27 and 28 (corpus bump 11): BLOB length after a fresh Get, the
     /// BigInteger/Integer FlowField type mismatch, the report dataset header bytes and lines and a second SaveAs on one variable,
-    /// Report/Field metadata rows, Media import, BigInteger into an Enum field. Not consumed yet.
+    /// Report/Field metadata rows, Media import, BigInteger into an Enum field. Corpus bump 30 adds the RDLC Pdf output tests,
+    /// asserted only below BC 29 (`#if not BC29PLUS`): the BC 29 Linux container has no renderer, which is not BC behavior
+    /// (report/lt-am-rdlc-output/AMRdlcOutput.al:9-11). Not consumed yet.
     ProbedValuesDifferFrom29,
     /// `Base64Convert.ToBase64` of a Text with `TextEncoding::Windows` or `MSDos` and no code page gives the code page 1252
     /// bytes from BC 28 (`äöü` is `5Pb8`); before, the UTF-8 bytes (`w6TDtsO8`) (types/PVBase64.al, corpus bump 13).
@@ -216,6 +224,7 @@ impl Gate {
         Gate::TableFilterEvaluateError,
         Gate::ConversionErrorTextsFrom28,
         Gate::InterfaceListCodeunitFrom29,
+        Gate::DefaultInterfaceMethodsFrom29,
         Gate::ProbedValuesDifferFrom28,
         Gate::BigIntegerLiteralInControlExpressionFrom28,
         Gate::ProbedValuesDifferFrom29,
@@ -244,6 +253,7 @@ impl Gate {
             | Gate::MediaExportKeepsTheImportedBytes
             | Gate::PlatformMetadataColumnsFrom29
             | Gate::InterfaceListCodeunitFrom29
+            | Gate::DefaultInterfaceMethodsFrom29
             | Gate::ProbedValuesDifferFrom29
             | Gate::WindowsLanguageRowsFrom29
             | Gate::LanguageSelectionRowsFrom29
@@ -554,6 +564,14 @@ impl Gate {
             }],
             Gate::ConversionErrorTextsFrom28 => &[
                 Evidence {
+                    file: "pages/lt-be-enum-setvalue-blank/BeEnumSetValueBlank.al",
+                    lines: "541,760,999,1218",
+                },
+                Evidence {
+                    file: "streams/lt-dd-stream-leads/DdStreamLeads.al",
+                    lines: "540",
+                },
+                Evidence {
                     file: "errors/lt-error-handling/ErTRuntimeErrors.al",
                     lines: "13",
                 },
@@ -574,15 +592,37 @@ impl Gate {
                     lines: "178",
                 },
             ],
-            Gate::InterfaceListCodeunitFrom29 => &[Evidence {
-                file: "codeunit/lt-enums-interfaces/OjT71052.al",
-                lines: "43",
+            Gate::InterfaceListCodeunitFrom29 => &[
+                Evidence {
+                    file: "codeunit/lt-enums-interfaces/OjT71052.al",
+                    lines: "43",
+                },
+                Evidence {
+                    file: "collections/lt-cs-odd-leads/CsCollections.al",
+                    lines: "332",
+                },
+                Evidence {
+                    file: "collections/lt-cs-odd-leads/CsDictInterface.al",
+                    lines: "9",
+                },
+            ],
+            Gate::DefaultInterfaceMethodsFrom29 => &[Evidence {
+                file: "codeunit/lt-cw-interface-leads/CwDefaultInterfaceMethods.al",
+                lines: "19",
             }],
             Gate::BigIntegerLiteralInControlExpressionFrom28 => &[Evidence {
                 file: "pages/lt-cc-page-leads/CcPageLeads.al",
                 lines: "801",
             }],
             Gate::ProbedValuesDifferFrom28 => &[
+                Evidence {
+                    file: "collections/lt-cs-odd-leads/CsCollections.al",
+                    lines: "594,607",
+                },
+                Evidence {
+                    file: "pages/lt-px-controls/PxControls.al",
+                    lines: "1115,1118,1125,1128",
+                },
                 Evidence {
                     file: "network/lt-http-send-failure/LtDaSendFailure.al",
                     lines: "10,140",
@@ -653,6 +693,14 @@ impl Gate {
                 },
             ],
             Gate::ProbedValuesDifferFrom29 => &[
+                Evidence {
+                    file: "report/lt-am-report-output/AMReportOutputTests.al",
+                    lines: "286",
+                },
+                Evidence {
+                    file: "report/lt-am-rdlc-output/AMRdlcOutput.al",
+                    lines: "313,386",
+                },
                 Evidence {
                     file: "misc/lt-cq-odd-leads/CqOddLeadObjects.al",
                     lines: "40,52",
@@ -770,6 +818,10 @@ impl Gate {
                 lines: "92",
             }],
             Gate::MediaExportKeepsTheImportedBytes => &[
+                Evidence {
+                    file: "streams/lt-dd-stream-leads/DdStreamLeads.al",
+                    lines: "271,290",
+                },
                 Evidence {
                     file: "report/lt-bc-xml-blob/BcXmlBlob.al",
                     lines: "213,222",

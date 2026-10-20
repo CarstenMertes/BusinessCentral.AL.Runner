@@ -367,6 +367,7 @@ impl Session {
             if as_part {
                 return Ok(());
             }
+            let waiting = self.parts_waiting_refresh(st);
             self.load_first_row(st, mode, record.is_some())?;
             // A card over a table with no row to show stands on a blank Rec that was never stored: an action cannot have deleted it.
             if has_source && !self.is_list(st) && st.borrow().cursor == Cursor::Row && !st.borrow().draft {
@@ -374,7 +375,8 @@ impl Session {
                 let never = self.stored_row(&rec)?.is_none();
                 st.borrow_mut().never_stored = never;
             }
-            self.sync_parts_at_open(st)
+            self.sync_parts_at_open(st)?;
+            self.refresh_parts_asked_by_host(st, &waiting, true, false)
         })();
         if let Err(e) = result {
             // The open raises the error itself and leaves the variable closed
@@ -697,13 +699,34 @@ impl Session {
         // The parts are asked first, with the action None; the host's own OnQueryClosePage follows
         // (testpart/TestPartCloseLinkEditableContracts.al:
         // Parts_CloseTriggers_AllPartsQueryClose_ThenHost_ThenPartsClose_ThenHost).
-        let open_parts: Vec<St> = st
-            .borrow()
-            .parts
-            .iter()
-            .map(|(_, c)| c.clone())
-            .filter(|c| c.borrow().open)
-            .collect();
+        // A part hidden by a Visible expression opened with the host and closes with it; one a literal `Visible = false` left
+        // out never opened (pages/W1Parts.al:408-411). The order of a hidden part's close triggers among shown parts is not
+        // pinned: refused when the hidden part declares them.
+        let (open_parts, mixed_order) = {
+            let s = st.borrow();
+            let mut all: Vec<(usize, St, bool)> = s
+                .parts
+                .iter()
+                .map(|(i, c)| (*i, c.clone(), false))
+                .chain(s.hidden_parts.iter().map(|(i, c)| (*i, c.clone(), true)))
+                .filter(|(_, c, _)| c.borrow().open)
+                .collect();
+            all.sort_by_key(|(i, _, _)| *i);
+            let shown = all.iter().any(|(_, _, h)| !h);
+            let hidden: Vec<St> = all.iter().filter(|(_, _, h)| *h).map(|(_, c, _)| c.clone()).collect();
+            let parts: Vec<St> = all.into_iter().map(|(_, c, _)| c).collect();
+            (parts, if shown { hidden } else { Vec::new() })
+        };
+        for hidden in &mixed_order {
+            if ["onqueryclosepage", "onclosepage"]
+                .iter()
+                .any(|t| self.declares(hidden, t))
+            {
+                return unsupported(
+                    "closing a host with a shown part and a part hidden by a Visible expression that has close triggers (order not pinned)",
+                );
+            }
+        }
         let none_ordinal = al_builtins::value::ACTION_MEMBERS
             .iter()
             .position(|m| *m == "None")
@@ -1141,26 +1164,16 @@ impl Session {
             let mut s = st.borrow_mut();
             s.cursor = Cursor::NewLine;
             s.draft = true;
+            s.typed_before_key = false;
         }
         // The blank line of a part is a started record: the client runs NewRecord when it becomes
         // current (corpus handlers/TestPagePartDraftLineLink.al:LinkedPart_DraftLine_*,
         // handlers/TestPagePartOnNewRecordCount.al). A top-level list does the same, and both then
         // run OnAfterGetCurrRecord on the blank row (corpus testpart/TestPartTriggerOrderAndRefresh.al:
         // 258-273 TopLevelList_BlankLine_RunsOnNewRecord, Part_BlankLine_RunsOnNewRecord).
-        // A part whose host record is not saved yet (a card opened with OpenNew whose key was just typed) copies the link
-        // values without validating them: the host row they point to does not exist yet (Microsoft's Allocation Account
-        // page, 34 Tests-ERM tests failed on the table relation of "Allocation Account No."). Assumed, see
-        // Assumption::PartLinkNotValidatedForUnsavedHost.
-        let host_unsaved = st
-            .borrow()
-            .host
-            .as_ref()
-            .and_then(|(h, _)| h.upgrade())
-            .is_some_and(|h| h.borrow().draft);
-        if host_unsaved {
-            al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::PartLinkNotValidatedForUnsavedHost);
-        }
-        self.stamp_from_filters(st, !host_unsaved)?;
+        // A part whose host record is not saved yet links to a blank value, which is validated like any other
+        // (pages/lt-part-line-before-host-key/PartLineBeforeHostKey.al:398, :400; see `sync_part`).
+        self.stamp_from_filters(st, true)?;
         self.page_trigger(st, "onnewrecord", vec![Value::Boolean(true)])?;
         self.page_event(st, "onnewrecordevent", None, Some(true))?;
         // xRec is the new record itself there (misc/lt-probes-needed-7/PnGNewRecord.al:HandedRecordNoFilters `AGCR(,)`,

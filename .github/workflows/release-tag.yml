@@ -50,6 +50,12 @@ jobs:
   test:
     needs: plan
     uses: ./.github/workflows/ci.yml
+    # A called workflow gets at most the caller's permissions. ci.yml's cache-cleanup job asks for
+    # actions: write (it runs only on a push to main, but the request is checked at start-up).
+    # Without this grant the run ends in startup_failure.
+    permissions:
+      actions: write
+      contents: read
 
   package:
     needs: [plan, test]

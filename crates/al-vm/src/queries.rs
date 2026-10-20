@@ -604,8 +604,12 @@ impl Session {
         };
         let t = self.engine.tables[def.items[c.item].table].clone().expect("table");
         match self.field_caption_written(&t, field)? {
-            Ok(caption) => Ok(caption),
-            Err(expr) => unsupported(format!(
+            crate::recmeta::WrittenCaption::Text(caption) => Ok(caption),
+            crate::recmeta::WrittenCaption::Class(class) => unsupported(format!(
+                "the caption of query column {} whose field's CaptionClass `{class}` the platform translates (not pinned for a query column)",
+                c.name
+            )),
+            crate::recmeta::WrittenCaption::Expr(expr) => unsupported(format!(
                 "the caption of query column {} whose field's CaptionClass is the expression `{}` (not pinned)",
                 c.name,
                 expr.trim()

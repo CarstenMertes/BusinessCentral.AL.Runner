@@ -191,18 +191,26 @@ impl Session {
         rec: Option<&Rc<RefCell<RecordState>>>,
     ) -> Result<String, Signal> {
         match self.field_caption_written(t, pos)? {
-            Ok(caption) => Ok(caption),
-            // A CaptionClass that is an expression runs with the record, and its `3,<text>` reads as <text>
-            // (pageext/lt-page-ext-properties/TableExtCaptionClass.al:56-74, BP_TableExtCaptionClass_ProcedureCall :124-149).
-            Err(expr) => {
+            WrittenCaption::Text(caption) => Ok(caption),
+            WrittenCaption::Class(class) => self.caption_class_translate(&class),
+            // A CaptionClass that is an expression runs once per read, with the record that reads it (record/lt-qd-captionclass-
+            // areas/QdCaptionClassAreas.al:323-347 Expression_PerRead_CallCount, :350-372 Expression_ChangesRec), and its
+            // result goes through the same resolvers as a literal (:262-296 Expressions_FieldCaption, :376-418
+            // Expressions_FieldRefCaption).
+            WrittenCaption::Expr(expr) => {
                 let class = self.field_caption_class_value(t, pos, rec, &expr)?;
-                expression_caption(&t.fields[pos].name, &class)
+                match expression_class(&t.fields[pos].name, &class)? {
+                    ExprCaption::FieldCaption => Ok(self.field_caption(t, pos)),
+                    ExprCaption::Text(c) => Ok(c),
+                    ExprCaption::Translate => self.caption_class_translate(&class),
+                }
             }
         }
     }
 
-    /// The caption of field `pos` that its declaration gives, or `Err` with its CaptionClass when that is an expression.
-    pub(crate) fn field_caption_written(&self, t: &TableDef, pos: usize) -> Result<Result<String, String>, Signal> {
+    /// The caption of field `pos` that its declaration gives, a literal CaptionClass the platform translates, or the
+    /// CaptionClass expression.
+    pub(crate) fn field_caption_written(&self, t: &TableDef, pos: usize) -> Result<WrittenCaption, Signal> {
         if let Some(why) = self.field_caption_class_refusal(t, pos) {
             return unsupported(why);
         }
@@ -211,24 +219,28 @@ impl Session {
             return unsupported(format!("the caption of system field {}", t.fields[pos].name));
         }
         // A field with a CaptionClass: `3,<text>` reads as <text> ('3,' alone as the Caption); a numeric area other than 3
-        // or an empty area reads as the class text as written (pages/lt-page-report-events/P84Captions.al:
-        // Table_NoSubscriber f01..f14, Table_Log_* and Table_Resolve_* with no event call, BC 29). A non-numeric area is
-        // the platform's event and not pinned for FieldCaption: refused.
+        // or an empty area goes to the platform's translation, which raises OnResolveCaptionClass and keeps what it translated
+        // for the session (record/lt-qd-captionclass-areas/QdCaptionClassAreas.al:233-258 Literals_FieldCaption: '2,0,x' reads
+        // `x Excl. VAT`, '5,3,' `Bill-to County` through Base Application's subscribers; pages/lt-page-report-events/
+        // P84Captions.al: a text no subscriber resolves stays as written, and a second read raises no event). A non-numeric
+        // area is the platform's event and not pinned for FieldCaption: refused.
         let declared = self.field_property(t, pos, "CaptionClass");
         if let Some(v) = declared.as_ref().filter(|v| string_literal(v).is_none()) {
-            return Ok(Err(v.clone()));
+            return Ok(WrittenCaption::Expr(v.clone()));
         }
         if let Some(class) = declared.and_then(|v| string_literal(&v)) {
             return match class.split_once(',') {
-                Some(("3", "")) => Ok(Ok(self.field_caption(t, pos))),
-                Some(("3", rest)) => Ok(Ok(rest.to_string())),
-                Some((area, _)) if area.is_empty() || area.trim().parse::<u32>().is_ok() => Ok(Ok(class)),
+                Some(("3", "")) => Ok(WrittenCaption::Text(self.field_caption(t, pos))),
+                Some(("3", rest)) => Ok(WrittenCaption::Text(rest.to_string())),
+                Some((area, _)) if area.is_empty() || area.trim().parse::<u32>().is_ok() => {
+                    Ok(WrittenCaption::Class(class))
+                }
                 _ => unsupported(format!(
                     "FieldCaption of a field whose CaptionClass `{class}` has an area no built-in resolver claims (not pinned)"
                 )),
             };
         }
-        Ok(Ok(self.field_caption(t, pos)))
+        Ok(WrittenCaption::Text(self.field_caption(t, pos)))
     }
 
     /// Why a read of field `pos`'s caption is refused (see `ir::Field::caption_class_refusal`).
@@ -260,8 +272,6 @@ impl Session {
                 expr.trim()
             ));
         };
-        // How often and with which record the expression runs is not pinned, only the caption one read gives.
-        al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::FieldCaptionClassExpressionPerRead);
         match self.call_on_record(object, routine, rec.clone(), None, Vec::new())?.0 {
             Value::Text(c) | Value::Code(c) => Ok(c.into_string()),
             other => unsupported(format!(
@@ -1766,14 +1776,38 @@ pub(crate) fn lock_table_bad_parm(t: &TableDef) -> Signal {
     )
 }
 
-/// The caption a CaptionClass expression's result `class` gives field `field`: `3,<text>` reads as <text>
-/// (pageext/lt-page-ext-properties/TableExtCaptionClass.al:124-149). Any other result of an expression is not pinned: the
-/// literal rules (P84Captions.al) are pinned for written classes only.
-pub(crate) fn expression_caption(field: &str, class: &str) -> Result<String, Signal> {
+/// What a table field's caption read gives for field `pos` (see `Session::field_caption_written`).
+pub(crate) enum WrittenCaption {
+    /// The caption, as written.
+    Text(String),
+    /// A literal CaptionClass the platform translates (`Session::caption_class_translate`).
+    Class(String),
+    /// The CaptionClass expression, which runs with the record.
+    Expr(String),
+}
+
+/// What a CaptionClass expression's result reads as (QdCaptionClassAreas.al:7-21).
+pub(crate) enum ExprCaption {
+    /// An empty result and `3,`: the field's Caption on a table read (Expressions_FieldCaption `exprEmpty`, `expr3`), the empty
+    /// text on a page control (Page_ControlCaptions `exprEmpty`, `expr3`).
+    FieldCaption,
+    /// `3,<text>`: <text> (pageext/lt-page-ext-properties/TableExtCaptionClass.al:124-149).
+    Text(String),
+    /// A numeric area other than 3, or an empty one: the platform translates it as a literal ('2,0,x', '5,3,', '9,x', '2,x',
+    /// '101,0,..', '1,1,1', QdCaptionClassAreas.al:262-296).
+    Translate,
+}
+
+/// The reading of field `field`'s CaptionClass expression result `class`. A text with no comma and an area that is not a
+/// number are not pinned for an expression: refused.
+pub(crate) fn expression_class(field: &str, class: &str) -> Result<ExprCaption, Signal> {
     match class.split_once(',') {
-        Some(("3", rest)) if !rest.is_empty() => Ok(rest.to_string()),
+        _ if class.is_empty() => Ok(ExprCaption::FieldCaption),
+        Some(("3", "")) => Ok(ExprCaption::FieldCaption),
+        Some(("3", rest)) => Ok(ExprCaption::Text(rest.to_string())),
+        Some((area, _)) if area.is_empty() || area.trim().parse::<u32>().is_ok() => Ok(ExprCaption::Translate),
         _ => unsupported(format!(
-            "the caption of field {field} whose CaptionClass expression gives `{class}` (only `3,<text>` from an expression is pinned)"
+            "the caption of field {field} whose CaptionClass expression gives `{class}` (an area that is not a number, or no comma, is not pinned)"
         )),
     }
 }

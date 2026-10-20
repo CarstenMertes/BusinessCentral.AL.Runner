@@ -616,8 +616,9 @@ impl Session {
         if let Some(why) = field.as_ref().and_then(|f| f.caption_class_refusal.clone()) {
             return unsupported(why);
         }
-        // A CaptionClass of the source field that is an expression runs with the page's record, and its `3,<text>` reads as
-        // <text> (pageext/lt-page-ext-properties/TableExtCaptionClass.al:124-149, the page captions).
+        // A CaptionClass of the source field that is an expression ran when the page filled (`fill_field_caption_expressions`);
+        // the read takes that caption and runs nothing (record/lt-qd-captionclass-areas/QdCaptionClassAreas.al:422-481
+        // Page_ControlCaptions, `exprId_again`; pageext/lt-page-ext-properties/TableExtCaptionClass.al:124-149).
         if let Some(raw) = field.as_ref().and_then(|f| {
             f.properties
                 .iter()
@@ -630,17 +631,12 @@ impl Session {
                         "a control Caption over its source field's CaptionClass (which one BC shows is not pinned)",
                     );
                 }
-                let rec = self.page_rec(st);
-                let t = self.table(&rec)?;
-                let Some(pos) = t
-                    .fields
-                    .iter()
-                    .position(|f| field.as_ref().is_some_and(|c| c.id == f.id))
-                else {
-                    return unsupported("the caption of a control whose source field is not in its table");
+                return match st.borrow().field_captions.iter().find(|(i, _)| *i == idx) {
+                    Some((_, caption)) => Ok(caption.clone()),
+                    None => unsupported(
+                        "Caption() of a control over a field whose CaptionClass is an expression, before the page filled a row",
+                    ),
                 };
-                let class = self.field_caption_class_value(&t, pos, Some(&rec), &raw)?;
-                return crate::recmeta::expression_caption(&t.fields[pos].name, &class);
             }
         }
         if let Some(c) = field_prop("captionclass") {

@@ -481,11 +481,11 @@ registry! {
         tests: "Microsoft tests that read ToString or Format of a last-error exception.",
         probe: "Format(GetLastErrorObject()) after Error('x') in a codeunit run from a test: every line,. Asked in corpus #652.",
     },
-    FieldCaptionClassExpressionPerRead => {
-        id: "field-caption-class-expression-per-read",
-        assumed: "A table field's CaptionClass expression runs once each time its caption is read (FieldCaption, a FieldRef's Caption, a page control over the field), with the record that reads it as Rec, its current values and its table globals; what the expression changes stays changed. The corpus pins the result of one read (pageext/lt-page-ext-properties/TableExtCaptionClass.al:124-149), not how often or with which record the expression runs.",
-        tests: "Microsoft tests that read the caption of Sales Line, Purchase Line and their archive and history tables' \"No.\" (CaptionClass = GetCaptionClass(FieldNo(\"No.\"))), about 2100 tests of Tests-ERM and 160 of Tests-Bank in the 2026-10-20 measurement.",
-        probe: "A table field whose CaptionClass calls a procedure that counts its calls in a SingleInstance codeunit and returns '3,' + Format(Rec.Id) + Format(count): read FieldCaption twice on one record, once on a second record with another Id, and the page control caption over the field; read the count after each.",
+    PageOpenCaptionClassExpressions => {
+        id: "page-open-caption-class-expressions",
+        assumed: "A page whose source table has fields with a CaptionClass expression runs every one of them 20 times with an empty record when it opens, then once for each control over such a field with each row it fills, and Caption() of the control reads what the fill gave. Pinned for a Card opened with OpenView (record/lt-qd-captionclass-areas/QdCaptionClassAreas.al:422-481 Page_ControlCaptions); assumed for other page types and open modes, and for the fills after the open.",
+        tests: "Microsoft tests that open sales and purchase documents and their subforms (Sales Line, Purchase Line \"No.\" and amount fields have CaptionClass = GetCaptionClass(..)), for example ERM Sales Order and ERM Purchase Order tests in Tests-ERM; they pass in Microsoft's CI.",
+        probe: "The QD card's log on a List opened with OpenView, OpenEdit and Page.Run, on a list part of a document, and after Next on a list: how many calls with an empty record, and how many with which row.",
     },
     RunnerPermissionSetsGrantAll => {
         id: "runner-permission-sets-grant-all",

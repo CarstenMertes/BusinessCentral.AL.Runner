@@ -191,9 +191,11 @@ impl Session {
                 "TestPage.{name} on a card whose OnNewRecord inserted the new row itself (not pinned)"
             ));
         }
-        // The row the host stands on before a First or Last, to tell a move from a stay (see below).
-        let before = if matches!(name, PageMethod::First | PageMethod::Last)
-            && st.borrow().host.is_none()
+        // The row the host stands on before a First, Last, GoToKey or GoToRecord, to tell a move from a stay (see below).
+        let before = if matches!(
+            name,
+            PageMethod::First | PageMethod::Last | PageMethod::GoToKey | PageMethod::GoToRecord
+        ) && st.borrow().host.is_none()
             && !st.borrow().parts.is_empty()
             && st.borrow().open
             && self.has_source(st)
@@ -266,6 +268,10 @@ impl Session {
                     PageMethod::First | PageMethod::Last if before.is_some() && !stayed => {
                         self.sync_parts_after_move(st, name == PageMethod::First)?;
                         true
+                    }
+                    PageMethod::GoToKey | PageMethod::GoToRecord if stayed => {
+                        self.sync_parts_stayed(st)?;
+                        false
                     }
                     _ => {
                         self.sync_parts(st)?;

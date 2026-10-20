@@ -144,19 +144,22 @@ fn a_caption_class_expression_of_a_tables_own_field_sees_the_record() {
     assert_eq!(text(al_testkit::run_in(src, "C", "F")), "7/2");
 }
 
-/// What a caption reads when the expression gives another area, or `3,` with nothing after the comma, is not pinned for an
-/// expression: refused where the caption is read.
+/// An expression result reads as a literal does: a numeric area nobody resolves stays as written, `3,` reads as the field's
+/// Caption, here its name (record/lt-qd-captionclass-areas/QdCaptionClassAreas.al:262-296 `expr9`, `expr3`). An area that is
+/// not a number is refused.
 #[test]
-fn a_caption_class_expression_with_another_area_is_refused() {
+fn a_caption_class_expression_with_another_area_reads_as_a_literal() {
     let src = "table 50100 T { fields { field(1; Id; Integer) { } field(2; Amt; Decimal) { CaptionClass = Cc(); } \
         field(3; Empty; Decimal) { CaptionClass = Blank(); } } keys { key(PK; Id) { } } \
         procedure Cc(): Text begin exit('2,0,Amount'); end; procedure Blank(): Text begin exit('3,'); end; } \
         codeunit 50100 C { procedure F(): Text var R: Record T; begin exit(R.FieldCaption(Amt)); end; \
         procedure G(): Text var R: Record T; begin exit(R.FieldCaption(Empty)); end; \
         procedure H(): Text var R: Record T; begin exit(R.FieldCaption(Id)); end; }";
-    refused(al_testkit::run_in(src, "C", "F"), "CaptionClass");
-    refused(al_testkit::run_in(src, "C", "G"), "CaptionClass");
+    assert_eq!(text(al_testkit::run_in(src, "C", "F")), "2,0,Amount");
+    assert_eq!(text(al_testkit::run_in(src, "C", "G")), "Empty");
     assert_eq!(text(al_testkit::run_in(src, "C", "H")), "Id");
+    let other = src.replace("exit('2,0,Amount')", "exit('AB,Amount')");
+    refused(al_testkit::run_in(&other, "C", "F"), "CaptionClass");
 }
 
 /// An error text that names a table whose caption is refused (a tableextension sets one over the table's own) is not pinned:

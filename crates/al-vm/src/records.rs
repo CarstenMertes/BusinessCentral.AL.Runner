@@ -2181,7 +2181,7 @@ impl Session {
                 self.sql_timestamp_before(&t, rec, stored_row.as_deref())?;
                 // A bulk ModifyAll(.., false) without subscribers stamps SystemModifiedAt of a row that has the value already
                 // (RcBTriggers.al:ModifyAll_Equal_Value_Rows_BQ); that it also gives the row a new row version is not pinned and
-                // marks the assumption modifyall-with-events-unchanged-row.
+                // marks the assumption modifyall-bulk-unchanged-row-version.
                 let unchanged = match stored_row.as_deref() {
                     Some(old) if !rec.borrow().temporary && Session::modify_changes_nothing(&t, old, rec) => Some(old),
                     _ => None,
@@ -2197,7 +2197,7 @@ impl Session {
                         let bumped = self.bump_row_version(&t, rec);
                         if bumped.is_some() {
                             al_builtins::assumptions::assume(
-                                al_builtins::assumptions::Assumption::ModifyAllWithEventsUnchangedRow,
+                                al_builtins::assumptions::Assumption::ModifyAllBulkUnchangedRowVersion,
                             );
                         }
                         bumped
@@ -2454,6 +2454,11 @@ impl Session {
                         Some(v) => ops::convert(v.clone(), &ty)?,
                         None => self.default_value(&ty),
                     });
+                }
+                if self.engine.program.objects[t.object as usize].id == Some(2_000_000_164) {
+                    if let Some(why) = pk.first().and_then(crate::platform::time_zone_get_refusal) {
+                        return unsupported(why);
+                    }
                 }
                 match self
                     .store_for(rec)

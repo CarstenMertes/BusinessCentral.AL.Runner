@@ -214,21 +214,16 @@ fn media_export(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out 
     };
     match &*h.borrow() {
         LibraryValue::OutStream(blob, _) => {
-            // Before BC 29 an imported PNG comes back re-encoded: 68 bytes export as 93 other bytes (types/W7Media.al:141-151,
-            // ExportStream_OfAnImportedPicture, `#else` branch). The export itself succeeds (streams/StTMedia.al:170 and :213,
-            // MediaExportStream and MediaExportAfterReload pass on BC 27 and 28). The re-encoded bytes are not pinned, and neither is
-            // what BC 27/28 export for content that is no PNG: the stream's buffer is marked like an unproduced report (ADR-040)
-            // and any look at it is refused. Probe wanted (docs/probes-needed.md).
-            if !c.gate(al_version::Gate::MediaExportKeepsTheImportedBytes) {
-                let mut buf = blob.borrow_mut();
-                buf.bytes.clear();
-                buf.loaded = true;
-                buf.written = true;
-                buf.render_pending = Some(crate::stream::MEDIA_REENCODED.into());
-            } else {
-                // From BC 29 the bytes are the ones imported (types/W7Media.al:134,146).
-                crate::stream::write_bytes(blob, &obj.bytes);
-            }
+            // An imported PNG comes back re-encoded on every major: 68 bytes export as 99 other bytes on Windows BC 27, 28 and 29
+            // (types/W7Media.al:141-145, ExportStream_OfAnImportedPicture, corpus bump 34; bc-linux #161). The export itself
+            // succeeds (streams/StTMedia.al:170 and :213, MediaExportStream and MediaExportAfterReload). The re-encoded bytes are not
+            // pinned, and neither is what BC exports for content that is no PNG: the stream's buffer is marked like an unproduced
+            // report (ADR-040) and any look at it is refused. Probe wanted (docs/probes-needed.md).
+            let mut buf = blob.borrow_mut();
+            buf.bytes.clear();
+            buf.loaded = true;
+            buf.written = true;
+            buf.render_pending = Some(crate::stream::MEDIA_REENCODED.into());
         }
         other => return unsupported(format!("an OutStream was expected, got {}", other.describe())),
     }

@@ -369,3 +369,28 @@ pub(super) fn license_permission_count(t: &TableDef, filters: &[FieldFilter]) ->
     };
     Ok(usize::from(filters.iter().all(|f| f.expr.matches(&r[f.field]))))
 }
+
+/// Why `Get(No.)` of the Time Zone table is refused, if it is. BC lists the 144 Windows time zones, numbered as Windows
+/// sorts them (record/lt-at-partner-gaps/AtTimeZoneNumbering.al:41-47: `count = 144`, `2 = UTC-11`, `3 = Aleutian Standard
+/// Time`); the runtime lists a few host zones in another order, so which zone a number from 2 to 144 names is not known
+/// here. Get(1) keeps the first row of a scan (record/TestTimeZoneVirtualTable.al:GetOne_AgreesWithTheFirstRowOfFindSet)
+/// and a number past 144 finds nothing (:GetOnANumberPastTheEnd_ReturnsFalse).
+pub(crate) fn time_zone_get_refusal(no: &Value) -> Option<&'static str> {
+    matches!(no, Value::Integer(n) if (2..=144).contains(n)).then_some(
+        "Get of a Time Zone row by a number from 2 to 144: BC lists 144 Windows time zones in Windows order, the runtime only a few host zones (not pinned which zone a number names)",
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn get_of_a_time_zone_number_after_the_first_is_refused() {
+        assert!(time_zone_get_refusal(&Value::Integer(1)).is_none());
+        assert!(time_zone_get_refusal(&Value::Integer(2)).is_some());
+        assert!(time_zone_get_refusal(&Value::Integer(144)).is_some());
+        assert!(time_zone_get_refusal(&Value::Integer(145)).is_none());
+        assert!(time_zone_get_refusal(&Value::Integer(999_999)).is_none());
+    }
+}

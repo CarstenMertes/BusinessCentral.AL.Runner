@@ -1,8 +1,7 @@
-//! OnFindRecord (and OnNextRecord) on a page whose SourceTableView has a WHERE part. Pinned by writer QC's probe
-//! tests/al-language/pagefindrecord/QcFindViewTests.al (corpus branch al-runtime-rs-staging-qc eca98051, green on all three
-//! BC majors the corpus runs; it lands on corpus master with corpus bump 33). Until the bump the runtime runs these paths under
-//! Assumption::FindRecordFilteredView, so the passes are flagged. Shapes from Base Application: Interaction Log
-//! Entries (list), Service Invoice (document card with a fallback), Sales Order Subform (list part).
+//! OnFindRecord (and OnNextRecord) on a page whose SourceTableView has a WHERE part. Pinned by
+//! tests/al-language/pagefindrecord/QcFindViewTests.al (corpus bump 33), so these paths mark no assumption.
+//! Shapes from Base Application: Interaction Log Entries (list), Service Invoice (document card with a fallback),
+//! Sales Order Subform (list part).
 
 use al_testkit::text;
 
@@ -111,7 +110,14 @@ codeunit 69981 Seed
 
 fn run(body: &str) -> String {
     let src = format!("{OBJECTS}\ncodeunit 69989 T\n{{\n{body}\n}}\n");
-    text(al_testkit::run_in(&src, "T", "F"))
+    al_builtins::assumptions::clear_hits();
+    let got = text(al_testkit::run_in(&src, "T", "F"));
+    // Pinned by corpus bump 33: no path here runs under an assumption (a new line of the list part is stamped under
+    // new-line-stamps-all-before-validating, which is not this file's subject).
+    let mut hits = al_builtins::assumptions::take_hits();
+    hits.retain(|a| *a != al_builtins::assumptions::Assumption::NewLineStampsAllBeforeValidating);
+    assert_eq!(hits, vec![]);
+    got
 }
 
 /// QcFindViewTests.al:78 ViewList_OpenView_FindStringAndRow, :97 ViewList_FirstNextLastPrevious, :135 ViewList_GoToKey.

@@ -298,3 +298,17 @@ fn continue_else_in_a_foreach_nested_in_a_loop_is_refused() {
     assert!(matches!(r, Err(Signal::Unsupported(_))), "{r:?}");
     assert_eq!(text(run_in(CONTINUE_ELSE, "CE", "TopLevelBlock")), "A.C.");
 }
+
+// `#undef x` after `#define X`: preprocessor symbols are case-sensitive in `#if`
+// (misc/lt-bm-preprocessor-scope/BmPreprocessorDefine.al:83), but whether `#undef` matches the other case is not pinned:
+// the file is refused (docs/probes-needed.md, "Loops, continue and MaxStrLen").
+#[test]
+fn undef_of_a_symbol_defined_only_in_another_case_is_refused() {
+    let src = "#define LTX\n#undef ltx\ncodeunit 69907 PU { procedure F(): Text begin\n#if LTX\nexit('defined');\n#else\nexit('not defined');\n#endif\nend; }\n";
+    // The workspace reports the directive (so `al_testkit::compile` would stop here) and every routine of the file is refused.
+    let (_, l) = al_sema::lower::compile(vec![al_testkit::app(src)], &Default::default());
+    let reasons: Vec<String> = al_testkit::blocked(&l).into_iter().flatten().flatten().collect();
+    assert!(reasons.iter().any(|r| r.contains("#undef ltx")), "{reasons:?}");
+    let same_case = "#define LTX\n#undef LTX\ncodeunit 69908 PV { procedure F(): Text begin\n#if LTX\nexit('defined');\n#else\nexit('not defined');\n#endif\nend; }\n";
+    assert_eq!(text(run_in(same_case, "PV", "F")), "not defined");
+}

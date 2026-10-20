@@ -86,7 +86,15 @@ pub fn preprocess(src: &str, tokens: &[Token], symbols: &BTreeSet<String>) -> Pr
                     syms.insert(rest.trim().to_string());
                 }
                 "undef" if active => {
-                    syms.remove(rest.trim());
+                    let name = rest.trim();
+                    // Whether `#undef x` removes a symbol defined only as `X` is not pinned (`#if` is case-sensitive,
+                    // BmPreprocessorDefine.al:83): the file is refused (docs/probes-needed.md).
+                    if !syms.contains(name) && syms.iter().any(|s| s.eq_ignore_ascii_case(name)) {
+                        diag(format!(
+                            "#undef {name} names a symbol that is defined only in another case (not pinned)"
+                        ));
+                    }
+                    syms.remove(name);
                 }
                 _ => {}
             }
@@ -227,6 +235,16 @@ mod tests {
     #[test]
     fn undefined_symbol_keeps_the_else_branch() {
         assert_eq!(code(SRC, &["BC27PLUS"]), vec!["a", ";", "c", ";", "d", ";"]);
+    }
+
+    #[test]
+    fn undef_of_a_symbol_defined_only_in_another_case_is_diagnosed() {
+        let (_, diags) = run("#define X\n#undef x\n", &[]);
+        assert_eq!(diags.len(), 1, "{diags:?}");
+        let (_, diags) = run("#undef bc29plus\n", &["BC29PLUS"]);
+        assert_eq!(diags.len(), 1, "{diags:?}");
+        let (_, diags) = run("#define X\n#undef X\n#undef Y\n", &[]);
+        assert!(diags.is_empty(), "{diags:?}");
     }
 
     #[test]

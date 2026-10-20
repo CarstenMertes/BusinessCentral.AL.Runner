@@ -159,3 +159,54 @@ fn a_part_update_asked_by_host_code_refills_the_part() {
         "open=part-open;host;proc;agr1;agr2;agr1;agr1;agr2;agr1;|next=host;proc;agr1;agr2;agr1;"
     );
 }
+
+const CLOSE_SRC: &str = r#"
+table 51420 "CL Row" { fields { field(1; Id; Integer) { } } keys { key(PK; Id) { } } }
+codeunit 51421 "CL Log"
+{
+    SingleInstance = true;
+    var T: Text;
+    procedure Add(S: Text) begin T += S + ';'; end;
+    procedure Take(): Text var R: Text; begin R := T; T := ''; exit(R); end;
+}
+page 51422 "CL Part"
+{
+    PageType = ListPart;
+    SourceTable = "CL Row";
+    layout { area(Content) { repeater(R) { field(IdCtl; Rec.Id) { } } } }
+    trigger OnQueryClosePage(CloseAction: Action): Boolean var Log: Codeunit "CL Log"; begin Log.Add('p.OnQueryClosePage(' + Format(CloseAction) + ')'); exit(true); end;
+    trigger OnClosePage() var Log: Codeunit "CL Log"; begin Log.Add('p.OnClosePage'); end;
+}
+page 51423 "CL Host Expr"
+{
+    PageType = Card;
+    SourceTable = "CL Row";
+    layout { area(Content) { field(IdCtl; Rec.Id) { } part(PartCtl; "CL Part") { Visible = ShowPart; } } }
+    var ShowPart: Boolean;
+}
+page 51424 "CL Host Static"
+{
+    PageType = Card;
+    SourceTable = "CL Row";
+    layout { area(Content) { field(IdCtl; Rec.Id) { } part(PartCtl; "CL Part") { Visible = false; } } }
+}
+codeunit 51425 "CL Test"
+{
+    procedure Run(): Text
+    var R: Record "CL Row"; Log: Codeunit "CL Log"; E: TestPage "CL Host Expr"; S: TestPage "CL Host Static"; T: Text;
+    begin
+        R.Id := 1; R.Insert();
+        E.OpenEdit(); Log.Take(); E.Close(); T := 'expr=' + Log.Take();
+        S.OpenEdit(); Log.Take(); S.Close(); T += '|static=' + Log.Take();
+        exit(T);
+    end;
+}
+"#;
+
+/// A part hidden by a Visible expression is open, so it runs its close triggers with its host; a literal
+/// `Visible = false` part never opened and runs none (pages/W1Parts.al:408-411).
+#[test]
+fn a_part_hidden_by_an_expression_closes_with_its_host() {
+    let r = al_testkit::run_in(CLOSE_SRC, "CL Test", "Run");
+    assert_eq!(text(r), "expr=p.OnQueryClosePage(None);p.OnClosePage;|static=");
+}

@@ -697,13 +697,31 @@ impl Session {
         // The parts are asked first, with the action None; the host's own OnQueryClosePage follows
         // (testpart/TestPartCloseLinkEditableContracts.al:
         // Parts_CloseTriggers_AllPartsQueryClose_ThenHost_ThenPartsClose_ThenHost).
-        let open_parts: Vec<St> = st
-            .borrow()
-            .parts
-            .iter()
-            .map(|(_, c)| c.clone())
-            .filter(|c| c.borrow().open)
-            .collect();
+        // A part hidden by a Visible expression opened with the host and closes with it; one a literal `Visible = false` left
+        // out never opened (pages/W1Parts.al:408-411). The order of a hidden part's close triggers among shown parts is not
+        // pinned: refused when the hidden part declares them.
+        let (open_parts, mixed_order) = {
+            let s = st.borrow();
+            let mut all: Vec<(usize, St, bool)> = s
+                .parts
+                .iter()
+                .map(|(i, c)| (*i, c.clone(), false))
+                .chain(s.hidden_parts.iter().map(|(i, c)| (*i, c.clone(), true)))
+                .filter(|(_, c, _)| c.borrow().open)
+                .collect();
+            all.sort_by_key(|(i, _, _)| *i);
+            let shown = all.iter().any(|(_, _, h)| !h);
+            let hidden: Vec<St> = all.iter().filter(|(_, _, h)| *h).map(|(_, c, _)| c.clone()).collect();
+            let parts: Vec<St> = all.into_iter().map(|(_, c, _)| c).collect();
+            (parts, shown.then_some(hidden).unwrap_or_default())
+        };
+        for hidden in &mixed_order {
+            if ["onqueryclosepage", "onclosepage"].iter().any(|t| self.declares(hidden, t)) {
+                return unsupported(
+                    "closing a host with a shown part and a part hidden by a Visible expression that has close triggers (order not pinned)",
+                );
+            }
+        }
         let none_ordinal = al_builtins::value::ACTION_MEMBERS
             .iter()
             .position(|m| *m == "None")

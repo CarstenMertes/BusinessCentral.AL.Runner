@@ -1661,6 +1661,7 @@
 60186 WhileLoop_PreCondition_ExecutesWhileTrue
 60186 WhileLoop_PreCondition_NeverExecutesIfFalse
 60186 WhileLoop_Variable_RetainsValueAfterExit
+60187 BN_Case_CodeSelectorAndLabels
 60187 BN_Case_DecimalSelector
 60187 BN_Case_OnlyElse
 60187 BN_Case_UnbracedIfInBranches
@@ -7289,6 +7290,7 @@
 70508 DelChrLeading
 70508 DelChrTargets
 70508 DelChrTrailing
+70509 LT_BU_CaseConv_TurkishGreekLanguage
 70509 LowerUpperBasic
 70509 LowerUpperLengthsAndTargets
 70510 StrPosBasic
@@ -9802,6 +9804,7 @@
 72513 Confirm_No
 72513 Confirm_ReplyUntouched
 72513 Confirm_Yes
+72513 LT_BU_Message_BackslashAndAppendLine
 72513 Message_ErrorAfterMessage
 72513 Message_Length
 72513 Message_Long
@@ -12769,6 +12772,11 @@
 79923 MarkedOnly_FilterExcludesMarked_DeleteAll
 79923 MarkedOnly_Filter_DeleteAllTrue_Trigger
 79924 TargetNeverOpened
+79925 Filters_Compare
+79925 Filters_Range
+79925 Filters_Single
+79925 Order_Ascending
+79925 Order_Descending
 79926 Byte10
 79926 Byte200
 79926 Byte7Equal
@@ -12805,6 +12813,7 @@
 80421 Evaluate_Time_Invalid_StatementForm
 80421 GetTrue_CodeKey_Yes
 80421 VariantDate_ToText
+80422 InRange_CodeAndTextMixedCase
 80422 InnerSeparator_SameLength
 80422 InnerSeparator_VsDigits
 80422 NumberLike_CodeAndText_Pairs

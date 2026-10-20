@@ -1059,12 +1059,13 @@ pub fn compare_order(l: &Value, r: &Value) -> Result<Ordering, Signal> {
     compare(l, r)
 }
 
-/// The order a range end of `in [a .. z]` or `case` uses. A Code on either side follows the order of `<` (the culture order, so the Code `K`
-/// is inside `'a' .. 'z'`: types/lt-expression-operators-literals/ExpressionBinaryOperators.al:P195_Binary_InOperatorOverTypes,
-/// `code-in-range` is Yes); two Text values compare by code point (`'K' in ['a' .. 'z']` is No, `char-range-upper`). Other pairs as
-/// [`compare`].
+/// The order a range end of `in [a .. z]` or `case` uses. A Code or a Text on either side follows the order of `<` (the culture order, so
+/// the Code `K` is inside `'a' .. 'z'`: types/lt-expression-operators-literals/ExpressionBinaryOperators.al:P195_Binary_InOperatorOverTypes,
+/// `code-in-range` is Yes; the Text `K` is inside the Text variables `a .. z` and the literals `'A' .. 'z'` and `'a' .. 'Z'`, the Text `k`
+/// inside `'A' .. 'Z'`: types/lt-ax-text-format-dates/AxCodeCompare.al:193-213, InRange_CodeAndTextMixedCase). Char values compare by
+/// number (`'K' in ['a' .. 'z']` is No, `char-range-upper`). Other pairs as [`compare`].
 pub fn compare_range_end(l: &Value, r: &Value) -> Result<Ordering, Signal> {
-    if matches!(l, Value::Code(_)) || matches!(r, Value::Code(_)) {
+    if matches!(l, Value::Code(_) | Value::Text(_)) || matches!(r, Value::Code(_) | Value::Text(_)) {
         compare_order(l, r)
     } else {
         compare(l, r)
@@ -1152,8 +1153,11 @@ pub fn hyphen_filter_order(a: &Value, b: &Value) -> Option<Ordering> {
     let (Value::Code(x), Value::Code(y)) = (a, b) else {
         return None;
     };
+    // Any number of leading hyphens, then a plus sign or not, then letters and digits: `-+5`, `--5`, `+A` against `+5`, `0`, `-0`,
+    // `A`, `-A` and `-+5` (record/lt-as-records/AsCodeKeySigns.al:79-123, Filters_Range, Filters_Compare).
     let shape = |t: &str| {
-        t.strip_prefix('-')
+        let t = t.trim_start_matches('-');
+        t.strip_prefix('+')
             .unwrap_or(t)
             .bytes()
             .all(|c| c.is_ascii_alphanumeric())
@@ -1168,9 +1172,12 @@ pub fn hyphen_filter_order(a: &Value, b: &Value) -> Option<Ordering> {
 /// The hyphen is dropped from every Code, not only from the pinned shape: an order that dropped it for some pairs only is not
 /// transitive (`'+5' < '0' < '-0' < '+5'`) and `slice::sort` panics on it. The pairs outside the pinned shape are an assumption
 /// (docs/probes-needed.md).
+///
+/// Every leading hyphen is dropped, and of two Codes that tie there the one with fewer hyphens comes first: `+5 -+5 +A 0 -0 5 -5 --5 A
+/// -A` (record/lt-as-records/AsCodeKeySigns.al:56, Order_Ascending; :68 Order_Descending).
 pub fn code_key_order(a: &str, b: &str) -> Ordering {
-    let (sa, sb) = (a.strip_prefix('-').unwrap_or(a), b.strip_prefix('-').unwrap_or(b));
-    text_key_order(sa, sb).then_with(|| a.starts_with('-').cmp(&b.starts_with('-')))
+    let (sa, sb) = (a.trim_start_matches('-'), b.trim_start_matches('-'));
+    text_key_order(sa, sb).then_with(|| (a.len() - sa.len()).cmp(&(b.len() - sb.len())))
 }
 
 /// [`compare`] for the values of a key: text follows [`text_key_order`].

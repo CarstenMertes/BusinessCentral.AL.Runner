@@ -1121,6 +1121,14 @@ impl Lowerer<'_> {
 
     pub(crate) fn case(&mut self, kids: &[SyntaxNode]) -> L<ir::Stmt> {
         let scrutinee = self.operand(&kids[0], ir::OperandUse::Value)?;
+        // A text literal label of a Code selector is converted to the selector's Code: `'abc'` matches the Code `ABC` before the
+        // label `'ABC'` does, and a label longer than the Code raises StringLengthExceeded with its text in upper case
+        // (types/TestCaseContracts.al:441-466, BN_Case_CodeSelectorAndLabels). A Text selector compares by case (:445-448). A label
+        // that is no literal, and a range, keep the plain comparison.
+        let code_selector = match self.ty_of(&kids[0]) {
+            t @ Ty::Code(_) => Some(t),
+            _ => None,
+        };
         let mut branches = Vec::new();
         let mut otherwise = Vec::new();
         for k in &kids[1..] {
@@ -1132,6 +1140,9 @@ impl Lowerer<'_> {
                     for p in &parts {
                         if is_stmt(p.kind()) {
                             body.extend(self.stmt(p));
+                        } else if let (Some(code), true) = (&code_selector, super::expr::is_string_literal(p)) {
+                            let label = self.expr(p)?;
+                            labels.push(ir::SetElem::One(self.convert_to(code, &Ty::Text(None), label)?));
                         } else {
                             labels.push(self.set_elem(p)?);
                         }

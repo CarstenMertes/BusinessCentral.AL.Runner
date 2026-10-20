@@ -352,8 +352,9 @@ impl Session {
         );
         if !decimal_sum && !typed_error {
             return unsupported(format!(
-                "Validate on a {:?} FlowField of type {:?} (not pinned)",
-                calc.method, f.ty
+                "Validate on the FlowField {} of type {} with this CalcFormula method (not pinned)",
+                f.name,
+                f.ty.describe()
             ));
         }
         if typed_error {

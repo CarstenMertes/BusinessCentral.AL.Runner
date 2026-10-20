@@ -1491,6 +1491,15 @@ impl Session {
     pub(crate) fn record_op_inner(&mut self, method: RecordOp, rec: &Rec, args: &mut [Value]) -> Result<Value, Signal> {
         self.connection_check(rec)?;
         let t = self.table(rec)?;
+        // A table declared ObsoleteState = Moved is not in the runtime app: AllObj has no row for it and RecordRef.Open
+        // fails (platform/lt-aw-fresh-tenant/AwTests.al:413-442). What a record of it does is not pinned.
+        if self.engine.object_facts.get(t.object as usize).is_some_and(|f| f.moved) {
+            return unsupported(format!(
+                "{} on table {}, which is declared ObsoleteState = Moved (what BC does is not pinned)",
+                method.name(),
+                t.name
+            ));
+        }
         self.linked_object_check(&t, rec, method)?;
         self.note_table(t.object, method.writes());
         if matches!(

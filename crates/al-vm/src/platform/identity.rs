@@ -19,8 +19,9 @@ const MS_PER_DAY: i64 = 86_400_000;
 
 /// The name of the database the session reads: not blank, and the same in the Session and the Active Session row
 /// (session/W6SessionTimeZone.al:ActiveSession_OwnRow_HostColumns and ActiveSession_DatabaseName_EqualsSessionDatabaseName,
-/// BC 27.5 and 29.0). The name itself is not pinned.
-const DATABASE_NAME: &str = "AL Runtime";
+/// BC 27.5 and 29.0). The name is the one of the oracle's database, `CRONUS` (platform/lt-aw-fresh-tenant/AwTests.al:49
+/// for Session, :71 for Active Session).
+const DATABASE_NAME: &str = "CRONUS";
 
 /// The ordinal of the `Client Type` option member of Active Session for a host client type, and
 /// the text `Format` gives it.

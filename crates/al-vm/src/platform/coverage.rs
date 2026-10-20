@@ -19,7 +19,10 @@
 //!   itself excluded, one Test Lookup row, a codeunit's `OnRun` trigger included
 //!   (codeunit/TestCodeCoveragePerTest.al:54-168). A procedure that runs outside any test
 //!   leaves no per-test row (same file, `PerTestTables_NoTestStartedWhileRecording_AreEmpty...`).
-//! - `Test ID` and `Method ID` are only compared between rows, never to a literal.
+//! - `Test ID` and `Method ID` are only compared between rows, never to a literal. The Test ID is the same for every test
+//!   recorded in one recording and in two recordings of one test, and is not 1 (coverage/W6CodeCoverageIds.al:96-97,
+//!   :111-112, :167-168). Its value is not pinned ([`Session::RUN_TEST_ID`]). Tests Run is keyed by Test ID alone, so the
+//!   runtime cannot hold two recorded tests at once: a read of the per-test tables is refused then.
 //!
 //! - Of an app compiled without its source in the symbols, every row's `Line` holds the platform's
 //!   "source cannot be viewed" text; the `begin` and `end` lines are `Empty` rows; the status is
@@ -52,7 +55,7 @@ pub(crate) struct Recorder {
     hits: Vec<u32>,
     /// Objects (indexes into `Program::objects`) with a routine that ran while recording.
     entered: BTreeSet<usize>,
-    /// `[Test]` procedures that started while recording; the test id is the index plus one.
+    /// `[Test]` procedures that started while recording (each row gets the one Test ID, `Session::RUN_TEST_ID`).
     tests: Vec<(usize, usize)>,
     /// (test id, object, routine) of the methods that ran inside a recorded test.
     lookups: BTreeSet<(i32, usize, usize)>,
@@ -128,8 +131,18 @@ impl Session {
 
     /// A read of a coverage table: what was recorded is in the tables first.
     pub(crate) fn coverage_read(&mut self, t: &TableDef, temporary: bool) -> Result<(), Signal> {
-        if temporary || self.coverage_table(t).is_none() {
+        if temporary {
             return Ok(());
+        }
+        let Some(table) = self.coverage_table(t) else {
+            return Ok(());
+        };
+        if table != CODE_COVERAGE && self.several_recorded_tests() {
+            return Err(Signal::Unsupported(format!(
+                "a read of {}: several [Test] procedures were recorded and BC gives them one Test ID, which the Tests Run \
+                 table keys its rows by (coverage/W6CodeCoverageIds.al:111-112); the runtime cannot hold those rows",
+                t.name
+            )));
         }
         // While logging is on the tables hold nothing new: what was recorded lands in them when logging stops or at
         // CodeCoverageRefresh (platform/lt-code-coverage-refresh/CodeCoverageRefreshLogged.al: `rows before nonzero` No).
@@ -152,6 +165,11 @@ impl Session {
             self.coverage.recorder.refreshed_while_logging = true;
         }
         self.coverage_flush()
+    }
+
+    /// More than one `[Test]` procedure was recorded since the per-test tables were emptied.
+    fn several_recorded_tests(&self) -> bool {
+        self.coverage.recorder.tests.len() > 1
     }
 
     fn coverage_table(&self, t: &TableDef) -> Option<u32> {
@@ -200,6 +218,8 @@ impl Session {
             let Some(t) = engine.tables[oi].as_ref() else { continue };
             let rows = match id {
                 CODE_COVERAGE => self.coverage_rows(t),
+                // Their reads are refused (`coverage_read`).
+                _ if self.several_recorded_tests() => Vec::new(),
                 TEST_LOOKUP => self.lookup_rows(t),
                 _ => self.tests_run_rows(t),
             };
@@ -346,19 +366,24 @@ impl Session {
     /// two recordings).
     const TEST_METHOD_ID: i32 = 469_735_107;
 
+    /// The "Test ID" of every Tests Run and Test Lookup row. Pinned: one value for the tests of a recording and for two
+    /// recordings of one test, and not 1 (coverage/W6CodeCoverageIds.al:111-112, :167-168). The number itself is not
+    /// pinned (BC computes it per run, codeunit/TestCodeCoveragePerTest.al:14): docs/probes-needed.md.
+    const RUN_TEST_ID: i32 = 2;
+
     fn lookup_rows(&self, t: &TableDef) -> Vec<Row> {
         let program = &self.engine.program;
         self.coverage
             .recorder
             .lookups
             .iter()
-            .filter_map(|&(test, oi, ri)| {
+            .filter_map(|&(_, oi, ri)| {
                 let o = &program.objects[oi];
                 let mut r = super::blank(t);
                 r[super::pos(t, 1)] = Self::option_member(t, 1, o.kind.label());
                 r[super::pos(t, 2)] = Value::Integer(o.id? as i32);
                 r[super::pos(t, 3)] = Self::method_id(ri);
-                r[super::pos(t, 4)] = Value::Integer(test);
+                r[super::pos(t, 4)] = Value::Integer(Self::RUN_TEST_ID);
                 Some(r)
             })
             .collect()
@@ -370,11 +395,10 @@ impl Session {
             .recorder
             .tests
             .iter()
-            .enumerate()
-            .filter_map(|(i, &(oi, ri))| {
+            .filter_map(|&(oi, ri)| {
                 let o = &program.objects[oi];
                 let mut r = super::blank(t);
-                r[super::pos(t, 1)] = Value::Integer(i as i32 + 1);
+                r[super::pos(t, 1)] = Value::Integer(Self::RUN_TEST_ID);
                 r[super::pos(t, 2)] = Value::Integer(o.id? as i32);
                 r[super::pos(t, 3)] = Value::Integer(Self::TEST_METHOD_ID);
                 r[super::pos(t, 4)] = Value::Text(o.routines[ri].name.clone().into());

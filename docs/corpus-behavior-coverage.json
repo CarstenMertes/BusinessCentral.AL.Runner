@@ -16360,7 +16360,7 @@
         "code": "RenameArgument",
         "file": "crates/al-vm/src/records.rs",
         "generic": false,
-        "line": 3065,
+        "line": 3074,
         "pinned": true,
         "site": "recordref/lt-refs/RfTWrite.al:223",
         "template": "The number of field arguments does not match the primary key size."
@@ -16387,7 +16387,7 @@
         "code": "RecordAlreadyOpened",
         "file": "crates/al-vm/src/refs.rs",
         "generic": false,
-        "line": 336,
+        "line": 358,
         "pinned": true,
         "site": "recordref/lt-recordref-fieldref-members/P92Open.al:168",
         "template": "The record is already open."
@@ -16396,7 +16396,7 @@
         "code": "RecordNotOpened",
         "file": "crates/al-vm/src/refs.rs",
         "generic": false,
-        "line": 618,
+        "line": 667,
         "pinned": true,
         "site": "errors/lt-ms-refusals-131/P131RecordRefGet.al:183",
         "template": "The record is not open."
@@ -16405,7 +16405,7 @@
         "code": "IndexOutOfBounds",
         "file": "crates/al-vm/src/refs.rs",
         "generic": false,
-        "line": 897,
+        "line": 953,
         "pinned": true,
         "site": "collections/lt-array-rows/ArrayRows.al:185",
         "template": "Index out of bounds."
@@ -16414,7 +16414,7 @@
         "code": "DB:KeyNotFound",
         "file": "crates/al-vm/src/refs.rs",
         "generic": false,
-        "line": 917,
+        "line": 973,
         "pinned": true,
         "site": "recordref/TestRecordRefKeyIndexSetRecFilterContracts.al:103",
         "template": "The % table does not have an active key at index %."
@@ -16423,7 +16423,7 @@
         "code": "KeyRef.{other}",
         "file": "crates/al-vm/src/refs.rs",
         "generic": false,
-        "line": 1012,
+        "line": 1068,
         "pinned": true,
         "site": "collections/lt-array-rows/ArrayRows.al:185",
         "template": "Index out of bounds"
@@ -16432,7 +16432,7 @@
         "code": "NotInitialized",
         "file": "crates/al-vm/src/refs.rs",
         "generic": false,
-        "line": 1032,
+        "line": 1088,
         "pinned": true,
         "site": "misc/lt-probes-needed-4/PnD05_UnassignedFieldRef.al:42",
         "template": "Microsoft.Dynamics.Nav.Runtime.NavFieldRef variable not initialized."

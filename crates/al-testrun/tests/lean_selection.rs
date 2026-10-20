@@ -92,6 +92,7 @@ fn run(main: &str, only: &[u32], cache: Option<&std::path::Path>) -> CorpusRunti
         version: "1.0.0.0".into(),
         resources: vec![],
         include_source: false,
+        target: String::new(),
         layout_files: Vec::new(),
         symbols: vec![],
     };

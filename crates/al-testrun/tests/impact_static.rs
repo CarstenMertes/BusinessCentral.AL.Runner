@@ -450,6 +450,7 @@ fn select_in_run(base: &str) -> (Vec<Option<String>>, Option<Vec<String>>) {
         version: "1.0.0.0".into(),
         resources: vec![],
         include_source: false,
+        target: String::new(),
         layout_files: Vec::new(),
         symbols: vec![],
     };
@@ -534,6 +535,7 @@ fn traced() -> CorpusRuntime {
         version: "1.0.0.0".into(),
         resources: vec![],
         include_source: false,
+        target: String::new(),
         layout_files: Vec::new(),
         symbols: vec![],
     };

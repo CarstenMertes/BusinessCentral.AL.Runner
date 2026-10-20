@@ -107,6 +107,8 @@ pub(super) fn field_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
     let c = Catalog::new(&engine);
     let blank = Blank::new(t);
     let mut out = Vec::new();
+    // BC 29 lists four more system fields per table (see [`BC29_USER_NAME_FIELDS`]); a run with no target is the newest.
+    let bc_29 = engine.target.as_ref().is_none_or(|x| x.bc.major >= 29);
     for (i, o) in c.objects.iter().enumerate() {
         let (Some(tid), al_ir::ObjKind::Table) = (o.id, o.kind) else {
             continue;
@@ -150,8 +152,60 @@ pub(super) fn field_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
                 }
             }
         }
+        if bc_29 {
+            out.extend(user_name_system_field_rows(t, &blank, tid));
+        }
     }
     out
+}
+
+/// The FlowFields BC 29 adds to every table, with the columns the corpus pins: number, name, type Text, length and class
+/// FlowField (system-fields/W6SystemFieldStamps.al:239-246; their order after SystemModifiedBy: metadata/W6FieldKeyRows.al:
+/// 267-268). The runtime's schema does not hold them (it keeps SystemRowVersion at 2000000005, where BC 27 and 28 have it;
+/// where BC 29 keeps it is not pinned); RecordRef refuses them (refs.rs).
+pub(crate) const BC29_USER_NAME_FIELDS: [(u32, &str, i32); 4] = [
+    (2_000_000_005, "SystemCreatedByUserName", 50),
+    (2_000_000_006, "SystemCreatedByFullName", 80),
+    (2_000_000_007, "SystemModifiedByUserName", 50),
+    (2_000_000_008, "SystemModifiedByFullName", 80),
+];
+
+/// The columns of a [`BC29_USER_NAME_FIELDS`] row that are set: TableNo, No., FieldName, Type, Len, Class (pinned above),
+/// RelationTableNo 0 (handlers 69519 FieldTable_RelationTableNo_OfConditionalRelations on BC 29: a `<>0` filter lists
+/// only the declared relations and SystemCreatedBy/SystemModifiedBy) and ObsoleteState. ObsoleteState is pinned only as
+/// not Removed (record/TestFieldObsoleteStateVirtualTable.al:66-73 on BC 29); `No` is kept, not pinned, so that a filter
+/// on it still answers (docs/probes-needed.md).
+const PINNED_USER_NAME_COLUMNS: [u32; 8] = [1, 2, 4, 5, 6, 7, 21, 25];
+
+fn user_name_system_field_rows(t: &TableDef, blank: &Blank, tid: u32) -> Vec<Entry> {
+    static WHY: std::sync::OnceLock<std::sync::Arc<str>> = std::sync::OnceLock::new();
+    let why = WHY
+        .get_or_init(|| {
+            "the value of a column of the Field row of a user-name system field BC 29 adds (SystemCreatedByUserName and the \
+             others) is not known: only TableNo, No., FieldName, Type, Len, Class, RelationTableNo and ObsoleteState are known (docs/probes-needed.md)"
+                .into()
+        })
+        .clone();
+    BC29_USER_NAME_FIELDS
+        .iter()
+        .map(|&(id, name, len)| {
+            let mut r = blank.row();
+            for (i, f) in t.fields.iter().enumerate() {
+                if !PINNED_USER_NAME_COLUMNS.contains(&f.id) {
+                    r[i] = Value::Unknown(why.clone());
+                }
+            }
+            r[pos(t, 1)] = Value::Integer(tid as i32);
+            r[pos(t, 2)] = Value::Integer(id as i32);
+            r[pos(t, 4)] = Value::Text(name.into());
+            r[pos(t, 5)] = blank.option(t, 5, 9);
+            r[pos(t, 6)] = Value::Integer(len);
+            r[pos(t, 7)] = blank.option(t, 7, 1);
+            r[pos(t, 21)] = Value::Integer(0);
+            r[pos(t, 25)] = blank.option(t, 25, 0);
+            Entry::ok(r)
+        })
+        .collect()
 }
 
 fn field_row(

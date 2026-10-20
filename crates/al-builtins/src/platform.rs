@@ -250,7 +250,8 @@ pub const UNSEEDED_ROWS: &[u32] = &[2_000_000_076, 2_000_000_168];
 /// Platform tables that only the System app of a later major declares (the registry above is checked against the System app
 /// of the first major the corpus pins, `tests/platform_tables.rs`). Ordinary stored tables here, written by install code:
 /// "Agent Install" (System Application "Agent Upgrade") and "MCP Install" insert into them, and without a provider the install
-/// baseline of those majors stopped at them and left tables unseeded. No corpus test touches them.
+/// baseline of those majors stopped at them and left tables unseeded. A Cloud-target `RecordRef.Open` of Agent Creation Control
+/// is refused (platform/lt-aw-fresh-tenant/AwTests.al:590-616, `al-vm` refs.rs).
 pub const LATER_MAJORS: &[(u32, &str, Provider)] = &[
     (2_000_000_297, "Agent Creation Control", Provider::Stored),
     (2_000_000_292, "MCP Configuration", Provider::Stored),

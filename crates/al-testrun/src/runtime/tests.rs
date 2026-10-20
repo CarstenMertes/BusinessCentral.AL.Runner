@@ -396,6 +396,32 @@ fn an_installer_trigger_that_ran_keeps_its_rows_when_the_next_one_cannot_run() {
     assert!(matches!(&o[1].1, Outcome::NotRun(r) if r.contains("install")), "{o:?}");
 }
 
+// ADR-046 decision 1: an ordinary codeunit's subscriber to "Extension Triggers" OnInstallAppPerCompany runs at install
+// (events/lt-platform-events-v/PeVFixtures.al:395-407, PeVTests.al:284). On BC it runs once per company of the database
+// (two in the corpus CI, PeVTests.al:313-314), which this runtime does not model yet (ADR-046 steps A and B are not
+// built). So the subscriber does not run, and a test on a table it writes is not run, never answered from a store
+// that lacks its rows.
+#[test]
+fn a_test_on_a_table_an_extension_triggers_install_subscriber_writes_is_not_run() {
+    let o = outcomes(
+        "table 60900 Log { DataPerCompany = false; fields { field(1; K; Integer) { AutoIncrement = true; } field(2; Info; Text[30]) { } } }
+            table 60903 Other { fields { field(1; K; Code[10]) { } } }
+            codeunit 60905 Subs {
+                [EventSubscriber(ObjectType::Codeunit, Codeunit::\"Extension Triggers\", 'OnInstallAppPerCompany', '', false, false)]
+                local procedure PerCompany() var R: Record Log; begin R.Info := CompanyName(); R.Insert(); end;
+                [EventSubscriber(ObjectType::Codeunit, Codeunit::\"Extension Triggers\", 'OnInstallAppPerDatabase', '', false, false)]
+                local procedure PerDatabase() var R: Record Log; begin R.Info := 'DB'; R.Insert(); end; }
+            codeunit 60102 T { Subtype = Test;
+                [Test] procedure ReadsTheLog() var R: Record Log; begin if R.Count() <> 3 then Error('rows: %1', R.Count()); end;
+                [Test] procedure OtherTable() var R: Record Other; begin if not R.IsEmpty() then Error('rows'); end; }",
+    );
+    assert!(
+        matches!(&o[0].1, Outcome::NotRun(r) if r.contains("Extension Triggers") && r.contains("Subs")),
+        "{o:?}"
+    );
+    assert_eq!(o[1].1, Outcome::Pass, "{o:?}");
+}
+
 #[test]
 fn a_blocked_installer_also_blocks_tests_on_tables_its_event_subscribers_touch() {
     // install/TestInstallEventDispatch_*.al: the installer raises an event whose

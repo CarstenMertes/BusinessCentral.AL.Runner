@@ -28,6 +28,7 @@ mod in_precedence;
 mod interfaces;
 mod lane_bump28;
 mod lane_property_plumbing;
+mod lane_text_compare;
 mod lane_values_builtins;
 mod last_error_origin;
 mod list_read_in_foreach;

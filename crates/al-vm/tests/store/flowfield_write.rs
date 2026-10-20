@@ -382,3 +382,49 @@ codeunit 50381 T
 fn a_stored_record_handed_to_a_temporary_parameter_is_an_empty_temporary_copy() {
     assert_eq!(text(run_in(TEMP_PARAM, "T", "F")), "Yes 0 2");
 }
+
+const SUM_TRIGGERS: &str = r#"
+codeunit 50392 L { SingleInstance = true; var T: Text; procedure Add(S: Text) begin T += S + ','; end; procedure Get(): Text begin exit(T); end; }
+table 50390 SR
+{
+    fields
+    {
+        field(1; Id; Code[10]) { }
+        field(2; Amount; Decimal)
+        {
+            FieldClass = FlowField;
+            CalcFormula = sum(SE.Amount where(Row = field(Id)));
+            trigger OnValidate() var L: Codeunit L; begin L.Add('OnValidate:' + Format(Amount) + '/' + Format(xRec.Amount)); end;
+        }
+    }
+    keys { key(PK; Id) { } }
+}
+table 50391 SE
+{
+    fields { field(1; No; Integer) { } field(2; Row; Code[10]) { } field(3; Amount; Decimal) { } }
+    keys { key(PK; No) { } }
+    trigger OnInsert() var L: Codeunit L; begin L.Add('OnInsert:' + Format(No) + '/' + Format(Amount)); end;
+}
+codeunit 50393 T
+{
+    procedure F(): Text
+    var
+        R: Record SR;
+        E: Record SE;
+        L: Codeunit L;
+    begin
+        R.Id := 'R1'; R.Insert();
+        E.No := 1; E.Row := 'R1'; E.Amount := 30; E.Insert();
+        R.Get('R1');
+        R.CalcFields(Amount);
+        R.Validate(Amount, 50);
+        exit(L.Get());
+    end;
+}
+"#;
+
+// pages/lt-cf-page-leads/CfPageLeads.al:EditableFlowField_SetValue: OnValidate first, then the source row with its OnInsert.
+#[test]
+fn validate_on_a_sum_flowfield_runs_onvalidate_then_inserts_with_the_trigger() {
+    assert_eq!(text(run_in(SUM_TRIGGERS, "T", "F")), "OnValidate:50/30,OnInsert:2/20,");
+}

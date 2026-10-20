@@ -382,28 +382,35 @@ impl Session {
         if rec.borrow().temporary || rec.borrow().company.is_some() {
             return refuse("a temporary record or another company");
         }
-        if f.on_validate.is_some()
-            || !f.ext_before_validate.is_empty()
-            || !f.ext_after_validate.is_empty()
-            || f.relation
-        {
-            return refuse("a FlowField with an OnValidate trigger or a relation");
+        if f.relation {
+            return refuse("a FlowField with a relation");
         }
-        let src_schema = engine.program.objects[calc.table].table.as_ref().expect("table");
         let src_t = self.engine.tables[calc.table].clone().expect("table");
         if src_t.keys[0].len() != 1 || src_t.fields[src_t.keys[0][0]].ty != RtType::Integer {
             return refuse("a source table whose key is not one Integer field");
         }
-        let has_insert_trigger = engine.program.objects[calc.table]
-            .routines
-            .iter()
-            .any(|r| r.is_trigger && r.field.is_none() && r.name.eq_ignore_ascii_case("OnInsert"));
-        if has_insert_trigger
-            || !src_schema.extensions.is_empty()
-            || !engine.events.subscribers_of(calc.table).is_empty()
-        {
-            return refuse("a source table with an insert trigger, an extension or event subscribers");
-        }
+        let _ = new;
+        Ok(())
+    }
+
+    /// After the OnValidate of a Decimal Sum FlowField (`validate_flowfield` checked it): inserts the difference between
+    /// `target` and the current sum into the source table, with Insert(true): the source table's OnInsert runs after the
+    /// FlowField's OnValidate (pages/lt-cf-page-leads/CfPageLeads.al:EditableFlowField_SetValue, `Amount.OnValidate:50/30,Entry.OnInsert`).
+    pub(crate) fn write_sum_difference(
+        &mut self,
+        rec: &Rec,
+        t: &TableDef,
+        pos: usize,
+        target: Value,
+    ) -> Result<(), Signal> {
+        let engine = self.engine.clone();
+        let table = t.object as usize;
+        let schema = engine.program.objects[table].table.as_ref().expect("table");
+        let f = &schema.fields[pos];
+        let calc = f.calc.as_ref().expect("checked by validate_flowfield");
+        let refuse = |why: &str| unsupported(format!("Validate on the Sum FlowField {}: {why} (not pinned)", f.name));
+        let src_t = self.engine.tables[calc.table].clone().expect("table");
+        let new = target;
         // The values of the new row: the where-fields that name a normal field of the record take its value; one that names a
         // FlowFilter takes the filter's value or the start of its range, and nothing when no filter is set (DiFwWriteTests.al:812, :818).
         let mut sets: Vec<(usize, Value)> = Vec::new();
@@ -477,7 +484,7 @@ impl Session {
                 }
                 r.fields[at] = ops::convert(Value::Decimal(diff), &src_t.fields[at].ty)?;
             }
-            self.record_op(RecordOp::Insert, &row, &mut [])?;
+            self.record_op(RecordOp::Insert, &row, &mut [Value::Boolean(true)])?;
         }
         rec.borrow_mut().fields[pos] = new;
         Ok(())

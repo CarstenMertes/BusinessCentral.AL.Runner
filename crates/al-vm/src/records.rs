@@ -3075,11 +3075,12 @@ impl Session {
                 let engine = self.engine.clone();
                 let schema = engine.program.objects[t.object as usize].table.as_ref().expect("table");
                 let field = &schema.fields[pos];
-                // A FlowField (record/lt-flowfield-write/DiFwWriteTests.al): flowfields.rs `validate_flowfield`.
-                if !field.stored && !field.flow_filter && field.id < 2_000_000_000 {
+                // A FlowField (record/lt-flowfield-write/DiFwWriteTests.al): flowfields.rs `validate_flowfield` raises or refuses
+                // what is not a Decimal Sum; for that one the value goes in, OnValidate runs, then `write_sum_difference`.
+                let sum_flowfield = !field.stored && !field.flow_filter && field.id < 2_000_000_000;
+                if sum_flowfield {
                     let value = args.get(1).cloned();
                     self.validate_flowfield(rec, &t, pos, value.as_ref())?;
-                    return Ok(Value::Null);
                 }
                 // A Validate nested in an OnValidate of the same record keeps the outer call's
                 // before-image as xRec (corpus record/TestXRecContracts.al:133).
@@ -3114,6 +3115,15 @@ impl Session {
                     self.validating.pop();
                 }
                 r?;
+                if sum_flowfield {
+                    let target = ops::convert(args[1].clone(), &field.ty)?;
+                    if ops::compare(&rec.borrow().fields[pos], &target).ok() != Some(std::cmp::Ordering::Equal) {
+                        return unsupported(
+                            "an OnValidate that changes the value of the Sum FlowField it validates (not pinned)",
+                        );
+                    }
+                    self.write_sum_difference(rec, &t, pos, target)?;
+                }
                 Ok(Value::Null)
             }
             RecordOp::Rename => {

@@ -349,6 +349,8 @@ pub fn format_value(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) 
         Value::Byte(b) if *b >= 0x80 && crate::stream::Encoding::MsDos.decode_pinned(&[*b]) => {
             crate::stream::Encoding::MsDos.decode(&[*b])
         }
+        // Kept, not pinned: a byte from 0x80 up whose character no corpus test pins shows as the Latin-1 character of its
+        // code; json/TestJsonComplete.al:JsonObject_GetByte_ReturnsValue (Assert.AreEqual of Byte 200) passes through it.
         Value::Byte(b) => char::from(*b).to_string(),
         Value::Char(c) => char::from_u32(u32::from(*c)).map(String::from).unwrap_or_default(),
         Value::Decimal(d) => format_decimal(d, standard)?,

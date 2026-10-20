@@ -653,15 +653,29 @@ The owner asked for a first public build before gate P. The gates in section 7 s
     When CI is green on a push to `release`, `edge.yml` rebuilds the three targets, moves the tag to that commit,
     replaces the assets and rewrites the body (commit, date, compare link). It is a pre-release and never
     "latest". A newer push cancels an older build. No new tag or release per push.
-  - **Numbered alphas** (`3.0.0-alpha.N`): a tag `v3.*` on a commit of `release`. `release.yml` refuses a tag that
-    is not the crate version or whose commit is not on `release`, runs the CI checks (`ci.yml`, reused), builds,
-    and creates a **draft** pre-release. A person publishes it. A manual run is a dry run and creates no release.
+  - **Numbered alphas** (`3.0.0-alpha.N`): a tag `v3.*` on a commit of `release`. `release-tag.yml` (named `release.yml`
+    before 2026-10-20) refuses a tag that is not the crate version or whose commit is not on `release`, runs the CI
+    checks (`ci.yml`, reused), builds, and creates a **draft** pre-release. A person publishes it. A manual run is
+    a dry run and creates no release. Changed by the owner on 2026-10-20: see below.
 - **Branches**: development stays on `main`. `release` is fast-forwarded from `main` when the owner wants a new
   edge build (`git push origin main:release`). Nobody commits on it, except a hotfix that cannot come from
   `main`: it is committed on `release`, released, and merged back into `main`. A fast-forward that fails
   afterwards means the merge-back is missing. Steps: `docs/releasing.md`. Open for the owner: branch protection
   for `release` (no force push) and protected tags `v3.*` and `edge`. Repository settings are not changed here.
 - **Docs and feedback**: README "Try the alpha" and the issue template `.github/ISSUE_TEMPLATE/alpha-feedback.md`.
+
+### Owner decision (2026-10-20): numbered alphas are normal releases
+
+"Build it, start with 3.0.0-alpha.2 as normal releases, update the readme with the tool recommendation."
+`release-tag.yml` now publishes each numbered alpha as a normal GitHub release (not a draft, not a
+pre-release), marked "latest". Reason: mise's github backend skips pre-releases, so `mise up` found nothing.
+The workflow also checks that `alrunner --version` prints the tag's version. `edge` stays a pre-release.
+The README recommends mise (`mise use -g github:StefanMaron/al-runtime-rs`).
+
+Also 2026-10-20: edge becomes a nightly build. `nightly-edge.yml` runs at 02:17 UTC, fast-forwards `release`
+to the newest main commit with green CI on a push (never a force push), and calls `edge.yml` with that commit.
+It pushes with GITHUB_TOKEN, so CI does not run twice on the same commit. A person's push to `release` works
+as before. Named alphas stay manual.
 
 ## Rejected options
 

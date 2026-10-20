@@ -1,7 +1,7 @@
 name: Build packages
 
 # Builds alrunner for the three alpha targets, smoke tests each binary, packages it and attests it.
-# Used by release.yml (numbered alphas, and the dry run) and edge.yml (the rolling edge build).
+# Used by release-tag.yml (numbered alphas, and the dry run) and edge.yml (the rolling edge build).
 # Output: the artifact "packages" holding the archives and one SHA256SUMS. Nothing of Microsoft's
 # is built in or downloaded here: the smoke test runs a fixture project of this repository.
 
@@ -9,7 +9,7 @@ on:
   workflow_call:
     inputs:
       label:
-        description: Name used in the archive file names, for example "3.0.0-alpha.1" or "edge".
+        description: Name used in the archive file names, for example "3.0.0-alpha.2" or "edge".
         required: true
         type: string
       sha:

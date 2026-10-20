@@ -62,6 +62,160 @@ impl Session {
         }
     }
 
+    /// The error of `TestPage.OpenNew` on an API page: `Sorry, the current permissions prevented the action. (Page <id> <name>
+    /// Insert: <app>)`, code DB:ClientInsertDenied, and no trigger runs (corpus pages/lt-cf-page-leads/CfPageLeads.al:144-180
+    /// ApiPage_OnInsertRecordInsertsAndReturnsFalse and :182-218 _ReturnsTrue, both on an API page with DelayedInsert = true that
+    /// declares OnInsertRecord and nothing else, CfPageObjects.al:122-189). Any other API page shape is refused: not pinned.
+    pub(super) fn api_open_new_denied(&self, st: &St) -> Result<Signal, Signal> {
+        let engine = self.engine();
+        let object = st.borrow().object as usize;
+        let delayed =
+            effective_prop(&engine, object, "DelayedInsert")?.is_some_and(|v| v.trim().eq_ignore_ascii_case("true"));
+        let o = &engine.program.objects[object];
+        let own_props_pinned = ["Editable", "InsertAllowed", "SourceTableView", "SourceTableTemporary"]
+            .iter()
+            .all(|p| effective_prop(&engine, object, p).ok().flatten().is_none());
+        let triggers_pinned = page_of(&engine, st).triggers.iter().all(|(n, _)| n == "oninsertrecord");
+        let extended = o.page.as_ref().is_some_and(|p| !p.extensions.is_empty());
+        if !delayed || !own_props_pinned || !triggers_pinned || !self.declares(st, "oninsertrecord") || extended {
+            return unsupported(
+                "OpenNew of an API page other than one with DelayedInsert that declares only OnInsertRecord (not pinned)",
+            );
+        }
+        let Some(id) = o.id else {
+            return unsupported("OpenNew of an API page without an id (the error text is not pinned)");
+        };
+        let app = engine
+            .program
+            .apps
+            .get(o.app as usize)
+            .map(|a| a.name.clone())
+            .unwrap_or_default();
+        Ok(error_code(
+            format!(
+                "Sorry, the current permissions prevented the action. (Page {id} {} Insert: {app})",
+                o.name
+            ),
+            "DB:ClientInsertDenied",
+        ))
+    }
+
+    /// After the page inserted its new row: a row outside the page's filters. SetValue on a field outside the key of a list
+    /// raises `Validation error for Field: ,  Message = 'The view is filtered, and the entry is outside the filter. Some actions
+    /// may not work.'` (TestValidation) and the row stays stored (corpus pages/lt-ao-testpage/AoTests.al:467-487
+    /// FilterGroup0_NewRowField and :489-509 FilterGroup2_NewRowField, a filter on a field outside the key; events/
+    /// lt-cm-trigger-leads/CmTriggerLeads.al:405-440 Item40_PageInsert_FilteredView, a TestPage filter on the key). Whether
+    /// the field was validated before the error, what the page shows and saves afterwards (also when its variable goes out of
+    /// scope) are not pinned: such a field with validation code is refused, and so is every later call on the page and the
+    /// end of the variable's scope. The insert outside the filters at Close raises nothing (pages/lt-ap-testpage-642/
+    /// ApTestPageTests.al:126-154 Ap02_OpenNew_NonKeyFilter_SetValue, `closed-row |typed|` outside `G7`), and so does the save
+    /// of a filter change (misc FilterChangeSavesThePendingRow); this is only called for the insert of a SetValue.
+    pub(super) fn inserted_outside_view(&mut self, st: &St, idx: usize) -> Result<(), Signal> {
+        if st.borrow().draft || !self.has_source(st) {
+            return Ok(());
+        }
+        let rec = self.page_rec(st);
+        if rec.borrow().filters.is_empty() {
+            return Ok(());
+        }
+        let probe = Rc::new(RefCell::new(rec.borrow().clone()));
+        self.ret_used = true;
+        if matches!(
+            self.record_op(RecordOp::Find, &probe, &mut [Value::Text("=".into())])?,
+            Value::Boolean(true)
+        ) {
+            return Ok(());
+        }
+        let shape = self.is_list_page(st) && st.borrow().host.is_none() && st.borrow().parts.is_empty();
+        let engine = self.engine();
+        let ctl = &page_of(&engine, st).controls[idx];
+        let plain_field = ctl.trigger("onvalidate").is_none()
+            && self.control_field(st, idx).is_some_and(|f| {
+                f.on_validate.is_none()
+                    && f.ext_before_validate.is_empty()
+                    && f.ext_after_validate.is_empty()
+                    && !f.relation
+            });
+        if !shape || !plain_field {
+            return unsupported(
+                "a page inserted a new row outside its filters on SetValue of a field with validation code, or on a page other than a list (not pinned)",
+            );
+        }
+        {
+            let mut s = st.borrow_mut();
+            s.unpinned_state = Some("a list page after it inserted a new row outside its filters (not pinned)".into());
+            s.unpinned_close = true;
+        }
+        if !self.pages.scope_unpinned.iter().any(|p| Rc::ptr_eq(p, st)) {
+            self.pages.scope_unpinned.push(st.clone());
+        }
+        Err(error_code(
+            "Validation error for Field: ,  Message = 'The view is filtered, and the entry is outside the filter. Some actions may not work.'",
+            "TestValidation",
+        ))
+    }
+
+    /// Whether control `idx` shows a field of the page's source table outside its primary key.
+    pub(super) fn control_outside_key(&self, st: &St, idx: usize) -> bool {
+        let engine = self.engine();
+        let ir::Binding::Field(pos) = page_of(&engine, st).controls[idx].binding else {
+            return false;
+        };
+        let table = self.page_rec(st).borrow().table as usize;
+        engine.program.objects[table]
+            .table
+            .as_ref()
+            .is_some_and(|t| !t.keys[0].contains(&pos))
+    }
+
+    /// SetValue on a field outside the key of a card whose OnNewRecord inserted the new row: the page inserts the row again
+    /// (OnInsertRecord, then the table's OnInsert), the insert fails on the stored row and SetValue raises `Validation error for
+    /// Field: <control>,  Message = 'This field cannot be validated since the key fields are not valid.'` (TestValidation) without
+    /// validating the field; Close then saves nothing (corpus pages/lt-cf-page-leads/CfPageLeads.al:241-289
+    /// Card_OnNewRecordInserts_OpenNewSetClose). Any other outcome of the insert, and every later call but Close, is refused.
+    pub(super) fn insert_of_trigger_inserted_row(
+        &mut self,
+        st: &St,
+        idx: usize,
+        activated: Result<(), Signal>,
+    ) -> Result<Signal, Signal> {
+        match activated {
+            Err(Signal::Error(e)) if e.code == "DB:RecordExists" => {}
+            Err(Signal::Error(_)) | Ok(()) => {
+                return unsupported(
+                    "SetValue on a card whose OnNewRecord inserted the new row, when the page's insert does not fail on the stored row (not pinned)",
+                );
+            }
+            Err(other) => return Err(other),
+        }
+        // The text names the control; the corpus control has one name for the control, its field and its caption.
+        let engine = self.engine();
+        let ctl = &page_of(&engine, st).controls[idx];
+        let field = self.control_field(st, idx).map(|f| f.name.clone()).unwrap_or_default();
+        let name = ctl.name.clone();
+        let caption = self.control_caption(st, idx)?;
+        if !name.eq_ignore_ascii_case(&field) || caption != field {
+            return unsupported(
+                "SetValue on a card whose OnNewRecord inserted the new row, on a control whose name, field and caption differ (which one the error names is not pinned)",
+            );
+        }
+        {
+            let mut s = st.borrow_mut();
+            s.new_row_inserted_by_trigger = false;
+            s.dirty = false;
+            s.unpinned_state = Some(
+                "a card after its insert of a row its OnNewRecord had inserted failed (only Close is pinned)".into(),
+            );
+            s.unpinned_close = false;
+        }
+        Ok(error_code(
+            format!(
+                "Validation error for Field: {field},  Message = 'This field cannot be validated since the key fields are not valid.'"
+            ),
+            "TestValidation",
+        ))
+    }
+
     /// An AL error of OnInsertRecord when SetValue on a non-key control inserts the new row of a card opened for editing: a
     /// TestValidation error that names no field (corpus pages/lt-cc-page-leads/CcPageLeads.al:585-595 TriggerError_OnInsertRecord
     /// `Validation error for Field: ,  Message = 'LT CC failure in OnInsertRecord'`). The page stays open; what it shows and
@@ -301,8 +455,26 @@ impl Session {
         if let Some(last) = last_held {
             self.set_xrec_fields(st, last);
         }
+        st.borrow_mut().new_row_inserted_by_trigger = false;
         self.page_trigger(st, "onnewrecord", vec![Value::Boolean(true)])?;
         self.page_event(st, "onnewrecordevent", None, Some(true))?;
+        // A card opened with OpenNew whose OnNewRecord inserts the new row itself still holds it as a new row: the next write to
+        // a field outside the key inserts it again (corpus pages/lt-cf-page-leads/CfPageLeads.al:241-289
+        // Card_OnNewRecordInserts_OpenNewSetClose: `OnInsertRecord:DOC1,Doc.OnInsert:DOC1` at SetValue). Only that shape is
+        // pinned: a list, a part, a host of parts or New() on an open card is refused.
+        if !existed && self.stored_row(&rec)?.is_some() {
+            let pinned = {
+                let s = st.borrow();
+                s.test_opened_new && s.host.is_none() && s.parts.is_empty() && !s.modal && s.mode == PageMode::New
+            } && self.is_card(st)
+                && !self.is_request_page(st);
+            if !pinned {
+                return unsupported(
+                    "OnNewRecord inserted the new row itself on a page other than a card opened with OpenNew (not pinned)",
+                );
+            }
+            st.borrow_mut().new_row_inserted_by_trigger = true;
+        }
         if self.is_list(st) && st.borrow().host.is_none() {
             // xRec is the new record itself when the line becomes current (misc/lt-probes-needed-7/PnGNewRecord.al:
             // HandedRecordNoFilters `AGCR(,)`).
@@ -314,7 +486,7 @@ impl Session {
         self.page_trigger(st, "onaftergetcurrrecord", vec![])?;
         self.page_event(st, "onaftergetcurrrecordevent", None, None)?;
         // Page code that inserts the new row itself (a template step) hands the page the stored row.
-        if !existed && self.stored_row(&rec)?.is_some() {
+        if !existed && !st.borrow().new_row_inserted_by_trigger && self.stored_row(&rec)?.is_some() {
             let mut s = st.borrow_mut();
             s.draft = false;
             s.cursor = Cursor::Row;
@@ -550,6 +722,7 @@ impl Session {
         };
         if st.borrow().draft && in_row && prev.is_some() && !delayed && non_key {
             self.insert_draft(st)?;
+            self.inserted_outside_view(st, idx)?;
         }
         Ok(())
     }

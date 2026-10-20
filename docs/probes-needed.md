@@ -587,6 +587,22 @@ Pinned by lt-ac/ACRecordIsDirty.al (codeunit 77504, BC 29). Everything below is 
 | IsDirty of a declared variable of a table with InitValue fields; a partial record (SetLoadFields); a FlowField or Blob that differs | REFUSED | The 77504 sequences on such a table |
 | IsDirty after DeleteAll or ModifyAll on a record that was read (pinned only on a fresh variable, ACRecordIsDirty.al:37-38) | REFUSED | Get, DeleteAll, IsDirty |
 
+## New rows and inserts on a TestPage (lane-page-inserts, 2026-10-20)
+
+Pinned by pageext/lt-bl-implicit-creation/ImplicitCreation.al:308-318 (Worksheet OpenNew), pages/lt-cf-page-leads/CfPageLeads.al:144-289
+(API page OpenNew, card whose OnNewRecord inserts), pages/lt-ao-testpage/AoTests.al:467-509 and events/lt-cm-trigger-leads/
+CmTriggerLeads.al:405-440 (insert outside the filter). Code: `page_open` (pages/open.rs), `api_open_new_denied`,
+`insert_of_trigger_inserted_row`, `inserted_outside_view` (pages/draft.rs), `end_unpinned_page_scope` (pages/rows.rs).
+
+| What is not pinned | Today | Probe wanted |
+|---|---|---|
+| Whether OnInit/OnOpenPage run before the NotSupportedPageViewMode error of a Worksheet OpenNew; other page types in Create mode | REFUSED (a Worksheet that declares either) | OpenNew of a Worksheet with logging OnInit/OnOpenPage; OpenNew of a ListPart, CardPart, RoleCenter |
+| OpenNew of an API page without DelayedInsert, without OnInsertRecord, with Editable/InsertAllowed set, or extended | REFUSED | The CfPageLeads API arm on those page shapes |
+| A list, a part, a host of parts, or New() on an open card whose OnNewRecord inserts the row; Close of the changed row; SetValue when the second insert does not fail | REFUSED | The CfPageLeads item 85 arm on a list and with New(); OnInsert that changes the key |
+| After the TestValidation error of an insert outside the filter: whether the field was validated, what the page shows, what Close and the end of the variable's scope save | REFUSED (every later call, Close and the end of scope) | Item40 with a logging OnValidate on Amount; read the controls and Close explicitly |
+| The insert outside the filter on a card, a part, or at New()/Next() | card and part REFUSED; New/Next keep the old behavior (no error) | AoTests FilteredNewRow on a card, a part, and with New() after the key |
+| How often the blank line of a part with an unsaved host runs OnNewRecord (PartLineBeforeHostKey.al:399 asserts 3 runs, TestPagePartOnNewRecordCount.al says the count depends on the tier) | kept: one run (refusing it loses the 60868 baseline cases) | A corpus decision: the absolute count is a tier property |
+
 ## Page trigger errors on a TestPage (lane-page-trigger-errors, 2026-10-20)
 
 Pinned by pages/lt-cc-page-leads/CcPageLeads.al:453-633 (the TriggerError_* tests, a Card opened with OpenEdit). Code:

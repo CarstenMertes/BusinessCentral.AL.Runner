@@ -61,6 +61,9 @@ pub(crate) struct PageClients {
     /// The variable-bound control values each SaveValues page stored when it closed.
     pub(crate) saved_values: std::collections::HashMap<u32, Vec<(usize, Value)>>,
     pub(crate) traps: Vec<Rc<RefCell<al_builtins::value::PageState>>>,
+    /// Open TestPages in a state whose end of scope is not pinned (what BC saves when the variable goes away): a routine
+    /// whose local holds the last reference to one is refused when it returns.
+    pub(crate) scope_unpinned: Vec<Rc<RefCell<al_builtins::value::PageState>>>,
     /// A page background task worker is running: its parameters and the result it set.
     pub(crate) bg_worker: Option<pages::BgWorker>,
     /// The xRec fields the next `Modify` hands the table's triggers instead of the stored row: a

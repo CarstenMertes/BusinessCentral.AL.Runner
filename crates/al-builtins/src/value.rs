@@ -402,6 +402,11 @@ pub struct PageState {
     pub caption_assigned_closed: bool,
     /// A row with the new record's starting key was already stored when the draft started.
     pub draft_stored: bool,
+    /// The new row of a card that its OnNewRecord inserted itself: the page still holds it as a new row
+    /// (corpus pages/lt-cf-page-leads/CfPageLeads.al:241-289 Card_OnNewRecordInserts_OpenNewSetClose).
+    pub new_row_inserted_by_trigger: bool,
+    /// TestPage.OpenNew is reading the page's first row (cleared once it is read).
+    pub test_opened_new: bool,
     /// On a new row whose key fields were still blank, a field outside the key was typed.
     pub typed_before_key: bool,
     /// The page reached a state whose behavior is not pinned: every later call on it or its parts except Close is refused
@@ -529,6 +534,8 @@ impl PageState {
             view_left: false,
             caption_assigned_closed: false,
             draft_stored: false,
+            new_row_inserted_by_trigger: false,
+            test_opened_new: false,
             typed_before_key: false,
             unpinned_state: None,
             unpinned_close: false,

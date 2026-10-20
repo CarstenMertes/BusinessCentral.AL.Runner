@@ -99,7 +99,11 @@ impl Session {
             self.reset_table_globals(&rec);
         }
         let writes = self.write_mark();
+        let inserted_by_trigger = st.borrow().new_row_inserted_by_trigger;
         let (activated, origin) = self.traced(st, |s| s.activate(st, idx));
+        if inserted_by_trigger {
+            return Err(self.insert_of_trigger_inserted_row(st, idx, activated)?);
+        }
         if let (Err(Signal::Error(e)), Some("oninsertrecord")) = (&activated, origin.as_deref()) {
             return Err(self.insert_trigger_error(st, e, writes)?);
         }
@@ -784,6 +788,20 @@ impl Session {
         self.refuse_unpinned_state(&c.page)?;
         let st = &c.page;
         let m = method.method();
+        // A card whose OnNewRecord inserted its new row: reading a control and writing a field outside the key are pinned
+        // (corpus pages/lt-cf-page-leads/CfPageLeads.al:241-289 Card_OnNewRecordInserts_OpenNewSetClose); the rest is refused.
+        if st.borrow().new_row_inserted_by_trigger {
+            let pinned = match (&c.target, m) {
+                (ControlTarget::Control(_), PageMethod::Value) => true,
+                (ControlTarget::Control(i), PageMethod::SetValue) => self.control_outside_key(st, *i),
+                _ => false,
+            };
+            if !pinned {
+                return unsupported(format!(
+                    "TestField.{m} on a card whose OnNewRecord inserted the new row itself (not pinned)"
+                ));
+            }
+        }
         let idx = match &c.target {
             ControlTarget::Control(i) => *i,
             ControlTarget::BuiltIn(name) if matches!(name.as_str(), "Edit" | "View") => {

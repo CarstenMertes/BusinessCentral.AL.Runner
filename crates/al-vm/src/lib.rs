@@ -763,6 +763,7 @@ impl Session {
             pages: PageClients {
                 saved_values: std::collections::HashMap::new(),
                 traps: Vec::new(),
+                scope_unpinned: Vec::new(),
                 bg_worker: None,
                 page_xrec: None,
                 curr_field_no: Vec::new(),
@@ -1449,6 +1450,9 @@ impl Session {
         self.depth -= usize::from(is_try);
         self.tx.commit_behavior = saved_commit_behavior;
         self.end_trap_scope(&frame, r.params, &r.by_var);
+        if let Some(why) = self.end_unpinned_page_scope(&frame, r.params, &r.by_var) {
+            outcome = Err(Signal::Unsupported(why));
+        }
         let ret = match outcome {
             Ok(()) => None,
             // A report flow call (Skip, Break, Quit) leaves every procedure between the report trigger and the call.

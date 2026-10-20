@@ -10,6 +10,30 @@ impl Session {
         if st.borrow().open {
             return Err(error(ALREADY_OPEN));
         }
+        // OpenNew of a Worksheet fails with NotSupportedPageViewMode (corpus pageext/lt-bl-implicit-creation/
+        // ImplicitCreation.al:308-318 Worksheet_OpenNew, a worksheet that declares no trigger). Whether OnInit or
+        // OnOpenPage run before the error is not pinned, so a worksheet that declares either is refused.
+        if mode == PageMode::New {
+            let object = st.borrow().object as usize;
+            let engine = self.engine();
+            if engine.object_facts[object].page_type == Some(al_ir::PageType::Worksheet) {
+                if self.declares(st, "oninit") || self.declares(st, "onopenpage") {
+                    return unsupported(
+                        "OpenNew of a Worksheet that declares OnInit or OnOpenPage (whether they run before the NotSupportedPageViewMode error is not pinned)",
+                    );
+                }
+                let Some(id) = engine.program.objects[object].id else {
+                    return unsupported("OpenNew of a Worksheet without an id (the error text is not pinned)");
+                };
+                return Err(error_code(
+                    format!("The view mode 'Create' is not supported by the page ID '{id}'."),
+                    "NotSupportedPageViewMode",
+                ));
+            }
+            if matches!(&engine.object_facts[object].page_type, Some(al_ir::PageType::Other(t)) if t == "api") {
+                return Err(self.api_open_new_denied(st)?);
+            }
+        }
         // A reopened variable shows a fresh page.
         st.borrow_mut().instance = None;
         st.borrow_mut().inited = false;
@@ -174,6 +198,8 @@ impl Session {
             s.mode = mode;
             s.cursor = Cursor::None;
             s.draft = false;
+            s.new_row_inserted_by_trigger = false;
+            s.test_opened_new = test_open && mode == PageMode::New;
             s.never_stored = false;
             s.dirty = false;
             s.frozen_visible = Vec::new();
@@ -379,6 +405,7 @@ impl Session {
             }
             let waiting = self.parts_waiting_refresh(st);
             let (loaded, origin) = self.traced(st, |s| s.load_first_row(st, mode, record.is_some()));
+            st.borrow_mut().test_opened_new = false;
             self.open_row_error(st, mode, test_open, loaded, origin)?;
             // A card over a table with no row to show stands on a blank Rec that was never stored: an action cannot have deleted it.
             if has_source && !self.is_list(st) && st.borrow().cursor == Cursor::Row && !st.borrow().draft {

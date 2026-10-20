@@ -11,13 +11,33 @@ It is a Rust rewrite of the ideas behind
 That C# runner executes Microsoft's compiled code; this runtime compiles and
 runs AL source itself. The original spike brief and report are in `docs/history/`.
 
-## Getting started with your own project
+## Install
 
-`alrunner` runs the tests of your AL app without a Business Central service tier. It is an
-alpha: many tests are refused ("not run", see below) and results may change between builds.
-Do not gate a pipeline on it yet.
+`alrunner` is built for Linux x64, Windows x64 and macOS arm64.
 
-**1. Install.** Linux x64, Windows x64 and macOS arm64. The scripts check the SHA-256 of the download.
+**With mise (recommended).** [mise](https://mise.jdx.dev) installs the binary from the GitHub
+releases of this repository and keeps it up to date.
+
+```
+mise use -g github:StefanMaron/al-runtime-rs    # install the newest alpha
+mise up                                         # update to a newer alpha
+```
+
+Each numbered alpha (`3.0.0-alpha.N`) is a normal GitHub release, so mise finds it.
+
+**The edge build, with mise.** `edge` is rebuilt every night from the newest commit of `main`
+that passed CI. Pick it if you want every build, not only the numbered alphas. The numbered
+alphas are released by hand.
+
+```
+mise use -g github:StefanMaron/al-runtime-rs@edge
+mise install --force github:StefanMaron/al-runtime-rs@edge    # update
+```
+
+The version name `edge` never changes, so `mise up` does not see a new edge build. Use
+`mise install --force` to get the newest one.
+
+**With the install scripts.** The scripts check the SHA-256 of the download.
 
 Linux, macOS:
 
@@ -31,9 +51,18 @@ Windows (PowerShell):
 & ([scriptblock]::Create((irm https://github.com/StefanMaron/al-runtime-rs/releases/download/edge/install.ps1))) -Version edge
 ```
 
+Replace `edge` with `latest-alpha` or a tag such as `v3.0.0-alpha.2` for a numbered alpha.
 The binary goes to `~/.local/bin` (Linux, macOS) or `%LOCALAPPDATA%\alrunner\bin` (Windows).
 Add that folder to your `PATH` if the script says so. More about builds and about the
 unsigned binaries is in "Try the alpha" below.
+
+## Getting started with your own project
+
+`alrunner` runs the tests of your AL app without a Business Central service tier. It is an
+alpha: many tests are refused ("not run", see below) and results may change between builds.
+Do not gate a pipeline on it yet.
+
+**1. Install.** See "Install" above.
 
 **2. Run your tests.** Pass the app and its test app:
 
@@ -168,7 +197,7 @@ jobs:
 ```
 
 `--allow-not-run` keeps refused tests from failing the job while the runtime is an alpha. Drop
-it when you want every test to run. Pin a numbered alpha (`v3.0.0-alpha.1`) instead of `edge`
+it when you want every test to run. Pin a numbered alpha (`v3.0.0-alpha.2`) instead of `edge`
 if the result must be repeatable.
 
 **11. Report a wrong result.** A test that passes or fails here and behaves differently on real
@@ -321,20 +350,21 @@ cargo build --release
 
 ## Try the alpha
 
-`alrunner` is in alpha (`3.0.0-alpha.1`). It does not match AL Runner v2 yet.
+`alrunner` is in alpha (`3.0.0-alpha.2`). It does not match AL Runner v2 yet.
 Many tests are refused, and results may change between builds. Use it to try
 it out and to report what is wrong. Do not gate a pipeline on it.
 
 **Which build?**
 
-- **edge**: the newest build of the `release` branch. One pre-release named `edge`,
-  replaced on each build. Pick this to test the latest fixes.
-- **alpha**: a numbered checkpoint (`3.0.0-alpha.N`). Pick this for a stable
-  point you can name in a bug report.
+- **edge**: rebuilt every night from the newest commit of `main` that passed CI.
+  One pre-release named `edge`, replaced on each build. Pick this to test the latest fixes.
+- **alpha**: a numbered checkpoint (`3.0.0-alpha.N`), released by hand. Pick this
+  for a stable point you can name in a bug report.
 
 **Install** (Linux x64, Windows x64, macOS arm64). One line, pointing at the newest
 build (`edge`). The scripts check the SHA-256 of the download. Replace `edge` with
-`latest-alpha` or a tag such as `v3.0.0-alpha.1` for a numbered checkpoint.
+`latest-alpha` or a tag such as `v3.0.0-alpha.2` for a numbered checkpoint. mise works too: see
+"Install" near the top.
 
 Linux, macOS:
 
@@ -349,14 +379,12 @@ Windows (PowerShell):
 ```
 
 `irm https://github.com/StefanMaron/al-runtime-rs/releases/download/edge/install.ps1 | iex` also works and
-installs the latest numbered alpha. (GitHub's "latest" link skips pre-releases, so the
-`edge` release is the stable place for the scripts.)
+installs the latest numbered alpha. (The `edge` release is the stable place for the scripts:
+its URL never changes.)
 You can also download an archive from the releases page, check it against
 `SHA256SUMS`, and unpack it. Each archive holds the binary, `LICENSE` and a short
 `README.txt`. `gh attestation verify FILE --repo StefanMaron/al-runtime-rs`
 checks the build provenance.
-
-A numbered alpha is a draft until the owner publishes it.
 
 **The binaries are not signed.** Your system may warn you.
 

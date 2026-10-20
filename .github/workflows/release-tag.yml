@@ -2,8 +2,10 @@ name: Release
 
 # A numbered alpha: push a tag v3.* on a commit of the `release` branch (docs/releasing.md).
 # The workflow checks the tag, runs the CI checks, builds and smoke tests the three targets and
-# creates a DRAFT pre-release. A person publishes it. workflow_dispatch is a dry run: it builds
-# and packages but creates no release.
+# creates a normal GitHub release (not a draft, not a pre-release) marked "latest", so that
+# `mise use github:StefanMaron/al-runtime-rs` and `mise up` find it (owner decision 2026-10-20).
+# Assets: alrunner-<version>-<target>.tar.xz or .zip, SHA256SUMS, install.sh, install.ps1.
+# workflow_dispatch is a dry run: it builds and packages but creates no release.
 
 on:
   push:
@@ -18,7 +20,6 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.plan.outputs.version }}
-      prerelease: ${{ steps.plan.outputs.prerelease }}
       publish: ${{ steps.plan.outputs.publish }}
     steps:
       - uses: actions/checkout@v4
@@ -29,7 +30,6 @@ jobs:
           version="$(sed -n '/^\[workspace.package\]/,/^\[/{s/^version = "\(.*\)"/\1/p}' Cargo.toml)"
           [ -n "$version" ] || { echo "::error::no workspace version in Cargo.toml"; exit 1; }
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          case "$version" in *-*) echo "prerelease=true" >> "$GITHUB_OUTPUT" ;; *) echo "prerelease=false" >> "$GITHUB_OUTPUT" ;; esac
           if [ "$GITHUB_REF_TYPE" != tag ]; then
             echo "Dry run: no release will be created."
             echo "publish=false" >> "$GITHUB_OUTPUT"
@@ -73,12 +73,23 @@ jobs:
         with:
           name: packages
           path: dist
-      - name: Create the draft release
+      - name: Check the version the binary prints
+        env:
+          VERSION: ${{ needs.plan.outputs.version }}
+        run: |
+          mkdir bin
+          tar -C bin -xJf "dist/alrunner-$VERSION-x86_64-unknown-linux-musl.tar.xz"
+          printed="$(./bin/alrunner --version)"
+          echo "$printed"
+          case "$printed" in
+            "alrunner $VERSION "*|"alrunner $VERSION") ;;
+            *) echo "::error::alrunner --version prints '$printed', not version $VERSION of tag $GITHUB_REF_NAME"; exit 1 ;;
+          esac
+      - name: Create the release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           VERSION: ${{ needs.plan.outputs.version }}
-          PRERELEASE: ${{ needs.plan.outputs.prerelease }}
         run: |
           cat > notes.md <<NOTES
           alrunner $VERSION. An alpha: no AL Runner v2 parity, some tests are refused ("not run")
@@ -87,6 +98,7 @@ jobs:
           The binaries are not signed. See "Try the alpha" in the README for the macOS and
           Windows steps. Install:
 
+          - mise: \`mise use -g github:$GH_REPO\`, and \`mise up\` to update
           - Linux and macOS: \`curl -fsSL https://github.com/$GH_REPO/releases/download/$GITHUB_REF_NAME/install.sh | sh -s -- $GITHUB_REF_NAME\`
           - Windows: download \`install.ps1\` from this release and run \`./install.ps1 -Version $GITHUB_REF_NAME\`
 
@@ -94,7 +106,6 @@ jobs:
           Report problems, especially wrong results, as GitHub issues.
           NOTES
           sed -i 's/^          //' notes.md
-          flags=""
-          [ "$PRERELEASE" = true ] && flags="--prerelease"
-          gh release create "$GITHUB_REF_NAME" dist/* --draft $flags --verify-tag \
+          # A normal release, marked latest. The commit list follows the fixed text (--generate-notes).
+          gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --latest --generate-notes \
             --title "alrunner $VERSION" --notes-file notes.md

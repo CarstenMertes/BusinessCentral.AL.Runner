@@ -242,6 +242,14 @@ pub(crate) fn run_codeunit_core(
     session.mark_install_end();
     session.in_test_codeunit = true;
     session.test_object = Some(object);
+    // Company Triggers when the test session opens the company, before the codeunit's OnRun and first test (ADR-046
+    // amendment 1, A4 item 10). A scratch run (`execute`) is not a test session.
+    if !execute {
+        if let Err(why) = crate::install::test_session_company_open(lowered, &mut session) {
+            return all(Outcome::NotRun(why));
+        }
+        session.commit_transaction();
+    }
     // What BC's AL test runner does around each test method (runner_reset.rs). A scratch run has no runner.
     let runner = if execute {
         runner_reset::RunnerReset::default()

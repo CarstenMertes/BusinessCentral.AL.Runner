@@ -137,14 +137,15 @@ fn a_second_non_modal_run_of_a_page_variable_runs_on_init_again() {
 }
 
 // errors/lt-ms-refusals-128/P128ModalOnInit.al:210 P128_TypedModalHandler_PageWithOnInit_PageVariable: a page variable keeps its
-// own LookupMode (No) in a Page-typed handler; the static RunModal reads Yes (:191).
+// own LookupMode (No) in a Page-typed handler; the static RunModal whose answer is used reads Yes (:191; called as a statement
+// it is no lookup, pages/lt-be-runmodal-onlookup/BeRunModalOnLookup.al:916).
 #[test]
 fn a_page_typed_handler_reads_the_lookup_mode_of_the_page_variable() {
     passes(
         "[Test] [HandlerFunctions('TypedH')]
-        procedure Typed() var L: Codeunit \"OR Log\"; P: Page \"OR Life\"; begin
+        procedure Typed() var L: Codeunit \"OR Log\"; P: Page \"OR Life\"; A: Action; begin
             L.Reset(); P.RunModal(); Check('Ilookup=No', L.Get());
-            L.Reset(); Page.RunModal(Page::\"OR Life\"); Check('Ilookup=Yes', L.Get()); end;
+            L.Reset(); A := Page.RunModal(Page::\"OR Life\"); Check('Ilookup=Yes', L.Get()); end;
         [ModalPageHandler] procedure TypedH(var P: Page \"OR Life\"; var Response: Action)
         var L: Codeunit \"OR Log\"; begin L.Add('lookup=' + Format(P.LookupMode())); Response := Action::LookupOK; end;",
     );

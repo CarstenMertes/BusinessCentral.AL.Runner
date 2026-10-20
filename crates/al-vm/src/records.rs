@@ -1517,6 +1517,54 @@ impl Session {
         ))
     }
 
+    /// A record method on a record whose buffer is not pinned (`RecordState::unpinned_buffer`): methods that do not read the
+    /// buffer run, a read that fills it again (Get, FindFirst, FindLast, FindSet, Find('-'/'+') answering true) makes it
+    /// pinned again, and every other method refuses.
+    fn unpinned_buffer_op(&mut self, method: RecordOp, rec: &Rec, args: &mut [Value]) -> Result<Value, Signal> {
+        let why = rec.borrow().unpinned_buffer.unwrap_or_default();
+        let refill = match method {
+            RecordOp::Get | RecordOp::FindFirst | RecordOp::FindLast | RecordOp::FindSet => true,
+            RecordOp::Find => matches!(args.first(), Some(Value::Text(w)) if w.as_str() == "-" || w.as_str() == "+"),
+            _ => false,
+        };
+        let independent = matches!(
+            method,
+            RecordOp::Reset
+                | RecordOp::SetCurrentKey
+                | RecordOp::SetAscending
+                | RecordOp::Ascending
+                | RecordOp::SetRange
+                | RecordOp::SetFilter
+                | RecordOp::FilterGroup
+                | RecordOp::SetLoadFields
+                | RecordOp::AddLoadFields
+                | RecordOp::SetAutoCalcFields
+                | RecordOp::MarkedOnly
+                | RecordOp::ClearMarks
+                | RecordOp::Count
+                | RecordOp::CountApprox
+                | RecordOp::IsEmpty
+                | RecordOp::DeleteAll
+                | RecordOp::ModifyAll
+                | RecordOp::IsTemporary
+                | RecordOp::TableName
+                | RecordOp::TableCaption
+                | RecordOp::LockTable
+                | RecordOp::ReadIsolation
+                | RecordOp::SecurityFiltering
+        );
+        if !refill && !independent {
+            return unsupported(why);
+        }
+        let flag = rec.borrow_mut().unpinned_buffer.take();
+        let r = self.record_op_inner(method, rec, args);
+        let refilled = refill && matches!(r, Ok(Value::Boolean(true)));
+        if !refilled {
+            rec.borrow_mut().unpinned_buffer = flag;
+        }
+        r
+    }
+
     /// A record method: [`Session::record_op_inner`], with what it does to the snapshot `Record.IsDirty` compares with
     /// (isdirty.rs).
     pub(crate) fn record_op(&mut self, method: RecordOp, rec: &Rec, args: &mut [Value]) -> Result<Value, Signal> {
@@ -1525,6 +1573,9 @@ impl Session {
 
     pub(crate) fn record_op_inner(&mut self, method: RecordOp, rec: &Rec, args: &mut [Value]) -> Result<Value, Signal> {
         self.connection_check(rec)?;
+        if rec.borrow().unpinned_buffer.is_some() {
+            return self.unpinned_buffer_op(method, rec, args);
+        }
         let t = self.table(rec)?;
         // A table declared ObsoleteState = Moved is not in the runtime app: AllObj has no row for it and RecordRef.Open
         // fails (platform/lt-aw-fresh-tenant/AwTests.al:413-442). What a record of it does is not pinned.

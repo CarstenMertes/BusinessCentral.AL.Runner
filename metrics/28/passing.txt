@@ -5686,6 +5686,7 @@
 69338 Continue_InForeach_AndNestedLoops
 69338 Continue_InRecordLoop_AndWithCase
 69338 Continue_InWhileAndRepeat
+69338 Continue_WithProcedureNamedContinue
 69339 Base64Url_Forms
 69339 Base64_Streams
 69339 FromBase64_Invalid_Text
@@ -7328,6 +7329,7 @@
 70511 SubstNoPercent
 70511 SubstNoTen
 70511 SubstNoTypes
+70512 LT_BU_MaxStrLen_TextParameters
 70512 MaxStrLenSubstTemp
 70512 MaxStrLenVariables
 70513 CodeNAssign
@@ -9899,6 +9901,7 @@
 72515 WhileRepeat_Semantics
 72516 Exit_DefaultValues
 72516 Exit_Forms
+72516 LT_BU_ForLoop_BigIntegerEndBoundOnInteger
 72516 Recursion_Values
 72518 Asserterror_RollsBackWrites
 72518 CodeunitRun_Error_RollsBack
@@ -13056,6 +13059,7 @@
 81959 BM_CalcFormula_BigIntegerFilterFromInteger
 81959 BM_CalcFormula_IntegerFilterFromBigInteger
 81959 BM_LookupFlowField_ShorterThanSource
+81961 BM_Preprocessor_DefineUndefScope
 82356 ListElementTypeOverloads_WhichRuns
 82356 SameNamedLabelInOverloads_EachKeepsItsText
 82357 CodeLengthListOverloads_WhichRuns
@@ -13226,6 +13230,7 @@
 85060 Item32_DurationNegation
 85060 Item33_RoundFollowsAmountRoundingPrecision
 85060 Item34_DefaultTimeAgainst0TAndMidnight
+85060 Item36_ForLoopBoundsAndCounterAfterLoop
 85060 Item37_DecimalPlacesAndStoredValue
 85060 Item38_BigIntegerSumIntoIntegerFlowField
 85060 Item39_IntegerProductAssignedToBigInteger
@@ -13233,6 +13238,7 @@
 85060 Item42_OptionAndEnumNegatedByMultiplication
 85060 Item43_CodeVariableLengths
 85060 Item44_IncStrWithDecimalPoint
+85060 Item45_MaxStrLenOfParameters
 85060 Item46_BackslashAndAppendLineInMessageAndError
 85120 CaseConversion_UnderGlobalLanguage
 85120 IndexAssign_CodeAndText

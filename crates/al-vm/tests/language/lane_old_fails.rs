@@ -61,26 +61,29 @@ fn http_content_read_as_text_after_a_stream_was_taken() {
 
 /// `WriteFrom(InStream)` leaves the source stream where it was: it is not at its end
 /// (network/lt-db-http-leads/DbHttpContentLeads.al:310). Any other use of the source afterwards is not pinned.
-/// `ReadAs(var Text)` after a stream of the body that was not read to its end is not pinned (the pins DbHttpContentLeads.al:113,
-/// :146, :336 and P97ContentRead.al:89 all read the stream to its end): refused, for each kind of content.
+/// `ReadAs(var Text)` after a stream of the body that was read only in part, or not at all: the response's own content and a
+/// content written from a text still read the whole body; a copy of a content reads an empty text
+/// (network/lt-db-http-leads/DbHttpContentLeads.al:384-480 QG_RespContent_*, QG_RespContentCopy_*, :506-550 QG_TextContent_*).
 #[test]
-fn http_content_read_as_text_after_a_partly_read_stream_is_refused() {
-    for (vars, body) in [
+fn http_content_read_as_text_after_a_partly_read_or_unread_stream() {
+    for (vars, body, want) in [
         (
             "R: HttpResponseMessage; C: HttpContent; S: InStream; T: Text; Line: Text;",
-            "R.Content().WriteFrom('a' + Format(10) + 'b'); C := R.Content(); C.ReadAs(S); C.ReadAs(T); exit('ran ' + T);",
+            "R.Content().WriteFrom('abcdef'); C := R.Content(); C.ReadAs(S); C.ReadAs(T); exit('ran ' + T);",
+            "ran ",
         ),
         (
             "R: HttpResponseMessage; S: InStream; T: Text; Line: Text; Nl: Text[1];",
             "Nl[1] := 10; R.Content().WriteFrom('a' + Nl + 'b'); R.Content().ReadAs(S); S.ReadText(Line); R.Content().ReadAs(T); exit('ran ' + T);",
+            "ran a\nb",
         ),
         (
             "C: HttpContent; S: InStream; T: Text;",
             "C.WriteFrom('body'); C.ReadAs(S); C.ReadAs(T); exit('ran ' + T);",
+            "ran body",
         ),
     ] {
-        let r = text(vars, body);
-        assert!(r.starts_with("refused:"), "{body}: {r}");
+        assert_eq!(text(vars, body), want, "{body}");
     }
 }
 

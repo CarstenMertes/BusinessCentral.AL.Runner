@@ -213,16 +213,30 @@ impl Session {
         // other call reads it is not pinned, so that call is refused.
         // A move after it reads only what the move reads: Next (AiListOrderTests.al:1012-1021 Paging_GoToKeyThenWalk_Nav, every
         // `at` log empty), GoToKey, Last and First (handlers/TestPageRuntimeContracts.al:342-357 on a list with OnAfterGetRecord
-        // alone). Close drops it too: not pinned, kept for baseline cases 68335 List_Window_AfterGoToKeyOutsideTheRowsRead and
-        // List_Window_SmallTable and 67095 Nav_TwelveRows_OpenLastPreviousFirstNext.
+        // alone). Close after a GoToKey that ran no trigger reads the row once, also after field value reads
+        // (pages/lt-ai-list-order/QgGoToKeyNextCall.al:223 Plain_GoToKey_ThenValueRead, :277 Plain_GoToKey_ThenClose, and the Nav_
+        // tests: `close_log` `R:R1003`); after a GoToKey that read rows it reads nothing (handlers/
+        // TestPageSystemPartListWindowContracts.al:219 List_Window_SmallTable: the next open's log holds no read of the Close). After a
+        // SetValue between them Close reads nothing: not pinned, kept for baseline case 68164
+        // TestPage_SetValue_OfTheValueAlreadyHeld_StillRunsOnValidate (it does not observe the Close).
         let read_after_goto = std::mem::take(&mut st.borrow_mut().read_after_goto);
         let doubt = std::mem::take(&mut st.borrow_mut().read_after_goto_doubt);
+        let quiet = std::mem::take(&mut st.borrow_mut().read_after_goto_quiet);
+        let set = std::mem::take(&mut st.borrow_mut().read_after_goto_set);
         if read_after_goto {
             match name {
                 PageMethod::Invoke => {
                     let mut s = st.borrow_mut();
                     s.read_after_goto = true;
                     s.read_after_goto_doubt = doubt;
+                    s.read_after_goto_quiet = quiet;
+                    s.read_after_goto_set = set;
+                }
+                PageMethod::Close if quiet && !set && method.recv() != PageRecv::Page && st.borrow().open => {
+                    let rec = self.page_rec(st);
+                    if self.stored_row(&rec)?.is_some() {
+                        self.populate_current(st)?;
+                    }
                 }
                 PageMethod::Next | PageMethod::GoToKey | PageMethod::Last | PageMethod::First | PageMethod::Close => {}
                 // A read of the page itself is a field call as in `controls.rs` (kept for baseline case 68164
@@ -235,6 +249,8 @@ impl Session {
                     let mut s = st.borrow_mut();
                     s.read_after_goto = true;
                     s.read_after_goto_doubt = true;
+                    s.read_after_goto_quiet = quiet;
+                    s.read_after_goto_set = set;
                 }
                 _ => {
                     return unsupported(format!(
@@ -260,6 +276,7 @@ impl Session {
         if name != PageMethod::First && !field_read {
             st.borrow_mut().settled_first_row = false;
         }
+        let triggers_before = st.borrow().triggers_run;
         let r = match self.test_page_op_inner(method, st, args) {
             // `CurrPage` and a `Page` variable are the page's own code, not a TestPage the test closed: BC does not raise
             // "The TestPage is not open." for them. What a method of a page that is not open (any more) does is not pinned, so
@@ -309,7 +326,10 @@ impl Session {
             && self.declares(st, "onaftergetrecord")
             && !self.declares(st, "onaftergetcurrrecord")
         {
-            st.borrow_mut().read_after_goto = true;
+            let quiet = st.borrow().triggers_run == triggers_before;
+            let mut s = st.borrow_mut();
+            s.read_after_goto = true;
+            s.read_after_goto_quiet = quiet;
         }
         if moved && st.borrow().open {
             if st.borrow().host.is_some() {

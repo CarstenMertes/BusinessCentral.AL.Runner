@@ -1329,22 +1329,21 @@ impl Session {
                 // record with the record's values over an empty table of its own (events/lt-cl-event-leads/ClEventLeads.al:70
                 // `ins.temporary temp=Yes count=0 id=103`, an OnAfterInsertEvent subscriber; record/lt-qd-temp-param/
                 // QdStoredToTempParam.al:90-119 for a plain procedure: `callee.count = 0`, `callee.current = 2=two`), without the
-                // caller's filters (`callee.filters` empty; the caller keeps `Id: 2..3`). What becomes of a current key other than
-                // the primary key and of marks is not pinned: refused.
+                // caller's filters (`callee.filters` empty; the caller keeps `Id: 2..3`). It has the primary key, ascending, no marks
+                // and MarkedOnly No, whatever the caller's key, sort order and marks (QdStoredToTempParam.al:149-240
+                // QF_StoredRecord_KeyAndOrder_ToTemporaryParameter `callee.view = VERSION(1) SORTING(Field1)`, `callee.order = 1,2,3,`;
+                // QF_StoredRecord_Marks_ToTemporaryParameter and _MarksNotMarkedOnly_: `callee.markedOnly = No`, `callee.marks =
+                // 1=No,2=No,3=No,`; corpus bump 37).
                 (Value::Record(rc), false)
                     if !rc.borrow().temporary && matches!(r.locals[i].ty, RtType::Record(_, true)) =>
                 {
                     let mut st = rc.borrow().clone();
-                    if st.key != 0 || st.adhoc.is_some() || !st.ascending || st.field_descending != 0 {
-                        return Err(Signal::Unsupported(
-                            "a stored record with a current key or sort order handed to a temporary parameter (whether the callee keeps it is not pinned)".into(),
-                        ));
-                    }
-                    if !st.marks.is_empty() || st.marked_only {
-                        return Err(Signal::Unsupported(
-                            "a stored record with marks handed to a temporary parameter (whether the callee keeps them is not pinned)".into(),
-                        ));
-                    }
+                    st.key = 0;
+                    st.adhoc = None;
+                    st.ascending = true;
+                    st.field_descending = 0;
+                    st.marks.clear();
+                    st.marked_only = false;
                     st.filters.clear();
                     st.filter_group = 0;
                     st.temporary = true;

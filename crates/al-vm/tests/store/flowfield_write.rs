@@ -502,3 +502,100 @@ codeunit 50393 T
 fn validate_on_a_sum_flowfield_runs_onvalidate_then_inserts_with_the_trigger() {
     assert_eq!(text(run_in(SUM_TRIGGERS, "T", "F")), "OnValidate:50/30,OnInsert:2/20,");
 }
+
+const TEMP_PARAM_KEYS: &str = r#"
+table 50386 TK { fields { field(1; Id; Integer) { } field(2; Name; Text[10]) { } } keys { key(PK; Id) { } key(ByName; Name) { } } }
+codeunit 50387 Callee
+{
+    procedure Keys(R: Record TK temporary): Text
+    var S: Text;
+    begin
+        S := R.CurrentKey() + ' ' + Format(R.Ascending()) + ' ' + R.GetView(false) + ' ' + Format(R.Id) + '=' + R.Name + ' ';
+        Fill(R);
+        exit(S + Order(R));
+    end;
+    procedure Marks(R: Record TK temporary): Text
+    var S: Text;
+    begin
+        S := Format(R.MarkedOnly()) + ' ' + Format(R.Mark()) + ' ' + Format(R.Id) + ' ' + Format(R.Count()) + ' ';
+        Fill(R);
+        S += Format(R.Count()) + ' ' + Order(R);
+        R.MarkedOnly(false);
+        if R.FindSet() then
+            repeat
+                S += Format(R.Mark());
+            until R.Next() = 0;
+        exit(S);
+    end;
+    local procedure Fill(var R: Record TK temporary)
+    begin
+        R.Id := 1; R.Name := 'c'; R.Insert();
+        R.Id := 2; R.Name := 'a'; R.Insert();
+        R.Id := 3; R.Name := 'b'; R.Insert();
+    end;
+    local procedure Order(var R: Record TK temporary): Text
+    var Ids: Text;
+    begin
+        if R.FindSet() then
+            repeat
+                Ids += Format(R.Id) + ',';
+            until R.Next() = 0;
+        exit(Ids);
+    end;
+}
+codeunit 50388 T
+{
+    local procedure Seed()
+    var R: Record TK;
+    begin
+        R.Id := 1; R.Name := 'c'; R.Insert();
+        R.Id := 2; R.Name := 'a'; R.Insert();
+        R.Id := 3; R.Name := 'b'; R.Insert();
+    end;
+    procedure KeyAndOrder(): Text
+    var R: Record TK; C: Codeunit Callee; S: Text;
+    begin
+        Seed();
+        R.SetCurrentKey(Name);
+        R.Ascending(false);
+        R.FindFirst();
+        S := C.Keys(R);
+        exit(S + '|' + R.CurrentKey() + ' ' + Format(R.Ascending()));
+    end;
+    procedure Marks(): Text
+    var R: Record TK; C: Codeunit Callee; S: Text;
+    begin
+        Seed();
+        R.Get(1); R.Mark(true);
+        R.Get(3); R.Mark(true);
+        R.MarkedOnly(true);
+        S := C.Marks(R);
+        exit(S + '|' + Format(R.MarkedOnly()) + ' ' + Format(R.Count()) + ' ' + Format(R.Mark()));
+    end;
+}
+"#;
+
+// record/lt-qd-temp-param/QdStoredToTempParam.al:149-180 QF_StoredRecord_KeyAndOrder_ToTemporaryParameter (corpus bump 37): the
+// callee's temporary record has the primary key, ascending (`callee.view = VERSION(1) SORTING(Field1)`), the current values, and
+// sorts its own rows by the primary key; the caller keeps its key and order.
+#[test]
+fn a_stored_record_handed_to_a_temporary_parameter_gets_the_primary_key_ascending() {
+    al_builtins::assumptions::clear_hits();
+    assert_eq!(
+        text(run_in(TEMP_PARAM_KEYS, "T", "KeyAndOrder")),
+        "Id Yes VERSION(1) SORTING(Field1) 1=c 1,2,3,|Name No"
+    );
+    assert_eq!(al_builtins::assumptions::take_hits(), vec![]);
+}
+
+// QdStoredToTempParam.al:182-213 QF_StoredRecord_Marks_ToTemporaryParameter: the callee has no marks and MarkedOnly No; its own
+// rows are all unmarked; the caller keeps its marks and MarkedOnly.
+#[test]
+fn a_stored_record_handed_to_a_temporary_parameter_has_no_marks() {
+    al_builtins::assumptions::clear_hits();
+    assert_eq!(
+        text(run_in(TEMP_PARAM_KEYS, "T", "Marks")),
+        "No No 3 0 3 1,2,3,NoNoNo|Yes 2 Yes"
+    );
+    assert_eq!(al_builtins::assumptions::take_hits(), vec![]);
+}

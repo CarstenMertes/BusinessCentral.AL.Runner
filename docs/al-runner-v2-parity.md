@@ -61,7 +61,7 @@ folder"). **Corpus** is the AL language test corpus used as the oracle (ADR-007)
 
 | ID | Feature | v2 reference | v3 today | Blocker | Proposed v3 | Hard |
 |---|---|---|---|---|---|---|
-| IN-1 | One or more bundle folders as arguments; run in order; one combined summary | `Program.cs` arg loop (lines 480-660); `ProgramSupport/CliText.cs` | Partial | CLI | `alrunner test PATH...` Built (2026-10-14): `alrunner test APP...`, APP a folder, `*.Source.zip` or `.app`. | - |
+| IN-1 | One or more bundle folders as arguments; run in order; one combined summary | `Program.cs` arg loop (lines 480-660); `ProgramSupport/CliText.cs` | Partial | CLI | `al-runner test PATH...` Built (2026-10-14): `al-runner test APP...`, APP a folder, `*.Source.zip` or `.app`. | - |
 | IN-2 | Bundle root found by climbing from any folder below an `app.json` | `Infrastructure/BundleRootValidation.cs` | No | CLI | Same rule | - |
 | IN-3 | A folder holding several apps is run as one bundle per app; loose `.al` files beside them are ignored | `ProgramSupport/Suites.cs`, `docs/server-mode.md` (#5107) | No | CLI | Same rule | - |
 | IN-4 | The same folder named twice runs once (real path, symlinks) | `Infrastructure/BundleRootDeduplication.cs` | No | CLI | Same rule, print which argument was dropped | - |
@@ -69,17 +69,17 @@ folder"). **Corpus** is the AL language test corpus used as the oracle (ADR-007)
 | IN-6 | The project's own `.alpackages` is a dependency source | `DependencyResolver.cs` | No | ADR-013 | ADR-013 pool order: `.alpackages`, then `--deps`, then cache | - |
 | IN-7 | An app sees only its declared dependencies (plus `propagateDependencies`); otherwise `AL0185` | `--guide` (#4096) | Done | - | `AppSource` has `visible_from` by dependency id | - |
 | IN-8 | AL preprocessor symbols: `--define`, `--preprocessor-symbols`, `app.json`, built-in `CLEANSCHEMA1..25` | `Program.cs:625,640` | Partial | ADR-015 | Preprocessor exists. Today only the corpus harness passes `BC27PLUS`. ADR-015 3.9: other projects get symbols from `app.json` and `--define` only, never invented `BC<n>PLUS`. Carry over v2's built-in `CLEANSCHEMA1..25` set | - |
-| IN-9 | Run inline AL, or a codeunit's `OnRun`, without tests (`execute`) | `ServerProtocol.cs`, `docs/server-mode.md` | No | CLI | `alrunner run [PATH] [--code TEXT]` and the server `execute` command | - |
-| IN-10 | Package a folder as `.app` without compiling (`--emit-app`) | `ProgramSupport/SiblingCompile.cs`, `Program.cs:256` | No | CLI | `alrunner package PATH OUT.app` (zip plus `NavxManifest.xml`); low priority | - |
+| IN-9 | Run inline AL, or a codeunit's `OnRun`, without tests (`execute`) | `ServerProtocol.cs`, `docs/server-mode.md` | No | CLI | `al-runner run [PATH] [--code TEXT]` and the server `execute` command | - |
+| IN-10 | Package a folder as `.app` without compiling (`--emit-app`) | `ProgramSupport/SiblingCompile.cs`, `Program.cs:256` | No | CLI | `al-runner package PATH OUT.app` (zip plus `NavxManifest.xml`); low priority | - |
 | IN-11 | Compile one `.app` to a DLL (`--precompile`) | `Program.cs:249` | N/A | - | v3 has no DLLs. Nothing to precompile | - |
-| IN-12 | Config file | none (the root `al-runner.json` is not read) | N/A | - | Not parity. A later `alrunner.toml` is optional | - |
+| IN-12 | Config file | none (the root `al-runner.json` is not read) | N/A | - | Not parity. A later `al-runner.toml` is optional | - |
 
 ## 2. Dependencies, artifacts, platform data
 
 | ID | Feature | v2 reference | v3 today | Blocker | Proposed v3 | Hard |
 |---|---|---|---|---|---|---|
 | DP-1 | Download missing BC artifacts by default; `--no-auto-provision`; `--auto-provision` | `Program.cs:491` | No | ADR-013 | Download by default. `--no-download` (ADR-013). Keep `--no-auto-provision` as an alias | - |
-| DP-2 | `provision` command: for a project, `--platform-apps`, `--test-apps`, `--service-tier`, `--resolve-version`, `--force` | `ProgramSupport/Provisioning.cs`, `tools/DownloadArtifacts/` | No | ADR-013 | `alrunner deps fetch [PATH]`, `deps resolve-version PREFIX`, `--force`. No service-tier set (no DLLs) | - |
+| DP-2 | `provision` command: for a project, `--platform-apps`, `--test-apps`, `--service-tier`, `--resolve-version`, `--force` | `ProgramSupport/Provisioning.cs`, `tools/DownloadArtifacts/` | No | ADR-013 | `al-runner deps fetch [PATH]`, `deps resolve-version PREFIX`, `--force`. No service-tier set (no DLLs) | - |
 | DP-3 | `--bc-version` exact build or prefix; newest match; error lists the builds | `Infrastructure/BcArtifacts.cs:292` | Partial | ADR-013 | Selection logic exists in `al-deps` on branch `deps` (not merged). Same flag | - |
 | DP-4 | Floor from `app.json`; never select below it; explicit lower value runs with a warning | `Infrastructure/BcVersionFloor.cs` | Partial | ADR-013 | Same (ADR-013 decision 2) | - |
 | DP-5 | `--artifact-path DIR` pins one engine directory | `Program.cs:105` | N/A | - | No engine directory in v3. `--bc-version` plus `--deps` cover it | - |
@@ -139,9 +139,9 @@ folder"). **Corpus** is the AL language test corpus used as the oracle (ADR-007)
 | OUT-11 | Output file paths checked before the run; parent folders created; exit 2 if a write fails | `Infrastructure/OutputPaths.cs`, `docs/cli-output-paths.md` | No | CLI | Same | - |
 | OUT-12 | Out-of-scope surfaces fail loudly: `RunnerOutOfScopeException` with API, reason, `scope.md` anchor | `docs/scope.md` | Partial | CLI | v3 reports "not run" with a reason (hard rule 4). Keep a `docs/scope.md` equivalent with anchors | - |
 | OUT-13 | Notes under a failure: `[testpage]` (real error behind "The TestPage is not open.") | `Reporter.cs` | No | CLI | Same, if the VM can report the hidden error | - |
-| OUT-14 | `--dump-csharp DIR` | `Program.cs:651` | N/A | - | No C# stage. Offer `alrunner debug dump-ir` | - |
+| OUT-14 | `--dump-csharp DIR` | `Program.cs:651` | N/A | - | No C# stage. Offer `al-runner debug dump-ir` | - |
 | OUT-15 | Timing records: `AL_RUNNER_PHASE_LOG` JSONL per phase | `PerfTrace.cs`, `scripts/phase-log-report.py` | No | CLI | `--timings FILE` | - |
-| OUT-16 | `--version`, `--help`, `--guide` (manual for automated callers) | `CliText.cs` | No | CLI | `alrunner --version`, `--help`, `alrunner guide` | - |
+| OUT-16 | `--version`, `--help`, `--guide` (manual for automated callers) | `CliText.cs` | No | CLI | `al-runner --version`, `--help`, `al-runner guide` | - |
 | OUT-17 | Log tag filter (`[bc]`, `[dep]`, `[warn]`) and trace variables (`AL_RUNNER_TRACE_*`, `AL_RUNNER_DIAG_*`, hook traces) | `Log.cs`, `docs/log-filter.md` | N/A | - | Replaced by `-v` levels and `ALRUNNER_LOG`. Most trace variables describe v2 internals | - |
 | OUT-18 | `--print-cache-key` | `Program.cs:585` | N/A | - | Diagnostic of the v2 cache | - |
 
@@ -152,7 +152,7 @@ folder"). **Corpus** is the AL language test corpus used as the oracle (ADR-007)
 | PERF-1 | `--cache DIR`: cache of compiled AL output; `--no-cache` | `AlCacheWriter.cs`, `Program.cs:561,584` | N/A | - | Cold compile of the corpus (1769 objects) is about 0.5 s. No user-code cache. `--cache-dir` moves the dependency cache (ADR-013) | - |
 | PERF-2 | Cache of dependency symbols and compiled dependencies | `DepSymbolCompilerCache.cs`, `compiled-deps` | No | ADR-013 | Persistent parse/index cache per dependency, only if the warm start needs it (ADR-013 decision 6) | - |
 | PERF-3 | Ncl rewrite cache, shadow runtime, re-exec, Win32 shim, JIT and GC tuning | `NclShadowRuntime.cs`, `Win32Stubs/` | N/A | - | Gone with the .NET engine | - |
-| PERF-4 | `--watch`: stay resident; rerun on `.al` save; wait for quiet (250 ms, max 10 s) | `WatchSource.cs`, `AL_RUNNER_WATCH_QUIET_MS`, `AL_RUNNER_WATCH_MAX_WAIT_MS` | No | CLI | `alrunner test --watch`. File watcher in the CLI layer. A full rerun is fast enough | - |
+| PERF-4 | `--watch`: stay resident; rerun on `.al` save; wait for quiet (250 ms, max 10 s) | `WatchSource.cs`, `AL_RUNNER_WATCH_QUIET_MS`, `AL_RUNNER_WATCH_MAX_WAIT_MS` | No | CLI | `al-runner test --watch`. File watcher in the CLI layer. A full rerun is fast enough | - |
 | PERF-5 | Live terminal dashboard; plain lines when not a terminal | `WatchDashboard.cs` | No | CLI | Same behaviour | - |
 | PERF-6 | `--watch --affected`, `--include-failing`, `--strict-environment`: rerun only tests an edit can affect | `Infrastructure/Affected*.cs`, `docs/watch-affected.md` | No | NEW-ADR | Deferred. v3 may not need it. Revisit if a full run with Base Application is slow | Hard: per-test dependency tracking, baselines across environments |
 | PERF-7 | Scratch folder sweeping; package-dedup cache; memory census | `Infrastructure/ScratchDirs.cs`, `PkgDedupCache.cs` | N/A | - | v3 writes no scratch folders | - |
@@ -164,7 +164,7 @@ The exact interface points of ALchemist and LethAL (file:line, v3 status, gaps, 
 
 | ID | Feature | v2 reference | v3 today | Blocker | Proposed v3 | Hard |
 |---|---|---|---|---|---|---|
-| ED-1 | `--server`: JSON lines on stdin/stdout; `{"ready":true}` first; `runTests` streams one `test` line per test then a `summary` | `ServerProtocol.cs`, `docs/server-mode.md`, `protocol-v2.schema.json` | No | NEW-ADR | `alrunner serve`, speaking protocol-v2 unchanged so ALchemist and LethAL keep working | - |
+| ED-1 | `--server`: JSON lines on stdin/stdout; `{"ready":true}` first; `runTests` streams one `test` line per test then a `summary` | `ServerProtocol.cs`, `docs/server-mode.md`, `protocol-v2.schema.json` | No | NEW-ADR | `al-runner serve`, speaking protocol-v2 unchanged so ALchemist and LethAL keep working | - |
 | ED-2 | `execute` command: inline `code` or one `OnRun` codeunit; one response line | `docs/server-mode.md` | No | NEW-ADR | Same | - |
 | ED-3 | `cancel` side channel; the running test finishes, the next does not start | `docs/server-mode.md` | No | NEW-ADR | Needs a cancel flag the VM checks between tests | - |
 | ED-4 | Request fields: `sourcePaths`, `packagePaths`, `test`, `excludeTests`, `testIsolation`, `coverage`, `perTestCoverage`, `affectedOnly`, `includeFailing`, `strictEnvironment`, `tdd`, `captureValues`; warnings for ignored fields; refusal of unknown fields | same | No | NEW-ADR | Same set; fields for deferred features answer with a clear refusal | - |
@@ -172,7 +172,7 @@ The exact interface points of ALchemist and LethAL (file:line, v3 status, gaps, 
 | ED-6 | `captureValues`: local variable values after each statement | `AlValueCapture.cs` | No | IR-POS | Same response shape | Hard: VM hook per statement plus wire format |
 | ED-7 | `iterationTracking`: per-loop iteration records | `AlIterationTracker.cs` | No | IR-POS | Same response shape | Hard: loop model |
 | ED-8 | Per-statement hit counts, position table, per-test coverage | `AlCoverageTracker.cs` | No | IR-POS | Same response shape | - |
-| ED-9 | `--dap [PORT]` and `--dap stdio`: breakpoints, next/stepIn/stepOut, stack, locals; `linesStartAt1`/`columnsStartAt1` | `Infrastructure/AlDapSession.cs`, `docs/dap-mode.md` | No | NEW-ADR | `alrunner debug [--stdio]` with the same DAP surface. VM pause hook at statement boundaries | Hard: VM is synchronous (ADR-002), so pausing needs its own thread; not in browser WASM without threads |
+| ED-9 | `--dap [PORT]` and `--dap stdio`: breakpoints, next/stepIn/stepOut, stack, locals; `linesStartAt1`/`columnsStartAt1` | `Infrastructure/AlDapSession.cs`, `docs/dap-mode.md` | No | NEW-ADR | `al-runner debug [--stdio]` with the same DAP surface. VM pause hook at statement boundaries | Hard: VM is synchronous (ADR-002), so pausing needs its own thread; not in browser WASM without threads |
 | ED-10 | VS Code extension ALchemist (external repo, `SShadowS/ALchemist`) drives `--server` and `--dap stdio` | `docs/server-mode.md` | No | NEW-ADR | Same protocols. The extension needs a path or download for the v3 binary | - |
 | ED-11 | LethAL (mutation testing, in `community/LethAL`) drives `--server` and `--output-json`; matches failure text | `LethAL/packages/runner/src/al-runner-transport.ts` | No | NEW-ADR | Works if ED-1 and OUT-7 match. Failure text differs (see below) | - |
 | ED-12 | No telemetry; no network use except downloads | `--guide` | Done | - | Keep. State it in the README | - |

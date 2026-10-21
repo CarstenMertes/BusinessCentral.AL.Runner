@@ -1,5 +1,5 @@
 {
-  "corpus_commit": "475c47b854569319391db457fa803db97e2a145b",
+  "corpus_commit": "0075e2f157a2d2bfc87b10b9b523952d7746a3c8",
   "language": {
     "bc": "27-29",
     "implemented": 1499,
@@ -20292,7 +20292,7 @@
         "pinned": true,
         "scope": "",
         "sig": "(Table)",
-        "site": "testpart/TestTestPart.al:639",
+        "site": "pages/lt-qi-row-page-var/QiRowPageVar.al:330",
         "state": "implemented",
         "type": "TestPart"
       },
@@ -35876,7 +35876,7 @@
           "id": "TestPart.GoToRecord#1",
           "pinned": true,
           "signature": "TestPart.GoToRecord inst (Rec: Record) -> Boolean?",
-          "site": "testpart/TestTestPart.al:639"
+          "site": "pages/lt-qi-row-page-var/QiRowPageVar.al:330"
         },
         {
           "id": "TestPart.IsExpanded#1",

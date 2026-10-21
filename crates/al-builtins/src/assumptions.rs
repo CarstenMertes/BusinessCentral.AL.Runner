@@ -157,12 +157,6 @@ registry! {
         tests: "Tests-ERM ERM Budget (134922, 36 tests) and ERM Budget UI (134927, 11 tests): Initialize calls Budget.GLAccCategory.SetValue(0) on page 113 Budget, a control over GLAccCategoryFilter: Enum \"G/L Account Category\" (value 0 \" \", Caption ' ').",
         probe: "The BeEnumSetValueBlank cases (SetValue(0) on a blank-captioned Enum variable control) on a page without a source table and on a list page.",
     },
-    PartOpenLineAfterGetCurrRecordOnce => {
-        id: "part-open-line-after-get-curr-record-once",
-        assumed: "The blank line of a part that shows no row of an editable host runs OnAfterGetCurrRecord once, after its three OnNewRecord runs at the host's open (PartLineBeforeHostKey.al pins the three OnNewRecord runs; its pages declare no OnAfterGetCurrRecord).",
-        tests: "Tests-ERM: about 540 tests that open a document page (Sales and Purchase orders, invoices, quotes) with OpenNew or OpenEdit on an empty lines subpart whose OnAfterGetCurrRecord runs (ERM Invoice Discount And VAT, ERM Update Currency - Sales, ERM Purchase Subform, ...).",
-        probe: "The PYB_OpenNew_Document_LogOnly shape with a part that logs OnAfterGetCurrRecord too: where it comes among the three OnNewRecord runs and how often.",
-    },
     PartFieldUnderTruePartExpression => {
         id: "part-field-under-true-part-expression",
         assumed: "TestField.Editable()/Enabled() of a field of a part whose part control has an Editable or Enabled expression that comes out true answer as without the property. An expression that comes out false is refused; a literal Editable = false is pinned (PnGPartRows.al:117).",
@@ -522,12 +516,6 @@ registry! {
         assumed: "CurrPage.SaveRecord() in the OnValidate of a ListPart's control leaves Rec and xRec as they were for a stored row; for a new row Rec gets the inserted key (AutoSplitKey line number) while xRec stays the blank new row. The stored row becomes xRec once the SetValue returns. After New() on such a part, OnNewRecord sees the last row as xRec and OnAfterGetCurrRecord the blank new row. Probed on every BC major the corpus CI runs, by corpus branch al-runtime-rs-staging-qj (pages/lt-qj-part-propagation/QjPartPropagation.al QJ_SubformSaveRecord_StoredRow / _NewRow); flagged until corpus bump 41 lands on master.",
         tests: "Tests-ERM Document Totals Pages (134394) BlanketOrderAddingLinesUpdatesTotals and BlanketOrderAddingLinesUpdatesTotalsStats: the Blanket Purchase Order Subform's Quantity OnValidate runs CurrPage.SaveRecord() then DeltaUpdateTotals (Rec minus xRec); they pass in Microsoft's CI.",
         probe: "Written and green: corpus branch al-runtime-rs-staging-qj commit 1fd2ccd1 (lands with bump 41). Remove this assumption when the bump lands.",
-    },
-    TableFieldAutoFormatExpression => {
-        id: "table-field-auto-format-expression",
-        assumed: "A page control over a table field whose AutoFormatExpression is an expression (Rec.\"Currency Code\", a field name, a procedure of the table), with no AutoFormatExpression of its own, formats its value as if the control had that expression: it is evaluated with the control's row each time the control's text is read, like a control expression (autoformat/PWAutoFormatTypes.al:19-22, TestAutoFormatExpressionTiming.al). The corpus pins control expressions and literal field expressions (pages/lt-page-autoformat-lookups/P113AutoFormat.al) only.",
-        tests: "Tests-ERM Amount AutoFormat Currency (134833): TestAutoformatShowFCYCodeOnlyAfterAmount and eight more (Case4FCY and Case5FCY, AutoFormatType 4 and 5 with AutoFormatExpression = Rec.\"Currency Code\" on the table field); about 100 Tests-ERM tests read such Base Application fields through pages (ERM Purchase Subform, ERM Payment Tolerance); they pass in Microsoft's CI.",
-        probe: "A table with Amount (AutoFormatType = 1, 2, 4, 5; AutoFormatExpression = Rec.\"Currency Code\") and a field with AutoFormatType = 10 and AutoFormatExpression = a procedure of the table that logs its calls and errors for one row: a Card and a List with plain controls over them, Value() of each control for rows with a currency of 3:3 / 4:4 places, a blank code and a code that is no currency; how often and when the procedure runs (open, Next, GoToRecord, Value()), and what the error does.",
     },
 }
 

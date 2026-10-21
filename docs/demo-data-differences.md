@@ -5,7 +5,7 @@ test database that is set up further. Where a test needs a setup value the backu
 a reason that is not a runtime defect. This file lists the differences that are proven, with the evidence, so that a
 failure is not chased in the runtime twice. Each row was found by reading the backup (BC 27.5.46862.48827,
 `BusinessCentral-W1.bak`) and confirmed by an experiment: the same tests, run with the value set by an install codeunit
-of a scratch app (`alrunner test <test app> <scratch app>`), pass.
+of a scratch app (`al-runner test <test app> <scratch app>`), pass.
 
 | Table, field | In the backup | A test needs | Effect (main 0b414672 or 23cc1e8f, full run) |
 |---|---|---|---|

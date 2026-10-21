@@ -20,35 +20,37 @@ built on the language, not on BC's internals".
 
 | Step | What | State |
 |---|---|---|
-| 1 | `alrunner test` flags LethAL uses, v2-shaped `--output-json` | done (this page, sections 1 to 5) |
+| 1 | `al-runner test` flags LethAL uses, v2-shaped `--output-json` | done (this page, sections 1 to 5) |
 | 2 | Cobertura coverage (`--coverage`, `--coverage-out`), per-test statements (`--coverage-json`) | done (sections 3 and 4a) |
-| 3 | `alrunner serve` (`runTests`, `cancel`, `shutdown`) | done (section 4b; ADR-028, Proposed) |
+| 3 | `al-runner serve` (`runTests`, `cancel`, `shutdown`) | done (section 4b; ADR-028, Proposed) |
 | 4 | `execute`, `cancel`, `coverage`, `perTestCoverage` in `serve` | done (section 4b; ADR-028) |
 | 5 | `captureValues`, `iterationTracking` | done (section 4b; ADR-030, Proposed) |
-| 6 | `alrunner debug --stdio` (DAP) | not yet |
+| 6 | `al-runner debug --stdio` (DAP) | not yet |
 
 ## 1. The command
 
 | v2 | v3 | Change |
 |---|---|---|
-| binary `al-runner` | binary `alrunner` | Run `alrunner test ...`. There is no `al-runner` launcher. A tool that finds the binary by name on the PATH looks for `alrunner`; a configured path still works. |
-| `al-runner [FLAGS] DIR [DIR]` | `alrunner test [FLAGS] APP...` | Put the word `test` first. APP is an app folder (with `app.json`), a `*.Source.zip` or an `.app` that carries source. |
+| binary `al-runner` | binary `al-runner` (called `alrunner` up to 3.0.0-alpha.2) | Run `al-runner test ...`. v2's dotnet tool has the same name, so a tool that finds the binary by name on the PATH may start v2. Tell them apart by `--version` (section 2), or use a configured path. v3 prints a note on stderr when it finds another copy; `ALRUNNER_NO_PATH_NOTE=1` turns it off. |
+| `al-runner [FLAGS] DIR [DIR]` | `al-runner test [FLAGS] APP...` | Put the word `test` first. APP is an app folder (with `app.json`), a `*.Source.zip` or an `.app` that carries source. |
 | install: `dotnet tool install -g msdyn365bc.al.runner` | one binary | Do not run `dotnet tool`. The user sets the path. v3 needs no .NET (an optional helper exists for `DotNet` variables). |
-| `al-runner --server [--package-cache P]... [--define S]... [--test-timeout N]` | `alrunner serve [--package-cache P]... [--define S]... [--test-timeout N]` | Same options (section 4b). |
-| `al-runner --dap stdio` | `alrunner debug --stdio` | Step 6. Not available yet. |
+| `al-runner --server [--package-cache P]... [--define S]... [--test-timeout N]` | `al-runner serve [--package-cache P]... [--define S]... [--test-timeout N]` | Same options (section 4b). |
+| `al-runner --dap stdio` | `al-runner debug --stdio` | Step 6. Not available yet. |
 
 ## 2. `--version`
 
 v2 prints `... v2.12.0 ...` somewhere in its output. v3 prints
 
 ```
-alrunner 3.0.0-alpha.2 (<commit>)
+al-runner 3.0.0-alpha.2 (<commit>)
 ```
 
 Change: do not match `/\bv2\.\d/`. Parse the first `\d+\.\d+\.\d+` (as ALchemist already does).
-A tool that must tell the two apart checks the program name: the output starts with `alrunner `.
+Read only the first line: when other copies of `al-runner` are on the PATH, v3 adds one
+`also on PATH: <path>: <its version line>` line for each. Both versions start with `al-runner `
+(v2 prints `al-runner v2.12.0`), so a tool that must tell them apart checks for `al-runner 3.`.
 
-## 3. Flags of `alrunner test`
+## 3. Flags of `al-runner test`
 
 Accepted with the v2 meaning unless the "Difference" column says otherwise.
 
@@ -68,9 +70,9 @@ Accepted with the v2 meaning unless the "Difference" column says otherwise.
 | `--coverage-out FILE` | Cobertura XML to FILE; implies `--coverage`. Section 4a. |
 | `--coverage-json FILE` | New in v3: the statements and what each test ran, as JSON; implies `--coverage`. Section 4a. |
 | `--affected`, `--tdd`, `--include-failing`, `--strict-environment`, `--per-suite`, `--watch` | Refused with exit 2 and the reason (deferred). Do not send them. |
-| any other v2 flag | `unknown option`, exit 2. `alrunner test --help` is the list. |
+| any other v2 flag | `unknown option`, exit 2. `al-runner test --help` is the list. |
 
-Selection runs whole codeunits: tests of one codeunit share state, so `alrunner` runs the codeunit
+Selection runs whole codeunits: tests of one codeunit share state, so `al-runner` runs the codeunit
 of every selected test and reports only the selected tests. A tool that selects one test and
 excludes its siblings sees the same rows as in v2; it does not save the time of the siblings.
 
@@ -100,7 +102,7 @@ last `{` in column 0 to the end" still works). Null and empty fields are left ou
 | `tests[].status` | `pass`, `fail`, `error`, `skipped` | `pass`, `fail`, `error` | `fail` is **every** failing test. v2 used `error` for an unexpected .NET exception; v3 has no such split. `skipped` is never sent. A tool that counts `error` as "the runner broke" must look at `notRun` first. |
 | `tests[].message` | text with a .NET prefix such as `NavNCLDialogException: ` | the BC message only (ADR-009) | Do not match .NET type prefixes. Match the message text. |
 | `tests[].stackTrace` | .NET stack | the AL call stack, one frame per line, innermost first | Show it as text. |
-| `tests[].durationMs` | present | present when the test ran | none |
+| `tests[].durationMs` | present | present when the test started (also on a test refused while it ran); absent on a test refused before it started | none |
 | `tests[].notRun` | absent | `true` on a test that did not run | New. v3 refuses what it cannot answer instead of running it (hard rule 4). Count these separately. |
 | not-run tests | no such thing in v2 | a row with `status: "error"`, `notRun: true`, `message: "NotRun: out-of-scope: <reason>"` | The prefix `<Type>: out-of-scope: ` is the form LethAL reads as "the runner refused" (not a killed mutant). Treat it as "unknown", not "killed". |
 | timed-out test | row with `Test exceeded <N>s timeout.` | the same sentence, `status: "error"`, `notRun: true` | none |
@@ -139,8 +141,10 @@ load), no document is written, the message is on stderr and the exit code is 2.
                          "coverage": [ { "file": "/abs/path/src/T.al", "statements": [ { "id": 17, "hits": 1, "..." : "..." } ] } ] } ] }
 ```
 
-- `coverage` has every statement of the APPs with its runs (0 when nothing ran it). `perTestCoverage` has, for each test
-  that ran, only the statements it ran, with its own `hits`. A test that did not run has no entry.
+- `coverage` has every statement of the APPs with its runs (0 when nothing ran it). With `--codeunit` or `--test`, the test codeunits
+  left out are not compiled, so their statements are missing; the other objects of the APPs are listed. `perTestCoverage` has, for each test
+  that ran, only the statements it ran, with its own `hits`. A test refused while it ran has an entry with the statements it ran
+  before; a test refused before it started has none.
 - `id` is stable inside one run only. `scope` is the procedure or trigger name. `column` is a byte column, from 1.
 - v2 also sent `endColumn`; v3 does not know it.
 - Selected tests only: a codeunit runs whole, but the tests that `--test` and `--exclude-test` leave out do not count.
@@ -148,44 +152,52 @@ load), no document is written, the message is on stderr and the exit code is 2.
 
 Cost: with coverage off the VM pays one `Option` check per statement. With it on, one counter bump per statement run.
 
-## 4b. `alrunner serve`
+## 4b. `al-runner serve`
 
 Same wire as v2 (`protocolVersion` 2): one JSON object per line on stdin, answers on stdout, logs on stderr; first
 stdout line `{"ready":true}`; command names are case insensitive; `[server] request <n> done` on stderr after each
-request except `cancel`. Start options are the request-independent options of `alrunner test`
+request except `cancel` and a line that is not a JSON object. Each request also prints the human `Tests:` and `Result:`
+lines on stderr. Start options are the request-independent options of `al-runner test`
 (`--package-cache`, `--dep`, `--define`, `--preprocessor-symbols`, `--test-timeout`, `--bc-version`, `--cache-dir`,
-`--no-download`, `--test-data`, `--no-test-data`, `--allow-not-run`); `--protocol 2` is accepted. Anything else is an
-error at start-up (exit 2).
+`--no-download`, `--test-data`, `--no-test-data`, `--allow-not-run`, `--server-url`, `--environment` and the like);
+`--protocol 2` is accepted. An APP and the options that select tests or write reports (`--filter`, `--test`,
+`--codeunit`, `--test-exact`, `--exclude-test`, `--isolation`, `--junit`, `--output-json`, `--coverage*`, `--explain`)
+are an error at start-up (exit 2).
 
 | Command | v3 |
 |---|---|
-| `runTests` | Fields `sourcePaths` (required), `packagePaths`, `coverage`, `perTestCoverage`, `test`, `excludeTests`, `testIsolation` (`codeunit`, `test`, `disabled`). `affectedOnly`, `includeFailing`, `strictEnvironment`, `tdd`: `{"error": ...}` (deferred). `captureValues`, `iterationTracking`: `capturedValues` and `loops` on each `test` line (ADR-030; v2 has them for `execute` only). `code`: accepted, with a `warnings` entry in the summary. Any other field: `{"error": "unknown field ..."}`. |
-| `execute` | Runs the `OnRun` trigger of one codeunit per app (`sourcePaths`) or of inline `code`; one answer line without `type`: `{"exitCode","tests":[{"name","status","durationMs","message","stackTrace","stackFrames","messages"}],"warnings","coverage","perTestCoverage"}`. `captureValues` and `iterationTracking` give `capturedValues` and `loops` on each test and, with `iterationTracking`, the tagged `messages` on the response (ADR-030; `runTests` takes both too: they are on the `test` lines). Names: `Codeunit<ID>.OnRun`, for `code` `<object name>.OnRun`. Details in ADR-028, item 9. |
-| `cancel` | Answered at once: `{"type":"ack","command":"cancel","noop":bool}`. During a run it stops **after the current test**: the tests that ran were already streamed, and the summary has `cancelled: true`, `exitCode: 130`, as in v2. |
-| `shutdown` | `{"status":"shutting down"}`, then exit 0. EOF on stdin exits too. |
+| `runTests` | Fields `sourcePaths` (required), `packagePaths`, `coverage`, `perTestCoverage`, `test` (matched like `--test`, section 3: `Codeunit50100.` with the dot selects a codeunit), `excludeTests`, `testIsolation` (`codeunit`, `test`, `disabled`; the aliases of `--isolation` are refused), `serverUrl` (as `--server-url`), `announceStart` (one `{"type":"started","codeunit":<id>,"test":"<method>"}` line when the first test starts; ADR-028). `affectedOnly`, `includeFailing`, `strictEnvironment`, `tdd`: `{"error": ...}` (deferred). `captureValues`, `iterationTracking`: `capturedValues` and `loops` on each `test` line (ADR-030; v2 has them for `execute` only). `code`: accepted, with a `warnings` entry in the summary. Any other field: `{"error": "unknown field ..."}`. |
+| `execute` | Runs the `OnRun` trigger of one codeunit per app (`sourcePaths`) or of inline `code`; one answer line without `type`: `{"exitCode","tests":[{"name","status","durationMs","message","stackTrace","stackFrames","messages"}],"warnings","coverage","perTestCoverage"}`. `captureValues` and `iterationTracking` give `capturedValues` and `loops` on each test and, with `iterationTracking`, the tagged `messages` on the response (ADR-030; `runTests` takes both too: they are on the `test` lines). Names: `Codeunit<ID>.OnRun`, for `code` `<object name>.OnRun`. `code` and `sourcePaths` together are an error. `testIsolation` and the `runTests`-only fields are accepted with a `warnings` entry. An app with no codeunit that has an `OnRun` trigger answers `exitCode` 6, `tests: []` and a warning. Details in ADR-028, item 9. |
+| `cancel` | Answered at once: `{"type":"ack","command":"cancel","noop":bool}`. During a run it stops **after the current test**: the tests that ran were already streamed, and the summary has `cancelled: true`, `exitCode: 130`, as in v2. (Known bug in 3.0.0-alpha.2 and later builds up to this note: the summary has `cancelled: true` but the exit code of the tests that ran, for example 0.) |
+| `shutdown` | `{"status":"shutting down"}`, then exit 0. During a run it stops the run after the current test like `cancel`: the summary (`cancelled: true`) comes first, then `{"status":"shutting down"}`. EOF on stdin stops a run the same way and exits 0. |
 
 Differences a client must adapt to:
 
 1. **Test lines stream**, one per test as it finishes, then the summary.
-2. The server is **warm and in-process**: compiled dependency apps and test data stay in memory. Same sources as the
-   last request: the compiled workspace is reused and `cached` is `true`. A changed source always shows. When only the
+2. The server is **warm and in-process**: compiled dependency apps and test data stay in memory. Same sources and the
+   same selected test codeunits as the last request: the compiled workspace is reused and `cached` is `true` (a request
+   that selects another codeunit compiles again and has `cached: false`). A changed source always shows. When only the
    code of routines of codeunits, tables or table extensions changed, just those objects are compiled again and the
    summary has `incremental: true` (ADR-029; a request takes 0.4 s on the corpus app and 2.2 s on Tests-ERM, of which
    1.8 s is the tests); any other change compiles the workspace again. Every request starts from the same post-install
-   database, so nothing leaks between requests. The first request after a new build of `alrunner` builds the
+   database, so nothing leaks between requests. The first request after a new build of `al-runner` builds the
    dependency cache (a minute with Microsoft's apps, then 3 GB resident); with the cache on disk it takes as long as a
    one-shot run. Repeats take 0.2 to 2 s.
    A panic in a test is reported as an error for that test and the server goes on.
 3. `test` lines have `type`, `name`, `status` (`pass`, `fail`, `error`), `durationMs`, `message`, `stackTrace`,
    `stackFrames` (the AL stack split into lines), and `notRun: true` for a test that did not run (status `error`, message
    `NotRun: out-of-scope: <reason>`; see section 4). `errorKind`, `alSourceFile`, `alSourceLine` are not sent.
-4. The `summary` has `exitCode` (the exit code of `alrunner test`, section 5), `passed`, `failed`, `errors` (= not run),
+4. The `summary` has `exitCode` (the exit code of `al-runner test`, section 5), `passed`, `failed`, `errors` (= not run),
    `notRun`, `total`, `cached`, `incremental` when only some objects were compiled again, `protocolVersion`, `wallSeconds`,
    `warnings` when there are some, `cancelled` when cancelled, and `coverage` / `perTestCoverage` when asked for (section 4a shapes). `compilationErrors`,
    `changedFiles`, `selection`, `companyInitFailures`, `sourceScanFailures` are not sent.
-5. A run that cannot start (a bad path, an app that does not load) answers `{"error": "the run produced no result (exit 2): ..."}`
-   instead of a summary with exit code 2 or 3.
-6. While a run is in progress `cancel` and `shutdown` are answered at once; other requests are queued, as in v2.
+5. A request that cannot run answers one `{"error": "<reason>"}` line instead of a summary with exit code 2 or 3:
+   for example `{"error":"/x: no such file or folder"}`, ``{"error":"unknown field `cobertura` for runTests"}``,
+   ``{"error":"`sourcePaths` needs at least one app folder"}``. (Known bug: a `test` or `excludeTests` that matches no
+   test answers `{"error":"the run produced no report"}`, and the reason is only on stderr; a summary with exit code 6
+   is meant.)
+6. While a run is in progress `cancel` is answered at once. `shutdown` takes effect after the current test (see the
+   table). Other requests are queued and run in order, as in v2.
 7. `testIsolation: "test"` means TestIsolation Function (section 3), `"disabled"` runs nothing.
 
 ## 5. Exit codes
@@ -214,12 +226,14 @@ rows on 7 (and 8); otherwise every run with a refused test hides all its rows.
 ## 7. Output on stderr and stdout
 
 v2 printed machine-readable and human lines mixed (`[bc] selected BC 27.5`, `al-runner ... BC ... N apps`,
-`[dep] ...`, `[provision] ...`, `[pkg-cache] ...`). v3 prints none of them. It prints its own
-header (`alrunner <version> (<commit>)`, `target: BC <v>, runtime <r>, Microsoft apps from build <b>`,
-`dependencies: N apps`). With `--output-json` and no file, all of it goes to stderr.
+`[dep] ...`, `[provision] ...`, `[pkg-cache] ...`). v3 prints none of them. By default it prints the
+version line (`al-runner <version> (<commit>)`), the failures, the top refusals, the `Tests:` line and the
+`Result:` line. The setup lines (`target: BC <v>, runtime <r>, Microsoft apps from build <b>`,
+`build chosen by: ...`, `dependencies: N apps`) are printed only with `--verbose`. With `--output-json` and no
+file, all of it goes to stderr.
 
 Change for a tool that read the `[bc]` or `[dep]` lines: treat the BC build and the
-platform-apps pin as "unknown", or parse `target: BC <v>, ... build <b>` from stderr.
+platform-apps pin as "unknown", or add `--verbose` and parse `target: BC <v>, ... build <b>` from stderr.
 
 ## 8. LethAL (one-shot mode, `serverMode: false`)
 
@@ -227,15 +241,15 @@ Source: `docs/integrations/alchemist-lethal.md`, section 3. The command LethAL b
 (`al-runner-transport.ts:641-741`) maps to v3 with one rename:
 
 ```
-alrunner test --output-json --isolation test --test Codeunit50011.Foo [--exclude-test Codeunit50011.Foo2]...
+al-runner test --output-json --isolation test --test Codeunit50011.Foo [--exclude-test Codeunit50011.Foo2]...
   [--auto-provision] <sourceDir> [<testDir>] [--package-cache <dir>]... [--define <SYM>]...
 ```
 
 Changes in LethAL:
 
-1. **Binary**: command name `alrunner`, first argument `test`. Config key `alRunner.alRunnerPath` stays.
+1. **Binary**: command name `al-runner`, first argument `test`. Config key `alRunner.alRunnerPath` stays.
 2. **Version check** (`al-runner-backend.ts:165, 1092-1115`; `al-runner-contract.ts:439-452`): replace
-   `/\bv2\.\d/` with a check that stdout starts with `alrunner ` and carries `\d+\.\d+\.\d+`.
+   `/\bv2\.\d/` with a check that stdout starts with `al-runner ` and carries `\d+\.\d+\.\d+`.
 3. **Exit codes** (`al-runner-transport.ts:576-625, 821-845`): read the rows on exit 7 and 8 as on 1.
    Exit 3 never happens.
 4. **Not-run rows** (`al-runner-backend.ts:97`): keep recognizing `<Type>: out-of-scope: ...`; the v3 message is
@@ -252,16 +266,16 @@ Changes in LethAL:
 10. **Selector**: `"selectorMode": "static"`. Server mode: not before step 3.
 11. **`--auto-provision`** may stay in the command; it is accepted.
 
-Check: run LethAL's contract probe against `alrunner`; the six facts (version, unknown flag rejected with a
+Check: run LethAL's contract probe against `al-runner`; the six facts (version, unknown flag rejected with a
 non-zero exit chosen by the process (2), qualified test name, timeout classified, timeout exit readable,
 compile failure not scorable) must hold with the changes above.
 
 ## 9. ALchemist
 
-ALchemist needs `alrunner serve` (step 3, done), `execute` (step 4), value capture (step 5) and `alrunner debug`
+ALchemist needs `al-runner serve` (step 3, done), `execute` (step 4), value capture (step 5) and `al-runner debug`
 (step 6). Test Explorer runs can move now; scratch runs, inline values and debugging cannot.
 
-1. Binary lookup (`alRunnerManager.ts:47-51, 129-139`): also `which alrunner`; spawn `alrunner serve` instead of
+1. Binary lookup (`alRunnerManager.ts:47-51, 129-139`): also `which al-runner`; spawn `al-runner serve` instead of
    `al-runner --server` (`serverProcess.ts:125-141`). The version check only warns and accepts `3.0.0` (A3).
 2. `runtests` (lowercase) is accepted. ALchemist sends `captureValues` and `iterationTracking` on `runTests`: v3 puts
    `capturedValues` and `loops` on the `test` lines (v2 ignored them there). It never sends `cobertura` or `testFilter`; both would be
@@ -269,7 +283,7 @@ ALchemist needs `alrunner serve` (step 3, done), `execute` (step 4), value captu
 3. `coverage` arrives in the summary in the v2 shape (section 4a). ALchemist reads `hitStatements` and `totalStatements`,
    which neither v2 nor v3 sends (a tool-side issue noted in `alchemist-lethal.md`, section 6).
 4. Test names are `Codeunit<ID>.<Method>` as in v2; the label match in `testController.ts:493` (A8) must be checked on a run.
-5. Debugger: `alrunner debug --stdio` instead of `al-runner --dap stdio` (step 6).
+5. Debugger: `al-runner debug --stdio` instead of `al-runner --dap stdio` (step 6).
 
 ## 10. What does not change for a tool
 

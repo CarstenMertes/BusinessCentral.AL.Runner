@@ -64,7 +64,7 @@ in milliseconds, with the whole program, every statement and every database writ
 
 ## Speed of the inner loop
 
-16. **Instant evaluation.** `alrunner eval` runs an AL snippet or one procedure against the
+16. **Instant evaluation.** `al-runner eval` runs an AL snippet or one procedure against the
     compiled app and the demo data in well under a second, like a REPL. Size: M.
 17. **Snapshot testing.** Compare a report dataset, a JSON or XML output, or a table's content
     with an approved file, and show the diff on change. Size: S.
@@ -115,7 +115,7 @@ Lower priority or unclear:
 - **What:** while a developer types in VS Code (ALchemist or any editor), the affected tests run
   after each short pause (about 300 ms) and the results appear inline: pass or fail per test, the
   failing assert, and with value capture the values per line.
-- **How:** `alrunner serve` keeps the compiled Microsoft and dependency apps in memory; the editor
+- **How:** `al-runner serve` keeps the compiled Microsoft and dependency apps in memory; the editor
   sends the unsaved file; v3 recompiles only what changed and runs only the tests whose coverage
   reaches the change.
 - **Speed today:** one filtered test 0.1 to 0.2 s total, the Pageworks suite about 1 s warm, NP
@@ -212,7 +212,7 @@ The owner had this idea for the v2 runner. Nothing here is decided or planned.
    apps: which test apps, in which company, with which test type and bucket, and which tests
    Microsoft disables (BCApps `build/projects/Test Apps <country>` settings and
    `src/DisabledTests`). How much of that is embedded and how much is read from BCApps or the
-   artifacts is open. One command, for example `alrunner test --microsoft-suite ./MyApp`,
+   artifacts is open. One command, for example `al-runner test --microsoft-suite ./MyApp`,
    then installs the developer's app next to Microsoft's apps and runs the whole Microsoft
    suite against it. Any developer sees which Microsoft tests their customization breaks,
    without a container or a pipeline. The same run is how we report parity with Microsoft.

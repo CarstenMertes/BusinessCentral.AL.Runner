@@ -1,4 +1,4 @@
-//! `alrunner test --recipe microsoft`: one run per lane, with the company and the disabled tests Microsoft's CI uses.
+//! `al-runner test --recipe microsoft`: one run per lane, with the company and the disabled tests Microsoft's CI uses.
 //!
 //! The planning (which codeunit gets which company) is `recipe.rs`; the files come from `bcapps.rs`. This file turns a
 //! plan into runs of the ordinary test command and adds the lines that put the lanes together.

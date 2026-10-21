@@ -235,6 +235,27 @@ pub fn run_traced(engine: &Arc<Engine>, lowered: &Lowered, trace: bool) -> Optio
 /// `Insert`, `Modify`, `Rename`, `ModifyAll` or `Validate`-free equivalents, found in the lowered
 /// bodies of everything it calls (not of event subscribers). Temporary
 /// records are left out. Writes through a `RecordRef` have no static table and are not counted.
+/// The Base Application tables whose rows the corpus database's company holds and the runtime does not: Accounting Period
+/// (36 rows, 2025-01-01 to 2027-12-01) and Company Information (one row) (session/lt-company-information/
+/// CompanyInformationValues.al:45 QG_CompanyInformation_CorpusRow `count` 1, :89 QG_AccountingPeriod_CorpusRows `count` 36).
+/// ADR-047 (seed them) is rejected, so without test data a `Count` or `IsEmpty` of one of them before the test's own code
+/// wrote to it is refused, the shape those two tests read (install code may have written a row with other values). Other reads stay answered: refusing every read of those tables lost 116 BC 29
+/// baseline cases (reports and pages that read Company Information without asserting its values). Object indexes of the
+/// dependency tables 50 and 79.
+pub fn demo_row_tables(lowered: &Lowered) -> std::collections::HashSet<usize> {
+    let objs = &lowered.program.objects;
+    (0..objs.len())
+        .filter(|&oi| {
+            lowered.dependency[oi]
+                && objs[oi].table.is_some()
+                && matches!(
+                    (objs[oi].id, objs[oi].name.as_str()),
+                    (Some(50), "Accounting Period") | (Some(79), "Company Information")
+                )
+        })
+        .collect()
+}
+
 pub(crate) fn tables_written(lowered: &Lowered, object: usize, routine: usize) -> BTreeSet<u32> {
     use al_builtins::value::RtType;
     use al_ir::{Arg, Expr, Place, Stmt};

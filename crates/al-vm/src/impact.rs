@@ -1,4 +1,4 @@
-//! The per-test record of what the code raised and touched, for the impact index of `alrunner impact-index build`
+//! The per-test record of what the code raised and touched, for the impact index of `al-runner impact-index build`
 //! (ADR-043 section 2.2). Off unless asked for (`Session::enable_impact_trace`): then each note costs one branch.
 //!
 //! What is noted, and where:
@@ -46,7 +46,7 @@ impl Touches {
 }
 
 impl crate::Session {
-    /// Starts noting what the code raises and touches (`alrunner impact-index build`).
+    /// Starts noting what the code raises and touches (`al-runner impact-index build`).
     pub fn enable_impact_trace(&mut self) {
         *self.coverage.impact.borrow_mut() = Some(Touches::default());
         self.coverage.impact_on = true;

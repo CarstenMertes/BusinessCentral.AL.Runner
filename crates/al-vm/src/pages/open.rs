@@ -1655,9 +1655,12 @@ impl Session {
     /// (pages/lt-part-line-before-host-key/PartLineBeforeHostKey.al:672 PYB_OpenNew_Document_LogOnly `L.OnValidate(Document No.): |
     /// LP.OnNewRecord: | LP.OnNewRecord: | L.OnValidate(Document No.): | LP.OnNewRecord:`, :688 a host without OnNewRecord, :704
     /// an unlinked part (three runs, no validation), :738 without AutoSplitKey, :754 two linked parts one after the other, :770 a
-    /// Card host, :809 OpenEdit of a host without lines, :603 after the host key is typed). OnAfterGetCurrRecord runs once
-    /// after them: assumption part-open-line-after-get-curr-record-once. A host's New() runs only the host's OnNewRecord, never
-    /// the part's (:827 PYB_OpenEdit_HostWithoutLines `host_new`, :879 PYB_OpenEdit_ThenHostNew, :861 PYB_OpenNew_ThenHostNew).
+    /// Card host, :809 OpenEdit of a host without lines, :603 after the host key is typed). OnAfterGetCurrRecord runs right
+    /// after each OnNewRecord run (:1349 QH_EmptyPart_OpenNew_CurrRecordOrder `CP.OnNewRecord: below=Yes |
+    /// CP.OnAfterGetCurrRecord:/0`, three times; :1381 OpenEdit, :1418 after the host key is typed, :1495 host Next; :1439 and
+    /// :1455 a part that declares only OnAfterGetCurrRecord runs it three times). A host's New() runs only the host's
+    /// OnNewRecord, never the part's (:827 PYB_OpenEdit_HostWithoutLines `host_new`, :879 PYB_OpenEdit_ThenHostNew, :861
+    /// PYB_OpenNew_ThenHostNew); whether its OnAfterGetCurrRecord runs then is not pinned, so a part that can observe it is refused.
     fn land_on_part_open_line(&mut self, st: &St) -> Result<(), Signal> {
         let rec = self.page_rec(st);
         let table = rec.borrow().table as usize;
@@ -1672,12 +1675,20 @@ impl Session {
             s.draft = true;
             s.typed_before_key = false;
         }
-        let runs: &[bool] = if self.host_new_running {
-            &[]
-        } else {
-            &[true, false, true]
-        };
-        for &validate in runs {
+        let object = st.borrow().object as usize;
+        let observes_curr = self.declares(st, "onaftergetcurrrecord")
+            || self.engine().events.is_subscribed(object, "onaftergetcurrrecordevent");
+        if self.host_new_running {
+            // Whether and how often the part's OnAfterGetCurrRecord runs then is not pinned (the PYB pages declare none).
+            if observes_curr {
+                return unsupported(
+                    "OnAfterGetCurrRecord of an empty part while its host runs New() (whether and how often BC runs it is not pinned)",
+                );
+            }
+            self.set_xrec(st);
+            return Ok(());
+        }
+        for validate in [true, false, true] {
             if validate {
                 // A link value the part's table relation refuses: BC runs one OnNewRecord and fails the open with code
                 // TestWrapped (PartLineBeforeHostKey.al:776 PYB_OpenNew_ConstLinkedPart `[LP.OnNewRecord:D9]`); where that error
@@ -1693,19 +1704,10 @@ impl Session {
             }
             self.page_trigger(st, "onnewrecord", vec![Value::Boolean(true)])?;
             self.page_event(st, "onnewrecordevent", None, Some(true))?;
+            self.set_xrec(st);
+            self.page_trigger(st, "onaftergetcurrrecord", vec![])?;
+            self.page_event(st, "onaftergetcurrrecordevent", None, None)?;
         }
-        // How often OnAfterGetCurrRecord runs in this sequence is not pinned (the PYB pages declare none). Refusing it blocks
-        // about 540 Microsoft tests that pass on real BC (Tests-ERM document pages opened on an empty lines part), so it runs
-        // once at the end under assumption part-open-line-after-get-curr-record-once, marked when a part can observe it.
-        let object = st.borrow().object as usize;
-        if self.declares(st, "onaftergetcurrrecord")
-            || self.engine().events.is_subscribed(object, "onaftergetcurrrecordevent")
-        {
-            al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::PartOpenLineAfterGetCurrRecordOnce);
-        }
-        self.set_xrec(st);
-        self.page_trigger(st, "onaftergetcurrrecord", vec![])?;
-        self.page_event(st, "onaftergetcurrrecordevent", None, None)?;
         Ok(())
     }
 

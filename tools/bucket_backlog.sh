@@ -5,13 +5,13 @@
 #   tools/bucket_backlog.sh [OUT_DIR]
 #
 # OUT_DIR defaults to ~/.cache/al-runtime/buckets/<commit>/. Set PREVIOUS=<dir> to add the
-# lost-pass section. Environment: ALRUNNER (binary, default ./target/release/alrunner),
+# lost-pass section. Environment: ALRUNNER (binary, default ./target/release/al-runner),
 # BUCKET_DIR (artifact folder), NO_SLICE=1 (do not wrap in systemd-run).
 # Never run two of these at once (docs/agents/brief.md).
 set -u
 here="$(cd "$(dirname "$0")" && pwd)"
 repo="$(cd "$here/.." && pwd)"
-bin="${ALRUNNER:-$repo/target/release/alrunner}"
+bin="${ALRUNNER:-$repo/target/release/al-runner}"
 src="${BUCKET_DIR:-$HOME/.bcartifacts.cache/sandbox/27.5.46862.48827/platform/Applications/BaseApp/Test}"
 commit="$(git -C "$repo" rev-parse --short HEAD)"
 out="${1:-$HOME/.cache/al-runtime/buckets/$commit}"

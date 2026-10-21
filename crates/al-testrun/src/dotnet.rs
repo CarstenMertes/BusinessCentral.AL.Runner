@@ -208,6 +208,8 @@ struct PoolState {
     starting: usize,
     /// How many to keep ready or starting. A taken one is replaced.
     target: usize,
+    /// The target the first session that starts a process of its own sets (`prewarm_on_first_use`).
+    on_first_use: usize,
     closed: bool,
 }
 
@@ -334,6 +336,14 @@ impl SidecarHost {
         start_standbys(&self.shared, need);
     }
 
+    /// Like [`prewarm`](Self::prewarm), but nothing starts until a session needs a process: that
+    /// session starts its own, and `n` standbys start beside it for the sessions that follow. A run
+    /// that never reaches `DotNet` starts no process at all. For a run whose compile is short
+    /// (a compile cache hit), where a start ahead has little to overlap.
+    pub fn prewarm_on_first_use(&self, n: usize) {
+        lock(&self.shared.pool.state).on_first_use = n;
+    }
+
     /// Ends the standby processes nobody used and stops starting new ones. Sessions that call
     /// later start their own process.
     pub fn shutdown(&self) {
@@ -457,7 +467,7 @@ fn resolve(cfg: &SidecarConfig) -> Result<Resolved, String> {
     Ok(Resolved { dotnet, sidecar })
 }
 
-/// The sidecar's source files, built into this binary, so a copied or installed `alrunner` can
+/// The sidecar's source files, built into this binary, so a copied or installed `al-runner` can
 /// find or build its helper without the repository (the cache is keyed by the same hash as the
 /// repository's own build). A test keeps the list equal to the folder.
 const EMBEDDED: &[(&str, &str)] = &[
@@ -700,7 +710,22 @@ impl SidecarSession {
                 start_standbys(&self.shared, need);
                 Ok(())
             }
-            None => self.start_process(),
+            None => {
+                // The first process of a run kept for first use: the standbys start now, beside it.
+                let first = {
+                    let mut st = lock(&self.shared.pool.state);
+                    let n = std::mem::take(&mut st.on_first_use);
+                    if n > 0 && st.target == 0 && !st.closed {
+                        st.target = n;
+                    }
+                    n > 0
+                };
+                if first {
+                    let need = self.shared.pool.reserve();
+                    start_standbys(&self.shared, need);
+                }
+                self.start_process()
+            }
         };
         self.shared.waited(began.elapsed());
         result

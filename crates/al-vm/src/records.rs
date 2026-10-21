@@ -1612,6 +1612,23 @@ impl Session {
             self.coverage_read(&t, temporary)?;
         }
         let cx = self.cx_for(rec, &t)?;
+        // A Count or IsEmpty of a table whose demo rows the corpus database holds, before the session's own code wrote to it:
+        // BC counts 1 Company Information row and 36 Accounting Period rows (session/lt-company-information/
+        // CompanyInformationValues.al:45 QG_CompanyInformation_CorpusRow, :89 QG_AccountingPeriod_CorpusRows); the runtime has
+        // only what install code wrote (ADR-047 rejected). A test that writes its own rows is answered.
+        if !rec.borrow().temporary && self.engine.demo_tables.contains(&(t.object as usize)) {
+            if method.writes() {
+                if !self.install_scope {
+                    self.demo_written.insert(t.object);
+                }
+            } else if matches!(method, RecordOp::Count | RecordOp::IsEmpty) && !self.demo_written.contains(&t.object) {
+                return unsupported(format!(
+                    "{} on {} before the test wrote to it: the corpus database holds demo rows there that the runtime does not have (ADR-047 rejected)",
+                    method.name(),
+                    t.name
+                ));
+            }
+        }
         // The next access of the table raises a deferred duplicate-key Insert, an Insert of another row not (the buffered inserts
         // stay buffered: misc/lt-protected-var-abs-query-views/P146TableExtProtected.al:P146_Triggers_BaseThenExtension, where
         // `R2.Insert(true)` succeeds and the next Modify raises it).

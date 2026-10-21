@@ -1,5 +1,5 @@
 #!/bin/sh
-# Installs alrunner from GitHub releases (Linux x64, macOS arm64).
+# Installs al-runner from GitHub releases (Linux x64, macOS arm64).
 #   install.sh [VERSION]
 # VERSION: "edge" (newest build of the release branch), "latest-alpha" (default: the newest numbered
 # alpha), or a tag such as v3.0.0-alpha.2.
@@ -13,7 +13,7 @@ want="${1:-latest-alpha}"
 case "$(uname -s)-$(uname -m)" in
   Linux-x86_64) target=x86_64-unknown-linux-musl ;;
   Darwin-arm64) target=aarch64-apple-darwin ;;
-  *) echo "error: no alrunner build for $(uname -s) $(uname -m)" >&2; exit 1 ;;
+  *) echo "error: no al-runner build for $(uname -s) $(uname -m)" >&2; exit 1 ;;
 esac
 
 fetch() { # URL -> stdout
@@ -35,14 +35,21 @@ case "$want" in
   *) tag="v$want"; label="$want" ;;
 esac
 
-archive="alrunner-$label-$target.tar.xz"
 base="${ALRUNNER_DOWNLOAD_BASE:-https://github.com/$repo/releases/download/$tag}"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
-echo "Installing alrunner $tag for $target"
-fetch_to "$base/$archive" "$tmp/$archive"
 fetch_to "$base/SHA256SUMS" "$tmp/SHA256SUMS"
+# The binary is al-runner. Releases from before the rename (up to 3.0.0-alpha.2) hold alrunner.
+exe=al-runner
+if ! grep -q " al-runner-$label-$target.tar.xz\$" "$tmp/SHA256SUMS" &&
+  grep -q " alrunner-$label-$target.tar.xz\$" "$tmp/SHA256SUMS"; then
+  exe=alrunner
+fi
+archive="$exe-$label-$target.tar.xz"
+
+echo "Installing $exe $tag for $target"
+fetch_to "$base/$archive" "$tmp/$archive"
 
 expected="$(grep " $archive\$" "$tmp/SHA256SUMS" | awk '{print $1}')"
 [ -n "$expected" ] || { echo "error: $archive is not in SHA256SUMS" >&2; exit 1; }
@@ -52,9 +59,28 @@ else actual="$(shasum -a 256 "$tmp/$archive" | awk '{print $1}')"; fi
 
 tar -xJf "$tmp/$archive" -C "$tmp"
 mkdir -p "$dir"
-install -m 755 "$tmp/alrunner" "$dir/alrunner"
+install -m 755 "$tmp/$exe" "$dir/$exe"
 # The binary is unsigned. Remove the macOS quarantine flag so Gatekeeper does not block it.
-[ "$(uname -s)" = Darwin ] && xattr -d com.apple.quarantine "$dir/alrunner" 2>/dev/null || true
+[ "$(uname -s)" = Darwin ] && xattr -d com.apple.quarantine "$dir/$exe" 2>/dev/null || true
 
-"$dir/alrunner" --version
+"$dir/$exe" --version
 case ":$PATH:" in *":$dir:"*) ;; *) echo "Add $dir to your PATH." ;; esac
+
+if [ "$exe" = al-runner ] && [ -e "$dir/alrunner" ]; then
+  echo "note: $dir/alrunner is an older build under the old name. Remove it: rm \"$dir/alrunner\""
+fi
+# AL Runner v2's dotnet tool is also called al-runner. Whichever comes first on PATH runs.
+v2dir="$HOME/.dotnet/tools"
+if [ "$exe" = al-runner ] && [ -f "$v2dir/al-runner" ]; then
+  echo "note: AL Runner v2 is installed at $v2dir/al-runner, a command of the same name."
+  echo "  Remove it with \"dotnet tool uninstall -g MSDyn365BC.AL.Runner\" if you no longer need it."
+  first=""
+  old_ifs="$IFS"; IFS=:
+  for p in $PATH; do
+    case "$p" in "$dir"|"$v2dir") first="$p"; break ;; esac
+  done
+  IFS="$old_ifs"
+  if [ "$first" = "$v2dir" ]; then
+    echo "  It comes first on your PATH now, so \"al-runner\" starts v2. To keep both, put $dir before $v2dir on PATH."
+  fi
+fi

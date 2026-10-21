@@ -915,6 +915,47 @@ held 2958 files, 7.1 GB, all younger than 2 days.
    `alrunner cache info` prints entries and bytes, this build and the other builds by tag.
 6. **Scope.** Only `<cache dir>/compile/`. The downloaded artifacts and demo backups are per BC build and stay.
 
+## Measured 2026-10-21: the fixed cost of a cached run of a small partner app (branch `lane-perf-small-app`)
+
+The case: a small partner app (about 1 test codeunit, extends Base Application), one test, BC 27.5, 13 dependency apps in
+10 layers (9 981 dependency objects, 30.1 MB of entry), the install baseline read from its entry. Release build, 12
+cores shared with other agents (load 10 to 25), so the CPU and instruction columns are the ones to compare.
+
+| Part | Wall, all cores | CPU, one thread (`RAYON_NUM_THREADS=1 AL_LOWER_THREADS=1`) |
+|---|---|---|
+| Open the 10 layer files (read, index hash, facts decode) | 0.06 to 0.23 s | 0.18 s |
+| Load the workspace from the source index | 0.04 to 0.13 s | 0.15 s |
+| Read the blocks (zstd, postcard, every object) | 0.17 to 1.0 s | 1.0 to 1.65 s |
+| Lower: link of every object, the workspace's own lowering | 0.13 to 0.52 s | 0.38 s |
+| Engine | 0.05 to 0.23 s | 0.15 s |
+| Install baseline (read from its entry), the test | 0.06 to 0.2 s | |
+| Two .NET standbys started ahead (now on first use, ADR-014) | (in the background) | 0.2 to 0.3 s |
+
+Total before: 2.35 to 2.56 s of CPU and 7.4 G instructions for 0.7 to 1.5 s of wall (the owner's 4.75 s was the same
+work on a busier machine). After this branch: 6.45 G instructions, CPU 2.2 to 2.36 s.
+
+The blocks are the largest part. Layer 1 alone (9 506 objects, 72 MB raw) decodes in 0.11 s of zstd and 0.30 to
+0.42 s of postcard on one thread when its memory is reused, and in 0.6 s when every byte is fresh memory, as in a run
+(207 000 page faults, 1 GB peak). Large pages for mimalloc change neither. A zstd context per thread instead of per
+block would save about 12 % of the zstd part (1 % of the run). Of the raw bytes, routines are 29 MB (bodies 14, locals
+4.3, attributes 2.4, expression types 1.7), pages 11.6, references 9.5, source positions 8.4, tables 6.2.
+
+**What would cut it, and what it takes.** Every object is decoded and linked because the program must be complete
+(the eager compile). Two forms of laziness were weighed:
+
+1. *Lazy objects* (decision 3, `OnceLock` slots): the engine reads `Program::objects` in 482 places in `al-vm` and
+   `al-testrun`, 60 of them loops over every object at start (table definitions, the event registry, seeding, the
+   platform tables). Each loop needs its facts stored beside the blocks first. Not started; the "Not done" note above
+   still holds.
+2. *Lazy routine bodies* (safe by construction: a body is decoded and linked the first time it is read, with the same
+   result): bodies with their expression types are 50 to 55 % of the postcard decode and its allocation (0.29 of 0.53 s
+   for layer 1, fresh memory), and most of the link walk. Expected saving about 0.3 to 0.4 s of CPU and a few hundred
+   MB per run. It needs `Routine::body` to become a wrapper that decodes on first access (a body stored as its own
+   byte string in the block, a new `al_cache::FORMAT`), link to keep each object's resolved references for the
+   rewrite at first access, and the walkers to leave an unread body alone. The readers of a body are few (the
+   bytecode compile of a routine, the reach walks of `observe.rs`, `written.rs`, coverage, impact), and none of the
+   start-up loops reads one. This is the recommended next step.
+
 ## Consequences
 
 - **IR serialization becomes a seam.** The format is versioned by an integer in the header and the key. Changing an

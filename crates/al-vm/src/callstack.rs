@@ -34,7 +34,7 @@ impl Session {
     }
 
     /// Sets the frames of the test runner that stand below a test's frames (the corpus job and
-    /// `alrunner` set them; a session without a runner has none).
+    /// `al-runner` set them; a session without a runner has none).
     pub fn set_runner_frames(&mut self, frames: String) {
         self.runner_frames = frames;
     }

@@ -12,7 +12,7 @@ Line numbers are a snapshot and drift; find the current line with `rust-analyzer
 Dependencies point down. Core crates do no OS access (ADR-006); the host seam is `al-host`.
 
 ```
-al-test-cli    corpus job: oracle, corpus, baseline file, ratchet, pass-rate report      alrunner-cli  user command line `alrunner test`
+al-test-cli    corpus job: oracle, corpus, baseline file, ratchet, pass-rate report      alrunner-cli  user command line `al-runner test`
 al-testrun     test runner (runtime), install baseline, dependency loading, sidecar host, explain, refusal ranking
 al-vm          interpreter over the IR: Engine (immutable), Session (all mutable state), test client
 al-sema        workspace -> members -> check (+ demand) -> lower; produces al-ir; takes dependency objects from a compile cache (provided.rs)
@@ -223,11 +223,11 @@ al-deps        dependency apps: .alpackages, Microsoft artifact feed, cache, pac
 
 - `baseline.rs` (440): The install baseline (ADR-013 decision 5, ADR-046): the dependency apps' install code (`install::plan`), Company-Initialize, then the apps under test (`install::run_apps_under_test`), captured once. Entry: `BaselineRun` 23, `run` 99, `tables_written` 238.
 - `compile_cache.rs` (220): The OS side of the compile cache (ADR-022): the key of a run (hash of the executable and of each app's source), reading, writing (temporary file, rename) and building the entry file. Entry: `CompileCache` 14, `key_for` 83, `read_entry` 108, `write_entry` 128, `open_or_build` 170.
-- `cache_gc.rs` (412): Cleanup of the compile cache folder (ADR-022 amendment): other-build entries after 7 days, any entry after 30, old temp files after 1 day; automatic once a day within 200 ms (`alrunner test`), by hand with `alrunner cache prune|info`. Stat only, never reads an entry. Entry: `prune`, `auto_prune`, `info`.
+- `cache_gc.rs` (412): Cleanup of the compile cache folder (ADR-022 amendment): other-build entries after 7 days, any entry after 30, old temp files after 1 day; automatic once a day within 200 ms (`al-runner test`), by hand with `al-runner cache prune|info`. Stat only, never reads an entry. Entry: `prune`, `auto_prune`, `info`.
 - `crash.rs` (246): Names the test a crashed process was running: each worker records its codeunit and test (`running`, from `events::starting` and `run_unit`); a handler for SIGSEGV, SIGBUS, SIGILL, SIGFPE and SIGABRT, installed by both command lines (`install`), writes it to stderr and hands the signal on (Rust's stack-overflow handler or the default action). Entry: `install`, `running`, `idle`.
 - `deps.rs` (158): Dependency apps for a corpus run (ADR-013). Entry: `Dependencies` 11, `Provision` 26, `load` 46, `load_with` 54.
 - `discover.rs` (90): Finds `Subtype = Test` codeunits and their `[Test]` procedure names in AL text, without a syntax tree. Entry: `test_codeunits`.
-- `dotnet.rs` (1084): The .NET sidecar host (ADR-014): one process per session, standby processes started at run start (`prewarm`), start-up stats. Entry: `SidecarConfig` 26, `SidecarStats` 72, `SidecarHost` 247, `prewarm` 279, `encode` 944, `decode` 964.
+- `dotnet.rs` (1084): The .NET sidecar host (ADR-014): one process per session, standby processes started at run start (`prewarm`) or beside the first process a session needs (`prewarm_on_first_use`, `al-runner` with the compile cache), start-up stats. Entry: `SidecarConfig` 26, `SidecarStats` 72, `SidecarHost` 247, `prewarm` 279, `encode` 944, `decode` 964.
 - `explain.rs` (137): --explain: where a test was refused or failed, with file and line. Entry: `describe` 38, `detail` 77, `render` 90, `TestDetail` 27.
 - `host.rs` (112): The host the command line gives a session (ADR-006). Entry: `SystemClock` 10, `set_files_dir` 26, `system_host` 32, `DirFileSystem` 43.
 - `impact_trace.rs` (370): The impact index's keys (`event <kind> <id> <event>[/<element>]`, `table`, `write`, `page`, `report`, `enum` by object id), their numbering, and the impact points of an extension from the compiled program (subscribers, table/page/report/enum extensions, install code by the tables it can write; uncovered events and kinds are `Unsupported`), each with its `Matcher` (index) and `Site` (static graph). Entry: `keys`, `Interner`, `impact_points`, `ImpactPoint`, `Matcher`, `Site`.
@@ -252,16 +252,17 @@ al-deps        dependency apps: .alpackages, Microsoft artifact feed, cache, pac
 ### alrunner-cli
 
 - `apps.rs` (128): Reads the APPs given on the command line (folder, `*.Source.zip`, `.app`) and builds the project the dependency resolution works for. Entry: `load`, `combined_project`.
-- `args.rs` (262): Command-line parsing and the `--help` text of `alrunner`. Entry: `parse`, `HELP`.
+- `args.rs` (262): Command-line parsing and the `--help` text of `al-runner`. Entry: `parse`, `HELP`.
 - `bcapps.rs` (330): Where the Microsoft recipe files come from: a sparse `git` checkout of BCApps `releases/<major>.<minor>` kept in `<cache>/bcapps/<major>.<minor>/`; a release without the BaseApp test recipe (before 29.0) uses `releases/29.0`. Entry: `resolve`, `git_fetch`, `has_recipe`.
+- `path_note.rs` (210): The note about another `al-runner` on PATH (AL Runner v2's dotnet tool): one stderr line at most once a day, the list after `--version`, off with `ALRUNNER_NO_PATH_NOTE=1` (ADR-016). Entry: `maybe_note`, `version_lines`, `others`.
 - `recipe.rs` (290): BCApps' settings as lanes (Legacy, UnitTest, Integration, Uncategorized): which company each test codeunit gets. Pure; reads `settings.json` and `TestConfiguration.json`. Entry: `Recipe::load`, `Lane`, `plan`.
-- `recipe_run.rs` (330): `alrunner test --recipe microsoft`: one run per lane with the lane's company and Microsoft's disabled tests skipped, then a by-lane summary. Entry: `test`, `lane_args`.
+- `recipe_run.rs` (330): `al-runner test --recipe microsoft`: one run per lane with the lane's company and Microsoft's disabled tests skipped, then a by-lane summary. Entry: `test`, `lane_args`.
 - `testdata.rs` (300): Which demo backup a run restores: disk, cache, download, other build; or why test data is off (ADR-020). Entry: `locate`, `Where`, `Located`.
-- `impact.rs` (1280): `alrunner test --impact-of APP` (ADR-043 steps 1, 2 and 5): dynamic selection with a cached index (`decide` narrows the "with" run after its compile and install baseline; the "without" outcomes come from the index; tests the index's run refused get their static verdict, `refused_static`), static selection (`--impact static`, or no index cached: `run_static`/`decide_static`, both sides run the selection, with the warning), else both runs (`--impact all`); the change class of each test (selection miss included), the impact points it reached, the extension routines it entered, the report and exit code. Entry: `run`, `run_dynamic`, `run_static`, `run_all`, `decide`, `decide_static`, `classify`, `Routines`, `diff_reached`, `report_with`.
-- `impact_index.rs` (660): The impact index (ADR-043 step 2): format (gzip JSON, `FORMAT`), cache key and path (`<cache>/impact/<key>/index.json.gz`), `alrunner impact-index build`, and `alrunner impact-index check-static` (step 5: every key a test recorded must be in its static reach; ratios per kind of key; `AL_IMPACT_WHY=<key>` prints the paths). Entry: `Index`, `key`, `lookup`, `build`, `check_static`.
-- `main.rs` (51): The `alrunner` binary: runs on a thread with a large stack, maps results to exit codes. Entry: `main`.
+- `impact.rs` (1280): `al-runner test --impact-of APP` (ADR-043 steps 1, 2 and 5): dynamic selection with a cached index (`decide` narrows the "with" run after its compile and install baseline; the "without" outcomes come from the index; tests the index's run refused get their static verdict, `refused_static`), static selection (`--impact static`, or no index cached: `run_static`/`decide_static`, both sides run the selection, with the warning), else both runs (`--impact all`); the change class of each test (selection miss included), the impact points it reached, the extension routines it entered, the report and exit code. Entry: `run`, `run_dynamic`, `run_static`, `run_all`, `decide`, `decide_static`, `classify`, `Routines`, `diff_reached`, `report_with`.
+- `impact_index.rs` (660): The impact index (ADR-043 step 2): format (gzip JSON, `FORMAT`), cache key and path (`<cache>/impact/<key>/index.json.gz`), `al-runner impact-index build`, and `al-runner impact-index check-static` (step 5: every key a test recorded must be in its static reach; ratios per kind of key; `AL_IMPACT_WHY=<key>` prints the paths). Entry: `Index`, `key`, `lookup`, `build`, `check_static`.
+- `main.rs` (51): The `al-runner` binary: runs on a thread with a large stack, maps results to exit codes. Entry: `main`.
 - `output.rs` (182): Counts, exit codes (0, 1, 6, 7), the summary line, the one-line warnings shown by default (`baseline_warning`, `dependency_line_is_problem`; the rest is `--verbose`) and JUnit XML of a run. Entry: `exit_code`, `junit`.
-- `run.rs` (433): `alrunner test`: load APPs, select test codeunits, resolve dependencies, compile, run, print. Entry: `test`.
+- `run.rs` (433): `al-runner test`: load APPs, select test codeunits, resolve dependencies, compile, run, print. Entry: `test`.
 
 ### al-version
 
@@ -366,7 +367,7 @@ functions or methods; the file is in the module list above.
    `decide` against `metrics/<major>/passing.txt` -> `format_baseline` with `--update-baseline`.
    Reading a run: `insight::top_refusals`, `insight::baseline_diff`, `explain::render`.
 
-### `alrunner test`: from the command line to a result
+### `al-runner test`: from the command line to a result
 
 1. `main` (alrunner-cli/main.rs) starts a thread with a large stack; `args::parse` returns `Command::Test`.
 2. `run::test`: `apps::load` per APP (`al_deps::load::read_package_at_with`: folder, `*.Source.zip` or `.app`) ->

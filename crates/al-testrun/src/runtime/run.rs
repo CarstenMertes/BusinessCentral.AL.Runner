@@ -181,7 +181,6 @@ pub(crate) fn run_codeunit_core(
     if scratch.trace {
         session.enable_impact_trace();
     }
-    let instance = session.instance(object);
     let is_on_run = |r: usize| obj.routines[r].is_trigger && obj.routines[r].name.eq_ignore_ascii_case("OnRun");
     let tests: Vec<usize> = (0..obj.routines.len())
         .filter(|&r| {
@@ -208,20 +207,6 @@ pub(crate) fn run_codeunit_core(
     if isolation == TestIsolation::Disabled {
         return all(Outcome::NotRun(
             "TestIsolation = Disabled: what the runner leaves between tests and test codeunits is not pinned".into(),
-        ));
-    }
-    // A test codeunit with SingleInstance = true: whether BC runs its test methods on the session's single instance (the one
-    // a variable of its own type and its event subscribers use) is not pinned (docs/probes-needed.md), and the runner runs
-    // them on an instance of their own, so it is refused (Tests-ERM 139844 Cost Adj. Sch. Notif. Tests binds a variable of
-    // itself and reads a global its subscriber sets).
-    if obj
-        .properties
-        .iter()
-        .any(|(k, v)| k.eq_ignore_ascii_case("SingleInstance") && v.trim().eq_ignore_ascii_case("true"))
-    {
-        return all(Outcome::NotRun(
-            "a test codeunit with SingleInstance = true (whether its tests run on the session's single instance is not pinned)"
-                .into(),
         ));
     }
     // A [TransactionModel] other than AutoCommit, AutoRollback or None is refused.
@@ -264,6 +249,11 @@ pub(crate) fn run_codeunit_core(
         }
         session.commit_transaction();
     }
+    // A test codeunit with SingleInstance = true runs its tests on the session's single instance: a variable of its own type
+    // and its manual subscriber share its globals, and the second test sees what the first left
+    // (codeunit/QiSingleInstanceTestCodeunit.al:57 QI_SI_1_OwnTypeVariableAndManualSubscriber, :98 QI_SI_2_SecondTestSeesTheFirst).
+    // Taken after the install code and the company open, which drop the session's single instances.
+    let instance = session.codeunit_instance(object);
     // What BC's AL test runner does around each test method (runner_reset.rs). A scratch run has no runner.
     let runner = if execute {
         runner_reset::RunnerReset::default()
@@ -403,7 +393,7 @@ pub(crate) fn run_codeunit_core(
                         Err(why) => Ok(Err(Signal::Unsupported(why))),
                         Ok(()) => std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                             // A debugging aid: the named test panics here, to show that a panic ends one codeunit and not the
-                            // process (tests of `alrunner serve`). Not documented for users.
+                            // process (tests of `al-runner serve`). Not documented for users.
                             if std::env::var("ALRUNNER_DEBUG_PANIC_IN").is_ok_and(|n| n == routine.name) {
                                 panic!("requested by ALRUNNER_DEBUG_PANIC_IN");
                             }

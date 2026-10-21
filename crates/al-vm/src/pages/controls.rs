@@ -17,6 +17,8 @@ impl Session {
     }
 
     fn control_set_value_now(&mut self, st: &St, idx: usize, args: &mut [Value]) -> Result<Value, Signal> {
+        // Taken first: a trigger that runs below may call SetValue itself.
+        let from_variant = std::mem::take(&mut self.set_value_from_variant);
         // A control's ValuesAllowed rejects a value outside the list (pageext/lt-page-ext-properties/PageFieldValuesAllowed.al:
         // 64-73; on a request page, pages/lt-report-page-properties/05-requestpage-valuesallowed.al:57-59); the client does not
         // check it, so a write to such a control is refused rather than taken.
@@ -162,24 +164,146 @@ impl Session {
             today: Some(self.today_day_number()),
             ..self.control_format(st, idx)?
         };
-        let arg = args.first().cloned().unwrap_or(Value::Null);
-        // An Integer on a control bound to an Enum page variable whose value of that ordinal has a blank caption (all spaces)
-        // selects that value, although its caption text trims to '' and the empty text is refused
-        // (controls/W2ValueControls.al:Enum_VariableControl_OtherSpellings `empty`). Assumption testpage-setvalue-blank-enum-member:
-        // Tests-ERM ERM Budget (134922) and ERM Budget UI (134927) call `Budget.GLAccCategory.SetValue(0)` in Initialize on page
-        // 113 Budget, a control over `GLAccCategoryFilter: Enum "G/L Account Category"` whose value 0 is `" "` with Caption ' ';
-        // the 47 tests pass on real BC. Only that shape: a table-field control and a text argument keep the caption lookup.
+        let mut arg = args.first().cloned().unwrap_or(Value::Null);
+        // A Text inside a Variant on an Enum or Option control goes by ordinal digits: '1' selects the value of ordinal 1, as an
+        // Integer does; ' ', '' and 'Alpha' fail to evaluate, the control keeps its value and holds no validation error. BC 27.5
+        // names NavOption instead (pages/lt-be-enum-setvalue-blank/BeEnumSetValueBlank.al:532-597 table field, Enum with a blank
+        // caption; the FStrict, FPlain, FOpt and V* twins). Pinned on a card with a row for digits of a value and for empty,
+        // blank or all-letter texts; other texts and other shapes are refused.
+        if from_variant && matches!(ty, RtType::Enum(_) | RtType::Option(_)) {
+            let variant_text: Option<String> = match &arg {
+                Value::Text(t) | Value::Code(t) => Some(t.to_string()),
+                Value::Char(c) => char::from_u32(*c as u32).map(String::from),
+                _ => None,
+            };
+            if let Some(t) = variant_text {
+                if !(self.has_source(st) && !self.is_list(st) && !self.shows_no_row(st, idx)) {
+                    return unsupported(
+                        "SetValue of a Text in a Variant on an Enum or Option control of a list or of a page without a row (not pinned)",
+                    );
+                }
+                if !t.is_empty() && t.chars().all(|c| c.is_ascii_digit()) {
+                    let n: Option<i32> = t.parse().ok();
+                    let is_value = match (&ty, n) {
+                        (RtType::Enum(id), Some(n)) => engine.program.objects[*id as usize]
+                            .enum_values
+                            .iter()
+                            .any(|(v, _)| i64::from(*v) == i64::from(n)),
+                        (RtType::Option(members), Some(n)) => usize::try_from(n).is_ok_and(|n| n < members.len()),
+                        _ => false,
+                    };
+                    match n {
+                        Some(n) if is_value => arg = Value::Integer(n),
+                        _ => {
+                            return unsupported(
+                                "SetValue of a Variant holding the digits of no value on an Enum or Option control (not pinned)",
+                            );
+                        }
+                    }
+                } else if t.chars().all(|c| c == ' ') || t.chars().all(|c| c.is_ascii_alphabetic()) {
+                    return Err(if self.has(al_version::Gate::ConversionErrorTextsFrom28) {
+                        error_code(
+                            format!("The value \"{t}\" can't be evaluated into type Option."),
+                            "Evaluate:Format",
+                        )
+                    } else {
+                        error_code("The type NavOption is unknown.".to_string(), "NotSupportedType")
+                    });
+                } else {
+                    return unsupported(
+                        "SetValue of a Variant holding a Text that is neither digits, blank nor letters on an Enum or Option control (not pinned)",
+                    );
+                }
+            }
+        }
+        // An Integer on an Enum control selects the value of that ordinal, also when its caption is blank (all spaces), although
+        // that caption trims to '' and the empty text is refused: on a card with a row, for a control bound to a table field
+        // and one bound to a page variable (pages/lt-be-enum-setvalue-blank/BeEnumSetValueBlank.al:502-528
+        // SetValue_FCompat_VariantInts_FromBlank, :635 IntVars, :2366 SetValue_VCompat_VariantInts_FromBlank; controls/
+        // W2ValueControls.al:Enum_VariableControl_OtherSpellings `empty`). A variable control on a list, a page without a source
+        // table or without a row
+        // keeps assumption testpage-setvalue-blank-enum-member (Tests-ERM ERM Budget 134922 and ERM Budget UI 134927 call
+        // `Budget.GLAccCategory.SetValue(0)` on page 113); a table-field control there is not pinned and refused.
+        // The blank-captioned value itself handed in (a Variant holding it, `member0` at BeEnumSetValueBlank.al:541-597) and a
+        // Text of spaces (`space`, :600-611; `litSpace`) select it the same way.
+        let pinned_card = self.has_source(st) && !self.is_list(st) && !self.shows_no_row(st, idx);
         let mut blank_enum = None;
-        if let (Value::Integer(_), RtType::Enum(_), ir::Binding::Var(_) | ir::Binding::BaseVar(_)) =
-            (&arg, &ty, &ctl.binding)
-        {
+        if let (RtType::Enum(id), Value::Text(t) | Value::Code(t)) = (&ty, &arg) {
+            if !t.is_empty() && t.chars().all(|c| c == ' ') {
+                let o = &engine.program.objects[*id as usize];
+                let blank = o
+                    .enum_captions
+                    .iter()
+                    .find(|(_, c)| !c.is_empty() && c.chars().all(|c| c == ' '))
+                    .map(|(v, _)| *v);
+                if let Some(v) = blank {
+                    if !pinned_card {
+                        return unsupported(
+                            "SetValue of a blank text on an Enum control with a blank caption on a list or a page without a row (not pinned)",
+                        );
+                    }
+                    blank_enum = Some(Value::Enum(*id, v));
+                }
+            }
+        }
+        if let (RtType::Enum(id), Value::Enum(eid, _)) = (&ty, &arg) {
+            if id == eid {
+                let shown = self.control_text(st, idx, &arg)?;
+                if !shown.is_empty() && shown.trim().is_empty() {
+                    if !pinned_card {
+                        return unsupported(
+                            "SetValue of a blank-captioned Enum value on a control of a list or of a page without a row (not pinned)",
+                        );
+                    }
+                    blank_enum = Some(arg.clone());
+                }
+            }
+        }
+        if let (Value::Integer(_), RtType::Enum(_)) = (&arg, &ty) {
             let converted = ops::convert(arg.clone(), &ty)?;
             let shown = self.control_text(st, idx, &converted)?;
             if !shown.is_empty() && shown.trim().is_empty() {
+                if !pinned_card {
+                    if rec_bound {
+                        return unsupported(
+                            "SetValue of an Integer selecting a blank-captioned Enum value on a table-field control of a list or of a page without a row (not pinned)",
+                        );
+                    }
+                    al_builtins::assumptions::assume(
+                        al_builtins::assumptions::Assumption::TestPageSetValueBlankEnumMember,
+                    );
+                }
                 blank_enum = Some(converted);
             }
         }
+        // An Integer that is no value of the Enum is refused naming the ordinal the control held before, on a card with a row
+        // (BeEnumSetValueBlank.al:523-525 `int5` from blank names '0', :742-744 from Beta names '2'; a variable control :2384).
+        // Elsewhere it is not pinned.
+        // An Option control does the same (:1907 from blank, :2138 from Beta; a variable control :3580).
+        let mut old_ordinal = None;
+        let not_a_value = match (&arg, &ty, &current) {
+            (Value::Integer(n), RtType::Enum(id), Value::Enum(_, held)) => {
+                let is_value = engine.program.objects[*id as usize]
+                    .enum_values
+                    .iter()
+                    .any(|(v, _)| i64::from(*v) == i64::from(*n));
+                (!is_value).then_some(*held)
+            }
+            (Value::Integer(n), RtType::Option(members), Value::Option(held, _)) => {
+                (!usize::try_from(*n).is_ok_and(|n| n < members.len())).then_some(*held)
+            }
+            _ => None,
+        };
+        if let Some(held) = not_a_value {
+            if !pinned_card {
+                return unsupported(
+                    "SetValue of an Integer that is no value of the Enum or Option on a list or a page without a row (not pinned)",
+                );
+            }
+            old_ordinal = Some(held.to_string());
+        }
         let text = match &arg {
+            _ if old_ordinal.is_some() => old_ordinal.clone().unwrap_or_default().into(),
             Value::Text(t) | Value::Code(t) => t.clone(),
             // A whole number handed to a text or code control is its digits (WhseItemTrackingPageHandler of SCM RTAM Item Tracking-II sets
             // `Serial No.` to `TrackingQuantity2 + AssignTracking`, a Decimal); unprobed (assumption setvalue-whole-number-into-text-control).
@@ -405,10 +529,7 @@ impl Session {
             }
         }
         let parsed = match blank_enum {
-            Some(v) => {
-                al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::TestPageSetValueBlankEnumMember);
-                Ok(v)
-            }
+            Some(v) => Ok(v),
             None => al_builtins::pagefmt::parse_control_text(&text, &ty, &fmt, &by_text),
         };
         let parsed = match parsed {

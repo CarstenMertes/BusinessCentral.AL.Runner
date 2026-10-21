@@ -1517,6 +1517,7 @@ impl Lowerer<'_> {
                     } else {
                         self.readable_field_pos(table, id)?;
                         self.coverage_test_id_read(n, table, id)?;
+                        self.coverage_lookup_method_id_read(n, table, id)?;
                     }
                     let field = self.field_ref(table, id);
                     let base = match n.kind() {

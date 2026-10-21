@@ -108,6 +108,9 @@ impl al_builtins::native::Ctx for Session {
     fn ref_op(&mut self, id: &str, receiver: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
         Session::ref_op(self, id, receiver, args)
     }
+    fn set_value_from_variant(&mut self, on: bool) {
+        self.set_value_from_variant = on;
+    }
     fn session_op(&mut self, id: al_ir::BuiltinId, args: &mut [Value]) -> Result<Value, Signal> {
         Session::session_op(self, id, args)
     }

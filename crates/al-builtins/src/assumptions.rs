@@ -153,9 +153,15 @@ registry! {
     },
     TestPageSetValueBlankEnumMember => {
         id: "testpage-setvalue-blank-enum-member",
-        assumed: "TestPageField.SetValue of an Integer on a control bound to an Enum page variable selects the value of that ordinal when its caption is blank (all spaces, e.g. value(0; \" \") { Caption = ' '; }), although the caption text trims to '' and an empty text is refused (controls/W2ValueControls.al:Enum_VariableControl_OtherSpellings `empty`). Only that shape; a table-field control and a text argument are not covered.",
+        assumed: "TestPageField.SetValue of an Integer on a control bound to an Enum page variable selects the value of that ordinal when its caption is blank (all spaces), on a list, a page without a source table or a page without a row. A card with a source row is pinned (pages/lt-be-enum-setvalue-blank/BeEnumSetValueBlank.al:2366).",
         tests: "Tests-ERM ERM Budget (134922, 36 tests) and ERM Budget UI (134927, 11 tests): Initialize calls Budget.GLAccCategory.SetValue(0) on page 113 Budget, a control over GLAccCategoryFilter: Enum \"G/L Account Category\" (value 0 \" \", Caption ' ').",
-        probe: "A page with an Enum variable control and an Enum table-field control, value 0 with Caption = ' ': after SetValue(1), SetValue(0), SetValue(' '), SetValue('') and SetValue(Integer ordinal 1), each then Value() and the ordinal (errors with text and code). Also SetValue(Integer) on an Enum control without a blank caption (by ordinal or through the caption text?).",
+        probe: "The BeEnumSetValueBlank cases (SetValue(0) on a blank-captioned Enum variable control) on a page without a source table and on a list page.",
+    },
+    PartOpenLineAfterGetCurrRecordOnce => {
+        id: "part-open-line-after-get-curr-record-once",
+        assumed: "The blank line of a part that shows no row of an editable host runs OnAfterGetCurrRecord once, after its three OnNewRecord runs at the host's open (PartLineBeforeHostKey.al pins the three OnNewRecord runs; its pages declare no OnAfterGetCurrRecord).",
+        tests: "Tests-ERM: about 540 tests that open a document page (Sales and Purchase orders, invoices, quotes) with OpenNew or OpenEdit on an empty lines subpart whose OnAfterGetCurrRecord runs (ERM Invoice Discount And VAT, ERM Update Currency - Sales, ERM Purchase Subform, ...).",
+        probe: "The PYB_OpenNew_Document_LogOnly shape with a part that logs OnAfterGetCurrRecord too: where it comes among the three OnNewRecord runs and how often.",
     },
     PartFieldUnderTruePartExpression => {
         id: "part-field-under-true-part-expression",

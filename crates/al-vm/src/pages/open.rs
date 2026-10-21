@@ -227,6 +227,7 @@ impl Session {
             s.agcr_xrec = None;
             s.agcr_after_new = false;
             s.part_accessed = false;
+            s.new_host_part_rows = false;
             s.expanded = Vec::new();
             // A caption assigned to the variable before its first run stays.
             // It stays for a second run too (types/lt-caption-assigned-before-run/CaptionAssignedBeforeRun.al:P187_SecondRun_NoReassign,
@@ -1508,10 +1509,22 @@ impl Session {
                             .as_ref()
                             .is_some_and(|l| l.entries.iter().any(|e| matches!(e, ir::LinkEntry::Field(..))))
                 });
-            if new_host_link.is_some() {
-                return unsupported(
-                    "a linked part that shows rows while its host is a new, unsaved record (BC inserts the host at Close; not modelled)",
-                );
+            // The host is inserted when a part field is read or the part's First runs, not at Close (PartLineBeforeHostKey.al
+            // QH_BlankRows_*; :838 reads a part field before Close): `first_part_access`. What else the host and its part may do
+            // in this state is refused (`refuse_new_host_part_rows`).
+            if let Some((h, _)) = new_host_link {
+                // A Card host is pinned for Close only (QH_BlankRows_CardHost); `new_host_on_part_access` refuses its part calls.
+                if h.borrow().host.is_some()
+                    || !matches!(
+                        self.engine.object_facts[h.borrow().object as usize].page_type,
+                        Some(al_ir::PageType::Document | al_ir::PageType::Card)
+                    )
+                {
+                    return unsupported(
+                        "a linked part that shows rows while its host is a new, unsaved record of a page other than a Document or Card page (not pinned)",
+                    );
+                }
+                h.borrow_mut().new_host_part_rows = true;
             }
             st.borrow_mut().cursor = Cursor::Row;
             st.borrow_mut().landing_first = true;

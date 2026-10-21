@@ -957,6 +957,16 @@ impl Session {
         let m = method.method();
         let field_read = m == PageMethod::Value && args.is_empty();
         self.first_part_access(st, m, field_read)?;
+        // A new host whose part shows rows of the blank key: a read of a host field and OK are pinned (PartLineBeforeHostKey.al:
+        // 2116 QH_BlankRows_ReadHostControl, :1939 QH_BlankRows_OkInvoke), nothing else.
+        if st.borrow().new_host_part_rows && st.borrow().host.is_none() {
+            let ok = matches!(&c.target, ControlTarget::BuiltIn(n) if n == "OK") && m == PageMethod::Invoke;
+            if !(field_read && matches!(c.target, ControlTarget::Control(_))) && !ok {
+                return unsupported(format!(
+                    "TestField.{m} on a new, unsaved host whose part shows rows of the blank key (not pinned)"
+                ));
+            }
+        }
         // After a GoToKey that moved a list without OnAfterGetCurrRecord a Value read and SetValue read nothing, and the action
         // after them reads the row twice (pages/lt-ai-list-order/QgGoToKeyNextCall.al:223 Plain_GoToKey_ThenValueRead `no_log`,
         // `qty_log` empty; :236 Plain_GoToKey_ThenSetValue_ThenAction `setvalue_log` empty; :317 _ThenValueRead_ThenAction; the Nav_

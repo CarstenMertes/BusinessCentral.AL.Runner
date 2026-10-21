@@ -511,6 +511,10 @@ pub struct PageState {
     pub shows_sibling_save: Option<Vec<Value>>,
     /// A part: a TestPart call or a call on one of its fields reached it since its host opened.
     pub part_accessed: bool,
+    /// A host that is a new, unsaved record while a part linked by a field shows rows of the blank key: only Close, OK, New()
+    /// and a read of a host field are pinned for it, and a part field read or First that inserts it (pages/
+    /// lt-part-line-before-host-key/PartLineBeforeHostKey.al QH_BlankRows_*).
+    pub new_host_part_rows: bool,
     /// `P.Editable(false)` or `P.Editable := false` on a Page variable before it runs: the page
     /// opens non-editable (handlers/TestPageVariableEditableContracts.al).
     pub editable_preset: Option<bool>,
@@ -675,6 +679,7 @@ impl PageState {
             agcr_after_new: false,
             shows_sibling_save: None,
             part_accessed: false,
+            new_host_part_rows: false,
             editable_preset: None,
             caption: None,
             parts: Vec::new(),

@@ -1276,6 +1276,66 @@ impl Session {
         Ok(())
     }
 
+    /// A call reaches part `child` of a Document host that is a new, unsaved record: a read of a part field or the part's First
+    /// inserts the host (page OnInsertRecord and table OnInsert, nothing typed), and the parts link to it and read their rows
+    /// again, with or without rows of the blank key (pages/lt-part-line-before-host-key/PartLineBeforeHostKey.al:1748
+    /// QH_BlankRows_ReadPart_Stored, :2032 QH_NoRows_ReadPartControl, :2057 QH_OtherKeyRows_ReadPartControl, :2083
+    /// QH_BlankRows_PartFirst, :2142 QH_BlankRows_ReadPartControlTwice_TraceHost). Pinned for a field-linked part of a host
+    /// nothing was typed into, reached the first time; any other call on such a part while it shows rows of the blank key is
+    /// refused. `Ok(true)`: the call was handled here.
+    fn new_host_on_part_access(
+        &mut self,
+        host: &St,
+        child: &St,
+        m: PageMethod,
+        field_read: bool,
+        reached_before: bool,
+    ) -> Result<bool, Signal> {
+        let new_host = {
+            let h = host.borrow();
+            h.open && h.host.is_none() && h.draft && !h.draft_stored && h.cursor != Cursor::None
+        };
+        if !new_host || !self.has_source(host) {
+            return Ok(false);
+        }
+        let shows_rows = host.borrow().new_host_part_rows;
+        let o = host.borrow().object as usize;
+        let engine = self.engine();
+        let idx = child.borrow().host.as_ref().map(|(_, c)| *c);
+        let field_linked = idx.is_some_and(|i| {
+            page_of(&engine, host).controls[i]
+                .part_link
+                .as_ref()
+                .is_some_and(|l| l.entries.iter().any(|e| matches!(e, ir::LinkEntry::Field(..))))
+        });
+        let pinned_call = field_read || m == PageMethod::First;
+        if self.engine.object_facts[o].page_type != Some(al_ir::PageType::Document) || !field_linked {
+            if shows_rows {
+                return unsupported(format!(
+                    "{m} on a part while its new host shows rows of the blank key in another part (not pinned)"
+                ));
+            }
+            return Ok(false);
+        }
+        if !pinned_call || reached_before || host.borrow().dirty {
+            if shows_rows {
+                return unsupported(format!(
+                    "{m} on a part whose new, unsaved host shows rows of the blank key, other than a first field read or First of a host nothing was typed into (not pinned)"
+                ));
+            }
+            // Kept, not pinned: a call other than a field read or First on the part of a new host whose part shows no rows
+            // inserts nothing, as before (the write paths save the host themselves: `save_unsaved_host_first`).
+            return Ok(false);
+        }
+        let used = self.ret_used;
+        host.borrow_mut().dirty = true;
+        let r = self.save_row(host);
+        self.ret_used = used;
+        r?;
+        host.borrow_mut().new_host_part_rows = false;
+        Ok(true)
+    }
+
     /// The first call that reaches part `child` since its host opened, while the Document host holds an unsaved edit of a
     /// stored row: a read of a part field saves the host first, its OnModifyRecord and the table's OnModify, and nothing reads
     /// again (testpart/QiHostSaveParts.al:441 QI_HostModify_ChangedValue and :469 QI_HostPlain_ChangedValue
@@ -1287,7 +1347,11 @@ impl Session {
         let Some(host) = child.borrow().host.as_ref().and_then(|(h, _)| h.upgrade()) else {
             return Ok(());
         };
-        if std::mem::replace(&mut child.borrow_mut().part_accessed, true) {
+        let reached_before = std::mem::replace(&mut child.borrow_mut().part_accessed, true);
+        if self.new_host_on_part_access(&host, child, m, field_read, reached_before)? {
+            return Ok(());
+        }
+        if reached_before {
             return Ok(());
         }
         let edited = {

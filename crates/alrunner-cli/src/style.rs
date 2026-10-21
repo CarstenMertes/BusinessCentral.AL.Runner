@@ -1,4 +1,4 @@
-//! Plain ANSI colors for the human report of `alrunner test` (no dependency). `--color auto|always|never`:
+//! Plain ANSI colors for the human report of `al-runner test` (no dependency). `--color auto|always|never`:
 //! auto colors only when the report goes to a terminal and `NO_COLOR` is not set. JUnit and JSON output are never colored.
 
 use std::sync::atomic::{AtomicBool, Ordering};

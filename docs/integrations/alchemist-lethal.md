@@ -6,7 +6,7 @@ LethAL run unchanged). State: research, written 2026-10-15. No runtime code chan
 ## Summary
 
 - Both tools drive AL Runner v2 through its command line and a JSON-lines server. v3 has
-  `alrunner test` only. `alrunner serve` and `alrunner debug` print "not implemented".
+  `al-runner test` only. `al-runner serve` and `al-runner debug` print "not implemented".
 - LethAL can run on v3 earliest, with one-shot mode only. It needs a v2-shaped
   `--output-json`, `--isolation test`, `--exclude-test`, qualified test names and a few
   accepted-and-ignored flags. No server needed. No conflict with the "server deferred" direction.
@@ -22,10 +22,10 @@ LethAL run unchanged). State: research, written 2026-10-15. No runtime code chan
 | # | Decision | Why it needs the owner |
 |---|---|---|
 | 1 | Build `serve` now. | ADR-016 (2026-10-13) defers server mode. The same text exempts interfaces and names "an editor integration is wanted" as a reason to revisit. Confirm that this trigger has fired. |
-| 2 | How do the tools reach v3? (a) They call `alrunner serve` and `alrunner debug`. (b) `alrunner` also accepts v2 top-level flags `--server`, `--dap stdio`, `--output-json`. (c) A thin `al-runner` launcher accepts v2 syntax. | The 2026-10-14 decision says: clean CLI, no compatibility launcher for now. Option (b) and (c) go against it. Option (a) needs edits in both tools. |
-| 3 | What does `alrunner --version` print? | LethAL's check is `/\bv2\.\d/`. v3 prints `alrunner 3.0.0-alpha.1 (...)`. LethAL must change, or v3 must lie. Recommend: LethAL changes. |
+| 2 | How do the tools reach v3? (a) They call `al-runner serve` and `al-runner debug`. (b) `al-runner` also accepts v2 top-level flags `--server`, `--dap stdio`, `--output-json`. (c) A thin `al-runner` launcher accepts v2 syntax. | The 2026-10-14 decision says: clean CLI, no compatibility launcher for now. Option (b) and (c) go against it. Option (a) needs edits in both tools. |
+| 3 | What does `al-runner --version` print? | LethAL's check is `/\bv2\.\d/`. v3 prints `al-runner 3.0.0-alpha.1 (...)`. LethAL must change, or v3 must lie. Recommend: LethAL changes. |
 | 4 | In v2-shaped JSON, exit code for "tests not run". | v3 uses 7. LethAL reads rows only on exit 0 and 1 (and a proven exit 3). Exit 7 would hide every row. Recommend: LethAL accepts 7 like 1. |
-| 5 | DAP (`alrunner debug`) needs an ADR. | The VM is synchronous (ADR-002). A pause hook is a seam change (hard rule 5). |
+| 5 | DAP (`al-runner debug`) needs an ADR. | The VM is synchronous (ADR-002). A pause hook is a seam change (hard rule 5). |
 | 6 | Value capture (`captureValues`) and loop tracking (`iterationTracking`). | Large VM work and a wire format. They are ALchemist's main feature. Decide if they are in v3.0. |
 
 ## Sources
@@ -35,7 +35,7 @@ LethAL run unchanged). State: research, written 2026-10-15. No runtime code chan
 | ALchemist 0.6.1 (VS Code extension) | https://github.com/SShadowS/ALchemist | `b71f5a3` |
 | LethAL (mutation testing) | https://github.com/SShadowS/LethAL | `7fd06618` |
 | AL Runner v2 | `BusinessCentral.AL.Runner` checkout | `351c2813d` (v2.12.0-305) |
-| AL Runner v3 | `alrunner 3.0.0-alpha.1 (547d0a601)`; this doc branched from `origin/main` `2fd27ac` | |
+| AL Runner v3 | `al-runner 3.0.0-alpha.1 (547d0a601)`; this doc branched from `origin/main` `2fd27ac` | |
 
 All `file:line` below are in the repo named by the table heading, at the commit above.
 Nothing was copied from the tool repos. Both were cloned read-only into a scratch folder.
@@ -99,10 +99,10 @@ Needs AL Runner >= 2.11.0 (`src/runner/alRunnerManager.ts:11`).
 
 | # | Interface point | Where | v3 today | Gap |
 |---|---|---|---|---|
-| A1 | Finds the binary: setting `alchemist.alRunnerPath`, env `ALCHEMIST_RUNNER_PATH`, then `which`/`where al-runner` | `alRunnerManager.ts:47-51, 129-139`; `package.json:269` | Name is `alrunner`, so the PATH lookup misses. The setting works. | None for v3. Tool could also look for `alrunner`. |
+| A1 | Finds the binary: setting `alchemist.alRunnerPath`, env `ALCHEMIST_RUNNER_PATH`, then `which`/`where al-runner` | `alRunnerManager.ts:47-51, 129-139`; `package.json:269` | Name is `al-runner`, so the PATH lookup misses. The setting works. | None for v3. Tool could also look for `al-runner`. |
 | A2 | Installs v2: `dotnet tool install -g msdyn365bc.al.runner`, update check via `dotnet tool list -g` and `tool search` | `alRunnerManager.ts:142-184, 186-220` | Not applicable. v3 is not a dotnet tool. | Cannot match. User sets the path. Update nag is skipped when the path is set (`:187`). |
 | A3 | Version check: `<path> --version`, first `\d+.\d+.\d+` compared with 2.11.0. Only a warning. | `alRunnerManager.ts:28-32, 100-127` | `3.0.0-alpha.1` parses and is above 2.11.0. No warning. | None. |
-| A4 | Spawns `<path> --server` with no other args, cwd inherited | `serverProcess.ts:125-141`; `extension.ts:207-215` | `alrunner --server` is "unknown command". `alrunner serve` is "not implemented". | Server, plus owner decision 2 for the spelling. |
+| A4 | Spawns `<path> --server` with no other args, cwd inherited | `serverProcess.ts:125-141`; `extension.ts:207-215` | `al-runner --server` is "unknown command". `al-runner serve` is "not implemented". | Server, plus owner decision 2 for the spelling. |
 | A5 | Waits for `{"ready":true}` on stdout. Skips non-JSON lines before it. | `serverProcess.ts:186-192` | No | Part of the server. |
 | A6 | Sends `runtests` (lowercase) with `sourcePaths`, `captureValues` (default true), optional `iterationTracking`, `coverage`, `cobertura`, `testFilter` | `serverExecutionEngine.ts:23-33`; callers `testController.ts:403, 431`, `extension.ts:596, 801` | No | Server must accept lowercase command and tolerate `captureValues` and `iterationTracking` on `runTests` (v2 runs and adds a warning). `cobertura` and `testFilter` are never set by current callers. v2 would refuse them. |
 | A7 | Reads streamed `test` lines: `name`, `status` (pass/fail/error), `durationMs`, `message`, `stackTrace`, `stackFrames`, `errorKind`, `alSourceFile`, `alSourceLine`, `messages`, `capturedValues` | `protocolV2Types.ts:89-103`; `serverExecutionEngine.ts:194-209`; `testController.ts:485-560` | No | `alSourceFile`, `alSourceLine`, `capturedValues`, `messages` are not emitted by v2 `runTests` either (schema-only). Without them ALchemist shows pass/fail and stack frames only. |
@@ -116,7 +116,7 @@ Needs AL Runner >= 2.11.0 (`src/runner/alRunnerManager.ts:11`).
 | A15 | Crash handling: if the process dies before any `test` line, respawn and resend once. After a `test` line, fail the request. | `serverProcess.ts:234-266` | n/a | Client logic. v3 must exit non-zero on a crash. |
 | A16 | Source path format in responses: absolute, forward slashes. Older relative forms are still matched. | `decorations.ts:595-610`; `serverProcess.ts:15-26` | n/a | v3 must emit absolute forward-slash paths in `coverage[].file` and `loops[].file`. |
 | A17 | Ignores stderr (does not read it) | `serverProcess.ts:138` (stdout only) | n/a | None. The `[server] request n done` marker is not needed. |
-| A18 | Debugger: `DebugAdapterExecutable(path, ['--dap','stdio', ...sourcePaths])`. Debug type `alchemist`. Launch config fields `bundleDir`, `sourcePaths`, `testFilter` are ALchemist's own. They are not sent to the runner. | `debugAdapterFactory.ts:56-98`; `debugLaunch.ts:31-47`; `package.json:162-212` | No (ED-9) | `alrunner debug --stdio`. See 1.3 for the DAP surface. |
+| A18 | Debugger: `DebugAdapterExecutable(path, ['--dap','stdio', ...sourcePaths])`. Debug type `alchemist`. Launch config fields `bundleDir`, `sourcePaths`, `testFilter` are ALchemist's own. They are not sent to the runner. | `debugAdapterFactory.ts:56-98`; `debugLaunch.ts:31-47`; `package.json:162-212` | No (ED-9) | `al-runner debug --stdio`. See 1.3 for the DAP surface. |
 | A19 | Says "stepping acts as continue" | `debugLaunch.ts:61-62` | n/a | Out of date: v2 now implements step. v3 should implement step. Tool text is the tool owner's to fix. |
 | A20 | Environment: `ALCHEMIST_RUNNER_PATH` (its own). Sends no `AL_RUNNER_*` variable. | `alRunnerManager.ts:49` | n/a | None. |
 
@@ -144,7 +144,7 @@ provisioning call (`al-runner-backend.ts:815`).
 | # | Interface point | Where | v3 today | Gap |
 |---|---|---|---|---|
 | L1 | Binary path comes only from `alRunner.alRunnerPath` | `cli.ts:2237, 2610` | n/a | None. |
-| L2 | Version check: `<path> --version` exit 0 and stdout matches `/\bv2\.\d/`. Otherwise "not a v2 build", session refused. Same check again in the contract probe. | `al-runner-backend.ts:165, 1092-1115`; `al-runner-contract.ts:439-452` | `alrunner 3.0.0-alpha.1 (...)` fails the match. | Decision 3. LethAL change. |
+| L2 | Version check: `<path> --version` exit 0 and stdout matches `/\bv2\.\d/`. Otherwise "not a v2 build", session refused. Same check again in the contract probe. | `al-runner-backend.ts:165, 1092-1115`; `al-runner-contract.ts:439-452` | `al-runner 3.0.0-alpha.1 (...)` fails the match. | Decision 3. LethAL change. |
 | L3 | Contract probe also sends an impossible flag (`--lethal-wire-contract-probe`) and needs a non-zero exit chosen by the process (v2: 2). | `al-runner-contract.ts:170, 454-478` | v3 answers `unknown option`, exit 2. Matches. | None. |
 | L4 | `--output-json` document on stdout: the last line that starts with `{` in column 0 to the end is parsed. Needs `tests[]` with `name`, `status`, `durationMs?`, `message?`. | `al-runner-transport.ts:497-535` | `unknown option` | v2-shaped JSON. See 1.2. Print the document pretty-printed so the last column-0 `{` starts it. |
 | L5 | `--isolation test` (fresh state per test). LethAL claims "full-reset". | `al-runner-transport.ts:668-673`; `al-runner-backend.ts` capabilities | Not built. `Function` isolation exists but is only reachable through a runner codeunit (SEL-5). | Add `--isolation`. |
@@ -212,13 +212,13 @@ Each step is useful alone. Order is smallest first.
 
 | Step | What | Unblocks | Size | Needs owner |
 |---|---|---|---|---|
-| 1 (done, branch tools-step-1; see migrating-tools-to-v3.md) | `alrunner test` accepts `--output-json` (v2 shape, section 1.2), `--isolation test|codeunit|disabled`, `--exclude-test`, qualified-name `--test`, `--define`, `--auto-provision` (ignored), and reads `AL_RUNNER_TEST_TIMEOUT_SEC`. Not-run tests become rows. Timeouts use v2's sentence. | LethAL one-shot (section 3.3) | 3 to 5 | #3 (version), #4 (exit 7), and #2 only for spelling. Flags that v3 already plans (`--output-json`, `--isolation`, `--exclude-test`) do not conflict. |
+| 1 (done, branch tools-step-1; see migrating-tools-to-v3.md) | `al-runner test` accepts `--output-json` (v2 shape, section 1.2), `--isolation test|codeunit|disabled`, `--exclude-test`, qualified-name `--test`, `--define`, `--auto-provision` (ignored), and reads `AL_RUNNER_TEST_TIMEOUT_SEC`. Not-run tests become rows. Timeouts use v2's sentence. | LethAL one-shot (section 3.3) | 3 to 5 | #3 (version), #4 (exit 7), and #2 only for spelling. Flags that v3 already plans (`--output-json`, `--isolation`, `--exclude-test`) do not conflict. |
 | 2 | `--coverage --coverage-out` (Cobertura) in the positions the compiled input has. Per-test file is one run per test already. | LethAL coverage (L19), gate R item 5 | 4 to 6 | none (needs IR positions, which exist) |
-| 3 | `alrunner serve`: ready line, `runTests` stream, `summary` with `protocolVersion:2`, `shutdown`, `{"error"}`, field warnings and refusals, `--package-cache`, `--define`, `--test-timeout` start flags, stderr request marker. No warm state: compile per request. | LethAL server mode (S1 to S10). ALchemist Test Explorer without inline values. | 5 to 7, plus a short ADR for the wire protocol | #1, #2 |
+| 3 | `al-runner serve`: ready line, `runTests` stream, `summary` with `protocolVersion:2`, `shutdown`, `{"error"}`, field warnings and refusals, `--package-cache`, `--define`, `--test-timeout` start flags, stderr request marker. No warm state: compile per request. | LethAL server mode (S1 to S10). ALchemist Test Explorer without inline values. | 5 to 7, plus a short ADR for the wire protocol | #1, #2 |
 | 4 (done, ADR-028 item 9) | `serve` adds `execute` (inline `code` or one `OnRun` codeunit), `cancel` side channel (flag checked between tests), `coverage` and `perTestCoverage` tables on both commands. | ALchemist scratch runs (A11), cancel (A13), coverage (A10); LethAL `perTestCoverage` (S6) | 5 to 8 | none beyond #1 |
 | 5 (done, ADR-030) | `captureValues` and `iterationTracking`: per-statement local-value records, loop records, tags. | ALchemist inline values and Iteration Table (A12) | 15 to 20 | #6 |
-| 6 | `alrunner debug --stdio`: DAP surface of section 1.3. VM pause hook at statement boundaries on its own thread. | ALchemist debugging (A18) | 15 to 20, plus an ADR | #5 |
-| 7 | Tool-side edits, by their owner: LethAL accepts a `v3` version string and exit 7; ALchemist looks for `alrunner`; ALchemist fixes the `hitStatements` read and the stale stepping text. | Clean "unchanged" claim for gate R item 4 | small, theirs | #2, #3 |
+| 6 | `al-runner debug --stdio`: DAP surface of section 1.3. VM pause hook at statement boundaries on its own thread. | ALchemist debugging (A18) | 15 to 20, plus an ADR | #5 |
+| 7 | Tool-side edits, by their owner: LethAL accepts a `v3` version string and exit 7; ALchemist looks for `al-runner`; ALchemist fixes the `hitStatements` read and the stale stepping text. | Clean "unchanged" claim for gate R item 4 | small, theirs | #2, #3 |
 
 Why this order: step 1 is the smallest and gives one tool a working path with no server. Step 3
 is the smallest server. Steps 5 and 6 are large and need owner scope decisions first.
@@ -261,5 +261,5 @@ rewriting source:
    killed (which test), survived, not covered, or unknown (a covering test does not run on v3).
 4. A mutation v3 cannot express in its compiled program falls back to LethAL's switched source.
 
-Protocol: a `runMutants` request on `alrunner serve`, after the serve basics. Gain to measure with
+Protocol: a `runMutants` request on `al-runner serve`, after the serve basics. Gain to measure with
 a prototype: no per-mutant compile, and only covering tests run.

@@ -1,4 +1,4 @@
-//! A scratch run (`alrunner serve`'s `execute`): the `OnRun` trigger of one codeunit per app runs, and the
+//! A scratch run (`al-runner serve`'s `execute`): the `OnRun` trigger of one codeunit per app runs, and the
 //! text of its `Message` calls comes back with the result.
 
 use al_sema::workspace::AppSource;

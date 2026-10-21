@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare the outcome of every test between two sets of `alrunner test --junit` files.
+"""Compare the outcome of every test between two sets of `al-runner test --junit` files.
 
     tools/bucket_diff.py --a solo-1.xml solo-2.xml ... --b combined.xml
 

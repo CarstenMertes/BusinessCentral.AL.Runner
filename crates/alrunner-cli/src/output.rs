@@ -224,7 +224,7 @@ pub fn json(results: &[&TestResult], exit_code: u8, wall_s: f64) -> String {
     serde_json::to_string_pretty(&doc).expect("a JSON value serializes")
 }
 
-/// One row of `tests[]` of the `--output-json` document, also the body of a `test` line of `alrunner serve`.
+/// One row of `tests[]` of the `--output-json` document, also the body of a `test` line of `al-runner serve`.
 pub fn json_row(
     codeunit: u32,
     codeunit_name: &str,

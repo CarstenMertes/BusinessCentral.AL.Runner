@@ -1,6 +1,6 @@
 //! The JUnit XML of a run, written in one place (ADR-037 item 6). The two command lines write two dialects of it,
 //! and both stay byte for byte what they were: `Dialect::Oracle` is the file `al-test-cli --junit` writes and the
-//! oracle parser reads back; `Dialect::Runner` is the v2-shaped file `alrunner test --junit` writes. Each caller
+//! oracle parser reads back; `Dialect::Runner` is the v2-shaped file `al-runner test --junit` writes. Each caller
 //! builds the suites (how tests are grouped differs) and this module writes them.
 
 use crate::Outcome;

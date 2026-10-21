@@ -7,7 +7,7 @@ AL code that uses the `DotNet` type calls an optional .NET helper process
 (see "DotNet" below).
 
 It is a Rust rewrite of the ideas behind
-[BusinessCentral.AL.Runner](https://github.com/StefanMaron/BusinessCentral.AL.Runner).
+[BusinessCentral.AL.Runner](https://github.com/aldevtools/BusinessCentral.AL.Runner/tree/v2).
 That C# runner executes Microsoft's compiled code; this runtime compiles and
 runs AL source itself. The original spike brief and report are in `docs/history/`.
 
@@ -19,7 +19,7 @@ runs AL source itself. The original spike brief and report are in `docs/history/
 releases of this repository and keeps it up to date.
 
 ```
-mise use -g github:StefanMaron/al-runtime-rs    # install the newest alpha
+mise use -g github:aldevtools/BusinessCentral.AL.Runner    # install the newest alpha
 mise up                                         # update to a newer alpha
 ```
 
@@ -30,8 +30,8 @@ that passed CI. Pick it if you want every build, not only the numbered alphas. T
 alphas are released by hand.
 
 ```
-mise use -g github:StefanMaron/al-runtime-rs@edge
-mise install --force github:StefanMaron/al-runtime-rs@edge    # update
+mise use -g github:aldevtools/BusinessCentral.AL.Runner@edge
+mise install --force github:aldevtools/BusinessCentral.AL.Runner@edge    # update
 ```
 
 The version name `edge` never changes, so `mise up` does not see a new edge build. Use
@@ -42,13 +42,13 @@ The version name `edge` never changes, so `mise up` does not see a new edge buil
 Linux, macOS:
 
 ```
-curl -fsSL https://github.com/StefanMaron/al-runtime-rs/releases/download/edge/install.sh | sh -s -- edge
+curl -fsSL https://github.com/aldevtools/BusinessCentral.AL.Runner/releases/download/edge/install.sh | sh -s -- edge
 ```
 
 Windows (PowerShell):
 
 ```
-& ([scriptblock]::Create((irm https://github.com/StefanMaron/al-runtime-rs/releases/download/edge/install.ps1))) -Version edge
+& ([scriptblock]::Create((irm https://github.com/aldevtools/BusinessCentral.AL.Runner/releases/download/edge/install.ps1))) -Version edge
 ```
 
 Replace `edge` with `latest-alpha` or a tag such as `v3.0.0-alpha.2` for a numbered alpha.
@@ -181,7 +181,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install alrunner
         run: |
-          curl -fsSL https://github.com/StefanMaron/al-runtime-rs/releases/download/edge/install.sh | sh -s -- edge
+          curl -fsSL https://github.com/aldevtools/BusinessCentral.AL.Runner/releases/download/edge/install.sh | sh -s -- edge
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - uses: actions/cache@v4
         with:
@@ -214,7 +214,7 @@ measured yet how often the result here matches real BC.
 
 **A pass** means the test ran to its end without an error. The project rule is that every
 behavior the runtime implements is measured on real BC by a test in the
-[AL language test corpus](https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests),
+[AL language test corpus](https://github.com/aldevtools/BusinessCentral.AL.Language.Tests),
 per BC version. There is one exception. A behavior that Microsoft's own tests need on real BC
 may be built before a corpus test measures it. Each such behavior is registered in the runtime
 code as an unprobed assumption (`crates/al-builtins/src/assumptions.rs`; the list is also in
@@ -299,7 +299,7 @@ kept small on purpose.
 ## What "correct" means here
 
 Correctness is defined by real Business Central, not by documentation. The
-[AL language test corpus](https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests)
+[AL language test corpus](https://github.com/aldevtools/BusinessCentral.AL.Language.Tests)
 runs its CI against real BC in containers, once per BC major (27, 28 and 29).
 The JUnit result of each run is the oracle for that major (`oracle/`). A test
 counts as passing only when it passes here **and** passed on real BC.
@@ -369,21 +369,21 @@ build (`edge`). The scripts check the SHA-256 of the download. Replace `edge` wi
 Linux, macOS:
 
 ```
-curl -fsSL https://github.com/StefanMaron/al-runtime-rs/releases/download/edge/install.sh | sh -s -- edge
+curl -fsSL https://github.com/aldevtools/BusinessCentral.AL.Runner/releases/download/edge/install.sh | sh -s -- edge
 ```
 
 Windows (PowerShell):
 
 ```
-& ([scriptblock]::Create((irm https://github.com/StefanMaron/al-runtime-rs/releases/download/edge/install.ps1))) -Version edge
+& ([scriptblock]::Create((irm https://github.com/aldevtools/BusinessCentral.AL.Runner/releases/download/edge/install.ps1))) -Version edge
 ```
 
-`irm https://github.com/StefanMaron/al-runtime-rs/releases/download/edge/install.ps1 | iex` also works and
+`irm https://github.com/aldevtools/BusinessCentral.AL.Runner/releases/download/edge/install.ps1 | iex` also works and
 installs the latest numbered alpha. (The `edge` release is the stable place for the scripts:
 its URL never changes.)
 You can also download an archive from the releases page, check it against
 `SHA256SUMS`, and unpack it. Each archive holds the binary, `LICENSE` and a short
-`README.txt`. `gh attestation verify FILE --repo StefanMaron/al-runtime-rs`
+`README.txt`. `gh attestation verify FILE --repo aldevtools/BusinessCentral.AL.Runner`
 checks the build provenance.
 
 **The binaries are not signed.** Your system may warn you.

@@ -3,7 +3,7 @@
 `al-bcdb` reads Business Central data straight out of a SQL Server native backup (`.bak`) or
 a cloud export (`.bacpac`): no SQL Server, no restore, no service tier. It is a port of
 `bcdb` (BusinessCentral.BakReader, C#, MIT, the owner's tool). AL Runner v2 uses bcdb for
-`--test-data`; this runtime uses the port for `alrunner test --test-data`, which restores the CRONUS demo
+`--test-data`; this runtime uses the port for `al-runner test --test-data`, which restores the CRONUS demo
 company into its store table by table, when a test first touches the table. ADR-020 says how it works;
 `al-bcdb-std` is the part that opens the file and gives the runtime its rows.
 
@@ -14,7 +14,7 @@ company into its store table by table, when a test first touches the table. ADR-
 | `crates/al-bcdb` | The reader. Core crate: works on a `ByteSource`, no OS access (ADR-006), `Sync`, usable from WebAssembly |
 | `crates/al-bcdb/PROVENANCE.md` | Where each format fact comes from, how the port was validated, how it differs from bcdb |
 | `crates/al-bcdb/tests/fixtures` | bcdb's synthetic `typeprobe` database as `.bak` and `.bacpac`, and the `SELECT` output a real SQL Server gave for it |
-| `crates/al-bcdb-std` | The OS side: the pread `FileSource` and `BackupProvider`, the `TableProvider` that `alrunner test --test-data` reads a backup through |
+| `crates/al-bcdb-std` | The OS side: the pread `FileSource` and `BackupProvider`, the `TableProvider` that `al-runner test --test-data` reads a backup through |
 | `crates/al-bcdb-cli` | The `al-bcdb` command line (the only code that reads files), the parity tests, `examples/phases.rs` |
 | `tools/bcdb-bench.sh` | The speed comparison against the published bcdb |
 

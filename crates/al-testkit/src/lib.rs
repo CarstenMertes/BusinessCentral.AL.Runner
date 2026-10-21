@@ -148,7 +148,7 @@ pub fn run_with(src: &str, object: &str, routine: &str, args: Vec<Value>) -> Res
     b.call(oi, ri, args)
 }
 
-/// With the `runner` feature: compiles `src` and runs the tests of the codeunit named `codeunit` the way `alrunner test` does
+/// With the `runner` feature: compiles `src` and runs the tests of the codeunit named `codeunit` the way `al-runner test` does
 /// (one session per codeunit, the install code first), giving each test's name and outcome.
 #[cfg(feature = "runner")]
 pub fn outcomes_in(src: &str, codeunit: &str) -> Vec<(String, al_testrun::Outcome)> {

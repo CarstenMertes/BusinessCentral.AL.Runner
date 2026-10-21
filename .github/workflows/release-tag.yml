@@ -3,8 +3,8 @@ name: Release
 # A numbered alpha: push a tag v3.* on a commit of the `release` branch (docs/releasing.md).
 # The workflow checks the tag, runs the CI checks, builds and smoke tests the three targets and
 # creates a normal GitHub release (not a draft, not a pre-release) marked "latest", so that
-# `mise use github:StefanMaron/al-runtime-rs` and `mise up` find it (owner decision 2026-10-20).
-# Assets: alrunner-<version>-<target>.tar.xz or .zip, SHA256SUMS, install.sh, install.ps1.
+# `mise use github:aldevtools/BusinessCentral.AL.Runner` and `mise up` find it (owner decision 2026-10-20).
+# Assets: al-runner-<version>-<target>.tar.xz or .zip, SHA256SUMS, install.sh, install.ps1.
 # workflow_dispatch is a dry run: it builds and packages but creates no release.
 
 on:
@@ -84,12 +84,12 @@ jobs:
           VERSION: ${{ needs.plan.outputs.version }}
         run: |
           mkdir bin
-          tar -C bin -xJf "dist/alrunner-$VERSION-x86_64-unknown-linux-musl.tar.xz"
-          printed="$(./bin/alrunner --version)"
+          tar -C bin -xJf "dist/al-runner-$VERSION-x86_64-unknown-linux-musl.tar.xz"
+          printed="$(./bin/al-runner --version)"
           echo "$printed"
           case "$printed" in
-            "alrunner $VERSION "*|"alrunner $VERSION") ;;
-            *) echo "::error::alrunner --version prints '$printed', not version $VERSION of tag $GITHUB_REF_NAME"; exit 1 ;;
+            "al-runner $VERSION "*|"al-runner $VERSION") ;;
+            *) echo "::error::al-runner --version prints '$printed', not version $VERSION of tag $GITHUB_REF_NAME"; exit 1 ;;
           esac
       - name: Create the release
         env:
@@ -98,7 +98,7 @@ jobs:
           VERSION: ${{ needs.plan.outputs.version }}
         run: |
           cat > notes.md <<NOTES
-          alrunner $VERSION. An alpha: no AL Runner v2 parity, some tests are refused ("not run")
+          al-runner $VERSION. An alpha: no AL Runner v2 parity, some tests are refused ("not run")
           with a reason, and results may change.
 
           The binaries are not signed. See "Try the alpha" in the README for the macOS and
@@ -114,4 +114,4 @@ jobs:
           sed -i 's/^          //' notes.md
           # A normal release, marked latest. The commit list follows the fixed text (--generate-notes).
           gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --latest --generate-notes \
-            --title "alrunner $VERSION" --notes-file notes.md
+            --title "al-runner $VERSION" --notes-file notes.md

@@ -946,12 +946,9 @@ impl Session {
                     self.read_page_again(st)?;
                 }
                 // On a Document card that read is OnAfterGetRecord alone, no OnAfterGetCurrRecord, then the parts read their rows
-                // (corpus bump 41 pages/lt-qj-part-propagation/QjPartPropagation.al QJ_Both_PartModifiesHost_ThenHostSave
-                // `H.ACT.end(...) H.AGR(...) L.AGR(...) L.AGR(...) L.AGCR(...)`).
+                // (pages/lt-qj-part-propagation/QjPartPropagation.al:511 QJ_Both_PartModifiesHost_ThenHostSave
+                // `H.ACT.end(...) H.AGR(...) L.AGR(...) L.AGR(...) L.AGCR(...)`, also :548, :585, :627, :665, :703).
                 if saved && !self.is_list(st) && !st.borrow().parts.is_empty() {
-                    al_builtins::assumptions::assume(
-                        al_builtins::assumptions::Assumption::PartUpdatePropagationBothRefreshesHost,
-                    );
                     st.borrow_mut().refresh_without_curr = true;
                 }
                 st.borrow_mut().refresh = true;

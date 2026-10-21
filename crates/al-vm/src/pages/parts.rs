@@ -1048,10 +1048,10 @@ impl Session {
     /// reads its row again in every UpdatePropagation mode, no 'changed by another user' follows, and the host's later save keeps the
     /// change. Over a stored part row the part's typed edit is dropped (Update(false) reads the line again; the part's
     /// OnAfterGetCurrRecord sees the typed row as xRec). With Both the host's triggers run first and then its parts read their rows;
-    /// with SubPart or none the part reads its rows first, then the host's triggers run. Probed by corpus bump 41
-    /// pages/lt-qj-part-propagation/QjPartPropagation.al QJ_Both_ / QJ_SubPart_ / QJ_Default_PartModifiesHost_ThenHostSave
-    /// (flagged as part-update-propagation-both-refreshes-host until the bump lands; Tests-ERM 134344 needs it). A new part row is
-    /// pinned for none of this: with Both it keeps the earlier flagged behavior (the part refreshes, then the host), otherwise refused.
+    /// with SubPart or none the part reads its rows first, then the host's triggers run. Pinned by
+    /// pages/lt-qj-part-propagation/QjPartPropagation.al:508 (QJ_Both_), :545 (QJ_SubPart_) and :582 (QJ_Default_PartModifiesHost_
+    /// ThenHostSave `log-part-edit`). A new part row is pinned for none of this: with Both it keeps the earlier behavior (the part
+    /// refreshes, then the host) under the assumption part-update-new-row-both-refreshes-host, otherwise it is refused.
     /// Returns whether the part's own refresh was done here.
     pub(super) fn host_after_part_update(&mut self, st: &St) -> Result<bool, Signal> {
         let Some((host, c)) = st
@@ -1102,8 +1102,8 @@ impl Session {
                 "a part's CurrPage.Update on a new part row after its code changed the host's stored row, UpdatePropagation not Both (not pinned)",
             );
         }
-        al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::PartUpdatePropagationBothRefreshesHost);
         if !part_stored {
+            al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::PartUpdateNewRowBothRefreshesHost);
             self.run_refresh(st)?;
             host.borrow_mut().refresh = true;
             self.run_refresh(&host)?;
@@ -1133,8 +1133,8 @@ impl Session {
 
     /// A part control is about to take a value while its Document/card host holds an unsaved edit of a stored row: the host saves
     /// it first (its OnModifyRecord and the table's OnModify run), then the part's validation runs, and the typed host field stays
-    /// (corpus bump 41 pages/lt-qj-part-propagation/QjPartPropagation.al QJ_Both_ / QJ_SubPart_ / QJ_Default_HostEdited_
-    /// PartModifiesHost_ThenHostSave `log-part-edit=H.MODR(...) T.H.MOD(...) L.Qty.V(...)`; flagged until the bump lands).
+    /// (pages/lt-qj-part-propagation/QjPartPropagation.al:623, :661, :699 QJ_Both_ / QJ_SubPart_ / QJ_Default_HostEdited_
+    /// PartModifiesHost_ThenHostSave `log-part-edit=H.MODR(...) T.H.MOD(...) L.Qty.V(...)`).
     /// A new host row, or a list host, keeps the earlier behavior.
     pub(super) fn save_host_before_part_edit(&mut self, st: &St) -> Result<(), Signal> {
         let Some(host) = st.borrow().host.as_ref().and_then(|(h, _)| h.upgrade()) else {
@@ -1153,7 +1153,6 @@ impl Session {
         if hrec.borrow().temporary || self.stored_row(&hrec)?.is_none() {
             return Ok(());
         }
-        al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::PartUpdatePropagationBothRefreshesHost);
         self.save_row(&host)
     }
 

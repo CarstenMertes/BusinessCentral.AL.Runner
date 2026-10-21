@@ -7,6 +7,7 @@ mod builtins;
 mod calc_const_guid;
 mod call_stack;
 mod caption_class_areas;
+mod caption_setup_written;
 mod clear_all_temp_rows;
 mod clear_enum;
 mod code_compare;

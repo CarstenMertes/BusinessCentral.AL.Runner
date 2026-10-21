@@ -1050,6 +1050,7 @@ impl Session {
     ///   QG_EmptyList_InsertViaOtherVariable_StepLog `List.AGR(NEW2,Created);List.AGR(NEW2,Created);List.AGCR(NEW2,);
     ///   List.OnNewRecord;List.AGCR(,)`), a list opened for view stays on the row (:411, :459).
     /// - no row: a list opened for edit runs its new-row line twice, as when it opened (:317 QG_EmptyList_ActionStoresNothing_StepLog).
+    ///
     /// A card opened for view shows the one row (pages/W1ShowRow.al:317). More rows, and an empty view after an action on a page
     /// opened for view, are not pinned.
     /// Answers whether it handled the action; the other cases go on as any action does: a view of more rows (testpart/
@@ -1089,8 +1090,8 @@ impl Session {
                 let probe = Rc::new(RefCell::new(rec.borrow().clone()));
                 self.ret_used = true;
                 self.record_op(RecordOp::FindFirst, &probe, &mut [])?;
-                let f = probe.borrow().fields.clone();
-                f
+                let found = probe.borrow();
+                found.fields.clone()
             }
         };
         rec.borrow_mut().fields = fields.clone();

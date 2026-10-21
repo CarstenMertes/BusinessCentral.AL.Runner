@@ -716,3 +716,28 @@ years after each version is first published. Change License: Apache License 2.0.
 before the change (up to and including 3.0.0-alpha.1 and the edge builds before the change) remain under
 MIT. Outside contributions need a contributor agreement before they are accepted, so the licensing stays
 with one holder.
+
+## Amendment (Proposed, 2026-10-21): repository move and binary name
+
+Status of this section: Proposed. It records owner decisions of 2026-10-21. It
+answers the "stay separate or cut over" choice of the 2026-10-14 decision above.
+
+- **Cut over.** v3 is now `main` of `aldevtools/BusinessCentral.AL.Runner`.
+  v2 is frozen on the branch `v2` of the same repository.
+- **Organization.** The corpus is `aldevtools/BusinessCentral.AL.Language.Tests`.
+  The BC container is `aldevtools/MsDyn365Bc.On.Linux`.
+- **Working repository.** `StefanMaron/al-runtime-rs` stays the working
+  repository until the running lanes finish. Its `main` is copied to the new
+  repository. After that it is archived.
+- **References.** The corpus submodule URL, the `repository` field in
+  `Cargo.toml`, the installers' default repository (`ALRUNNER_REPO`), the
+  mise name (`github:aldevtools/BusinessCentral.AL.Runner`) and the tools that
+  call `gh` point to the new names. GitHub Actions `uses:` lines do not follow
+  a transfer redirect, so every `uses:` that names a moved repository must name
+  the new one.
+- **Old numbers.** Pull request and issue numbers in history text written
+  before the move (below about 5570) refer to the archived
+  `StefanMaron/al-runtime-rs`. New text names the repository next to the number.
+- **Binary name.** The binary becomes `al-runner` (a separate change). The
+  environment variables keep the `ALRUNNER_` prefix for now; the owner has not
+  decided about them.

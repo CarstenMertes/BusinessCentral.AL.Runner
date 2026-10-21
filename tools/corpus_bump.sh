@@ -26,7 +26,7 @@ here="$(cd "$(dirname "$0")" && pwd)"
 root="$(dirname "$here")"
 gh="${CORPUS_BUMP_GH:-gh}"
 corpus="${CORPUS_BUMP_CORPUS:-$root/corpus}"
-repo="StefanMaron/BusinessCentral.AL.Language.Tests"
+repo="aldevtools/BusinessCentral.AL.Language.Tests"
 branch="master"
 legs="27.5 28.5 29.0"
 

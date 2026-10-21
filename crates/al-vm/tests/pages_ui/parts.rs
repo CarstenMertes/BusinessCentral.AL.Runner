@@ -1105,3 +1105,31 @@ fn a_part_expression_that_is_true_leaves_its_fields_answering_by_themselves() {
             .contains(&al_builtins::assumptions::Assumption::PartFieldUnderTruePartExpression)
     );
 }
+
+// pages/lt-part-line-before-host-key/PartLineBeforeHostKey.al:672 PYB_OpenNew_Document_LogOnly, :809 PYB_OpenEdit_HostWithoutLines,
+// :879 PYB_OpenEdit_ThenHostNew: the blank line of a part that shows no row of an editable host runs OnNewRecord three times as the
+// host opens (OpenNew and OpenEdit); the host's New() runs none of the part's.
+#[test]
+fn an_empty_part_of_an_editable_host_runs_on_new_record_three_times_and_host_new_none() {
+    let r = run(
+        &format!(
+            "procedure F(): Text var D: Record \"PT Doc\"; C: TestPage \"PT Doc Card\"; E: TestPage \"PT Doc Card\"; N: Codeunit \"PT Count\"; T: Text; Before: Integer; begin
+                {DOCS}
+                Before := N.Count();
+                C.OpenNew();
+                T := Format(N.Count() - Before);
+                C.Close();
+                Before := N.Count();
+                E.OpenEdit();
+                T += ',' + Format(N.Count() - Before);
+                Before := N.Count();
+                E.New();
+                T += ',' + Format(N.Count() - Before);
+                E.Close();
+                exit(T);
+            end;"
+        ),
+        "F",
+    );
+    assert_eq!(text(r), "3,3,0");
+}

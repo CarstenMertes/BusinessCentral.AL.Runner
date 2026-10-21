@@ -215,6 +215,19 @@ page 50091 "PG Blank Kind Page"
     var Kind: Enum "PG Blank Kind";
 }
 
+table 50093 "PG Blank Kind Row"
+{
+    fields { field(1; Id; Integer) { } field(2; Kind; Enum "PG Blank Kind") { } field(3; Opt; Option) { OptionMembers = " ",Alpha,Beta; OptionCaption = ' ,Alpha,Beta'; } }
+    keys { key(PK; Id) { Clustered = true; } }
+}
+
+page 50094 "PG Blank Kind Card"
+{
+    PageType = Card;
+    SourceTable = "PG Blank Kind Row";
+    layout { area(Content) { field(KindCtl; Rec.Kind) { } field(OptCtl; Rec.Opt) { } } }
+}
+
 page 50012 "PG Hidden Get"
 {
     PageType = List;
@@ -1166,14 +1179,15 @@ fn a_list_plus_page_over_an_empty_view_runs_new_record_and_get_curr_record() {
     assert_eq!(text(r), "open;new;agcr;");
 }
 
-// Assumption testpage-setvalue-blank-enum-member (Tests-ERM ERM Budget 134922 and ERM Budget UI 134927, `Initialize`:
-// `Budget.GLAccCategory.SetValue(0)` on a page-variable control of Enum "G/L Account Category", whose value 0 has
-// Caption = ' '): an Integer handed to an Enum variable control selects the value whose caption is blank.
+// pages/lt-be-enum-setvalue-blank/BeEnumSetValueBlank.al:502-528 (SetValue_FCompat_VariantInts_FromBlank) and :2366
+// (SetValue_VCompat_VariantInts_FromBlank): an Integer handed to an Enum control, bound to a table field or to a page
+// variable, selects the value of that ordinal, also when the value's caption is ' ' (which trims to the refused '').
+// Pinned on a card with a row.
 #[test]
 fn set_value_of_an_integer_selects_the_blank_captioned_enum_value() {
     al_builtins::assumptions::clear_hits();
     let r = run(
-        "procedure F(): Text var TP: TestPage \"PG Blank Kind Page\"; begin
+        "procedure F(): Text var TP: TestPage \"PG Blank Kind Page\"; V: Variant; begin
             TP.OpenEdit();
             TP.KindCtl.SetValue('Assets');
             TP.KindCtl.SetValue(0);
@@ -1182,8 +1196,96 @@ fn set_value_of_an_integer_selects_the_blank_captioned_enum_value() {
         "F",
     );
     assert_eq!(text(r), "[ ]");
+    // A page without a source table is not the pinned shape: assumption testpage-setvalue-blank-enum-member.
     assert!(
         al_builtins::assumptions::take_hits()
             .contains(&al_builtins::assumptions::Assumption::TestPageSetValueBlankEnumMember)
+    );
+    let r = run(
+        "procedure F(): Text var R: Record \"PG Blank Kind Row\"; TP: TestPage \"PG Blank Kind Card\"; V: Variant; begin
+            R.Id := 1; R.Kind := R.Kind::Assets; R.Insert();
+            TP.OpenEdit();
+            V := 0;
+            TP.KindCtl.SetValue(V);
+            TP.Close();
+            R.Get(1);
+            exit('[' + Format(R.Kind.AsInteger()) + ']');
+        end;",
+        "F",
+    );
+    assert_eq!(text(r), "[0]");
+    assert!(al_builtins::assumptions::take_hits().is_empty());
+}
+
+// pages/lt-be-enum-setvalue-blank/BeEnumSetValueBlank.al:532-597 (SetValue_FCompat_VariantTexts_FromBlank, BC 28 and later): a
+// Text inside a Variant selects by ordinal digits; a caption or a blank text fails to evaluate and the control keeps its value.
+#[test]
+fn set_value_of_a_text_in_a_variant_goes_by_ordinal_digits() {
+    let r = run(
+        "procedure F(): Text var R: Record \"PG Blank Kind Row\"; TP: TestPage \"PG Blank Kind Card\"; V: Variant; T: Text; begin
+            R.Id := 1; R.Insert();
+            TP.OpenEdit();
+            V := 'Assets';
+            asserterror TP.KindCtl.SetValue(V);
+            T := GetLastErrorText() + '|' + GetLastErrorCode() + '|[' + TP.KindCtl.Value() + ']|';
+            V := ' ';
+            asserterror TP.KindCtl.SetValue(V);
+            T += GetLastErrorText() + '|';
+            V := '1';
+            TP.KindCtl.SetValue(V);
+            exit(T + TP.KindCtl.Value());
+        end;",
+        "F",
+    );
+    assert_eq!(
+        text(r),
+        "The value \"Assets\" can't be evaluated into type Option.|Evaluate:Format|[ ]|The value \" \" can't be evaluated into type Option.|Assets"
+    );
+}
+
+// pages/lt-be-enum-setvalue-blank/BeEnumSetValueBlank.al:541-597 `member0` (the blank-captioned Enum value in a Variant selects it),
+// :600-611 `space` (a Text ' ' selects the value whose caption is ' '), :1907 and :2138 (an Integer that is no Option member names
+// the ordinal held before).
+#[test]
+fn set_value_selects_a_blank_captioned_value_by_member_and_by_space() {
+    let r = run(
+        "procedure F(): Text var R: Record \"PG Blank Kind Row\"; TP: TestPage \"PG Blank Kind Card\"; V: Variant; E: Enum \"PG Blank Kind\"; T: Text; begin
+            R.Id := 1; R.Kind := R.Kind::Assets; R.Opt := R.Opt::Beta; R.Insert();
+            TP.OpenEdit();
+            E := E::\" \";
+            V := E;
+            TP.KindCtl.SetValue(V);
+            T := '[' + TP.KindCtl.Value() + ']';
+            TP.KindCtl.SetValue('Assets');
+            T += '[' + TP.KindCtl.Value() + ']';
+            TP.KindCtl.SetValue(' ');
+            T += '[' + TP.KindCtl.Value() + ']';
+            asserterror TP.OptCtl.SetValue(5);
+            exit(T + GetLastErrorText());
+        end;",
+        "F",
+    );
+    assert_eq!(
+        text(r),
+        "[ ][Assets][ ]Validation error for Field: OptCtl,  Message = 'Your entry of '2' is not an acceptable value for 'Opt'. (Select Refresh to discard errors)'"
+    );
+}
+
+// pages/lt-be-enum-setvalue-blank/BeEnumSetValueBlank.al:523-525 (int5 from blank) and :742-744 (int5 from Beta): an Integer that
+// is no value of the Enum is refused naming the ordinal the control held before, not the one handed in.
+#[test]
+fn set_value_of_an_integer_that_is_no_enum_value_names_the_old_ordinal() {
+    let r = run(
+        "procedure F(): Text var R: Record \"PG Blank Kind Row\"; TP: TestPage \"PG Blank Kind Card\"; begin
+            R.Id := 1; R.Kind := R.Kind::Assets; R.Insert();
+            TP.OpenEdit();
+            asserterror TP.KindCtl.SetValue(5);
+            exit(GetLastErrorText() + '|' + GetLastErrorCode() + '|' + TP.KindCtl.Value());
+        end;",
+        "F",
+    );
+    assert_eq!(
+        text(r),
+        "Validation error for Field: KindCtl,  Message = 'Your entry of '1' is not an acceptable value for 'Kind'. (Select Refresh to discard errors)'|TestValidation|1"
     );
 }

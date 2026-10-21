@@ -356,6 +356,14 @@ impl Session {
                         self.sync_parts_stayed(st)?;
                         false
                     }
+                    PageMethod::New => {
+                        // The parts a host's New() links afresh run no OnNewRecord (see `land_on_part_open_line`).
+                        let before = std::mem::replace(&mut self.host_new_running, true);
+                        let r = self.sync_parts(st);
+                        self.host_new_running = before;
+                        r?;
+                        false
+                    }
                     _ => {
                         self.sync_parts(st)?;
                         false

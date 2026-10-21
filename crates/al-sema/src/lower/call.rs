@@ -343,6 +343,12 @@ impl Lowerer<'_> {
                     // A record that reaches GetTable through a Variant loses its ChangeCompany (types/lt-cw-variant-leads/
                     // CwVariantChangeCompany.al:CW_Variant_KeepsOrDropsChangeCompany `variant to recordref`).
                     "RecordRef.GetTableVariant#1".to_string()
+                } else if id == "TestField.SetValue#1"
+                    && args.first().is_some_and(|a| matches!(self.ty_of(a), Ty::Variant))
+                {
+                    // A Text inside a Variant goes by ordinal digits on an Enum or Option control
+                    // (pages/lt-be-enum-setvalue-blank/BeEnumSetValueBlank.al:532-597).
+                    "TestField.SetValueVariant#1".to_string()
                 } else if id == "System.Format#1" && decimal_field_places.is_some() {
                     "System.FormatDecimalField#1".to_string()
                 } else {

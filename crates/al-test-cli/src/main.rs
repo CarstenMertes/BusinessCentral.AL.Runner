@@ -76,7 +76,7 @@ fn run() -> Result<ExitCode, String> {
     }
     // The corpus pins that real BC's web address in its CI is http, has a port and the path /BC, and that its host is
     // not `localhost` (session/lt-geturl-shape/GetUrlShape.al:283); the host name itself is masked there and stays the
-    // host setting of ADR-042. So the corpus tool runs with an address of that shape instead of alrunner's default.
+    // host setting of ADR-042. So the corpus tool runs with an address of that shape instead of al-runner's default.
     al_test_cli::host::set_server_url(Some(CORPUS_SERVER_URL.into()));
     if let Some(dir) = &args.files_dir {
         al_test_cli::host::set_files_dir(dir.clone());
@@ -516,7 +516,7 @@ fn run_version(
         source_root: Some(root.to_path_buf()),
         // Only the user's folders. ADR-014 section 3, step 2 (the service folder of the platform package the run
         // selected) is skipped: the artifact cache holds no service folder, and BcContainerHelper's
-        // `~/.bcartifacts.cache/sandbox`, which `alrunner` reads, is a machine's own folder, often of another build
+        // `~/.bcartifacts.cache/sandbox`, which `al-runner` reads, is a machine's own folder, often of another build
         // of the major. Read here, it made a corpus case pass or be refused by what HOME held (99100
         // AL_JsonTextWriter_SimpleObject needs Newtonsoft.Json from it), so one build gave two results
         // (corpus_harness.rs `outcomes_do_not_depend_on_threads_or_home`). A missing assembly is refused, as on CI.

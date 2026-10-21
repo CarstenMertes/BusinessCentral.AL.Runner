@@ -1,4 +1,4 @@
-//! `alrunner serve` end to end (ADR-028): the v2 protocol on stdin and stdout.
+//! `al-runner serve` end to end (ADR-028): the v2 protocol on stdin and stdout.
 
 use serde_json::{Value, json};
 use std::io::{BufRead, BufReader, Write};
@@ -17,7 +17,7 @@ impl Server {
     }
 
     fn start_with(extra: &[&str], env: &[(&str, &str)]) -> Server {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_alrunner"))
+        let mut child = Command::new(env!("CARGO_BIN_EXE_al-runner"))
             .arg("serve")
             .args(extra)
             .envs(env.iter().copied())
@@ -28,7 +28,7 @@ impl Server {
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .spawn()
-            .expect("start alrunner serve");
+            .expect("start al-runner serve");
         let stdin = child.stdin.take();
         let stdout = BufReader::new(child.stdout.take().unwrap());
         Server { child, stdin, stdout }
@@ -266,6 +266,8 @@ fn cancel_stops_the_run_after_the_current_test_and_reports_what_ran() {
         (Some(true), Some(1)),
         "{summary}"
     );
+    // ADR-028 item 7: a cancelled run's summary has exit code 130, as in v2, whatever the tests that ran came to.
+    assert_eq!(summary["exitCode"], 130, "{summary}");
     // The server still answers, and the next run is not cancelled.
     s.send(json!({"command": "cancel"}));
     assert_eq!(s.line()["noop"], true);
@@ -793,6 +795,58 @@ fn announce_start_writes_one_started_line_before_the_first_test() {
     let lines = s.until_summary();
     let started: Vec<usize> = (0..lines.len()).filter(|&i| lines[i]["type"] == "started").collect();
     assert_eq!(started, vec![0], "{lines:?}");
+    s.send(json!({"command": "shutdown"}));
+    s.line();
+}
+
+#[test]
+fn a_selection_that_matches_no_test_answers_a_summary_with_exit_code_6() {
+    let d = tempfile::tempdir().unwrap();
+    let a = app(d.path(), "mixed", MIXED);
+    let mut s = started();
+    // As `al-runner test` exits 6 when the selection matches nothing, the summary has exit code 6 and no test.
+    s.send(json!({"command": "runTests", "sourcePaths": [a], "test": "Codeunit50100.NoSuchTest"}));
+    let lines = s.until_summary();
+    let summary = lines.last().unwrap();
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    assert_eq!(summary["type"], "summary", "{summary}");
+    assert_eq!(
+        (
+            summary["exitCode"].as_u64(),
+            summary["passed"].as_u64(),
+            summary["failed"].as_u64(),
+            summary["errors"].as_u64(),
+            summary["notRun"].as_u64(),
+            summary["total"].as_u64()
+        ),
+        (Some(6), Some(0), Some(0), Some(0), Some(0), Some(0)),
+        "{summary}"
+    );
+    assert_eq!(summary["protocolVersion"], 2);
+    // The reason is in the answer, not only on stderr.
+    assert!(
+        summary["warnings"][0].as_str().unwrap().contains("matches no test"),
+        "{summary}"
+    );
+    // An exclusion that leaves nothing gives the same answer, and the server goes on.
+    s.send(json!({"command": "runTests", "sourcePaths": [a], "excludeTests": ["Codeunit50100.Passes", "Codeunit50100.Fails"]}));
+    assert_eq!(s.until_summary().last().unwrap()["exitCode"], 6);
+    s.send(json!({"command": "runTests", "sourcePaths": [a]}));
+    assert_eq!(s.until_summary().last().unwrap()["total"], 2);
+    s.send(json!({"command": "shutdown"}));
+    s.line();
+}
+
+#[test]
+fn execute_with_announce_start_writes_the_started_line_and_no_warning() {
+    let mut s = started();
+    // ADR-028 item 8: `announceStart` works on `execute` too, so it earns no warning.
+    s.send(json!({"command": "execute", "code": "Message('hi');", "announceStart": true}));
+    let started = s.line();
+    assert_eq!(started["type"], "started", "{started}");
+    let r = s.line();
+    assert_eq!(r["tests"][0]["messages"], json!(["hi"]), "{r}");
+    assert!(r.get("warnings").is_none(), "{r}");
     s.send(json!({"command": "shutdown"}));
     s.line();
 }

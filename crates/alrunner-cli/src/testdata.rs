@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 pub struct Where<'a, D: FnMut(&BuildId) -> Result<PathBuf, String>> {
     /// `~/.bcartifacts.cache/sandbox`, when it exists.
     pub local_root: Option<&'a Path>,
-    /// The alrunner artifact cache root (`--cache-dir`, `$ALRUNNER_CACHE`, the default).
+    /// The al-runner artifact cache root (`--cache-dir`, `$ALRUNNER_CACHE`, the default).
     pub cache_root: &'a Path,
     /// Downloads the backup of a build into the cache. `None` for `--no-download`.
     pub download: Option<D>,

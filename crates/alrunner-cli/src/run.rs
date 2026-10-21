@@ -1,4 +1,4 @@
-//! `alrunner test`: load the APPs and their dependencies, compile, run, report.
+//! `al-runner test`: load the APPs and their dependencies, compile, run, report.
 
 use crate::apps::{self, AppInput};
 use crate::args::{DEFAULT_TOP, TestArgs};
@@ -214,12 +214,12 @@ pub fn write_file(path: &Path, text: &str) -> Result<(), String> {
     std::fs::write(path, text).map_err(|e| format!("{}: {e}", path.display()))
 }
 
-/// With `alrunner serve`: the backup opened last, kept with the tables read from it, for the next request.
+/// With `al-runner serve`: the backup opened last, kept with the tables read from it, for the next request.
 type KeptBackup = ((PathBuf, Option<String>), TestData);
 static KEPT_BACKUP: std::sync::Mutex<Option<KeptBackup>> = std::sync::Mutex::new(None);
 static KEEP_BACKUPS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-/// `alrunner serve` keeps the opened backup (and so the tables read from it) between requests.
+/// `al-runner serve` keeps the opened backup (and so the tables read from it) between requests.
 pub fn keep_backups() {
     KEEP_BACKUPS.store(true, std::sync::atomic::Ordering::Relaxed);
 }
@@ -406,7 +406,7 @@ fn should_choose_test_data(a: &TestArgs, already_open: bool, microsoft: bool) ->
     a.wants_test_data() && !already_open && (microsoft || a.test_data_asked_for())
 }
 
-/// `alrunner warm`: finds the backup, opens it, and so builds the index kept next to the compile cache.
+/// `al-runner warm`: finds the backup, opens it, and so builds the index kept next to the compile cache.
 pub fn warm(a: &TestArgs) -> Result<(), String> {
     if a.country.is_some() && !a.no_download {
         al_deps::artifact::check_country(&al_deps::artifact::HttpCdn::from_env(), a.country())?;
@@ -461,7 +461,7 @@ pub fn test(a: &TestArgs) -> Result<u8, String> {
 /// What one side of an impact run (ADR-043), or the run that builds its index, asks for and keeps of its run.
 #[derive(Default)]
 pub struct Collected {
-    /// Asked for: note what each test raised and touched (`alrunner impact-index build`).
+    /// Asked for: note what each test raised and touched (`al-runner impact-index build`).
     pub impact_trace: bool,
     /// Asked for: narrow the test codeunits once the compile is done (dynamic selection).
     pub narrow: Option<al_testrun::runtime::Narrow>,
@@ -490,7 +490,7 @@ pub fn test_collect(a: &TestArgs, into: &mut Collected) -> Result<u8, String> {
 /// What the server hears for each test as it finishes: the event, and its capture as JSON.
 pub type OnTest = Arc<dyn Fn(al_testrun::events::TestEvent, Option<serde_json::Value>) + Send + Sync>;
 
-/// What `alrunner serve` keeps between requests, and how it hears about a request's run (ADR-028).
+/// What `al-runner serve` keeps between requests, and how it hears about a request's run (ADR-028).
 #[derive(Default)]
 pub struct WarmCtx {
     pub runtime: al_testrun::runtime::Warm,
@@ -519,6 +519,22 @@ pub struct Report {
     pub object_names: Vec<String>,
     /// Per test of `doc["tests"]`: its capture as JSON (`capture::json`), when one was asked for.
     pub captured: Vec<Option<serde_json::Value>>,
+    /// Why the run came to its exit code when no test could tell (a selection that matches no test).
+    pub warnings: Vec<String>,
+}
+
+impl Report {
+    /// The report of a run that ran no test: exit code `code`, all counts 0, and why.
+    fn empty(code: u8, wall_s: f64, why: &str) -> Report {
+        Report {
+            doc: serde_json::from_str(&output::json(&[], code, wall_s)).unwrap_or_default(),
+            coverage: None,
+            messages: Vec::new(),
+            object_names: Vec::new(),
+            captured: Vec::new(),
+            warnings: vec![why.to_string()],
+        }
+    }
 }
 
 /// Everything the compile depends on but the selection and the text of the workspace files: the workspace file names, the dependency apps, the symbols, the target.
@@ -679,6 +695,10 @@ fn test_inner(a: &TestArgs, mut warm: Option<&mut WarmCtx>, collect: Option<&mut
             "no test codeunit (Subtype = Test) in the given apps"
         };
         eprintln!("error: {what}");
+        // A server request answers a summary with exit code 6, as `al-runner test` exits 6 (ADR-028 item 1).
+        if let Some(w) = warm.as_deref_mut() {
+            w.report = Some(Report::empty(6, started.elapsed().as_secs_f64(), what));
+        }
         return Ok(6);
     }
 
@@ -1550,6 +1570,7 @@ fn test_inner(a: &TestArgs, mut warm: Option<&mut WarmCtx>, collect: Option<&mut
                     })
                     .collect()
             },
+            warnings: Vec::new(),
         });
     }
     if let Some(target) = &a.output_json {

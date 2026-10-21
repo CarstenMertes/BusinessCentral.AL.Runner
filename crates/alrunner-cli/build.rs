@@ -1,4 +1,4 @@
-//! Puts the commit into `alrunner --version`: `ALRUNNER_COMMIT` is the short hash, or "unknown"
+//! Puts the commit into `al-runner --version`: `ALRUNNER_COMMIT` is the short hash, or "unknown"
 //! when the source has no git history (a source archive). CI may set `ALRUNNER_COMMIT` itself.
 //! `ALRUNNER_VERSION` is the Cargo version plus the optional `ALRUNNER_VERSION_SUFFIX` (an edge
 //! build sets `+edge.YYYYMMDD`). A suffix that is not empty and does not start with `+` is ignored.

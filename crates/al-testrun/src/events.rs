@@ -1,5 +1,5 @@
 //! What a run tells while it runs: one event per test as it finishes, and a flag that stops the run after the current
-//! test (`alrunner serve`, ADR-028). Installed per thread by the code that runs a test codeunit, so the signatures of
+//! test (`al-runner serve`, ADR-028). Installed per thread by the code that runs a test codeunit, so the signatures of
 //! the run functions did not change.
 
 use crate::Outcome;

@@ -163,7 +163,7 @@ def build(buckets, previous, tsv, zip_dir):
         for b, bk in sorted(it["buckets"].items(), key=lambda kv: (-kv[1]["tests"], kv[0])):
             cus = sorted(bk["codeunits"], key=cu_key)
             zp = os.path.join(zip_dir, f"Tests-{b}.Source.zip")
-            cmd = "alrunner test " + shlex.quote(zp) + "".join(f" --codeunit {c}" for c in cus)
+            cmd = "al-runner test " + shlex.quote(zp) + "".join(f" --codeunit {c}" for c in cus)
             buckets_out.append({"bucket": b, "tests": bk["tests"], "codeunits": [int(c) if str(c).isdigit() else c for c in cus],
                                 "names": bk["names"], "rerun": cmd})
         out_items.append({**{k: it[k] for k in ("kind", "reason", "example", "tests")}, "buckets": buckets_out})

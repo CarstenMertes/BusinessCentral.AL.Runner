@@ -1,7 +1,7 @@
 //! Test data from a database file (ADR-020 point 3): the capability a host gives the runtime to
 //! read the rows of one table of a restored company, and the counts of what a run took from it.
 //!
-//! The core never sees a file. A host (`alrunner`) implements [`TableProvider`] over a BC database
+//! The core never sees a file. A host (`al-runner`) implements [`TableProvider`] over a BC database
 //! backup; the runtime asks it for a table the first time a session touches that table. The
 //! provider answers in plain typed cells under the table's SQL column names. Mapping those names
 //! to the fields of the compiled program is the runtime's job (the program is the schema, never a

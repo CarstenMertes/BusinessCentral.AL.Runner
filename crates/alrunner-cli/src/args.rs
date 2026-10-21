@@ -1,4 +1,4 @@
-//! The command line of `alrunner` (ADR-016 section 2): parsing and the help text.
+//! The command line of `al-runner` (ADR-016 section 2): parsing and the help text.
 
 use std::path::PathBuf;
 
@@ -7,33 +7,35 @@ use std::path::PathBuf;
 pub enum Command {
     Help,
     Version,
-    /// `alrunner --list-assumptions`: the registry of unprobed assumptions with the counts of the last run.
+    /// `al-runner --list-assumptions`: the registry of unprobed assumptions with the counts of the last run.
     ListAssumptions(Option<PathBuf>),
     Test(Box<TestArgs>),
-    /// `alrunner serve`: the options every request's `alrunner test` run gets (ADR-028).
+    /// `al-runner serve`: the options every request's `al-runner test` run gets (ADR-028).
     Serve(Vec<String>),
-    /// `alrunner warm`: find (or download) the demo backup and build its index.
+    /// `al-runner warm`: find (or download) the demo backup and build its index.
     Warm(Box<TestArgs>),
-    /// `alrunner cache clear [--cache-dir DIR]`: remove every entry of the compile cache.
+    /// `al-runner cache clear [--cache-dir DIR]`: remove every entry of the compile cache.
     CacheClear(Option<PathBuf>),
-    /// `alrunner cache prune [--dry-run] [--all-other-builds] [--cache-dir DIR]`.
+    /// `al-runner cache prune [--dry-run] [--all-other-builds] [--cache-dir DIR]`.
     CachePrune {
         dir: Option<PathBuf>,
         dry_run: bool,
         all_other_builds: bool,
     },
-    /// `alrunner cache info [--cache-dir DIR]`.
+    /// `al-runner cache info [--cache-dir DIR]`.
     CacheInfo(Option<PathBuf>),
-    /// `alrunner impact-index build APP... [OPTIONS]` (ADR-043 step 2): run the tests of the APPs once and keep, per
+    /// `al-runner cache --help`: the cache part of the help.
+    CacheHelp,
+    /// `al-runner impact-index build APP... [OPTIONS]` (ADR-043 step 2): run the tests of the APPs once and keep, per
     /// test, what it raised and touched, for the impact runs that follow.
     ImpactIndexBuild(Box<TestArgs>),
-    /// `alrunner impact-index check-static APP... [OPTIONS]` (ADR-043 step 5): check that static reach covers every key
+    /// `al-runner impact-index check-static APP... [OPTIONS]` (ADR-043 step 5): check that static reach covers every key
     /// each test recorded in the cached index (a key it misses is a bug in static reach), and say how much more static
     /// reach selects.
     ImpactIndexCheckStatic(Box<TestArgs>),
 }
 
-/// `alrunner test`.
+/// `al-runner test`.
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct TestArgs {
     /// The apps whose tests run: an app folder (with `app.json`), a `*.Source.zip` or an `.app`.
@@ -87,7 +89,7 @@ pub struct TestArgs {
     /// `--refusal-detail TEXT`: the reasons that contain TEXT, grouped finer than `--top-refusals`.
     pub refusal_detail: Option<String>,
     pub allow_not_run: bool,
-    /// Not a command line option: `alrunner serve`'s `execute` runs the `OnRun` trigger of one codeunit per app
+    /// Not a command line option: `al-runner serve`'s `execute` runs the `OnRun` trigger of one codeunit per app
     /// instead of the tests.
     pub execute: bool,
     /// Not a command line option: `captureValues` and `iterationTracking` of a server request.
@@ -175,14 +177,16 @@ fn is_backup(v: &str) -> bool {
 pub const DEFAULT_TOP: usize = 10;
 
 pub const HELP: &str = "\
-alrunner: run AL tests without a service tier (AL Runner v3, preview)
+al-runner: run AL tests without a service tier (AL Runner, alpha)
 
 USAGE
-    alrunner test [OPTIONS] APP...
-    alrunner serve [--protocol 2] [OPTIONS]
-    alrunner impact-index build|check-static [OPTIONS] APP...
-    alrunner cache clear|prune|info [--cache-dir DIR]
-    alrunner --version | --help
+    al-runner test [OPTIONS] APP...
+    al-runner serve [--protocol 2] [OPTIONS]
+    al-runner impact-index build|check-static [OPTIONS] APP...
+    al-runner cache clear|prune|info [--cache-dir DIR]
+    al-runner warm [PATH.bak] [OPTIONS]
+    al-runner --list-assumptions [--cache-dir DIR]
+    al-runner --version | --help
 
 APP is an app folder (with app.json), a source archive (`Tests-SMB.Source.zip`) or an `.app`
 that carries its source. Every `Subtype = Test` codeunit of every APP runs, each in its own
@@ -209,12 +213,19 @@ DEPENDENCIES
     A build named exactly (four numbers) that is in ~/.bcartifacts.cache/sandbox is read from
     there, without the feed; any matching build there is the fallback when the feed has none or
     is offline.
-    --cache-dir DIR      Where downloaded artifacts are kept (else $ALRUNNER_CACHE).
+    Without --bc-version, the build of the run is, in this order: the build of the tests when
+    they are Microsoft's; the build of the Microsoft packages in the project's package folders
+    (.alpackages, --dep, --package-cache) when it is of the target BC major and not below the
+    application and platform versions of app.json; else the newest published build of the
+    target major at or above those versions. The target major is that of app.json's application
+    version, else the newest BC major the runtime is verified against. --verbose prints the rule.
+    --cache-dir DIR      Where downloaded artifacts and the compile cache are kept. Else
+                         $ALRUNNER_CACHE, else $XDG_CACHE_HOME/al-runtime, else ~/.cache/al-runtime.
 
 COMPILE CACHE
     The Microsoft apps and the other dependency apps are compiled completely once, and the result
     is kept in <cache dir>/compile/ (about 20 MB per set of apps). Later runs with the same apps,
-    versions, sources, target and the same alrunner build load it instead of compiling them.
+    versions, sources, target and the same al-runner build load it instead of compiling them.
     The first run of a new set pays for the build (about 10 s for Business Central).
     --no-compile-cache   Compile the dependency apps on every run, only what the tests reach.
                          Same as ALRUNNER_NO_COMPILE_CACHE=1.
@@ -224,26 +235,33 @@ COMPILE CACHE
                          sources, the install baseline). Entries of other app sets stay.
     The cache also holds the install baseline: what the install code of the dependency apps and
     Company-Initialize leave in the database, with the demo data if the run has it. It is kept
-    under a key of the alrunner build, the dependency apps, the app's sources, the BC target, the
+    under a key of the al-runner build, the dependency apps, the app's sources, the BC target, the
     environment, the demo backup and the day, and a run that finds it starts its clock at the
     instant the run that made it began.
-    Old entries go by themselves: at the end of `alrunner test`, at most once a day and for at most
-    200 ms, the folder is cleaned of entries of other alrunner builds unused for 7 days, entries of
+    Old entries go by themselves: at the end of `al-runner test`, at most once a day and for at most
+    200 ms, the folder is cleaned of entries of other al-runner builds unused for 7 days, entries of
     any build unused for 30 days, and leftover temporary files older than a day. A cache hit
     renews the entry. ALRUNNER_NO_CACHE_PRUNE=1 turns this off.
-    alrunner cache prune [--dry-run] [--all-other-builds] [--cache-dir DIR]
+    al-runner cache prune [--dry-run] [--all-other-builds] [--cache-dir DIR]
                          Run that cleanup now and print how many files and bytes went (--dry-run:
                          only print). --all-other-builds also removes entries of other builds that
                          are younger than 7 days.
-    alrunner cache info [--cache-dir DIR]
-                         Print the entries, their size, and the split by alrunner build.
-    alrunner cache clear [--cache-dir DIR]
+    al-runner cache info [--cache-dir DIR]
+                         Print the entries, their size, and the split by al-runner build.
+    al-runner cache clear [--cache-dir DIR]
                          Remove every entry of the compile cache (<cache dir>/compile/): use it
                          when a cached result is in doubt. The next run builds what it needs.
 
 SELECTION (a test is selected when any option matches it)
     --codeunit ID        A test codeunit by object id. Repeatable.
-    --filter TEXT        Tests whose name contains TEXT, any case. Repeatable.
+    --filter TEXT        (`--test TEXT` is the same) Tests whose name contains TEXT, any case.
+                         TEXT with a dot (`Codeunit50100.Foo`) is matched against
+                         `Codeunit<ID>.<Method>`, TEXT without a dot against the method name.
+                         Repeatable.
+    --test-exact NAME    The test whose method name or `Codeunit<ID>.<Method>` is exactly NAME
+                         (any case). Repeatable.
+    --exclude-test TEXT  Leave out the tests TEXT matches (matched like --filter). Wins over
+                         every selecting option. Repeatable.
     --explain TEST       Run one test (its name, or a part of it that only one test has) and print
                          its outcome and, for a failure or a refusal, the routines and source
                          lines it left from. Selects that test like --filter.
@@ -257,12 +275,12 @@ OUTPUT
     line. A warning that changes how to read the result is one short line, only
     when it applies (for example: baseline incomplete, 16 of 17 install roots ran to their end).
     Errors go to stderr. --junit also holds the stack as the text of each <failure>.
-    --verbose            Everything else: first the setup (dependency notes, target, apps, build
+    --verbose, -v        Everything else: first the setup (dependency notes, target, apps, build
                          chosen by, dependencies, threads, isolation, server address, test data,
                          baseline details), then one line per test (PASS, FAIL, NOT RUN with its
                          reason) with its run time in ms, the test data rows line and the full Time
                          line (it replaces the short time line). There is one level.
-    --quiet              Summary only.
+    --quiet, -q          Summary only.
     --color auto|always|never
                          Color the report: PASS green, FAIL red, NOT RUN yellow, flagged cyan,
                          headings bold. auto (default): only when stdout is a terminal and
@@ -333,19 +351,19 @@ IMPACT (ADR-043)
                          or is a selection miss and not accepted; 2 for bad options or an unreadable
                          accept file; 6 when a side selected no test. Tests not run on a side do not
                          give 7 or 8: they are the class not verified.
-    alrunner impact-index build [OPTIONS] APP...
+    al-runner impact-index build [OPTIONS] APP...
                          Run the tests of the APPs once (the same options as `test`, without
                          --impact-of) and keep in the cache, per test, the events it raised and the
                          tables, pages and reports it used. An impact run with the same APPs and
                          options reads it. Never built implicitly.
-    alrunner impact-index check-static [OPTIONS] APP...
+    al-runner impact-index check-static [OPTIONS] APP...
                          Check that static reach covers everything each test recorded in the cached
                          index of the same APPs and options (exit 1 on a miss), and how much more
                          static reach selects.
 
 ISOLATION
-    --isolation MODE     `codeunit` (default): the database is rolled back when a test codeunit ends.
-                         `test` (also `function`, `method`): it is rolled back to its state after OnRun
+    --isolation MODE     (`--test-isolation MODE` is the same) `codeunit` (default): the database
+                         is rolled back when a test codeunit ends. `test` (also `function`, `method`): it is rolled back to its state after OnRun
                          after every test method; the codeunit's AL variables are kept, as BC's
                          TestIsolation = Function does. `disabled`: not pinned, so every test is
                          reported as not run.
@@ -359,20 +377,29 @@ EXIT CODES
     8  some tests were not run because the .NET helper could not be used (not found, no .NET 8
        runtime): a problem of the machine; --allow-not-run makes this 0
     Order when several apply: 2, 6, 1, 8, 7.
+    --allow-not-run      Return 0 instead of 7 or 8.
 
 SERVE
-    alrunner serve       AL Runner v2's server protocol (ALchemist, LethAL): one JSON object per line on
-                         stdin, answers on stdout (a ready line first), logs on stderr. Commands:
-                         runTests, cancel, shutdown (execute: later). Each runTests request runs
-                         `alrunner test` as a child process, so nothing is kept between requests.
-                         The options are those of `test` that do not depend on a request (--package-cache,
-                         --define, --test-timeout, --bc-version, --cache-dir, --no-download, --dep, ...);
-                         the request carries sourcePaths, packagePaths, coverage, perTestCoverage, test,
-                         excludeTests, testIsolation. See docs/adr/028-alrunner-serve.md.
+    al-runner serve      AL Runner v2's server protocol (ALchemist, LethAL): one JSON object per line on
+                         stdin, answers on stdout (the first line is {\"ready\":true}), logs on stderr.
+                         Commands: runTests, execute, cancel, shutdown. Requests run in this process,
+                         one at a time: the compile of the last request is kept, so a request with
+                         the same sources and test codeunits reuses it (`cached`), and one that only
+                         changes routine code compiles just those objects again (`incremental`).
+                         Every request starts from the same database. runTests writes one `test` line
+                         per test as it finishes, then a `summary`; execute runs one OnRun trigger per
+                         app, or inline `code`, and answers with one line. cancel is answered at once
+                         and stops the run after the current test; shutdown stops a run the same way
+                         and exits. The start options are those of `test` that do not depend on a
+                         request (--package-cache, --dep, --define, --test-timeout, --bc-version,
+                         --cache-dir, --no-download, --test-data, ...); --recipe and --impact-of are
+                         refused. A runTests request carries
+                         sourcePaths, packagePaths, test, excludeTests, testIsolation, coverage,
+                         perTestCoverage, captureValues, iterationTracking, announceStart, serverUrl.
+                         Fields and answers: docs/integrations/migrating-tools-to-v3.md, section 4b.
 
 WARM
-    alrunner cache clear [--cache-dir DIR]
-    alrunner warm [PATH.bak] [--bc-version BUILD] [--country CODE] [--cache-dir DIR] [--no-download]
+    al-runner warm [PATH.bak] [--bc-version BUILD] [--country CODE] [--cache-dir DIR] [--no-download]
                   [--test-data-company NAME]
         Finds the demo backup the way `test` does (downloading it if need be), opens it and
         keeps its page map and catalog in the cache. The first open of a backup verifies the
@@ -447,6 +474,13 @@ OTHER
     --dotnet-timeout-secs N, --require-dotnet     The optional .NET helper (ADR-014).
 
 ENVIRONMENT
+    ALRUNNER_CACHE       The cache folder when --cache-dir is not given.
+    ALRUNNER_SERVER_URL  The address --server-url sets, when it is not given.
+    ALRUNNER_NO_COMPILE_CACHE=1, ALRUNNER_NO_CACHE_PRUNE=1  See COMPILE CACHE.
+    ALRUNNER_BCAPPS_URL  The address --recipe fetches BCApps from.
+    ALRUNNER_NO_PATH_NOTE=1  No note about another al-runner on PATH (AL Runner v2's dotnet tool has
+                         the same name), and no list of them under --version.
+    NO_COLOR             No color with --color auto.
     ALRUNNER_TEST_TIMEOUT, AL_RUNNER_TEST_TIMEOUT_SEC  The test time limit in seconds when
     --test-timeout-secs is not given (the second is AL Runner v2's name).
     AL_CHECK_THREADS, AL_LOWER_THREADS, AL_TEST_THREADS  Worker threads of the check, the
@@ -457,26 +491,35 @@ fn number(flag: &str, v: &str) -> Result<usize, String> {
     v.parse().map_err(|_| format!("{flag} needs a number, got `{v}`"))
 }
 
-/// `alrunner cache clear|prune|info`.
+/// The COMPILE CACHE section of the help: what `al-runner cache --help` prints.
+pub fn cache_help() -> &'static str {
+    let start = HELP.find("COMPILE CACHE\n").unwrap_or(0);
+    let end = HELP[start..].find("\n\n").map_or(HELP.len(), |e| start + e + 1);
+    &HELP[start..end]
+}
+
+/// `al-runner cache clear|prune|info`.
 fn parse_cache(mut it: impl Iterator<Item = String>) -> Result<Command, String> {
     let sub = match it.next().as_deref() {
+        Some("--help" | "-h") => return Ok(Command::CacheHelp),
         Some(s @ ("clear" | "prune" | "info")) => s.to_string(),
         Some(other) => {
             return Err(format!(
-                "unknown cache command `{other}` (use `alrunner cache clear`, `prune` or `info`)"
+                "unknown cache command `{other}` (use `al-runner cache clear`, `prune` or `info`)"
             ));
         }
-        None => return Err("alrunner cache needs a command: `clear`, `prune` or `info`".into()),
+        None => return Err("al-runner cache needs a command: `clear`, `prune` or `info`".into()),
     };
     let (mut dir, mut dry_run, mut all_other_builds) = (None, false, false);
     while let Some(f) = it.next() {
         match f.as_str() {
+            "--help" | "-h" => return Ok(Command::CacheHelp),
             "--cache-dir" => dir = Some(it.next().ok_or("--cache-dir needs a value")?.into()),
             "--dry-run" if sub == "prune" => dry_run = true,
             "--all-other-builds" if sub == "prune" => all_other_builds = true,
             other => {
                 return Err(format!(
-                    "unknown option `{other}` for `alrunner cache {sub}` (see --help)"
+                    "unknown option `{other}` for `al-runner cache {sub}` (see --help)"
                 ));
             }
         }
@@ -492,7 +535,7 @@ fn parse_cache(mut it: impl Iterator<Item = String>) -> Result<Command, String> 
     })
 }
 
-/// `alrunner warm [PATH.bak] [--bc-version V] [--country CODE] [--cache-dir DIR] [--no-download] [--test-data-company NAME]`.
+/// `al-runner warm [PATH.bak] [--bc-version V] [--country CODE] [--cache-dir DIR] [--no-download] [--test-data-company NAME]`.
 fn parse_warm(mut it: impl Iterator<Item = String>) -> Result<Command, String> {
     let mut a = TestArgs {
         test_data: true,
@@ -510,18 +553,18 @@ fn parse_warm(mut it: impl Iterator<Item = String>) -> Result<Command, String> {
             f if !f.starts_with("--") && is_backup(f) => a.test_data_path = Some(PathBuf::from(f)),
             f => {
                 return Err(format!(
-                    "unknown option or argument `{f}` for `alrunner warm` (see --help)"
+                    "unknown option or argument `{f}` for `al-runner warm` (see --help)"
                 ));
             }
         }
     }
     if a.test_data_path.is_none() && a.bc_version.is_none() {
-        return Err("alrunner warm needs a backup (PATH.bak) or a build (--bc-version BUILD)".into());
+        return Err("al-runner warm needs a backup (PATH.bak) or a build (--bc-version BUILD)".into());
     }
     Ok(Command::Warm(Box::new(a)))
 }
 
-/// `alrunner serve [--protocol 2] [OPTIONS]`: the options are those of `alrunner test` that do not depend on a request;
+/// `al-runner serve [--protocol 2] [OPTIONS]`: the options are those of `al-runner test` that do not depend on a request;
 /// they are checked with its parser and handed to every run.
 fn parse_serve(args: Vec<String>) -> Result<Command, String> {
     let mut daemon = Vec::new();
@@ -545,7 +588,7 @@ fn parse_serve(args: Vec<String>) -> Result<Command, String> {
     let mut probe = vec!["test".to_string(), "APP".to_string()];
     probe.extend(daemon.iter().cloned());
     let Command::Test(t) = parse(probe)? else {
-        return Err("alrunner serve: options of `alrunner test` only".into());
+        return Err("al-runner serve: options of `al-runner test` only".into());
     };
     let t = *t;
     if t.apps.len() != 1
@@ -559,7 +602,20 @@ fn parse_serve(args: Vec<String>) -> Result<Command, String> {
         || t.explain.is_some()
         || t.isolation.is_some()
     {
-        return Err("alrunner serve takes only the options that do not depend on a request: --package-cache, --dep, --define, --preprocessor-symbols, --test-timeout, --bc-version, --cache-dir, --no-download, --test-data and the like; the rest comes in each `runTests` request".into());
+        return Err("al-runner serve takes only the options that do not depend on a request: --package-cache, --dep, --define, --preprocessor-symbols, --test-timeout, --bc-version, --cache-dir, --no-download, --test-data and the like; the rest comes in each `runTests` request".into());
+    }
+    // Hard rule 4: every request is one plain test run (`run::test_with`). A recipe run (one run per lane) and an
+    // impact run (a run without and one with the extensions) are other kinds of run, so they are refused here, not
+    // ignored by every request.
+    for (set, flag) in [
+        (t.recipe, "--recipe microsoft"),
+        (!t.impact_of.is_empty(), "--impact-of"),
+    ] {
+        if set {
+            return Err(format!(
+                "al-runner serve cannot be combined with {flag}: a request runs the tests once, the plain way; use `al-runner test {flag} ...`"
+            ));
+        }
     }
     Ok(Command::Serve(daemon))
 }
@@ -594,7 +650,7 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Command, String> 
             }
             other => {
                 return Err(format!(
-                    "`alrunner impact-index` needs `build` or `check-static`, got `{}`",
+                    "`al-runner impact-index` needs `build` or `check-static`, got `{}`",
                     other.unwrap_or_default()
                 ));
             }
@@ -604,7 +660,7 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Command, String> 
         "serve" => return parse_serve(it.collect()),
         "run" | "debug" | "deps" | "package" | "helper" | "doctor" | "migrate" | "guide" => {
             return Err(format!(
-                "`alrunner {first}` is not implemented yet (ADR-016 lists it for a later step); only `alrunner test` exists"
+                "`al-runner {first}` is not implemented yet (ADR-016 lists it for a later step); see --help for the commands that exist"
             ));
         }
         other => return Err(format!("unknown command `{other}` (see --help)")),
@@ -810,7 +866,7 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Command, String> 
         }
     }
     if a.apps.is_empty() {
-        return Err("alrunner test needs at least one APP (an app folder or a *.Source.zip)".into());
+        return Err("al-runner test needs at least one APP (an app folder or a *.Source.zip)".into());
     }
     if a.rebuild_compile_cache && a.no_compile_cache {
         return Err("--rebuild-compile-cache and --no-compile-cache cannot be combined".into());
@@ -863,10 +919,10 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Command, String> 
     }
     if index_build {
         if !a.impact_of.is_empty() || a.impact.is_some() || a.impact_accept.is_some() || a.impact_json.is_some() {
-            return Err("alrunner impact-index build runs the tests without any extension: --impact-of, --impact, --impact-accept and --impact-json do not apply".into());
+            return Err("al-runner impact-index build runs the tests without any extension: --impact-of, --impact, --impact-accept and --impact-json do not apply".into());
         }
         if a.no_compile_cache {
-            return Err("alrunner impact-index build cannot be combined with --no-compile-cache: impact runs compile the dependency apps completely from the compile cache, and so must the index's run (ADR-043 section 2.2)".into());
+            return Err("al-runner impact-index build cannot be combined with --no-compile-cache: impact runs compile the dependency apps completely from the compile cache, and so must the index's run (ADR-043 section 2.2)".into());
         }
         for (set, flag) in [
             (a.explain.is_some(), "--explain"),
@@ -875,7 +931,7 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Command, String> 
             (a.recipe, "--recipe microsoft"),
         ] {
             if set {
-                return Err(format!("alrunner impact-index build cannot be combined with {flag}"));
+                return Err(format!("al-runner impact-index build cannot be combined with {flag}"));
             }
         }
         return Ok(if check_static {
@@ -978,6 +1034,9 @@ mod tests {
             }
         );
         assert_eq!(p("cache info").unwrap(), Command::CacheInfo(None));
+        assert_eq!(p("cache --help").unwrap(), Command::CacheHelp);
+        assert_eq!(p("cache prune --help").unwrap(), Command::CacheHelp);
+        assert!(cache_help().starts_with("COMPILE CACHE") && cache_help().contains("al-runner cache clear"));
         assert!(p("cache info --dry-run").is_err(), "--dry-run belongs to prune");
         assert!(p("cache wipe").unwrap_err().contains("wipe"));
         assert!(p("cache clear --all").unwrap_err().contains("--all"));
@@ -1049,7 +1108,7 @@ mod tests {
 
     #[test]
     fn the_help_documents_the_flush_and_the_rebuild_and_the_baseline_entry() {
-        for needle in ["alrunner cache clear", "--rebuild-compile-cache", "install baseline"] {
+        for needle in ["al-runner cache clear", "--rebuild-compile-cache", "install baseline"] {
             assert!(HELP.contains(needle), "{needle}");
         }
     }
@@ -1122,6 +1181,12 @@ mod tests {
         assert!(p("serve --test Codeunit1.X").unwrap_err().contains("do not depend"));
         assert!(p("serve --coverage").unwrap_err().contains("do not depend"));
         assert!(p("serve OtherApp").unwrap_err().contains("do not depend"));
+        // Hard rule 4: a request runs one plain test run, so the options that make a run of another kind are refused at
+        // the start, not ignored by every request.
+        let e = p("serve --recipe microsoft").unwrap_err();
+        assert!(e.contains("--recipe microsoft") && e.contains("serve"), "{e}");
+        let e = p("serve --impact-of ext").unwrap_err();
+        assert!(e.contains("--impact-of") && e.contains("serve"), "{e}");
     }
 
     #[test]

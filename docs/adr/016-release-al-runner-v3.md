@@ -677,6 +677,28 @@ to the newest main commit with green CI on a push (never a force push), and call
 It pushes with GITHUB_TOKEN, so CI does not run twice on the same commit. A person's push to `release` works
 as before. Named alphas stay manual.
 
+### Owner decision (2026-10-21): the binary is `al-runner`
+
+- The binary `alrunner` becomes `al-runner`: the Cargo bin name, the `--version` line
+  (`al-runner 3.x (commit)`), the release archives (`al-runner-<label>-<target>`), the installers and
+  the help text. Earlier text in this ADR and in other ADRs keeps the old name as written.
+- Kept: the crate name `alrunner-cli`, the `ALRUNNER_*` environment variables (owner undecided), the
+  cache folders, the Windows install folder `%LOCALAPPDATA%\alrunner\bin` (so a `PATH` entry made for an
+  earlier alpha keeps working), and file names such as `028-alrunner-serve.md`.
+- The installers still install a release from before the rename under its old name, and point out a
+  leftover `alrunner` in the install folder.
+- **The v2 `PATH` clash** (decided without owner review, 2026-10-21; tooling only, so ADR-009 allows it).
+  AL Runner v2's dotnet tool is also called `al-runner`. v3 can only notice the clash when it runs:
+  - Each command except `serve`, `--help` and `--version` looks for other files named `al-runner` or
+    `al-runner.exe` on `PATH` and in `~/.dotnet/tools`. It skips itself (canonical path) and links to a
+    program of another name (a version manager's shim). If it finds one, it prints one line to stderr,
+    at most once a day (stamp file `path-note.stamp` in the cache folder). Never on stdout.
+  - `al-runner --version` prints its line, then `also on PATH: <path>: <first line of its --version>` for
+    each other copy, waiting at most 2 seconds for each.
+  - `ALRUNNER_NO_PATH_NOTE=1` turns both off (the `--version` list sets it for the copies it runs).
+  - `install.sh` and `install.ps1` print the same advice when v2 is in `~/.dotnet/tools`, and say which
+    `PATH` order to use when v2's folder comes first.
+
 ## Rejected options
 
 - **Keep `al-test-cli` as the user tool.** It is the oracle harness; its flags and

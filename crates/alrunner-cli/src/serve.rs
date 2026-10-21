@@ -1,4 +1,4 @@
-//! `alrunner serve` (ADR-028): the v2 server protocol on stdin and stdout, in this process. The compile of the
+//! `al-runner serve` (ADR-028): the v2 server protocol on stdin and stdout, in this process. The compile of the
 //! last request is kept (`WarmCtx`), a test line is written as each test finishes, and `cancel` stops the run after the
 //! current test.
 
@@ -37,6 +37,7 @@ const EXECUTE_FIELDS: &[&str] = &[
     "coverage",
     "perTestCoverage",
     "testIsolation",
+    "announceStart",
 ];
 /// Fields v2 knows and v3 defers (ADR-016).
 const DEFERRED: &[&str] = &["affectedOnly", "includeFailing", "strictEnvironment", "tdd"];
@@ -171,13 +172,13 @@ pub fn serve(daemon: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-/// The `alrunner test` options of the daemon, as the template of every request's.
+/// The `al-runner test` options of the daemon, as the template of every request's.
 fn daemon_args(daemon: &[String]) -> Result<TestArgs, String> {
     let mut probe = vec!["test".to_string(), "APP".to_string()];
     probe.extend(daemon.iter().cloned());
     match crate::args::parse(probe)? {
         Command::Test(t) => Ok(*t),
-        _ => Err("alrunner serve: options of `alrunner test` only".into()),
+        _ => Err("al-runner serve: options of `al-runner test` only".into()),
     }
 }
 
@@ -204,7 +205,7 @@ fn flag(fields: &Map<String, Value>, name: &str) -> Result<bool, String> {
     }
 }
 
-/// The `alrunner test` arguments for a request, and the warnings the request earns.
+/// The `al-runner test` arguments for a request, and the warnings the request earns.
 fn request_args(base: &TestArgs, fields: &Map<String, Value>) -> Result<(TestArgs, Vec<String>), String> {
     let mut warnings = Vec::new();
     for key in fields.keys() {
@@ -293,6 +294,11 @@ fn run_tests(base: &TestArgs, fields: &Map<String, Value>, ctx: &mut WarmCtx, fl
                 return error("the run produced no report");
             };
             let doc = &report.doc;
+            // ADR-028 item 7: a cancelled run (also one that `shutdown` or the end of input stopped) has exit code
+            // 130, as in v2, whatever the tests that ran came to.
+            let code = if cancelled { 130 } else { code };
+            let mut warnings = warnings;
+            warnings.extend(report.warnings.iter().cloned());
             let mut summary = json!({
                 "type": "summary",
                 "exitCode": code,
@@ -370,7 +376,7 @@ fn is_object_declaration(code: &str) -> bool {
 /// Microsoft's apps in sight the app has no dependencies (it runs at once); with `--bc-version`, `--dep`,
 /// `--package-cache` or `packagePaths` it is built for that BC version and sees the Base Application.
 fn inline_app(code: &str, with_microsoft: bool, bc_version: Option<&str>) -> Result<PathBuf, String> {
-    let dir = std::env::temp_dir().join(format!("alrunner-execute-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("al-runner-execute-{}", std::process::id()));
     std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     let mut app = json!({
         "id": "6f3f1a4e-3d52-4c1e-9d4b-0a1c2e3f4a5b",

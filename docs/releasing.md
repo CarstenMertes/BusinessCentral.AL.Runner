@@ -1,6 +1,6 @@
 # Releasing
 
-How `alrunner` builds reach testers (ADR-016, "Owner decision (2026-10-15): alpha").
+How `al-runner` builds reach testers (ADR-016, "Owner decision (2026-10-15): alpha").
 Development stays on `main`. The branch `release` marks what testers get.
 
 Rules:
@@ -18,9 +18,9 @@ Rules:
   `release-tag.yml` creates a normal GitHub release (not a draft, not a
   pre-release), marked "latest". mise's github backend lists only such
   releases, so `mise up` finds them (owner decision 2026-10-20).
-- `alrunner --version` tells them apart. Edge shows the build date:
-  `alrunner 3.0.0-alpha.2+edge.20261021 (c26a65651)`. A numbered alpha and a
-  local build show `alrunner 3.0.0-alpha.2 (c26a65651)`.
+- `al-runner --version` tells them apart. Edge shows the build date:
+  `al-runner 3.0.0-alpha.2+edge.20261021 (c26a65651)`. A numbered alpha and a
+  local build show `al-runner 3.0.0-alpha.2 (c26a65651)`.
 - Nothing from Microsoft goes into any archive.
 
 ## 1. A new edge build
@@ -45,9 +45,9 @@ from the Actions tab (workflow_dispatch), or push `release` by hand:
 5. `git push origin v3.0.0-alpha.2`
 6. The Release workflow (`release-tag.yml`) checks that the tag equals the crate
    version and that the commit is on `release`. It runs the CI checks, builds,
-   smoke tests and attests the archives, and checks that `alrunner --version`
+   smoke tests and attests the archives, and checks that `al-runner --version`
    prints the tag's version. Then it publishes the release with the archives
-   (`alrunner-<version>-<target>.tar.xz` or `.zip`), `SHA256SUMS`, `install.sh`
+   (`al-runner-<version>-<target>.tar.xz` or `.zip`), `SHA256SUMS`, `install.sh`
    and `install.ps1`. The notes are a short fixed text plus the commit list.
 7. Check: `mise ls-remote github:aldevtools/BusinessCentral.AL.Runner` lists the version.
 

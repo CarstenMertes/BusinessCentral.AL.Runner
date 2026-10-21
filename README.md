@@ -1,19 +1,58 @@
-# al-runtime-rs
+# BusinessCentral.AL.Runner
 
-A Rust-native runtime for AL, the Business Central language. It parses and
-checks AL source with its own front end and runs it in its own VM against an
-in-memory database. It needs no BC service tier, no Microsoft DLLs and no .NET.
-AL code that uses the `DotNet` type calls an optional .NET helper process
-(see "DotNet" below).
+Run Business Central AL tests without a BC service tier, without Docker, without SQL Server
+and without a BC license.
 
-It is a Rust rewrite of the ideas behind
-[BusinessCentral.AL.Runner](https://github.com/aldevtools/BusinessCentral.AL.Runner/tree/v2).
-That C# runner executes Microsoft's compiled code; this runtime compiles and
-runs AL source itself. The original spike brief and report are in `docs/history/`.
+> **AL Runner v3 replaces v2.** This repository now holds AL Runner v3, written in Rust.
+> AL Runner v2 (C#) is frozen on the [`v2` branch](https://github.com/aldevtools/BusinessCentral.AL.Runner/tree/v2).
+> Its dotnet tool [`MSDyn365BC.AL.Runner`](https://www.nuget.org/packages/MSDyn365BC.AL.Runner)
+> stays on NuGet, and the versions published there keep working. If you maintain a tool that
+> calls AL Runner, see [Migrating tools from AL Runner v2 to v3](docs/integrations/migrating-tools-to-v3.md).
+>
+> v3 was developed in the repository `StefanMaron/al-runtime-rs`, now archived. Issue and pull
+> request numbers below about 5570 in the commit history and in older documents refer to that
+> repository.
+
+## What it is
+
+AL Runner is a standalone test runner for Business Central AL code. You point it at your app
+and its test app, and it runs the test codeunits and reports each test as passed, failed or
+not run.
+
+v3 parses and checks AL source with its own front end and runs it in its own VM against an
+in-memory database. It needs no BC service tier, no Microsoft DLLs and no .NET. AL code that
+uses the `DotNet` type calls an optional .NET helper process (see "DotNet" below). Microsoft's
+apps (System Application, Base Application, the test libraries) are compiled from their own
+source, so your tests run against Microsoft's real AL code, not against stubs.
+
+It is meant for AL developers who want quick test results on their own machine or in a pull
+request build, before the full BC pipeline runs. The full pipeline with a service tier stays
+the final check; AL Runner does not replace it. v3 is an alpha: many tests are still refused,
+so do not gate a pipeline on it yet (see "Try the alpha").
+
+What it does not do is just as important. A feature AL Runner does not support is refused:
+the test is reported as "not run", with the reason. It never returns a guessed default
+instead. See "Can I trust the results?" and "What AL Runner v3 does not do" below.
+
+The goal is the whole AL language. How much of it runs today is in "Status" below and in
+`docs/status.md`.
+
+### Two commands named `al-runner`
+
+The v2 dotnet tool also installs a command named `al-runner`. If both are installed, two
+commands with that name are on your `PATH`, and the one found first runs. v3 prints a one-line
+note on stderr when it finds the v2 tool (at most once a day; the note can be turned off), and
+`al-runner --version` lists the other copies it finds. To avoid the clash, uninstall the
+dotnet tool:
+
+```
+dotnet tool uninstall -g MSDyn365BC.AL.Runner
+```
+
 
 ## Install
 
-`alrunner` is built for Linux x64, Windows x64 and macOS arm64.
+`al-runner` is built for Linux x64, Windows x64 and macOS arm64.
 
 **With mise (recommended).** [mise](https://mise.jdx.dev) installs the binary from the GitHub
 releases of this repository and keeps it up to date.
@@ -58,7 +97,7 @@ unsigned binaries is in "Try the alpha" below.
 
 ## Getting started with your own project
 
-`alrunner` runs the tests of your AL app without a Business Central service tier. It is an
+`al-runner` runs the tests of your AL app without a Business Central service tier. It is an
 alpha: many tests are refused ("not run", see below) and results may change between builds.
 Do not gate a pipeline on it yet.
 
@@ -67,13 +106,13 @@ Do not gate a pipeline on it yet.
 **2. Run your tests.** Pass the app and its test app:
 
 ```
-alrunner test ./MyApp ./MyApp.Test
+al-runner test ./MyApp ./MyApp.Test
 ```
 
 Every test codeunit runs in its own session. Your apps are compiled on each run. Each app
 must carry its AL source.
 
-**3. Dependencies.** For the apps you name, `alrunner` looks for the apps they depend on
+**3. Dependencies.** For the apps you name, `al-runner` looks for the apps they depend on
 (`app.json`) in this order:
 
 1. `--dep PATH`: a package file (`.app` or `*.Source.zip`), an app folder or a folder of
@@ -88,7 +127,7 @@ cannot be used, and tests that reach it are not run (the message names the app).
 Downloads are kept in a cache folder: `--cache-dir DIR`, or `$ALRUNNER_CACHE`.
 
 **4. Choose the BC version.** `--bc-version V` takes a major (`28`), a major and minor
-(`28.5`) or an exact build (four numbers). Without it, `alrunner` uses these in order: the
+(`28.5`) or an exact build (four numbers). Without it, `al-runner` uses these in order: the
 build of the Microsoft packages in your `.alpackages` (if it is at or above the `application`
 and `platform` version in `app.json`), then the newest published build of the newest BC major
 the runtime is verified against (29). The corpus is checked against BC 27, 28 and 29.
@@ -113,7 +152,7 @@ Contoso company, and says so.
 
 **6. .NET is optional.** Nothing in the core needs .NET. AL code that uses the `DotNet` type
 is served by a .NET 8 helper process. A few common types (for example `StringBuilder`,
-`byte[]`, `Encoding`, SHA and MD5 hashes, Base64) run inside `alrunner` and need no helper
+`byte[]`, `Encoding`, SHA and MD5 hashes, Base64) run inside `al-runner` and need no helper
 (ADR-038). Tests that reach any other `DotNet` call need the .NET 8 SDK. The binary carries the
 helper sources and builds the helper into the cache on first use. Without .NET those tests are
 not run, with a reason, and the exit code is 8. `--require-dotnet` makes a missing helper an
@@ -125,7 +164,7 @@ that needs it takes longer (about 10 s for Business Central). The cache also hol
 the install code of Microsoft's apps leaves in the database. Entries nothing used for 30 days
 are removed.
 
-- `alrunner cache clear` removes every entry. Use it when a cached result is in doubt.
+- `al-runner cache clear` removes every entry. Use it when a cached result is in doubt.
 - `--rebuild-compile-cache` builds the entries this run needs again and overwrites them.
 - `--no-compile-cache` turns the cache off for one run.
 - `--require-compile-cache` fails when there is no usable entry. Use it in CI.
@@ -143,7 +182,7 @@ are removed.
 
 When several apply, the order is 2, 6, 1, 8, 7. `--allow-not-run` makes 7 and 8 return 0.
 
-**9. "Not run" and how to see why.** "Not run" means `alrunner` refused the test and gave a
+**9. "Not run" and how to see why.** "Not run" means `al-runner` refused the test and gave a
 reason, usually a feature that is missing. The test neither passed nor failed. Missing
 features are refused, not guessed. See "Can I trust the results?" below for what a pass,
 a failure and "not run" each mean.
@@ -166,7 +205,7 @@ a failure and "not run" each mean.
   test that did not run is `<skipped>` with its reason.
 
 **10. GitHub Actions.** A minimal job for a repository that holds `MyApp` and `MyApp.Test`.
-It uses only the install script and flags that `alrunner test --help` lists. This repository's
+It uses only the install script and flags that `al-runner test --help` lists. This repository's
 own CI does not run it.
 
 ```yaml
@@ -179,7 +218,7 @@ jobs:
       ALRUNNER_CACHE: ${{ github.workspace }}/.alrunner-cache
     steps:
       - uses: actions/checkout@v4
-      - name: Install alrunner
+      - name: Install al-runner
         run: |
           curl -fsSL https://github.com/aldevtools/BusinessCentral.AL.Runner/releases/download/edge/install.sh | sh -s -- edge
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
@@ -188,7 +227,7 @@ jobs:
           path: .alrunner-cache
           key: alrunner-${{ runner.os }}-${{ hashFiles('**/app.json') }}
       - name: Run tests
-        run: alrunner test ./MyApp ./MyApp.Test --junit test-results.xml --allow-not-run
+        run: al-runner test ./MyApp ./MyApp.Test --junit test-results.xml --allow-not-run
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -202,7 +241,7 @@ if the result must be repeatable.
 
 **11. Report a wrong result.** A test that passes or fails here and behaves differently on real
 Business Central is the most useful report. Open a GitHub issue with the "Alpha feedback"
-template. Include `alrunner --version`, the BC version, the test name, what you expected, and the
+template. Include `al-runner --version`, the BC version, the test name, what you expected, and the
 output of `--explain TEST`.
 
 ## Can I trust the results?
@@ -224,7 +263,7 @@ code as an unprobed assumption (`crates/al-builtins/src/assumptions.rs`; the lis
 - `--verbose` marks each such test `(flagged)`.
 - `--explain TEST` lists each assumption and the probe that would settle it.
 - `--junit FILE` lists the assumption ids in an `assumptions` property of the test case.
-- `--top-assumptions` ranks the assumptions of a run. `alrunner --list-assumptions` describes all of them.
+- `--top-assumptions` ranks the assumptions of a run. `al-runner --list-assumptions` describes all of them.
 
 **"Not run"** means the runtime refused the test and gave a reason. There are three kinds:
 
@@ -276,7 +315,7 @@ on missing setup data. The `Tests:` line says so.
 
 **Report a suspected false result.** Open an issue on this repository with the "Alpha
 feedback" template. Give the test name, the BC version, the result here, the result on real
-BC, `alrunner --version` and the output of `--explain TEST`.
+BC, `al-runner --version` and the output of `--explain TEST`.
 
 ## Why it is built on the language, not on BC's internals
 
@@ -332,7 +371,7 @@ other versions take them from the artifact of the matching build.
 
 Time: the command above, for all three versions, took 27 s of wall time on the main machine.
 `al-test-cli` compiles Base Application, System Application and the others from source on every
-run, only what the tests reach. `alrunner test` keeps their complete compile in a compile cache
+run, only what the tests reach. `al-runner test` keeps their complete compile in a compile cache
 (ADR-022, `<cache dir>/compile/`) and loads it on later runs. `--no-compile-cache` turns it off,
 and `al-test-cli --compile-cache` turns it on for the corpus.
 
@@ -350,7 +389,7 @@ cargo build --release
 
 ## Try the alpha
 
-`alrunner` is in alpha (`3.0.0-alpha.2`). It does not match AL Runner v2 yet.
+`al-runner` is in alpha (`3.0.0-alpha.2`). It does not match AL Runner v2 yet.
 Many tests are refused, and results may change between builds. Use it to try
 it out and to report what is wrong. Do not gate a pipeline on it.
 
@@ -388,16 +427,16 @@ checks the build provenance.
 
 **The binaries are not signed.** Your system may warn you.
 
-- macOS: Gatekeeper blocks the file. Run `xattr -d com.apple.quarantine ./alrunner`
+- macOS: Gatekeeper blocks the file. Run `xattr -d com.apple.quarantine ./al-runner`
   (the install script does this for you).
 - Windows: SmartScreen shows "Windows protected your PC". Click "More info", then
-  "Run anyway". Or run `Unblock-File .\alrunner.exe` in PowerShell.
+  "Run anyway". Or run `Unblock-File .\al-runner.exe` in PowerShell.
 
 **Run**
 
 ```
-alrunner --version
-alrunner test ./MyApp ./MyApp.Test
+al-runner --version
+al-runner test ./MyApp ./MyApp.Test
 ```
 
 Pass both the app and its test app. Then your app is compiled fresh on each run,
@@ -408,7 +447,7 @@ load it.
 - **Test data** (the CRONUS demo company) is on by default when a run uses
   Microsoft's apps. The first run downloads about 520 MB. `--no-test-data`
   turns it off.
-- **"Not run"** means `alrunner` refused the test and said why, for example a
+- **"Not run"** means `al-runner` refused the test and said why, for example a
   feature it does not support yet. Missing features are refused, not guessed. The
   test did not pass and did not fail. `--verbose` lists the reason for each test.
   See "Can I trust the results?".
@@ -420,7 +459,7 @@ load it.
   helper sources and builds the helper into the cache on first use. Without the
   SDK these tests are not run, with a reason.
 - Many features are missing. See `docs/status.md` and `docs/al-runner-v2-parity.md`.
-- No watch mode and no debugger. `alrunner serve` (AL Runner v2's server protocol, one child
+- No watch mode and no debugger. `al-runner serve` (AL Runner v2's server protocol, one child
   process per request, nothing kept between requests) and `--coverage` (Cobertura XML,
   `--coverage-json`) exist.
 - Only three targets are built: Linux x64, Windows x64 and macOS arm64.
@@ -462,17 +501,17 @@ Main flags by purpose (`--help` lists all of them):
 - Baselines and reports: `--update-baseline`, `--no-ratchet`, `--junit FILE`,
   `--json FILE`, `--markdown FILE`.
 
-**`alrunner`** runs the tests of any app, or of one of Microsoft's
+**`al-runner`** runs the tests of any app, or of one of Microsoft's
 `Tests-*.Source.zip` archives. Every test codeunit runs in its own session.
 
 ```
-alrunner test ./MyApp                                       # an app folder with app.json
-alrunner test ./MyApp --filter Posting --verbose            # selected tests, one line per test
-alrunner test Tests-ERM.Source.zip                          # Microsoft's tests: apps, System.app and CRONUS data fetched
-alrunner test ./MyApp --no-test-data                        # without the CRONUS company
+al-runner test ./MyApp                                       # an app folder with app.json
+al-runner test ./MyApp --filter Posting --verbose            # selected tests, one line per test
+al-runner test Tests-ERM.Source.zip                          # Microsoft's tests: apps, System.app and CRONUS data fetched
+al-runner test ./MyApp --no-test-data                        # without the CRONUS company
 ```
 
-Exit codes are in "Getting started with your own project" above. `alrunner test --help`
+Exit codes are in "Getting started with your own project" above. `al-runner test --help`
 lists every flag.
 
 ## Dependencies
@@ -480,7 +519,7 @@ lists every flag.
 Microsoft's apps are compiled from their own source (ADR-013). Nothing of
 Microsoft's is committed to this repository.
 
-1. `alrunner` searches `--dep` and `--package-cache` first, then each app's
+1. `al-runner` searches `--dep` and `--package-cache` first, then each app's
    `.alpackages` folder. The corpus ships System Application, Base Application
    and Business Foundation in its `.alpackages`, with source.
 2. What is still missing comes from Microsoft's artifact feed: the apps, the
@@ -514,13 +553,13 @@ missing setup data. Those failures are not trusted.
 The core needs no .NET. AL code that uses the `DotNet` type is served by an
 optional .NET 8 helper process (ADR-014). A closed set of pure .NET framework members
 (`StringBuilder`, `byte[]` access, `Encoding`, SHA and MD5 hashes, Convert Base64) runs inside
-`alrunner` and does not call the helper (ADR-038). Without the helper, tests that reach any
+`al-runner` and does not call the helper (ADR-038). Without the helper, tests that reach any
 other `DotNet` call are not run, with the reason stated, and the exit code is 8.
 `--require-dotnet` turns that into an error, for CI.
 
 ## Microsoft's test buckets
 
-`alrunner` can run Microsoft's own Base Application test buckets. Most of these tests are
+`al-runner` can run Microsoft's own Base Application test buckets. Most of these tests are
 still refused, not run. The full run of 2026-10-16 (main `fae0c8df`, BC 27.5, all buckets
 together) held 40300 tests: 16848 passed, 2508 failed and 20944 were not run. It took 298 s on a
 12-thread Ryzen 5 5600X. `docs/alrunner-buckets.md` has the per-bucket numbers, the recipe and
@@ -550,9 +589,10 @@ many more of these tests run.
 
 ## License
 
-al-runtime-rs is licensed under the Business Source License 1.1 (`LICENSE`). You may use it for free,
+AL Runner v3 is licensed under the Business Source License 1.1 (`LICENSE`). You may use it for free,
 including commercial work: developing, testing and building Business Central extensions for yourself or
 for your customers, on your own machines and in build pipelines. You may not sell it, or offer it or a
 product or service built substantially on it to others for a fee. Each version becomes available under
 the Apache License 2.0 four years after it is published. Versions published before this change remain
-under the MIT License. For other licensing arrangements, contact the author.
+under the MIT License. AL Runner v2 on the `v2` branch is under the MIT License (its own `LICENSE`
+file there). For other licensing arrangements, contact the author.

@@ -21,29 +21,29 @@ pub struct RunOptions {
     /// to read them (`deps::load_project_with`). The run reads what it needs; a missing entry means
     /// the app has its text.
     pub lazy: Vec<Option<al_sema::LazySource>>,
-    /// `alrunner test --isolation`: the isolation of every test codeunit, instead of the runner's property (`None`: the runner's,
+    /// `al-runner test --isolation`: the isolation of every test codeunit, instead of the runner's property (`None`: the runner's,
     /// else Codeunit).
     pub isolation: Option<TestIsolation>,
-    /// Count how often each statement of the workspace's apps runs, per test (`alrunner test --coverage`).
+    /// Count how often each statement of the workspace's apps runs, per test (`al-runner test --coverage`).
     /// Off, a run pays one branch per statement.
     pub coverage: bool,
-    /// A scratch run (`alrunner serve`'s `execute`): the `OnRun` trigger of one codeunit per `SuiteRun`'s app runs
+    /// A scratch run (`al-runner serve`'s `execute`): the `OnRun` trigger of one codeunit per `SuiteRun`'s app runs
     /// instead of the tests, and the text of its `Message` calls is kept in `TestResult::messages`.
     pub execute: bool,
-    /// Capture the values of the locals and the loops of the apps' code, per test (`alrunner serve`, ADR-030). Off,
+    /// Capture the values of the locals and the loops of the apps' code, per test (`al-runner serve`, ADR-030). Off,
     /// a run pays nothing for it.
     pub capture: al_vm::CaptureConfig,
     /// Callbacks while the run goes on: a line per test as it finishes, and a flag that stops the run after the
-    /// current test (`alrunner serve`).
+    /// current test (`al-runner serve`).
     pub hooks: crate::events::Hooks,
     /// Where the run clock of a test codeunit starts (codeunit id to Unix milliseconds), instead of now: the corpus
     /// oracle recorded values derived from `Today` on the day real BC ran, so the harness starts each codeunit at the
     /// time of that codeunit's suite in the oracle.
     pub clock_starts: Option<Arc<std::collections::HashMap<u32, i64>>>,
-    /// Do not print the `baseline:` detail lines to stderr (`alrunner test` prints them only with `--verbose`). The counts
+    /// Do not print the `baseline:` detail lines to stderr (`al-runner test` prints them only with `--verbose`). The counts
     /// stay in `Phases::baseline_roots`. Default `false`: print, as the corpus job does.
     pub quiet_baseline: bool,
-    /// `alrunner impact-index build` (ADR-043 step 2): note per test what it raised and touched
+    /// `al-runner impact-index build` (ADR-043 step 2): note per test what it raised and touched
     /// (`TestResult::impact`), and what the install baseline raised and touched (`CorpusRuntime::impact_baseline`).
     /// The baseline then runs instead of being read from the compile cache. Off, a run pays one branch per raise and
     /// record operation.

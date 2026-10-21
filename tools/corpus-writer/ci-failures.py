@@ -5,7 +5,7 @@ import xml.etree.ElementTree as ET
 run=sys.argv[1]
 d=os.path.expanduser(os.environ.get('WORK','~/.cache/corpus-writer'))+'/ci/run-'+run
 shutil.rmtree(d,ignore_errors=True); os.makedirs(d)
-subprocess.run(['gh','run','download',run,'-R','StefanMaron/BusinessCentral.AL.Language.Tests','-p','junit-test-results-*','-D',d],capture_output=True)
+subprocess.run(['gh','run','download',run,'-R','aldevtools/BusinessCentral.AL.Language.Tests','-p','junit-test-results-*','-D',d],capture_output=True)
 res=collections.defaultdict(dict)
 for dd in sorted(glob.glob(d+'/junit-test-results-*')):
     v=dd.split('-')[-1]

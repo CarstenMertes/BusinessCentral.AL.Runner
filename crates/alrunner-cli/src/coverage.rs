@@ -98,7 +98,7 @@ pub fn cobertura(
         ));
     }
     format!(
-        "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<coverage line-rate=\"{}\" branch-rate=\"0\" lines-covered=\"{covered}\" lines-valid=\"{valid}\" branches-covered=\"0\" branches-valid=\"0\" complexity=\"0\" version=\"alrunner\" timestamp=\"0\">\n  <sources>\n    <source>{}</source>\n  </sources>\n  <packages>\n{body}  </packages>\n</coverage>\n",
+        "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<coverage line-rate=\"{}\" branch-rate=\"0\" lines-covered=\"{covered}\" lines-valid=\"{valid}\" branches-covered=\"0\" branches-valid=\"0\" complexity=\"0\" version=\"al-runner\" timestamp=\"0\">\n  <sources>\n    <source>{}</source>\n  </sources>\n  <packages>\n{body}  </packages>\n</coverage>\n",
         rate(covered, valid),
         esc(cwd)
     )

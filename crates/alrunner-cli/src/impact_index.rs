@@ -39,7 +39,7 @@ pub struct IndexedTest {
     pub keys: Vec<u32>,
 }
 
-/// What `alrunner impact-index build` keeps.
+/// What `al-runner impact-index build` keeps.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Index {
     /// The apps of the index run's compile: (id, name, version).
@@ -316,11 +316,11 @@ pub fn of_run(c: &Collected) -> Index {
     }
 }
 
-/// `alrunner impact-index build APP...`: runs the tests of the APPs with the trace on and writes the index.
+/// `al-runner impact-index build APP...`: runs the tests of the APPs with the trace on and writes the index.
 pub fn build(a: &TestArgs) -> Result<u8, String> {
     // The index must hold every test codeunit an impact run of these APPs can run.
     if !a.codeunits.is_empty() || !a.filters.is_empty() || !a.exact.is_empty() || !a.excludes.is_empty() {
-        return Err("alrunner impact-index build runs every test of the APPs: --codeunit, --test, --exact and --exclude do not apply (an impact run selects from the whole index)".into());
+        return Err("al-runner impact-index build runs every test of the APPs: --codeunit, --test, --exact and --exclude do not apply (an impact run selects from the whole index)".into());
     }
     let started = Instant::now();
     let path = path(a)?;
@@ -356,7 +356,7 @@ pub fn build(a: &TestArgs) -> Result<u8, String> {
     Ok(0)
 }
 
-/// `alrunner impact-index check-static APP... [OPTIONS]` (ADR-043 step 5, the cross-check): compiles the APPs as the
+/// `al-runner impact-index check-static APP... [OPTIONS]` (ADR-043 step 5, the cross-check): compiles the APPs as the
 /// index's run did, runs nothing, and checks that every key each test recorded in the cached index is in the test's
 /// static reach (with "cannot rule out" sites). A key outside it is a bug in static reach: exit 1. Also prints how
 /// much more static reach selects than the index, per test and per codeunit.
@@ -367,7 +367,7 @@ pub fn check_static(a: &TestArgs) -> Result<u8, String> {
     side.parity = a.disabled_tests_dir.is_some();
     side.test_apps = Some(a.apps.len());
     let Some((index, path)) = lookup(&side)? else {
-        return Err("no impact index for these test apps and options: build it first with alrunner impact-index build and the same APPs and options".into());
+        return Err("no impact index for these test apps and options: build it first with al-runner impact-index build and the same APPs and options".into());
     };
     println!("checking static reach against the impact index {}", path.display());
     let (index, verbose, tests) = (Arc::new(index), a.verbose, a.apps.len());

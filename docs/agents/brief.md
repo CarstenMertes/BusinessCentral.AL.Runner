@@ -49,7 +49,7 @@ on the main machine or as a remote worker (`docs/agents/remote-worker.md`).
   an `ir::Stmt::Assume`). Mark only the part no corpus test pins. Regenerate the table in
   `docs/probes-needed.md` with `UPDATE_ASSUMPTIONS_DOC=1 cargo test -p al-builtins assumptions`.
   When a probe pins it, delete the entry: the compiler lists the marker sites that remain.
-  `alrunner test --top-assumptions` ranks the entries by flagged passes; `--list-assumptions`
+  `al-runner test --top-assumptions` ranks the entries by flagged passes; `--list-assumptions`
   prints the registry with the counts of the last run (also in `al-test-cli`).
 - **One build, one result.** A corpus run must give each case the same outcome whatever the
   thread counts, the run order and HOME hold (`corpus_harness.rs`
@@ -220,7 +220,7 @@ Run these in order. Do not skip any.
    If you touched `al-testrun/src/observe.rs` or the baseline, also run
    `tools/baseline_rule_check.sh run`: the rule that skips the install baseline
    must give zero outcome differences. If you touched the lazy reading of dependency packages
-   (`al-deps/src/lazy.rs`, `Workspace::load_apps_lazy`), run `alrunner test` on Tests-ERM twice, once with
+   (`al-deps/src/lazy.rs`, `Workspace::load_apps_lazy`), run `al-runner test` on Tests-ERM twice, once with
    `ALRUNNER_EAGER_SOURCES=1`, and compare the two `--junit` files with `tools/compare_junit.py`: 0 differences.
 5. No corpus case may newly fail. A case that was not run and now fails counts
    as wrong behavior (hard rule 4); the baseline ratchet does not catch it. Run

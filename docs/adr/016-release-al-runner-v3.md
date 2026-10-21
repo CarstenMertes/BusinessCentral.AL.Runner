@@ -677,6 +677,28 @@ to the newest main commit with green CI on a push (never a force push), and call
 It pushes with GITHUB_TOKEN, so CI does not run twice on the same commit. A person's push to `release` works
 as before. Named alphas stay manual.
 
+### Owner decision (2026-10-21): the binary is `al-runner`
+
+- The binary `alrunner` becomes `al-runner`: the Cargo bin name, the `--version` line
+  (`al-runner 3.x (commit)`), the release archives (`al-runner-<label>-<target>`), the installers and
+  the help text. Earlier text in this ADR and in other ADRs keeps the old name as written.
+- Kept: the crate name `alrunner-cli`, the `ALRUNNER_*` environment variables (owner undecided), the
+  cache folders, the Windows install folder `%LOCALAPPDATA%\alrunner\bin` (so a `PATH` entry made for an
+  earlier alpha keeps working), and file names such as `028-alrunner-serve.md`.
+- The installers still install a release from before the rename under its old name, and point out a
+  leftover `alrunner` in the install folder.
+- **The v2 `PATH` clash** (decided without owner review, 2026-10-21; tooling only, so ADR-009 allows it).
+  AL Runner v2's dotnet tool is also called `al-runner`. v3 can only notice the clash when it runs:
+  - Each command except `serve`, `--help` and `--version` looks for other files named `al-runner` or
+    `al-runner.exe` on `PATH` and in `~/.dotnet/tools`. It skips itself (canonical path) and links to a
+    program of another name (a version manager's shim). If it finds one, it prints one line to stderr,
+    at most once a day (stamp file `path-note.stamp` in the cache folder). Never on stdout.
+  - `al-runner --version` prints its line, then `also on PATH: <path>: <first line of its --version>` for
+    each other copy, waiting at most 2 seconds for each.
+  - `ALRUNNER_NO_PATH_NOTE=1` turns both off (the `--version` list sets it for the copies it runs).
+  - `install.sh` and `install.ps1` print the same advice when v2 is in `~/.dotnet/tools`, and say which
+    `PATH` order to use when v2's folder comes first.
+
 ## Rejected options
 
 - **Keep `al-test-cli` as the user tool.** It is the oracle harness; its flags and
@@ -716,3 +738,28 @@ years after each version is first published. Change License: Apache License 2.0.
 before the change (up to and including 3.0.0-alpha.1 and the edge builds before the change) remain under
 MIT. Outside contributions need a contributor agreement before they are accepted, so the licensing stays
 with one holder.
+
+## Amendment (Proposed, 2026-10-21): repository move and binary name
+
+Status of this section: Proposed. It records owner decisions of 2026-10-21. It
+answers the "stay separate or cut over" choice of the 2026-10-14 decision above.
+
+- **Cut over.** v3 is now `main` of `aldevtools/BusinessCentral.AL.Runner`.
+  v2 is frozen on the branch `v2` of the same repository.
+- **Organization.** The corpus is `aldevtools/BusinessCentral.AL.Language.Tests`.
+  The BC container is `aldevtools/MsDyn365Bc.On.Linux`.
+- **Working repository.** `StefanMaron/al-runtime-rs` stays the working
+  repository until the running lanes finish. Its `main` is copied to the new
+  repository. After that it is archived.
+- **References.** The corpus submodule URL, the `repository` field in
+  `Cargo.toml`, the installers' default repository (`ALRUNNER_REPO`), the
+  mise name (`github:aldevtools/BusinessCentral.AL.Runner`) and the tools that
+  call `gh` point to the new names. GitHub Actions `uses:` lines do not follow
+  a transfer redirect, so every `uses:` that names a moved repository must name
+  the new one.
+- **Old numbers.** Pull request and issue numbers in history text written
+  before the move (below about 5570) refer to the archived
+  `StefanMaron/al-runtime-rs`. New text names the repository next to the number.
+- **Binary name.** The binary becomes `al-runner` (a separate change). The
+  environment variables keep the `ALRUNNER_` prefix for now; the owner has not
+  decided about them.

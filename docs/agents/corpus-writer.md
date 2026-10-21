@@ -12,11 +12,11 @@ You never change al-runtime-rs code. You write AL in the corpus repo, measure it
 
 | What | Where |
 |---|---|
-| Corpus repo | `https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests` (local clone, call it `$CORPUS`) |
+| Corpus repo | `https://github.com/aldevtools/BusinessCentral.AL.Language.Tests` (local clone, call it `$CORPUS`) |
 | Corpus branch the runtime pins | `master`, the default branch (since 2026-10-19; before that the side branch `al-runtime-rs`). A ruleset protects it: changes only through a pull request with the 10 required checks green, no direct push, no force push, no delete |
 | Integration branch | `al-runtime-rs-staging` (the publisher merges green writer branches here; the CI batcher merges writer commits onto it for test runs) |
 | Your branch | `al-runtime-rs-staging-<letter>` (local writers) or `al-runtime-rs-writer-<name>` (the laptop), created from the current `al-runtime-rs-staging`; merge staging into it before you hand it over |
-| Local BC container | `https://github.com/StefanMaron/MsDyn365Bc.On.Linux` (call it `$BCLINUX`) |
+| Local BC container | `https://github.com/aldevtools/MsDyn365Bc.On.Linux` (call it `$BCLINUX`) |
 | Tools for this guide | `tools/corpus-writer/` in al-runtime-rs |
 
 Never push to `master` or `al-runtime-rs-staging`, and never open a pull request to `master` (the publisher does that, see "How a bump lands on master"). Never edit or delete an existing test (add new ones). Never put secrets in files.
@@ -53,8 +53,8 @@ You need Docker, Python 3, .NET (for the AL compiler) and about **12 GB of free 
 
 1. Clone bc-linux and the corpus; check out your branch:
    ```bash
-   git clone git@github.com:StefanMaron/MsDyn365Bc.On.Linux.git ~/bc-linux
-   git clone https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests ~/corpus
+   git clone git@github.com:aldevtools/MsDyn365Bc.On.Linux.git ~/bc-linux
+   git clone https://github.com/aldevtools/BusinessCentral.AL.Language.Tests ~/corpus
    cd ~/corpus && git checkout -b al-runtime-rs-writer-<name> origin/al-runtime-rs-staging
    ```
 2. Start **BC 29.0.54011.55816** (the build the CI legs pin; same platform as the oracle):
@@ -166,8 +166,8 @@ CI is only the final check for 27 and 28; you are green on 29 locally first.
 Local writers do not dispatch `ci.yml` themselves: they queue their pushed commit with the CI batcher (`~/.cache/al-runtime/orchestration/tools/ci-batch/`, README there), which merges many writer commits onto `al-runtime-rs-staging` and runs one CI run per leg for all of them. The laptop writer, which has no batcher, dispatches one leg at a time:
 
 ```bash
-gh workflow run ci.yml -R StefanMaron/BusinessCentral.AL.Language.Tests --ref <your branch> -f bc_version=29.0
-gh run list -R StefanMaron/BusinessCentral.AL.Language.Tests --branch <your branch> --limit 3
+gh workflow run ci.yml -R aldevtools/BusinessCentral.AL.Language.Tests --ref <your branch> -f bc_version=29.0
+gh run list -R aldevtools/BusinessCentral.AL.Language.Tests --branch <your branch> --limit 3
 python3 tools/corpus-writer/ci-failures.py <run id>    # failing tests per BC version from the junit artifacts
 ```
 

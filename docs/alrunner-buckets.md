@@ -1,6 +1,6 @@
-# Microsoft's BaseApp test buckets under `alrunner`
+# Microsoft's BaseApp test buckets under `al-runner`
 
-How to run `Tests-*.Source.zip` of a BC artifact with `alrunner test`, and what the first measurement found
+How to run `Tests-*.Source.zip` of a BC artifact with `al-runner test`, and what the first measurement found
 (2026-10-14, branch `alrunner-cli`). Nothing here is Microsoft's code; the sources are read from the local
 artifact and never copied into this repository.
 
@@ -11,7 +11,7 @@ the folder name fills the `$(app_...)` variables of the source archives. Everyth
 `--no-download`, so the Microsoft apps and the tests are the same build.
 
 ```
-alrunner test "$A/BaseApp/Test/Tests-SMB.Source.zip" --no-download \
+al-runner test "$A/BaseApp/Test/Tests-SMB.Source.zip" --no-download \
   --dep "$A/BaseApp/Test/Tests-TestLibraries.Source.zip" \
   --dep "$A/TestFramework/TestLibraries/Variable Storage/Library Variable Storage.Source.zip" \
   --dep "$A/TestFramework/TestLibraries/Assert/Library Assert.Source.zip" \
@@ -36,7 +36,7 @@ fallback when the feed has none or cannot be reached.
 
 ## The plain command (zero configuration, 2026-10-14, branch `zero-config`)
 
-`alrunner test "$A/BaseApp/Test/Tests-ERM.Source.zip"` with no option and no environment variable now gives the
+`al-runner test "$A/BaseApp/Test/Tests-ERM.Source.zip"` with no option and no environment variable now gives the
 same result as the recipe, test by test (`tools/bucket_diff.py` on both JUnit files: every test has the same
 outcome). The run does these things for you:
 
@@ -74,7 +74,7 @@ Several buckets can be named in one run (all 32 together: 40300 tests, one compi
 
 ## The compile cache (ADR-022, branch `compile-cache`, 2026-10-14)
 
-`alrunner test` keeps the complete compile of the dependency apps in `<cache dir>/compile/` (13 MB per set of apps;
+`al-runner test` keeps the complete compile of the dependency apps in `<cache dir>/compile/` (13 MB per set of apps;
 `--cache-dir`, `$ALRUNNER_CACHE`, default `~/.cache/al-runtime`). The first run with a new set of apps builds it (about
 5 s and 4 GB on 12 cores). The next runs load it. `--no-compile-cache` (or `ALRUNNER_NO_COMPILE_CACHE=1`) compiles only
 what the tests reach, as before. `--require-compile-cache` fails when there is no usable entry (CI).
@@ -131,7 +131,7 @@ dealt with them. Tests-ERM with test data went from 480 passed, 18 failed (main 
 variables of a table object did not persist per record variable; ADR-021 (`table-globals`) fixes it: Tests-ERM with
 test data went from 487 passed, 5 failed to 490 passed, 3 failed.
 
-Still failing in Tests-ERM (3 on 2026-10-14, BC 27.5 build 46862.56320, `alrunner test ... --test-data`; each run with
+Still failing in Tests-ERM (3 on 2026-10-14, BC 27.5 build 46862.56320, `al-runner test ... --test-data`; each run with
 `--explain TEST`, add `--codeunit ID` when the name is in two codeunits). Triage of issue 5:
 
 | Test | Cause | Kind |
@@ -146,7 +146,7 @@ calculation on an undefined date).
 
 ## Alone and together (issue 3, 2026-10-14)
 
-The 32 buckets that hold tests, run one at a time and all in one `alrunner test` process, do not give the same
+The 32 buckets that hold tests, run one at a time and all in one `al-runner test` process, do not give the same
 counts. Measured on BC 27.5 build 46862.56320 (the build of the first measurement, 46862.48827, is no longer on
 the artifact feed), without test data, `tools/bucket_diff.py` over the JUnit files of both:
 
@@ -189,7 +189,7 @@ sets of runs. A bucket name with a space needs quoting in the shell.
 ## All buckets with test data (issue 10, 2026-10-14)
 
 The 32 buckets with tests (every `Tests-*.Source.zip` except `Tests-TestLibraries` and `Tests-Local`) in one
-`alrunner test --test-data` process, BC 27.5 build 46862.56320, 4 threads each for check, lowering and tests,
+`al-runner test --test-data` process, BC 27.5 build 46862.56320, 4 threads each for check, lowering and tests,
 one run. Codeunit 136106 "Service Response Time" is left out (see below): 40315 tests.
 
 | | Passed | Failed | Not run | Peak memory | Total |
@@ -208,7 +208,7 @@ CRONUS company has none (`al-bcdb read ... --table "Service Hour"` lists no row)
 `CalcDate` leaves the date range in the year 9999. In Microsoft's pipeline the rows exist. The figures above
 leave the codeunit out by removing its file from a local copy of the bucket archive.
 
-A run no longer hangs on such a test: `alrunner test` stops a test that runs longer than `--test-timeout-secs`
+A run no longer hangs on such a test: `al-runner test` stops a test that runs longer than `--test-timeout-secs`
 (default 20, 0 = no limit) at its next loop iteration and reports it as not run, with the limit as the reason.
 Measured here, the loop does about 7000 days per second (140 microseconds a day, `Calendar Management` builds
 temporary records each time), so the 2.7 million days to the year 9999 would take about 6 minutes per test and
@@ -328,7 +328,7 @@ from the package and read Company Information."Country/Region Code"). Until then
 
 ## Microsoft's recipe: `--recipe microsoft` (2026-10-18, branch `ms-recipe-3`)
 
-`alrunner test <Tests-*.Source.zip> ... --recipe microsoft` runs the buckets the way BCApps' CI does.
+`al-runner test <Tests-*.Source.zip> ... --recipe microsoft` runs the buckets the way BCApps' CI does.
 
 1. The BCApps files come from `releases/<major>.<minor>` of github.com/microsoft/BCApps (MIT), fetched with `git`
    (shallow, no file contents, only `src/DisabledTests`, `build/projects`, `build/scripts`) into
@@ -404,7 +404,7 @@ table `License Permission` answers its two pinned rows.
 
 WorkDate: the recipe does not set one. BCApps `Invoke-ContosoDemoTool` runs Company-Initialize (codeunit 2), then
 `CreateSetupDemoData` / `CreateAllDemoData` (codeunit 5193) and the tenant data (5691) through OData, so WorkDate is today, as in
-`alrunner` (session/TestSessionFunctions.al:53-65). The demo dates are relative to the Starting Year (today's year minus one), so
+`al-runner` (session/TestSessionFunctions.al:53-65). The demo dates are relative to the Starting Year (today's year minus one), so
 a sales shipment dated in the past gives the message "Shipment Date ... is before work date ..." on real BC as well. The OData
 call ignores the message; a test method does not. The `Unhandled UI` failure of the first spike was a spike artifact: a
 `[MessageHandler]` on the test makes `SalesTransactional` pass. The lanes need a message handler (or UI off) around the roots.

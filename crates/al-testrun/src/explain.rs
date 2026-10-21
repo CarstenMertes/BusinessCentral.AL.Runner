@@ -91,7 +91,7 @@ pub fn render(head: &str, outcome: &Outcome, oracle: &str, detail: Option<&TestD
     render_with(head, Some(oracle), outcome, detail)
 }
 
-/// The same for a run that has no oracle (`alrunner test --explain`).
+/// The same for a run that has no oracle (`al-runner test --explain`).
 pub fn render_without_oracle(head: &str, outcome: &Outcome, detail: Option<&TestDetail>) -> String {
     render_with(head, None, outcome, detail)
 }

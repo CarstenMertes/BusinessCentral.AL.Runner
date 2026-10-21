@@ -1,6 +1,6 @@
 name: Build packages
 
-# Builds alrunner for the three alpha targets, smoke tests each binary, packages it and attests it.
+# Builds al-runner for the three alpha targets, smoke tests each binary, packages it and attests it.
 # Used by release-tag.yml (numbered alphas, and the dry run) and edge.yml (the rolling edge build).
 # Output: the artifact "packages" holding the archives and one SHA256SUMS. Nothing of Microsoft's
 # is built in or downloaded here: the smoke test runs a fixture project of this repository.
@@ -85,18 +85,18 @@ jobs:
       - name: Smoke test
         shell: bash
         run: |
-          exe=target/${{ matrix.target }}/release/alrunner
+          exe=target/${{ matrix.target }}/release/al-runner
           [ "${{ matrix.ext }}" = zip ] && exe="$exe.exe"
           release/smoke.sh "$exe"
       - name: Package
         shell: bash
         run: |
-          name="alrunner-${{ inputs.label }}-${{ matrix.target }}"
+          name="al-runner-${{ inputs.label }}-${{ matrix.target }}"
           mkdir -p stage dist
           if [ "${{ matrix.ext }}" = zip ]; then
-            cp "target/${{ matrix.target }}/release/alrunner.exe" stage/
+            cp "target/${{ matrix.target }}/release/al-runner.exe" stage/
           else
-            cp "target/${{ matrix.target }}/release/alrunner" stage/
+            cp "target/${{ matrix.target }}/release/al-runner" stage/
           fi
           cp LICENSE stage/LICENSE
           cp release/README.txt stage/README.txt
@@ -133,7 +133,7 @@ jobs:
       - name: SHA256SUMS and install scripts
         run: |
           cp release/install.sh release/install.ps1 dist/
-          (cd dist && sha256sum alrunner-*.tar.xz alrunner-*.zip > SHA256SUMS && cat SHA256SUMS)
+          (cd dist && sha256sum al-runner-*.tar.xz al-runner-*.zip > SHA256SUMS && cat SHA256SUMS)
       - uses: actions/upload-artifact@v4
         with:
           name: packages

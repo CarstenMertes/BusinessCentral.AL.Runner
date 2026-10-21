@@ -1,6 +1,6 @@
 //! Cleanup of the compile cache folder (ADR-022, "Cleanup of old builds").
 //!
-//! Every entry file name starts with the tag of the alrunner build that wrote it (`al_cache::build_tag`), and a
+//! Every entry file name starts with the tag of the al-runner build that wrote it (`al_cache::build_tag`), and a
 //! cache hit sets the file's modification time to now. So the cleanup needs `stat` only, never a file read:
 //!
 //! - an entry of another build (or from before the tag existed) goes after 7 days unused: several builds run on one

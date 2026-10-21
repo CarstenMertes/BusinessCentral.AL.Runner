@@ -318,6 +318,15 @@ impl Session {
             }
         }
         self.end_page_call(st);
+        if name == "onaftergetrecord" && result.is_ok() && self.has_source(st) {
+            let rec = self.page_rec(st);
+            let key = self.row_key(&rec)?;
+            let mut s = st.borrow_mut();
+            if !s.agr_rows.iter().any(|k| Self::same_key(k, &key)) {
+                s.agr_rows.push(key.clone());
+            }
+            s.agr_row = Some(key);
+        }
         result.map(|()| answer)
     }
 

@@ -22,6 +22,28 @@ impl Session {
                 let (slot, owner) = b
                     .var_slot(page_of(&engine, st).controls[idx].owner)
                     .expect("a variable binding");
+                // A control of a list's repeater over a page variable: BC's client shows the value the variable had when
+                // OnAfterGetRecord ran for the row it stands on (each row keeps its own); the runtime keeps one value. A
+                // read on a row other than the one OnAfterGetRecord ran with last is refused (per-row values not
+                // modelled; Tests-ERM 134760 Empl. Ledger Entries Preview AmountFCY after First()). A row OnAfterGetRecord
+                // never ran with (a new row the test typed) shows what the variable holds.
+                if self.in_repeater(st, idx)
+                    && self.declares(st, "onaftergetrecord")
+                    && st.borrow().cursor == Cursor::Row
+                    && !st.borrow().draft
+                {
+                    let rec = self.page_rec(st);
+                    let key = self.row_key(&rec)?;
+                    let s = st.borrow();
+                    let ran_for_it = s.agr_rows.iter().any(|k| Self::same_key(k, &key));
+                    let last = s.agr_row.as_ref().is_some_and(|k| Self::same_key(k, &key));
+                    drop(s);
+                    if ran_for_it && !last {
+                        return unsupported(
+                            "a page-variable control of a list row other than the one OnAfterGetRecord ran with last (per-row values not modelled)",
+                        );
+                    }
+                }
                 let inst = self.owner_instance(st, owner);
                 let v = inst.borrow().globals[slot].clone();
                 Ok(v)
@@ -31,6 +53,20 @@ impl Session {
             ir::Binding::Caption => Ok(Value::Text(self.control_caption(st, idx)?.into())),
             ir::Binding::None => unsupported("a control without a source"),
         }
+    }
+
+    /// Whether control `idx` sits inside a repeater of its page.
+    pub(super) fn in_repeater(&self, st: &St, idx: usize) -> bool {
+        let engine = self.engine();
+        let page = page_of(&engine, st);
+        let mut at = page.controls[idx].parent;
+        while let Some(p) = at {
+            if page.controls[p].kind == ir::ControlKind::Repeater {
+                return true;
+            }
+            at = page.controls[p].parent;
+        }
+        false
     }
 
     pub(super) fn control_as(&mut self, st: &St, idx: usize, to: &RtType) -> Result<Value, Signal> {

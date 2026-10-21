@@ -5,66 +5,13 @@
 //! (`tests/fixtures/impact/tests`, a stand-in for a Microsoft test app) to the artifact as `Tests-Imp`, with its
 //! publisher app `lib` given by `--dep` and the subscriber `ext` as the extension.
 
+mod support;
+
 use std::path::Path;
 use std::process::{Command, Output};
+use support::{impact_fixture, source_row, text, zip};
 
 const BUILD: &str = "29.0.1.2";
-
-fn crc32(data: &[u8]) -> u32 {
-    let mut crc = !0u32;
-    for &b in data {
-        crc ^= u32::from(b);
-        for _ in 0..8 {
-            crc = if crc & 1 == 1 {
-                (crc >> 1) ^ 0xEDB8_8320
-            } else {
-                crc >> 1
-            };
-        }
-    }
-    !crc
-}
-
-/// A ZIP with stored entries.
-fn zip(entries: &[(&str, String)]) -> Vec<u8> {
-    let mut out = Vec::new();
-    let mut central = Vec::new();
-    for (name, text) in entries {
-        let data = text.as_bytes();
-        let crc = crc32(data);
-        let offset = out.len() as u32;
-        out.extend(0x0403_4b50u32.to_le_bytes());
-        out.extend([20, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
-        out.extend(crc.to_le_bytes());
-        out.extend((data.len() as u32).to_le_bytes());
-        out.extend((data.len() as u32).to_le_bytes());
-        out.extend((name.len() as u16).to_le_bytes());
-        out.extend([0, 0]);
-        out.extend(name.as_bytes());
-        out.extend(data);
-        central.extend(0x0201_4b50u32.to_le_bytes());
-        central.extend([20, 0, 20, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
-        central.extend(crc.to_le_bytes());
-        central.extend((data.len() as u32).to_le_bytes());
-        central.extend((data.len() as u32).to_le_bytes());
-        central.extend((name.len() as u16).to_le_bytes());
-        central.extend([0; 12]);
-        central.extend(offset.to_le_bytes());
-        central.extend(name.as_bytes());
-    }
-    let cd_offset = out.len() as u32;
-    let n = entries.len() as u16;
-    let cd_len = central.len() as u32;
-    out.extend(central);
-    out.extend(0x0605_4b50u32.to_le_bytes());
-    out.extend([0, 0, 0, 0]);
-    out.extend(n.to_le_bytes());
-    out.extend(n.to_le_bytes());
-    out.extend(cd_len.to_le_bytes());
-    out.extend(cd_offset.to_le_bytes());
-    out.extend([0, 0]);
-    out
-}
 
 fn app(id: &str, name: &str, al: &str) -> Vec<u8> {
     let json = format!(
@@ -183,14 +130,6 @@ fn run_cmd(root: &Path, cmd: &[&str], extra: &[&str]) -> Output {
         .expect("run al-runner")
 }
 
-fn text(o: &Output) -> String {
-    format!(
-        "{}{}",
-        String::from_utf8_lossy(&o.stdout),
-        String::from_utf8_lossy(&o.stderr)
-    )
-}
-
 /// The numbers of a row of the summary table.
 fn row(out: &str, name: &str) -> String {
     let line = out
@@ -261,12 +200,6 @@ fn an_unknown_app_name_or_a_library_exits_2_before_any_test_runs() {
     assert_eq!(row(&out, "_Exclude_Fake"), "Tests 0 1 0 1 0 1", "{out}");
 }
 
-fn impact_fixture(name: &str) -> std::path::PathBuf {
-    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/impact")
-        .join(name)
-}
-
 /// The step 1 artifact plus `Tests-Imp` (the impact fixture's test app), and the extension without its own tests
 /// under `root/ext-only`. Returns (ext-only, ext with own tests, lib).
 fn source_fixture(root: &Path) -> (String, String, String) {
@@ -288,35 +221,13 @@ fn source_fixture(root: &Path) -> (String, String, String) {
         ]),
     )
     .unwrap();
+    let only = support::ext_only(root);
     let ext = impact_fixture("ext");
-    let only = root.join("ext-only");
-    std::fs::create_dir_all(&only).unwrap();
-    std::fs::copy(ext.join("app.json"), only.join("app.json")).unwrap();
-    let al = std::fs::read_to_string(ext.join("Subscriber.Codeunit.al")).unwrap();
-    let cut = al
-        .find("// The extension's own tests")
-        .expect("the fixture's own tests");
-    std::fs::write(only.join("Subscriber.Codeunit.al"), &al[..cut]).unwrap();
     (
         only.to_string_lossy().into_owned(),
         ext.to_string_lossy().into_owned(),
         impact_fixture("lib").to_string_lossy().into_owned(),
     )
-}
-
-/// The cells of a row of the `Sources` table.
-fn source_row(out: &str, name: &str) -> String {
-    let at = out
-        .find("\nSources\n")
-        .unwrap_or_else(|| panic!("no Sources table in:\n{out}"));
-    let line = out[at..]
-        .lines()
-        .find(|l| l.trim_start().starts_with(&format!("{name} ")))
-        .unwrap_or_else(|| panic!("no row {name} in:\n{out}"));
-    line.trim_start()[name.len()..]
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
 }
 
 #[test]

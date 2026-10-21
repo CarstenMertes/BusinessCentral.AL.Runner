@@ -1,6 +1,6 @@
 //! The command line of `al-runner` (ADR-016 section 2): parsing and the help text.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// What the command line asks for.
 #[derive(Debug, PartialEq)]
@@ -170,6 +170,9 @@ pub struct TestArgs {
     /// Not a command line option: the command that builds the impact index of this run, when it is one run of a test
     /// source (ADR-052 1.8); the no-index warning prints it instead of the run's own command line.
     pub index_command: Option<String>,
+    /// Not a command line option: the test source this impact run belongs to (ADR-052 1.6). The accept file's entries
+    /// of other sources are left out, and the entries that match nothing are reported by the caller, once per source.
+    pub accept_source: Option<String>,
 }
 
 impl TestArgs {
@@ -1025,7 +1028,7 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Command, String> 
         return test_microsoft_args(a);
     }
     source_names(&mut a, if index_build { "--from" } else { "--affected-from" })?;
-    if !a.microsoft_apps.is_empty() && a.affected_from.is_empty() {
+    if !a.microsoft_apps.is_empty() && !a.affected_from.iter().any(|s| s == "microsoft") {
         return Err(if index_build {
             "--microsoft-app needs --from microsoft: it names the Microsoft test apps the index is built for".into()
         } else {
@@ -1067,7 +1070,7 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Command, String> 
     if a.company_package && a.no_test_data {
         return Err("--company-data package cannot be combined with --no-test-data".into());
     }
-    if a.bcapps_dir.is_some() && !a.recipe && a.affected_from.is_empty() {
+    if a.bcapps_dir.is_some() && !a.recipe && !a.affected_from.iter().any(|s| s == "microsoft") {
         return Err("--bcapps needs --recipe microsoft or the microsoft test source".into());
     }
     if a.recipe {
@@ -1140,17 +1143,38 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Command, String> 
     Ok(Command::Test(Box::new(a)))
 }
 
-/// The names of the test sources (ADR-052 1.1): `microsoft`, without case. A path (an ISV test app) is build step 3.
+/// The test sources (ADR-052 1.1): `microsoft`, without case, or the path of an ISV test app (a folder, an `.app` or
+/// a `*.Source.zip`; a folder of several test apps is one source per app, `sources::resolve`). `impact-index build
+/// --from` takes `microsoft` only: an ISV test app's index is built with `impact-index build PATH`.
 fn source_names(a: &mut TestArgs, flag: &str) -> Result<(), String> {
     let mut seen: Vec<String> = Vec::new();
+    // The same file or folder, however it is spelled.
+    let same = |x: &str, y: &str| {
+        let canon = |p: &str| std::fs::canonicalize(p).unwrap_or_else(|_| PathBuf::from(p));
+        canon(x) == canon(y)
+    };
     for s in &a.affected_from {
-        if !s.eq_ignore_ascii_case("microsoft") {
+        let name = if s.eq_ignore_ascii_case("microsoft") {
+            "microsoft".to_string()
+        } else if flag == "--from" {
             return Err(format!(
-                "{flag} {s}: an ISV test app as a test source is not built yet (ADR-052 build step 3); only `{flag} microsoft` works today"
+                "--from {s}: impact-index build --from takes `microsoft`; build the index of an ISV test app with `al-runner impact-index build {s}`"
             ));
-        }
-        let name = s.to_ascii_lowercase();
-        if seen.contains(&name) {
+        } else if !Path::new(s).exists() {
+            return Err(format!("{flag} {s}: no such file or folder"));
+        } else {
+            if let Some(app) = a.apps.iter().find(|p| same(&p.to_string_lossy(), s)) {
+                return Err(format!(
+                    "{flag} {s} is also an APP ({}): an app is either under test or a test source",
+                    app.display()
+                ));
+            }
+            s.clone()
+        };
+        if seen
+            .iter()
+            .any(|t| *t == name || (name != "microsoft" && same(t, &name)))
+        {
             return Err(format!("{flag} {name} is given twice"));
         }
         seen.push(name);
@@ -1194,19 +1218,9 @@ fn affected_args(a: &TestArgs, what: &str) -> Result<(), String> {
             "a source's tests run with and without the extension and have nothing to stub",
         ),
         (
-            a.output_json.is_some(),
-            "--output-json",
-            "its document with a `sources` part is not built yet (ADR-052 build step 3); --junit FILE holds every part",
-        ),
-        (
-            a.impact_json.is_some(),
-            "--impact-json",
-            "its format 2 with one entry per source is not built yet (ADR-052 build step 3); --junit FILE holds the change class of each test",
-        ),
-        (
-            a.impact_accept.is_some(),
-            "--impact-accept",
-            "an accept file across sources (format 2, entries per source) is not built yet (ADR-052 build step 3)",
+            matches!(a.output_json, Some(None)),
+            "--output-json without a FILE",
+            "the report of every part goes to stdout; name a FILE (`--output-json results.json`)",
         ),
     ] {
         if set {
@@ -1375,15 +1389,12 @@ mod tests {
         }
         // Without an extension there is nothing to measure.
         assert!(p("test-microsoft --impact static").unwrap_err().contains("--impact"));
-        for flag in [
-            "--output-json r.json",
-            "--impact-json d.json",
-            "--impact-accept a.json",
-            "--no-compile-cache",
-            "--coverage",
-        ] {
+        for flag in ["--no-compile-cache", "--coverage"] {
             let e = p(&format!("test-microsoft MyApp {flag}")).unwrap_err();
             assert!(e.contains(flag.split(' ').next().unwrap()), "{flag}: {e}");
+        }
+        for flag in ["--output-json r.json", "--impact-json d.json", "--impact-accept a.json"] {
+            assert!(p(&format!("test-microsoft MyApp {flag}")).is_ok(), "{flag}");
         }
         assert!(p("test-microsoft --affected-from microsoft").is_err());
         assert!(p("test-microsoft --output-json").unwrap_err().contains("FILE"));
@@ -1407,9 +1418,23 @@ mod tests {
             vec!["microsoft"]
         );
         assert!(p("test Ext --affected-from microsoft --impact all --junit r.xml").is_ok());
-        // An ISV test app as a source is a later step.
-        let e = p("test Ext --affected-from ./vendor-tests").unwrap_err();
-        assert!(e.contains("./vendor-tests") && e.contains("step 3"), "{e}");
+        // An ISV test app is a path; one that does not exist, the same twice or an APP as a source exit 2.
+        let e = p("test Ext --affected-from ./no-such-vendor-tests").unwrap_err();
+        assert!(e.contains("./no-such-vendor-tests") && e.contains("no such"), "{e}");
+        let dir = tempfile::tempdir().unwrap();
+        let v = dir.path().join("vendor");
+        std::fs::create_dir_all(&v).unwrap();
+        let v = v.to_string_lossy();
+        assert_eq!(
+            test_args(&format!("test Ext --affected-from {v} --affected-from microsoft")).affected_from,
+            vec![v.to_string(), "microsoft".into()]
+        );
+        let e = p(&format!("test Ext --affected-from {v} --affected-from {v}/")).unwrap_err();
+        assert!(e.contains("twice"), "{e}");
+        let e = p(&format!("test {v} --affected-from {v}")).unwrap_err();
+        assert!(e.contains("also an APP"), "{e}");
+        let e = p(&format!("test Ext --affected-from {v} --microsoft-app Tests-ERM")).unwrap_err();
+        assert!(e.contains("--affected-from microsoft"), "{e}");
         let e = p("test Ext --affected-from microsoft --affected-from MICROSOFT").unwrap_err();
         assert!(e.contains("microsoft") && e.contains("twice"), "{e}");
         for flag in [
@@ -1418,9 +1443,7 @@ mod tests {
             "--explain T",
             "--coverage",
             "--impact-of E",
-            "--output-json r.json",
-            "--impact-json d.json",
-            "--impact-accept a.json",
+            "--output-json",
             "--tdd",
         ] {
             let e = p(&format!("test Ext --affected-from microsoft {flag}")).unwrap_err();
@@ -1431,6 +1454,13 @@ mod tests {
         }
         let e = p("test Ext --microsoft-app Tests-ERM").unwrap_err();
         assert!(e.contains("--affected-from microsoft"), "{e}");
+        // Build step 3: the files of a run with sources.
+        for flag in ["--output-json r.json", "--impact-json d.json", "--impact-accept a.json"] {
+            assert!(
+                p(&format!("test Ext --affected-from microsoft {flag}")).is_ok(),
+                "{flag}"
+            );
+        }
     }
 
     #[test]
@@ -1444,7 +1474,8 @@ mod tests {
             other => panic!("{other:?}"),
         }
         assert!(p("impact-index build --from microsoft A").unwrap_err().contains("APP"));
-        assert!(p("impact-index build --from ./x").unwrap_err().contains("microsoft"));
+        let e = p("impact-index build --from ./x").unwrap_err();
+        assert!(e.contains("microsoft") && e.contains("impact-index build ./x"), "{e}");
         assert!(p("impact-index check-static --from microsoft").is_err());
         assert!(p("impact-index build A --microsoft-app Tests-ERM").is_err());
     }

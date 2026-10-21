@@ -1491,7 +1491,20 @@ impl Session {
         } else {
             None
         };
-        if self.nav_find(st, which)? {
+        // A part of a Document or Card host opened for view on no row shows no row, though rows of the blank key exist
+        // (pages/lt-part-line-before-host-key/PartLineBeforeHostKey.al:1578 QH_OpenView_NoRow_BlankKeyLinesExist
+        // `part_description=[]`).
+        let host_shows_no_row = st.borrow().host.as_ref().and_then(|(h, _)| h.upgrade()).is_some_and(|h| {
+            let hb = h.borrow();
+            hb.host.is_none()
+                && hb.mode == PageMode::View
+                && hb.cursor == Cursor::None
+                && matches!(
+                    self.engine.object_facts[hb.object as usize].page_type,
+                    Some(al_ir::PageType::Document | al_ir::PageType::Card)
+                )
+        });
+        if !host_shows_no_row && self.nav_find(st, which)? {
             // A part linked by a field that shows rows of a host that is a new, unsaved record: BC inserts the host at Close although
             // nothing was typed (PartLineBeforeHostKey.al:838 PYB_OpenNew_LinkedPart_BlankKeyRowsExist `close =
             // [HP.OnInsertRecord: | H.OnInsert:]`). Not modelled: refused.
@@ -1592,9 +1605,14 @@ impl Session {
                     .controls
                     .iter()
                     .any(|c| c.kind == ir::ControlKind::Repeater);
-            // A host over no row is not pinned: a part with an OnNewRecord there is refused.
+            // A host over no row: the part runs OnNewRecord once too, with the blank link value and no validation, and
+            // OnAfterGetCurrRecord once; the host runs neither (PartLineBeforeHostKey.al:1503 QH_OpenView_NoRow_Document
+            // `[LP.OnNewRecord:]`, :1530 _TraceHost `[TH.OnOpenPage | CP.OnOpenPage | CP.OnNewRecord: below=Yes |
+            // CP.OnAfterGetCurrRecord:/0]`, :1562 _UnlinkedPart, :1602 QH_OpenView_RowFilteredAway after the host's filter
+            // left no row). Pinned for a Document or Card host (`host_shows_no_row`); another host is refused.
             let view_part_no_host_row = self.has_source(st)
                 && !host_on_row
+                && !host_shows_no_row
                 && st.borrow().host.is_some()
                 && st.borrow().mode == PageMode::View
                 && page_of(&self.engine(), st)
@@ -1611,7 +1629,7 @@ impl Session {
                     "OnNewRecord of a list part whose host was opened for view on no row (whether BC runs it is not pinned)",
                 );
             }
-            if view_part {
+            if view_part || (host_shows_no_row && self.has_source(st) && st.borrow().mode == PageMode::View) {
                 let rec = self.page_rec(st);
                 let table = rec.borrow().table as usize;
                 let fresh = self.initial_fields(table);
@@ -1707,19 +1725,23 @@ impl Session {
             self.set_xrec(st);
             return Ok(());
         }
+        // A link value the part's table relation refuses: the client stamps it without validating (no OnBeforeValidate, no
+        // OnValidate), runs the part's OnNewRecord and OnAfterGetCurrRecord once, then the open fails with code TestWrapped and the
+        // relation's text (PartLineBeforeHostKey.al:1600-1680 QH_ConstLink_Missing_OpenNew_Trace `[CP.OnOpenPage |
+        // CP.OnNewRecord:D9 below=Yes | CP.OnAfterGetCurrRecord:D9/0]`, QH_ConstLink_Missing_OpenNew_Events `[LP.OnNewRecord:D9]`,
+        // QH_ConstLink_Missing_OpenEdit; :776 PYB_OpenNew_ConstLinkedPart).
+        if let Some(e) = self.part_link_relation_error(st)? {
+            self.stamp_from_filters(st, false)?;
+            self.page_trigger(st, "onnewrecord", vec![Value::Boolean(true)])?;
+            self.page_event(st, "onnewrecordevent", None, Some(true))?;
+            self.set_xrec(st);
+            self.page_trigger(st, "onaftergetcurrrecord", vec![])?;
+            self.page_event(st, "onaftergetcurrrecordevent", None, None)?;
+            return Err(error_code(e.message.clone(), "TestWrapped"));
+        }
         for validate in [true, false, true] {
             if validate {
-                // A link value the part's table relation refuses: BC runs one OnNewRecord and fails the open with code
-                // TestWrapped (PartLineBeforeHostKey.al:776 PYB_OpenNew_ConstLinkedPart `[LP.OnNewRecord:D9]`); where that error
-                // comes in this sequence is not modelled.
-                match self.stamp_from_filters(st, true) {
-                    Err(Signal::Error(_)) => {
-                        return unsupported(
-                            "a part link value refused by validation while the host opens (BC runs one OnNewRecord first; not modelled)",
-                        );
-                    }
-                    other => other?,
-                }
+                self.stamp_from_filters(st, true)?;
             }
             self.page_trigger(st, "onnewrecord", vec![Value::Boolean(true)])?;
             self.page_event(st, "onnewrecordevent", None, Some(true))?;
@@ -1728,6 +1750,30 @@ impl Session {
             self.page_event(st, "onaftergetcurrrecordevent", None, None)?;
         }
         Ok(())
+    }
+
+    /// The error of the table relation of the first link value `stamp_from_filters` would validate on the part's new line, when
+    /// the related table lacks it; the line is left as it was.
+    fn part_link_relation_error(&mut self, st: &St) -> Result<Option<Box<al_builtins::native::AlError>>, Signal> {
+        if st.borrow().host.is_none() || !self.has_source(st) {
+            return Ok(None);
+        }
+        let rec = self.page_rec(st);
+        let before = rec.borrow().fields.clone();
+        self.stamp_from_filters(st, false)?;
+        let stamped = rec.borrow().fields.clone();
+        rec.borrow_mut().fields = before.clone();
+        let table = self.table(&rec)?;
+        for (pos, (was, now)) in before.iter().zip(&stamped).enumerate() {
+            if Self::same_values(std::slice::from_ref(was), std::slice::from_ref(now)) {
+                continue;
+            }
+            match self.validate_relation(&rec, &table, pos, now.clone()) {
+                Err(Signal::Error(e)) => return Ok(Some(e)),
+                other => other?,
+            }
+        }
+        Ok(None)
     }
 
     /// Remembers the stored row the cursor stands on as the lower neighbour of the row about to

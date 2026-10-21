@@ -289,6 +289,24 @@ codeunit 67582 "QH Test"
         exit(T);
     end;
 
+    procedure OpenViewNoRow(Lines: Integer): Text
+    var
+        Host: TestPage "LT DL Document";
+        T: Text;
+    begin
+        Seed(Lines);
+        Host.OpenView();
+        T := 'open=' + Take();
+        T += '#no=' + Host."No.".Value();
+        T += '#read=' + Host.Lines.Description.Value();
+        T += '#log=' + Take();
+        Host.Close();
+        T += '#close=' + Take() + '#' + Stored();
+        exit(T);
+    end;
+
+    procedure ViewNoRow(): Text begin exit(OpenViewNoRow(0)); end;
+    procedure ViewNoRowBlankLines(): Text begin exit(OpenViewNoRow(1)); end;
     procedure ReadStored(): Text begin exit(Run(2, 1)); end;
     procedure ReadNoRows(): Text begin exit(Run(0, 1)); end;
     procedure CloseOnly(): Text begin exit(Run(2, 0)); end;
@@ -352,4 +370,16 @@ fn a_host_new_inserts_nothing() {
 #[test]
 fn ok_inserts_no_new_host() {
     assert_eq!(run("OkInvoke"), "open=[HP.OnNewRecord]#log=[]#close=[]#headers=0 lines=1");
+}
+
+/// PartLineBeforeHostKey.al:1503 QH_OpenView_NoRow_Document: the part runs OnNewRecord once, no validation, nothing is inserted.
+#[test]
+fn open_view_on_no_host_row_runs_the_parts_on_new_record_once() {
+    assert_eq!(run("ViewNoRow"), "open=[LP.OnNewRecord:]#no=#read=#log=[]#close=[]#headers=0 lines=0");
+}
+
+/// PartLineBeforeHostKey.al:1578 QH_OpenView_NoRow_BlankKeyLinesExist: the part shows no row although lines of the blank key exist.
+#[test]
+fn open_view_on_no_host_row_shows_no_part_row() {
+    assert_eq!(run("ViewNoRowBlankLines"), "open=[LP.OnNewRecord:]#no=#read=#log=[]#close=[]#headers=0 lines=1");
 }

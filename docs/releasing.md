@@ -18,6 +18,9 @@ Rules:
   `release-tag.yml` creates a normal GitHub release (not a draft, not a
   pre-release), marked "latest". mise's github backend lists only such
   releases, so `mise up` finds them (owner decision 2026-10-20).
+- `alrunner --version` tells them apart. Edge shows the build date:
+  `alrunner 3.0.0-alpha.2+edge.20261021 (c26a65651)`. A numbered alpha and a
+  local build show `alrunner 3.0.0-alpha.2 (c26a65651)`.
 - Nothing from Microsoft goes into any archive.
 
 ## 1. A new edge build

@@ -232,6 +232,11 @@ impl Session {
             let Value::Record(empty) = self.default_value(&RtType::Record(t.object, false)) else {
                 return unsupported("an empty record of the page's source table");
             };
+            // How many times is no oracle (it differs between BC runs): every open that runs them is a flagged pass at best
+            // (owner decision 2026-10-21).
+            al_builtins::assumptions::assume(
+                al_builtins::assumptions::Assumption::PageOpenCaptionClassEmptyRecordCount,
+            );
             for _ in 0..20 {
                 for (pos, expr) in &exprs {
                     self.field_caption_class_value(&t, *pos, Some(&empty), expr)?;
@@ -919,6 +924,24 @@ impl Session {
         }
         if self.open_new_list_untouched(st) {
             return self.move_on_open_new_list(how);
+        }
+        // A list opened for view over an empty view holds no row: First answers No and reads nothing, also after the test stored a
+        // row the view admits (misc/lt-probes-needed-7/PnGShowRow.al:494 QG_ViewEmptyList_RowStoredByTest_ThenFirst `first` No,
+        // `first_no` and `first_log` empty; pages/W1ShowRow.al:277 FilteredList_InsertedRowTheViewHides). An action shows the row
+        // (`empty_page_after_action`). The other moves are not pinned there.
+        let empty_view_list = {
+            let s = st.borrow();
+            s.open
+                && s.cursor == Cursor::None
+                && s.mode == PageMode::View
+                && s.window.is_empty()
+                && s.host.is_none()
+                && s.parts.is_empty()
+        } && self.is_list(st)
+            && !self.declares(st, "onfindrecord")
+            && !self.declares(st, "onnextrecord");
+        if empty_view_list && how == PageMethod::First {
+            return Ok(Value::Boolean(false));
         }
         let answer_used = self.ret_used;
         // A list row whose OnValidate refused an entry: Next() raises nothing, runs no OnModify and stores nothing of the row

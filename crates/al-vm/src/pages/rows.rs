@@ -232,6 +232,9 @@ impl Session {
             let Value::Record(empty) = self.default_value(&RtType::Record(t.object, false)) else {
                 return unsupported("an empty record of the page's source table");
             };
+            // How many times is no oracle (it differs between BC runs): every open that runs them is a flagged pass at best
+            // (owner decision 2026-10-21).
+            al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::PageOpenCaptionClassEmptyRecordCount);
             for _ in 0..20 {
                 for (pos, expr) in &exprs {
                     self.field_caption_class_value(&t, *pos, Some(&empty), expr)?;

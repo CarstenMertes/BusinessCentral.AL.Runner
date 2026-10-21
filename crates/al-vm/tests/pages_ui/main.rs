@@ -15,6 +15,7 @@ mod page_inserts;
 mod pageext;
 mod pages;
 mod part_host_move;
+mod part_update_propagation;
 mod parts;
 mod row_window;
 mod run_record_group2;

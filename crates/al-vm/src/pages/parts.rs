@@ -915,6 +915,47 @@ impl Session {
         self.torn_down_on_error(&host, r).map(|_| ())
     }
 
+    /// A part ran `CurrPage.Update` in a trigger of a SetValue, and its code changed the host's stored row: with
+    /// `UpdatePropagation = Both` BC's client refreshes the host as well, so the host's later save keeps that change (Tests-ERM
+    /// 134344 PurchaseQuoteUpdateCurrrencyFactor: the subform's Invoice Discount Amount changes the Purchase Header, the card's
+    /// AssistEdit then saves the header). No corpus test pins the host's refresh (assumption part-update-propagation-both-refreshes-host).
+    pub(super) fn host_after_part_update(&mut self, st: &St) -> Result<(), Signal> {
+        let Some((host, c)) = st.borrow().host.as_ref().and_then(|(h, c)| h.upgrade().map(|h| (h, *c))) else {
+            return Ok(());
+        };
+        let both = {
+            let engine = self.engine();
+            matches!(page_of(&engine, &host).controls[c].prop("updatepropagation"), Some(ir::PropVal::Lit(v)) if v.eq_ignore_ascii_case("both"))
+        };
+        if !both
+            || !host.borrow().open
+            || !self.has_source(&host)
+            || host.borrow().cursor != Cursor::Row
+            || host.borrow().draft
+        {
+            return Ok(());
+        }
+        let hrec = self.page_rec(&host);
+        if hrec.borrow().temporary {
+            return Ok(());
+        }
+        let Some(stored) = self.stored_row(&hrec)? else {
+            return Ok(());
+        };
+        let read = self.page_xrec_fields(&host);
+        if Self::same_values(&stored, &read) {
+            return Ok(());
+        }
+        if host.borrow().dirty {
+            return unsupported(
+                "a part's CurrPage.Update with UpdatePropagation = Both after its code changed the host's stored row while the host holds an unsaved edit (not pinned)",
+            );
+        }
+        al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::PartUpdatePropagationBothRefreshesHost);
+        host.borrow_mut().refresh = true;
+        self.run_refresh(&host)
+    }
+
     /// A host control is about to take a value: the open parts that hold a typed row that is not saved save it first
     /// (assumption part-row-saved-before-host-set-value).
     pub(super) fn save_parts_before_host_edit(&mut self, st: &St) -> Result<(), Signal> {

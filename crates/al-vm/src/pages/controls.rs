@@ -839,6 +839,9 @@ impl Session {
                 let saved = std::mem::take(&mut st.borrow_mut().save_record_called);
                 let update_asked = st.borrow().refresh;
                 self.run_refresh(st)?;
+                if update_asked {
+                    self.host_after_part_update(st)?;
+                }
                 if saved && !update_asked && rec_bound {
                     self.refresh_linked_parts_after_save(st)?;
                 }

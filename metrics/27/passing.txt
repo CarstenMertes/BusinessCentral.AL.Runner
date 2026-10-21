@@ -4420,6 +4420,12 @@
 67582 PYB_OpenNew_UnlinkedPart_WithRows
 67582 PYB_OpenView_ExistingHost
 67582 PartLine_EnteredAfterHostKey_Baseline
+67582 QH_BlankRows_BlankHeaderExists
+67582 QH_BlankRows_UnlinkedPart
+67582 QH_FieldLink_OpenNew_Events
+67582 QH_NoRows_HostOnNewRecordSetsName
+67582 QH_OtherKeyRows_OpenNew_Close
+67582 QH_PartWithRows_OpenEdit_CurrRecordOrder
 67590 Delete_ThenError_InAssertError_IsRolledBack_Control
 67590 Rename_Committed_SurvivesALaterError
 67590 Rename_ThenError_InAssertError_IsRolledBack
@@ -13786,6 +13792,8 @@
 86163 PxRunsASameTwo
 86163 PxRunsATextArg
 86163 PxRunsBNoArgs
+86163 QhRunsEmptyCE1
+86163 QhRunsTargets
 86264 DI_AssignThenInsert
 86264 DI_AssignThenModify
 86264 DI_AssignedValueLifetime
@@ -13857,3 +13865,12 @@
 86703 Plain_GoToKey_ThenValueRead_ThenUpdateAction
 86703 Plain_LookupHandler_GoToKey_ThenOK
 86703 Plain_LookupHandler_GoToKey_ValueRead_ThenOK
+86826 QI_TableFieldExpression_Card_ShowFcySymbolOnly
+86836 QI_PartNewRowUntouched_ThenHostSetValue
+86853 QI_EE_EmptyOpen_Asserterror
+86853 QI_EE_TextAction_Asserterror
+86853 QI_EE_TextValidate_Asserterror
+86853 QI_EE_TryEmptyAction
+86864 QI_RV_List_Actions
+86864 QI_RV_List_Navigation
+86864 QI_RV_List_NewRow

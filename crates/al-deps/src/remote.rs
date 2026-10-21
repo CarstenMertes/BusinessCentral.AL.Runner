@@ -142,7 +142,7 @@ pub fn http_agent() -> ureq::Agent {
     let config = ureq::Agent::config_builder()
         .timeout_global(Some(std::time::Duration::from_secs(300)))
         .timeout_connect(Some(std::time::Duration::from_secs(20)))
-        .user_agent(concat!("al-runtime-rs/", env!("CARGO_PKG_VERSION")))
+        .user_agent(concat!("al-runner/", env!("CARGO_PKG_VERSION")))
         .http_status_as_error(false)
         .build();
     ureq::Agent::new_with_config(config)

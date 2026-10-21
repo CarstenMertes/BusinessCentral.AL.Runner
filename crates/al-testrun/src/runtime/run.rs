@@ -403,7 +403,7 @@ pub(crate) fn run_codeunit_core(
                         Err(why) => Ok(Err(Signal::Unsupported(why))),
                         Ok(()) => std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                             // A debugging aid: the named test panics here, to show that a panic ends one codeunit and not the
-                            // process (tests of `alrunner serve`). Not documented for users.
+                            // process (tests of `al-runner serve`). Not documented for users.
                             if std::env::var("ALRUNNER_DEBUG_PANIC_IN").is_ok_and(|n| n == routine.name) {
                                 panic!("requested by ALRUNNER_DEBUG_PANIC_IN");
                             }

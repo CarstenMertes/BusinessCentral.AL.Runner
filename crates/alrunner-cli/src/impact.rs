@@ -1,4 +1,4 @@
-//! `alrunner test --impact-of APP` (ADR-043 steps 1 to 3: two runs or dynamic selection, the diff, the accept file,
+//! `al-runner test --impact-of APP` (ADR-043 steps 1 to 3: two runs or dynamic selection, the diff, the accept file,
 //! the JSON diff and the JUnit of the run with the extension).
 //!
 //! Runs the selected tests of the APPs without the extensions, then with them (the extensions given as further
@@ -755,7 +755,7 @@ fn side_args(a: &TestArgs) -> TestArgs {
 /// The command that builds the index this run lacks: the run's own arguments, as `impact-index build`, without the
 /// extension (ADR-043 section 2.3: it repeats the test apps and flags exactly).
 fn build_command(args: &[String]) -> String {
-    let mut out = vec!["alrunner".to_string(), "impact-index".into(), "build".into()];
+    let mut out = vec!["al-runner".to_string(), "impact-index".into(), "build".into()];
     let mut it = args.iter().skip_while(|a| *a != "test").skip(1);
     while let Some(a) = it.next() {
         if a == "--impact-of" || a == "--impact" {
@@ -794,7 +794,7 @@ fn no_index_warning(a: &TestArgs, cannot_rule_out: Option<usize>) -> String {
     )
 }
 
-/// `alrunner test --impact-of ...`: `--impact all` runs everything on both sides; `--impact static`, or no cached
+/// `al-runner test --impact-of ...`: `--impact all` runs everything on both sides; `--impact static`, or no cached
 /// index, selects by static reach; else dynamic selection with the index. Exit 1 when a test newly fails, fails
 /// differently, is newly not run or is a selection miss; a run that selected nothing or stopped exits as that run did.
 pub fn run(a: &TestArgs) -> Result<u8, String> {

@@ -2,7 +2,7 @@
 //! apps and `Company-Initialize` takes longer than reading what they leave, and it is the same for the same program
 //! and the same world around it. The entry lives in the compile cache's folder (`<cache>/compile/`, file extension
 //! `albr`), is tied to the same build of the runtime, is pruned with the other entries, and goes with
-//! `alrunner cache clear` and is replaced by `--rebuild-compile-cache`. There is no second cache.
+//! `al-runner cache clear` and is replaced by `--rebuild-compile-cache`. There is no second cache.
 //!
 //! The file is the [`BaselineRun`]: the data the install code left, the notes about roots that did not run to their
 //! end, and the instant the run began. The file is written to a name of its own and renamed, so a reader never sees

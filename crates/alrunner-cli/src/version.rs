@@ -1,9 +1,9 @@
 //! The one version line, shared by `--version` and the run header.
 
-/// `alrunner <version> (<commit>)`. The version is the Cargo version, plus the build suffix
+/// `al-runner <version> (<commit>)`. The version is the Cargo version, plus the build suffix
 /// (`+edge.YYYYMMDD`) on an edge build.
 pub fn line() -> String {
-    format!("alrunner {} ({})", env!("ALRUNNER_VERSION"), env!("ALRUNNER_COMMIT"))
+    format!("al-runner {} ({})", env!("ALRUNNER_VERSION"), env!("ALRUNNER_COMMIT"))
 }
 
 #[cfg(test)]
@@ -13,7 +13,10 @@ mod tests {
     #[test]
     fn line_starts_with_the_cargo_version_and_has_the_commit() {
         let l = line();
-        assert!(l.starts_with(&format!("alrunner {}", env!("CARGO_PKG_VERSION"))), "{l}");
+        assert!(
+            l.starts_with(&format!("al-runner {}", env!("CARGO_PKG_VERSION"))),
+            "{l}"
+        );
         assert!(l.ends_with(&format!(" ({})", env!("ALRUNNER_COMMIT"))), "{l}");
     }
 

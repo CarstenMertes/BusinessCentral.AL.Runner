@@ -1,4 +1,4 @@
-//! `alrunner`: the user command line of AL Runner v3 (ADR-016). Today: `alrunner test`.
+//! `al-runner`: the user command line of AL Runner v3 (ADR-016). Today: `al-runner test`.
 
 mod apps;
 mod args;
@@ -8,6 +8,7 @@ mod coverage;
 mod impact;
 mod impact_index;
 mod output;
+mod path_note;
 mod recipe;
 mod recipe_run;
 mod run;
@@ -52,6 +53,11 @@ fn real_main() -> ExitCode {
             return ExitCode::from(2);
         }
     };
+    // Another `al-runner` on PATH (AL Runner v2's dotnet tool): one line on stderr, at most once a day. `--version`
+    // lists the copies instead; `serve` talks a protocol on stdout and stderr and gets no note.
+    if !matches!(command, Command::Help | Command::Version | Command::Serve(_)) {
+        path_note::maybe_note();
+    }
     match command {
         Command::Help => {
             print!("{}", args::HELP);
@@ -59,6 +65,9 @@ fn real_main() -> ExitCode {
         }
         Command::Version => {
             println!("{}", version::line());
+            for l in path_note::version_lines() {
+                println!("{l}");
+            }
             ExitCode::SUCCESS
         }
         Command::ListAssumptions(dir) => {

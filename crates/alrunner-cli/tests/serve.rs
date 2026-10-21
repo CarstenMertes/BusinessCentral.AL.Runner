@@ -1,4 +1,4 @@
-//! `alrunner serve` end to end (ADR-028): the v2 protocol on stdin and stdout.
+//! `al-runner serve` end to end (ADR-028): the v2 protocol on stdin and stdout.
 
 use serde_json::{Value, json};
 use std::io::{BufRead, BufReader, Write};
@@ -17,7 +17,7 @@ impl Server {
     }
 
     fn start_with(extra: &[&str], env: &[(&str, &str)]) -> Server {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_alrunner"))
+        let mut child = Command::new(env!("CARGO_BIN_EXE_al-runner"))
             .arg("serve")
             .args(extra)
             .envs(env.iter().copied())
@@ -28,7 +28,7 @@ impl Server {
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .spawn()
-            .expect("start alrunner serve");
+            .expect("start al-runner serve");
         let stdin = child.stdin.take();
         let stdout = BufReader::new(child.stdout.take().unwrap());
         Server { child, stdin, stdout }

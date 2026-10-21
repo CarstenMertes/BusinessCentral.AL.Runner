@@ -457,7 +457,7 @@ fn resolve(cfg: &SidecarConfig) -> Result<Resolved, String> {
     Ok(Resolved { dotnet, sidecar })
 }
 
-/// The sidecar's source files, built into this binary, so a copied or installed `alrunner` can
+/// The sidecar's source files, built into this binary, so a copied or installed `al-runner` can
 /// find or build its helper without the repository (the cache is keyed by the same hash as the
 /// repository's own build). A test keeps the list equal to the folder.
 const EMBEDDED: &[(&str, &str)] = &[

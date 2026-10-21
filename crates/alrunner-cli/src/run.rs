@@ -847,14 +847,7 @@ fn test_inner(a: &TestArgs, mut warm: Option<&mut WarmCtx>, collect: Option<&mut
     }
 
     if !a.quiet {
-        say!(
-            "{}",
-            style::bold(&format!(
-                "alrunner {} ({})",
-                env!("CARGO_PKG_VERSION"),
-                env!("ALRUNNER_COMMIT")
-            ))
-        );
+        say!("{}", style::bold(&crate::version::line()));
     }
     // Setup details: --verbose only (see HELP, "Output").
     if a.verbose {

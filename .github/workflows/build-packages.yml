@@ -16,6 +16,11 @@ on:
         description: The commit to build.
         required: true
         type: string
+      version_suffix:
+        description: Build metadata appended to the version, for example "+edge.20261021". Empty for a numbered release.
+        required: false
+        type: string
+        default: ""
       attest:
         description: Create a build provenance attestation for each archive.
         required: false
@@ -29,6 +34,7 @@ env:
   CARGO_PROFILE_RELEASE_LTO: thin
   CARGO_PROFILE_RELEASE_STRIP: symbols
   ALRUNNER_COMMIT: ${{ inputs.sha }}
+  ALRUNNER_VERSION_SUFFIX: ${{ inputs.version_suffix }}
 
 jobs:
   build:

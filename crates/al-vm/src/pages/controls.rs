@@ -180,9 +180,10 @@ impl Session {
                 if !t.is_empty() && t.chars().all(|c| c.is_ascii_digit()) {
                     let n: Option<i32> = t.parse().ok();
                     let is_value = match (&ty, n) {
-                        (RtType::Enum(id), Some(n)) => {
-                            engine.program.objects[*id as usize].enum_values.iter().any(|(v, _)| i64::from(*v) == i64::from(n))
-                        }
+                        (RtType::Enum(id), Some(n)) => engine.program.objects[*id as usize]
+                            .enum_values
+                            .iter()
+                            .any(|(v, _)| i64::from(*v) == i64::from(n)),
                         (RtType::Option(members), Some(n)) => usize::try_from(n).is_ok_and(|n| n < members.len()),
                         _ => false,
                     };
@@ -196,7 +197,10 @@ impl Session {
                     }
                 } else if t.chars().all(|c| c == ' ') || t.chars().all(|c| c.is_ascii_alphabetic()) {
                     return Err(if self.has(al_version::Gate::ConversionErrorTextsFrom28) {
-                        error_code(format!("The value \"{t}\" can't be evaluated into type Option."), "Evaluate:Format")
+                        error_code(
+                            format!("The value \"{t}\" can't be evaluated into type Option."),
+                            "Evaluate:Format",
+                        )
                     } else {
                         error_code("The type NavOption is unknown.".to_string(), "NotSupportedType")
                     });
@@ -274,8 +278,10 @@ impl Session {
         let mut old_ordinal = None;
         let not_a_value = match (&arg, &ty, &current) {
             (Value::Integer(n), RtType::Enum(id), Value::Enum(_, held)) => {
-                let is_value =
-                    engine.program.objects[*id as usize].enum_values.iter().any(|(v, _)| i64::from(*v) == i64::from(*n));
+                let is_value = engine.program.objects[*id as usize]
+                    .enum_values
+                    .iter()
+                    .any(|(v, _)| i64::from(*v) == i64::from(*n));
                 (!is_value).then_some(*held)
             }
             (Value::Integer(n), RtType::Option(members), Value::Option(held, _)) => {

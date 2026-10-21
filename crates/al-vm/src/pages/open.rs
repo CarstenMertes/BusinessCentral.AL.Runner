@@ -1456,15 +1456,20 @@ impl Session {
             // A part linked by a field that shows rows of a host that is a new, unsaved record: BC inserts the host at Close although
             // nothing was typed (PartLineBeforeHostKey.al:838 PYB_OpenNew_LinkedPart_BlankKeyRowsExist `close =
             // [HP.OnInsertRecord: | H.OnInsert:]`). Not modelled: refused.
-            let new_host_link = st.borrow().host.as_ref().and_then(|(h, c)| h.upgrade().map(|h| (h, *c))).filter(|(h, c)| {
-                let hb = h.borrow();
-                hb.draft
-                    && !hb.draft_stored
-                    && page_of(&self.engine(), h).controls[*c]
-                        .part_link
-                        .as_ref()
-                        .is_some_and(|l| l.entries.iter().any(|e| matches!(e, ir::LinkEntry::Field(..))))
-            });
+            let new_host_link = st
+                .borrow()
+                .host
+                .as_ref()
+                .and_then(|(h, c)| h.upgrade().map(|h| (h, *c)))
+                .filter(|(h, c)| {
+                    let hb = h.borrow();
+                    hb.draft
+                        && !hb.draft_stored
+                        && page_of(&self.engine(), h).controls[*c]
+                            .part_link
+                            .as_ref()
+                            .is_some_and(|l| l.entries.iter().any(|e| matches!(e, ir::LinkEntry::Field(..))))
+                });
             if new_host_link.is_some() {
                 return unsupported(
                     "a linked part that shows rows while its host is a new, unsaved record (BC inserts the host at Close; not modelled)",
@@ -1525,7 +1530,10 @@ impl Session {
             let view_part = self.has_source(st)
                 && st.borrow().host.is_some()
                 && st.borrow().mode == PageMode::View
-                && page_of(&self.engine(), st).controls.iter().any(|c| c.kind == ir::ControlKind::Repeater);
+                && page_of(&self.engine(), st)
+                    .controls
+                    .iter()
+                    .any(|c| c.kind == ir::ControlKind::Repeater);
             if view_part {
                 let rec = self.page_rec(st);
                 let table = rec.borrow().table as usize;
@@ -1606,7 +1614,11 @@ impl Session {
             s.draft = true;
             s.typed_before_key = false;
         }
-        let runs: &[bool] = if self.host_new_running { &[] } else { &[true, false, true] };
+        let runs: &[bool] = if self.host_new_running {
+            &[]
+        } else {
+            &[true, false, true]
+        };
         for &validate in runs {
             if validate {
                 // A link value the part's table relation refuses: BC runs one OnNewRecord and fails the open with code

@@ -1605,7 +1605,10 @@ fn a_test_lookup_method_id_is_refused_where_its_number_would_show() {
     let why = not_run(&o, "ShowsIt");
     assert!(why.contains("Test Lookup Method ID is not pinned"), "{why}");
     assert!(
-        !matches!(o.iter().find(|(n, _)| n == "ComparesIt").map(|(_, o)| o), Some(Outcome::NotRun(_))),
+        !matches!(
+            o.iter().find(|(n, _)| n == "ComparesIt").map(|(_, o)| o),
+            Some(Outcome::NotRun(_))
+        ),
         "{o:?}"
     );
 }

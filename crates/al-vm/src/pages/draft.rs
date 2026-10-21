@@ -492,6 +492,19 @@ impl Session {
             // xRec is the new record itself when the line becomes current (misc/lt-probes-needed-7/PnGNewRecord.al:
             // HandedRecordNoFilters `AGCR(,)`).
             self.set_xrec(st);
+        } else if self.is_list(st)
+            && st
+                .borrow()
+                .host
+                .as_ref()
+                .and_then(|(h, _)| h.upgrade())
+                .is_some_and(|h| !self.is_list(&h))
+        {
+            // The same for a ListPart in a Document page: OnNewRecord sees the last row as xRec, OnAfterGetCurrRecord the blank new
+            // row (corpus bump 41 pages/lt-qj-part-propagation/QjPartPropagation.al QJ_SubformSaveRecord_NewRow
+            // `S.NEW(x=1 x.ln=10000) S.AGCR(0 r=0 x=0)`).
+            al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::PartSaveRecordInValidateKeepsXrec);
+            self.set_xrec(st);
         }
         // A new row nobody has saved raises OnAfterGetCurrRecord but no OnAfterGetRecord (corpus
         // pageupdate/TestPageUpdateNewRow.al:OpenNew_TraceIsOneOnAfterGetCurrRecord).

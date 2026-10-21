@@ -353,7 +353,9 @@ impl Session {
     pub(super) fn populate_current(&mut self, st: &St) -> Result<(), Signal> {
         st.borrow_mut().dirty = false;
         self.calc_row_flowfields(st)?;
-        self.set_xrec(st);
+        if !st.borrow().read_keeps_xrec {
+            self.set_xrec(st);
+        }
         self.populate_expressions(st)?;
         self.page_trigger(st, "onaftergetrecord", vec![])?;
         Ok(())

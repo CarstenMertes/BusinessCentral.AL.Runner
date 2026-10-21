@@ -136,6 +136,7 @@ impl Session {
         // PendingPartRowSavedWhenHostMoves) and when it closes (testpart/TestOkPartRow.al). Not pinned for a SetValue:
         // assumption part-row-saved-before-host-set-value.
         self.save_parts_before_host_edit(st)?;
+        self.save_host_before_part_edit(st)?;
         // OnBeforeValidate and OnAfterValidate of `modify` blocks wrap the control's own OnValidate
         // (corpus pageextensiontrigger/TestModifiedControlValidateTriggers_Tests.al:
         // ModifiedControlBeforeAndAfterValidateWrapTheBaseControlsOwnOnValidate). Only that
@@ -764,6 +765,7 @@ impl Session {
         }
         let from_page_trigger = std::cell::Cell::new(false);
         st.borrow_mut().save_record_called = false;
+        let was_validating = std::mem::replace(&mut st.borrow_mut().validating_control, rec_bound);
         let result = (|| -> Result<(), Signal> {
             match ctl.binding.clone() {
                 ir::Binding::Field(pos) => {
@@ -830,6 +832,14 @@ impl Session {
             }
             Ok(())
         })();
+        st.borrow_mut().validating_control = was_validating;
+        // CurrPage.SaveRecord in the validation left xRec as it was; the row it stored is xRec from here on (the next SetValue's
+        // OnValidate sees it: QjPartPropagation.al QJ_SubformSaveRecord_StoredRow / _NewRow `S.V.before(... x=5 ...)`, pinned in
+        // corpus bump 41).
+        let pending_xrec = st.borrow_mut().xrec_after_validate.take();
+        if let Some(fields) = pending_xrec {
+            self.set_xrec_fields(st, fields);
+        }
         match result {
             Ok(()) => {
                 // A SetValue that goes through clears the control's refused entries (pages/lt-f3-pages/F3ValidationAddinFilter.al:
@@ -838,9 +848,8 @@ impl Session {
                 st.borrow_mut().trigger_errors.retain(|(i, _)| *i != idx);
                 let saved = std::mem::take(&mut st.borrow_mut().save_record_called);
                 let update_asked = st.borrow().refresh;
-                self.run_refresh(st)?;
-                if update_asked {
-                    self.host_after_part_update(st)?;
+                if !(update_asked && self.host_after_part_update(st)?) {
+                    self.run_refresh(st)?;
                 }
                 if saved && !update_asked && rec_bound {
                     self.refresh_linked_parts_after_save(st)?;

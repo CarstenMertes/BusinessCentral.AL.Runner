@@ -859,6 +859,15 @@ impl Session {
                 if reads_rows && !saved {
                     self.read_page_again(st)?;
                 }
+                // On a Document card that read is OnAfterGetRecord alone, no OnAfterGetCurrRecord, then the parts read their rows
+                // (corpus bump 41 pages/lt-qj-part-propagation/QjPartPropagation.al QJ_Both_PartModifiesHost_ThenHostSave
+                // `H.ACT.end(...) H.AGR(...) L.AGR(...) L.AGR(...) L.AGCR(...)`).
+                if saved && !self.is_list(st) && !st.borrow().parts.is_empty() {
+                    al_builtins::assumptions::assume(
+                        al_builtins::assumptions::Assumption::PartUpdatePropagationBothRefreshesHost,
+                    );
+                    st.borrow_mut().refresh_without_curr = true;
+                }
                 st.borrow_mut().refresh = true;
             }
             if !find_pinned {
@@ -1123,6 +1132,8 @@ impl Session {
     /// TestPageUpdateGoneRow.al StoredRow_OnValidateUpdateFalse_Trace). The row is read from the
     /// table unless the client holds edits of it that are not saved yet.
     pub(super) fn run_refresh(&mut self, st: &St) -> Result<(), Signal> {
+        let without_curr = std::mem::take(&mut st.borrow_mut().refresh_without_curr);
+        let without_parts = std::mem::take(&mut st.borrow_mut().refresh_without_parts);
         let read_done = std::mem::take(&mut st.borrow_mut().refresh_read_done);
         if !std::mem::take(&mut st.borrow_mut().refresh) || read_done {
             return Ok(());
@@ -1191,6 +1202,9 @@ impl Session {
         }
         let r = (|| {
             self.populate_current(st)?;
+            if without_curr {
+                return Ok(true);
+            }
             self.page_trigger(st, "onaftergetcurrrecord", vec![])?;
             self.page_event(st, "onaftergetcurrrecordevent", None, None)
         })();
@@ -1199,7 +1213,9 @@ impl Session {
         // The parts read their rows again after the host's own triggers (corpus
         // testpart/TestPartTriggerOrderAndRefresh.al:HostCurrPageUpdate_ReReadsThePart:
         // "host.Action;host.AGCR(2);part.AGCR(2);", and no part OnOpenPage).
-        self.sync_parts(st)?;
+        if !without_parts {
+            self.sync_parts(st)?;
+        }
         Ok(())
     }
 

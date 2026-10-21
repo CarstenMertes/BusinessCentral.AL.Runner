@@ -915,55 +915,117 @@ impl Session {
         self.torn_down_on_error(&host, r).map(|_| ())
     }
 
-    /// A part ran `CurrPage.Update` in a trigger of a SetValue, and its code changed the host's stored row: with
-    /// `UpdatePropagation = Both` BC's client refreshes the host as well, so the host's later save keeps that change (Tests-ERM
-    /// 134344 PurchaseQuoteUpdateCurrrencyFactor: the subform's Invoice Discount Amount changes the Purchase Header, the card's
-    /// AssistEdit then saves the header). No corpus test pins the host's refresh (assumption part-update-propagation-both-refreshes-host).
-    pub(super) fn host_after_part_update(&mut self, st: &St) -> Result<(), Signal> {
+    /// A part ran `CurrPage.Update` in a trigger of a SetValue, and its code changed the host's stored row (another table): the host
+    /// reads its row again in every UpdatePropagation mode, no 'changed by another user' follows, and the host's later save keeps the
+    /// change. Over a stored part row the part's typed edit is dropped (Update(false) reads the line again; the part's
+    /// OnAfterGetCurrRecord sees the typed row as xRec). With Both the host's triggers run first and then its parts read their rows;
+    /// with SubPart or none the part reads its rows first, then the host's triggers run. Probed by corpus bump 41
+    /// pages/lt-qj-part-propagation/QjPartPropagation.al QJ_Both_ / QJ_SubPart_ / QJ_Default_PartModifiesHost_ThenHostSave
+    /// (flagged as part-update-propagation-both-refreshes-host until the bump lands; Tests-ERM 134344 needs it). A new part row is
+    /// pinned for none of this: with Both it keeps the earlier flagged behavior (the part refreshes, then the host), otherwise refused.
+    /// Returns whether the part's own refresh was done here.
+    pub(super) fn host_after_part_update(&mut self, st: &St) -> Result<bool, Signal> {
         let Some((host, c)) = st
             .borrow()
             .host
             .as_ref()
             .and_then(|(h, c)| h.upgrade().map(|h| (h, *c)))
         else {
-            return Ok(());
+            return Ok(false);
         };
         let both = {
             let engine = self.engine();
             matches!(page_of(&engine, &host).controls[c].prop("updatepropagation"), Some(ir::PropVal::Lit(v)) if v.eq_ignore_ascii_case("both"))
         };
-        if !both
-            || !host.borrow().open
+        if !host.borrow().open
             || !self.has_source(&host)
+            || !self.has_source(st)
             || host.borrow().cursor != Cursor::Row
             || host.borrow().draft
+        {
+            return Ok(false);
+        }
+        let hrec = self.page_rec(&host);
+        if hrec.borrow().temporary {
+            return Ok(false);
+        }
+        // A part over the host's own table: `refresh_host_after_part_edit` re-reads the host once, and only once
+        // (pages/lt-page-controls-aa/AaPartsLists.al:AA_UpdatePropagation_Both line 191: loads-after-part-edit = 2).
+        if self.table(&hrec)?.object == self.table(&self.page_rec(st))?.object {
+            return Ok(false);
+        }
+        let Some(stored) = self.stored_row(&hrec)? else {
+            return Ok(false);
+        };
+        let read = self.page_xrec_fields(&host);
+        if Self::same_values(&stored, &read) {
+            return Ok(false);
+        }
+        if host.borrow().dirty {
+            return unsupported(
+                "a part's CurrPage.Update after its code changed the host's stored row while the host holds an unsaved edit (not pinned)",
+            );
+        }
+        let prec = self.page_rec(st);
+        let part_stored = !st.borrow().draft && st.borrow().cursor == Cursor::Row && self.stored_row(&prec)?.is_some();
+        if !part_stored && !both {
+            return unsupported(
+                "a part's CurrPage.Update on a new part row after its code changed the host's stored row, UpdatePropagation not Both (not pinned)",
+            );
+        }
+        al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::PartUpdatePropagationBothRefreshesHost);
+        if !part_stored {
+            self.run_refresh(st)?;
+            host.borrow_mut().refresh = true;
+            self.run_refresh(&host)?;
+            return Ok(true);
+        }
+        {
+            let mut p = st.borrow_mut();
+            p.refresh = false;
+            p.dirty = false;
+        }
+        self.set_xrec(st);
+        if !both {
+            self.sync_part(&host, c, st)?;
+        }
+        // The host's triggers still see the row it read before as xRec (`H.AGR(t=5 ... x.t=1)`); the next read sees the new one.
+        let mut h = host.borrow_mut();
+        h.refresh = true;
+        h.refresh_without_parts = !both;
+        h.read_keeps_xrec = true;
+        drop(h);
+        let r = self.run_refresh(&host);
+        host.borrow_mut().read_keeps_xrec = false;
+        r?;
+        self.set_xrec(&host);
+        Ok(true)
+    }
+
+    /// A part control is about to take a value while its Document/card host holds an unsaved edit of a stored row: the host saves
+    /// it first (its OnModifyRecord and the table's OnModify run), then the part's validation runs, and the typed host field stays
+    /// (corpus bump 41 pages/lt-qj-part-propagation/QjPartPropagation.al QJ_Both_ / QJ_SubPart_ / QJ_Default_HostEdited_
+    /// PartModifiesHost_ThenHostSave `log-part-edit=H.MODR(...) T.H.MOD(...) L.Qty.V(...)`; flagged until the bump lands).
+    /// A new host row, or a list host, keeps the earlier behavior.
+    pub(super) fn save_host_before_part_edit(&mut self, st: &St) -> Result<(), Signal> {
+        let Some(host) = st.borrow().host.as_ref().and_then(|(h, _)| h.upgrade()) else {
+            return Ok(());
+        };
+        if !host.borrow().open
+            || !host.borrow().dirty
+            || host.borrow().draft
+            || host.borrow().cursor != Cursor::Row
+            || self.is_list(&host)
+            || !self.has_source(&host)
         {
             return Ok(());
         }
         let hrec = self.page_rec(&host);
-        if hrec.borrow().temporary {
+        if hrec.borrow().temporary || self.stored_row(&hrec)?.is_none() {
             return Ok(());
-        }
-        // A part over the host's own table: `refresh_host_after_part_edit` re-reads the host once, and only once
-        // (pages/lt-page-controls-aa/AaPartsLists.al:AA_UpdatePropagation_Both line 191: loads-after-part-edit = 2).
-        if self.has_source(st) && self.table(&hrec)?.object == self.table(&self.page_rec(st))?.object {
-            return Ok(());
-        }
-        let Some(stored) = self.stored_row(&hrec)? else {
-            return Ok(());
-        };
-        let read = self.page_xrec_fields(&host);
-        if Self::same_values(&stored, &read) {
-            return Ok(());
-        }
-        if host.borrow().dirty {
-            return unsupported(
-                "a part's CurrPage.Update with UpdatePropagation = Both after its code changed the host's stored row while the host holds an unsaved edit (not pinned)",
-            );
         }
         al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::PartUpdatePropagationBothRefreshesHost);
-        host.borrow_mut().refresh = true;
-        self.run_refresh(&host)
+        self.save_row(&host)
     }
 
     /// A host control is about to take a value: the open parts that hold a typed row that is not saved save it first

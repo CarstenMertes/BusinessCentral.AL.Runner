@@ -17,6 +17,7 @@ mod pages;
 mod part_host_move;
 mod part_update_propagation;
 mod parts;
+mod qj_part_propagation;
 mod row_window;
 mod run_record_group2;
 mod trap_reopen;

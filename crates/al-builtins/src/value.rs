@@ -414,6 +414,16 @@ pub struct PageState {
     pub refresh: bool,
     /// `CurrPage.SaveRecord` ran in the action being invoked.
     pub save_record_called: bool,
+    /// A SetValue on a control of this page is running its validation (CurrPage.SaveRecord inside it keeps xRec).
+    pub validating_control: bool,
+    /// The next refresh reads the row (OnAfterGetRecord) without OnAfterGetCurrRecord: a card action that only saved.
+    pub refresh_without_curr: bool,
+    /// The next refresh does not make the parts read their rows again (they just did).
+    pub refresh_without_parts: bool,
+    /// The row's read keeps xRec as it was while its triggers run (a host re-read after a part's Update).
+    pub read_keeps_xrec: bool,
+    /// The row CurrPage.SaveRecord stored inside a control's validation: it becomes xRec once the SetValue returns.
+    pub xrec_after_validate: Option<Vec<Value>>,
     /// CurrPage.Update ran while the page's row was stored but outside the view the action had just set (list refresh).
     pub view_left: bool,
     /// A TestPage GoToKey moved the cursor of a list without OnAfterGetCurrRecord: the client reads the new row once more before
@@ -599,6 +609,11 @@ impl PageState {
             trapping: false,
             refresh: false,
             save_record_called: false,
+            validating_control: false,
+            refresh_without_curr: false,
+            refresh_without_parts: false,
+            read_keeps_xrec: false,
+            xrec_after_validate: None,
             view_left: false,
             read_after_goto: false,
             read_after_goto_doubt: false,

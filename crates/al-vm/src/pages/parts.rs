@@ -1409,9 +1409,9 @@ impl Session {
             return Ok(());
         }
         if self.engine.object_facts[o].page_type != Some(al_ir::PageType::Document) || other_reached {
-            return unsupported(format!(
-                "a first field read on a part while its host holds an unsaved edit, other than on the only part reached of a Document page (whether the host saves first is not pinned)"
-            ));
+            return unsupported(
+                "a first field read on a part while its host holds an unsaved edit, other than on the only part reached of a Document page (whether the host saves first is not pinned)",
+            );
         }
         let used = self.ret_used;
         let r = self.save_row(&host);

@@ -313,6 +313,9 @@ pub enum ReadBackwards {
     AfterMove,
 }
 
+/// A row key and what the repeater's page-variable controls show for it: (control index, value) (`PageState::row_vars`).
+pub type RowVars = (Vec<Value>, Vec<(usize, Value)>);
+
 /// The test client's state for one page (ADR-012). Fields grow with the
 /// behaviours the corpus pins.
 pub struct PageState {
@@ -497,7 +500,7 @@ pub struct PageState {
     pub agr_rows: Vec<Vec<Value>>,
     /// Per row of a repeater (its key): what the page variables its controls show held after the row's OnAfterGetRecord, and
     /// for the current row after OnAfterGetCurrRecord: (control index, value) (pages/lt-qi-row-page-var/QiRowPageVar.al).
-    pub row_vars: Vec<(Vec<Value>, Vec<(usize, Value)>)>,
+    pub row_vars: Vec<RowVars>,
     /// The row OnAfterGetRecord ran with last (its fields after the trigger): the next OnAfterGetRecord sees it as xRec;
     /// `None` before the first fetch, when xRec is a blank row (testpart/QiHostSaveParts.al:361 `L.AGR(D1/10000|d1 l1 x=/0)`).
     pub agr_xrec: Option<Vec<Value>>,

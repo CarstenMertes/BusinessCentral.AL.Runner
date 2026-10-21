@@ -566,6 +566,8 @@ pub struct Session {
     pub(crate) bulk_modify: bool,
     /// The `RecordRef.GetTable` that runs was given a Variant (refs.rs `ref_op`).
     pub(crate) get_table_from_variant: bool,
+    /// Set while a `TestField.SetValue` written with a Variant argument runs (`TestField.SetValueVariant#1`).
+    pub(crate) set_value_from_variant: bool,
     /// The host session behind `DotNet` values; ends with the session (ADR-014 section 6).
     pub(crate) dotnet: dotnet::DotNetState,
     /// The session's application areas as `ApplicationArea()` reads them: `#Basic,#Suite`, or the
@@ -757,6 +759,7 @@ impl Session {
             foreign_transfers: Vec::new(),
             bulk_modify: false,
             get_table_from_variant: false,
+            set_value_from_variant: false,
             dotnet: Default::default(),
             application_areas: String::new(),
             tx: TxState {

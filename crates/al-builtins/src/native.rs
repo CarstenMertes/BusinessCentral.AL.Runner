@@ -153,6 +153,10 @@ pub trait Ctx: FormatCtx {
         Err(Signal::Unsupported(format!("{method} needs a page runtime")))
     }
 
+    /// Set around a `TestField.SetValue` whose argument is written as a Variant (lowering picks
+    /// `TestField.SetValueVariant#1`): BC reads a Text inside a Variant differently on an Enum or Option control.
+    fn set_value_from_variant(&mut self, _on: bool) {}
+
     /// `Query` variable methods: the VM executes the query (`al-vm/src/queries.rs`).
     /// `method` is the catalog name (`Open`, `SetRange`, ...).
     fn query(&mut self, method: &str, _recv: Option<&mut Value>, _args: &mut [Value]) -> Result<Value, Signal> {
@@ -371,6 +375,14 @@ const REGISTRY: &[(&str, NativeFn)] = &[
         c.ref_op("RecordRef.GetTableVariant#1", r, a)
     }),
     ("TextBuilder.AppendFieldValue#1", crate::textfns::tb_append_field_value),
+    // `TestField.SetValue(V)` with a Variant argument (lowering picks it): an Enum or Option control reads a Text in it by
+    // ordinal digits (pages/lt-be-enum-setvalue-blank/BeEnumSetValueBlank.al:532-597).
+    ("TestField.SetValueVariant#1", |c, r, a| {
+        c.set_value_from_variant(true);
+        let out = c.page(crate::page_op::PageOp::TestFieldSetValue, r, a);
+        c.set_value_from_variant(false);
+        out
+    }),
     ("System.FormatDecimalField#1", format_decimal_field),
     ("System.OptionCaptionML#1", option_caption_ml),
     ("System.Evaluate#1", crate::evaluate::evaluate),
@@ -2427,6 +2439,7 @@ pub(crate) mod tests {
             "System.FormatVariant#1",
             "TextBuilder.AppendVariant#1",
             "RecordRef.GetTableVariant#1",
+            "TestField.SetValueVariant#1",
             "System.FormatDecimalField#1",
             "System.OptionCaptionML#1",
             "Dialog.ErrorNotLiteral#1",

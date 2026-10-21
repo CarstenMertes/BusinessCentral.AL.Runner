@@ -620,7 +620,7 @@ pub(crate) fn lower_object<'a>(
             && lw.reasons.len() > global_reasons.len()
         {
             let why = lw.reasons[global_reasons.len()..].join("; ");
-            routine.body = vec![ir::Stmt::Expr(ir::Expr::Refused(format!("{}.OnAction: {why}", o.name)))];
+            routine.body = vec![ir::Stmt::Expr(ir::Expr::Refused(format!("{}.OnAction: {why}", o.name)))].into();
             lw.reasons = global_reasons.clone();
             lw.calls.clear();
         }

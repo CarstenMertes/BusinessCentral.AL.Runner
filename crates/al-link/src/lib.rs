@@ -11,8 +11,12 @@ use al_ir::sym::{
     Contribution, ControlKey, EnumImplDecl, Expansion, FieldKey, FxMap, ImplSlot, ListKind, LocalKey, ObjKey,
     RoutineKey, SubscriberTarget, SymObject,
 };
-use al_ir::walk::{ExpansionSite, RefVisitor, TableOf, walk_object, walk_page_contribution, walk_table_contribution};
+use al_ir::walk::{
+    ExpansionSite, RefVisitor, TableOf, walk_body, walk_object, walk_page_contribution, walk_table_contribution,
+};
+use al_ir::{Body, BodyFixup, Stmt};
 use al_ir::{Object, Program, SrcPos};
+use std::sync::Arc;
 use std::sync::OnceLock;
 
 /// One object to link. (An object a layer build only marks as supplied, whose lowered form is never read,
@@ -522,8 +526,8 @@ impl<'a, S: Space + ?Sized> Tables<'a, S> {
 
 /// Rewrites `object`, whose references are indices into the tables of a symbolic object, with
 /// what they resolved to.
-fn rewrite(object: &mut Object, res: &Resolved, key: &ObjKey) -> Result<(), Box<LinkError>> {
-    let mut w = Rewrite { res, bad: None };
+fn rewrite(object: &mut Object, res: &Arc<Resolved>, key: &ObjKey) -> Result<(), Box<LinkError>> {
+    let mut w = Rewrite::new(res, key);
     walk_object(object, &mut w);
     match w.bad {
         Some((class, index)) => Err(Box::new(LinkError::BadReference {
@@ -551,7 +555,7 @@ pub fn link<'k>(
     // What each symbolic object's tables mean in the program: the position of every key.
     let merges;
     let subscribers;
-    let resolved: Vec<Option<Resolved>> = {
+    let resolved: Vec<Option<Arc<Resolved>>> = {
         let space = UnitSpace {
             units: &units,
             extras: extra_fields(&units),
@@ -564,7 +568,7 @@ pub fn link<'k>(
         subscribers = uncompiled_subscribers(&units, &tables)?;
         par_map(units.iter().collect(), workers, |_, u| match u {
             s if s.placeholder => Ok(None),
-            s => tables.resolve(s).map(Some),
+            s => tables.resolve(s).map(|r| Some(Arc::new(r))),
         })
         .into_iter()
         .collect::<Result<_, _>>()?
@@ -579,7 +583,7 @@ pub fn link<'k>(
     }
     let mut units = units;
     let contributions: Vec<Contribution> = units.iter_mut().map(|u| std::mem::take(&mut u.contribution)).collect();
-    let work: Vec<(Unit, Option<Resolved>, Contribution)> = units
+    let work: Vec<(Unit, Option<Arc<Resolved>>, Contribution)> = units
         .into_iter()
         .zip(resolved)
         .zip(contributions)
@@ -592,7 +596,7 @@ pub fn link<'k>(
             let (mut object, mut positions, key) = (u.object, u.positions, u.key);
             if let Some(res) = res {
                 rewrite(&mut object, &res, &key)?;
-                let mut w = Rewrite { res: &res, bad: None };
+                let mut w = Rewrite::new(&res, &key);
                 if let Some(t) = contribution.table.as_mut() {
                     walk_table_contribution(t, &mut w);
                 }
@@ -1086,7 +1090,7 @@ pub fn relink<'k>(
     routines: &'k dyn Fn(usize) -> &'k [LocalKey],
     replace: Vec<(usize, SymObject)>,
 ) -> Result<(), Box<LinkError>> {
-    let resolved: Vec<Resolved> = {
+    let resolved: Vec<Arc<Resolved>> = {
         let space = ProgramSpace {
             program,
             keys,
@@ -1095,10 +1099,10 @@ pub fn relink<'k>(
         let tables = Tables::new(&space)?;
         replace
             .iter()
-            .map(|(_, s)| tables.resolve(s))
+            .map(|(_, s)| tables.resolve(s).map(Arc::new))
             .collect::<Result<_, _>>()?
     };
-    let mut renewed: Vec<Option<(SymObject, Resolved)>> = (0..program.objects.len()).map(|_| None).collect();
+    let mut renewed: Vec<Option<(SymObject, Arc<Resolved>)>> = (0..program.objects.len()).map(|_| None).collect();
     for ((oi, s), res) in replace.into_iter().zip(resolved) {
         renewed[oi] = Some((s, res));
     }
@@ -1179,10 +1183,59 @@ enum Expanded {
 
 struct Rewrite<'a> {
     res: &'a Resolved,
+    /// The same rewrite for a routine body that is not decoded yet: it runs when the body is decoded (ADR-022,
+    /// "Measured 2026-10-21"). `None` inside that deferred rewrite.
+    lazy: Option<Arc<dyn BodyFixup>>,
     bad: Option<(&'static str, usize)>,
 }
 
+impl<'a> Rewrite<'a> {
+    fn new(res: &'a Arc<Resolved>, key: &ObjKey) -> Rewrite<'a> {
+        Rewrite {
+            res,
+            lazy: Some(Arc::new(LinkBody {
+                res: res.clone(),
+                key: key.clone(),
+            })),
+            bad: None,
+        }
+    }
+}
+
+/// The rewrite of one routine body of an object, run when the body is decoded.
+struct LinkBody {
+    res: Arc<Resolved>,
+    key: ObjKey,
+}
+
+impl BodyFixup for LinkBody {
+    fn apply(&self, body: &mut Vec<Stmt>) -> Result<(), String> {
+        let mut w = Rewrite {
+            res: &self.res,
+            lazy: None,
+            bad: None,
+        };
+        walk_body(body, &mut w);
+        match w.bad {
+            Some((class, index)) => Err(LinkError::BadReference {
+                object: self.key.clone(),
+                class,
+                index,
+            }
+            .to_string()),
+            None => Ok(()),
+        }
+    }
+}
+
 impl RefVisitor for Rewrite<'_> {
+    fn lazy_body(&mut self, body: &mut Body) -> bool {
+        match &self.lazy {
+            Some(f) => body.fix(f.clone()).is_ok(),
+            None => false,
+        }
+    }
+
     fn object(&mut self, r: &mut usize) {
         match self.res.objects.get(*r) {
             Some(&p) => *r = p,
@@ -1364,7 +1417,7 @@ mod tests {
             locals: vec![],
             ret: None,
             ret_local: None,
-            body,
+            body: body.into(),
             pos: al_ir::NO_POS,
             end_pos: al_ir::NO_POS,
             begin_pos: al_ir::NO_POS,
@@ -1435,6 +1488,46 @@ mod tests {
         assert_eq!(call_of(&a.program, 0), (1, 1));
         let b = link_all(vec![callee(2), callee(3), caller(1, 2)], 1).unwrap();
         assert_eq!(call_of(&b.program, 2), (0, 1));
+    }
+
+    /// A body read from the compact form (a cache entry) is linked when it is first read: the call is resolved and the
+    /// source positions are shifted as in an eager link, and linking decodes nothing.
+    #[test]
+    fn a_stored_body_is_linked_on_first_read_as_an_eager_body_is_linked_at_once() {
+        let pos = |n: u32| SrcPos {
+            file: 0,
+            line: n,
+            col: 1,
+            end_line: n,
+            object: 0,
+            routine: 0,
+        };
+        let with_pos = |mut c: SymObject| {
+            c.object.routines[0].body.insert(0, Stmt::Pos(0));
+            c.positions = vec![pos(7)];
+            c
+        };
+        let mut first = callee(2);
+        first.positions = vec![pos(1), pos(2)];
+        let eager = link_all(vec![first.clone(), callee(3), with_pos(caller(1, 3))], 1).unwrap();
+        let stored = with_pos(caller(1, 3));
+        let read: SymObject = postcard::from_bytes(&postcard::to_stdvec(&stored).unwrap()).unwrap();
+        assert!(!read.object.routines[0].body.is_loaded());
+        let lazy = link_all(vec![first, callee(3), read], 1).unwrap();
+        assert!(
+            !lazy.program.objects[2].routines[0].body.is_loaded(),
+            "link leaves a stored body alone"
+        );
+        assert_eq!(lazy.program.objects[2].routines[0].body[0], Stmt::Pos(2));
+        assert_eq!(call_of_at(&lazy.program, 2, 1), (1, 1));
+        assert_eq!(first_difference(&eager.program, &lazy.program), None);
+    }
+
+    fn call_of_at(p: &Program, at: usize, stmt: usize) -> (usize, usize) {
+        match &p.objects[at].routines[0].body[stmt] {
+            Stmt::Expr(Expr::Call { object, routine, .. }) => (*object, *routine),
+            other => panic!("not a call: {other:?}"),
+        }
     }
 
     #[test]
@@ -1694,7 +1787,7 @@ mod tests {
         };
         let mut a = callee(1);
         a.positions = vec![pos(1), pos(2)];
-        a.object.routines[0].body = vec![Stmt::Pos(1)];
+        a.object.routines[0].body = vec![Stmt::Pos(1)].into();
         a.object.routines[0].pos = 0;
         let mut b = callee(2);
         b.positions = vec![pos(7)];

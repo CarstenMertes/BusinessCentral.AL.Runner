@@ -781,6 +781,7 @@ fn assignment_converts_to_the_slot_type() {
             ir::Place::Local(0),
             ir::Expr::Convert(RtType::Decimal, Box::new(ir::Expr::Const(ir::Const::Integer(1))))
         )]
+        .into()
     );
 }
 
@@ -861,6 +862,7 @@ fn procedure_calls_and_call_graph() {
             args: vec![ir::Arg::Ref(ir::Place::Local(0))],
             try_call: false,
         })]
+        .into()
     );
     assert_eq!(l.calls[0][pi], vec![(0, qi)]);
 }
@@ -1594,6 +1596,7 @@ fn record_fields_are_places() {
                 Box::new(ir::Expr::Const(ir::Const::Text("a".into())))
             )
         )]
+        .into()
     );
 }
 

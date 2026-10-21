@@ -10,4 +10,5 @@ description = "The link step (ADR-033): symbolic objects with stable keys in, th
 al-ir.workspace = true
 
 [dev-dependencies]
+postcard = { version = "1", features = ["use-std"] }
 serde_json.workspace = true

@@ -222,6 +222,28 @@ impl Session {
         // TestPageSystemPartListWindowContracts.al:219 List_Window_SmallTable: the next open's log holds no read of the Close). After a
         // SetValue between them (no action since) Close reads nothing: not pinned, kept for baseline case 68164
         // TestPage_SetValue_OfTheValueAlreadyHeld_StillRunsOnValidate (it does not observe the Close).
+        // After an action stored one row through another variable while a list opened for edit stood on its new-row line over an
+        // empty view, the list is back on that line (`actions.rs`, empty_page_after_action). First then reads the row twice and
+        // runs OnAfterGetCurrRecord with xRec on it (misc/lt-probes-needed-7/PnGShowRow.al:223
+        // QG_EmptyList_InsertViaOtherVariable_StepLog `first_log` `List.AGR(NEW2,Created);List.AGR(NEW2,Created);
+        // List.AGCR(NEW2,NEW2)`, :56 EmptyListInsertViaOtherVariable); Close reads nothing (`close_log` empty). Other calls are not
+        // pinned.
+        if method.recv() != PageRecv::Page && std::mem::take(&mut st.borrow_mut().empty_list_row_behind) {
+            match name {
+                PageMethod::First
+                    if st.borrow().open && st.borrow().cursor == Cursor::NewLine && !st.borrow().dirty =>
+                {
+                    return self.first_after_empty_list_action(st);
+                }
+                PageMethod::Close => {}
+                _ => {
+                    return unsupported(format!(
+                        "TestPage.{} after an action stored a row behind the new-row line of an empty list (not pinned)",
+                        name.name()
+                    ));
+                }
+            }
+        }
         // The page's own code (CurrPage in the action's trigger) is not a call of the test client: the mark stays as it is.
         let client = method.recv() != PageRecv::Page;
         let read_after_goto = client && std::mem::take(&mut st.borrow_mut().read_after_goto);

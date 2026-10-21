@@ -796,6 +796,10 @@ impl Session {
             // Management") has no row for the action to delete, so it stays open.
             let stored_before = !st.borrow().never_stored;
             st.borrow_mut().save_record_called = false;
+            let empty = self.empty_page_shape(st)?;
+            if let Some(shape) = empty {
+                self.empty_page_before_action(st, shape)?;
+            }
             // Subscribers to the action's events: before the trigger (what they write to Rec the trigger reads and the
             // page saves, because `before` was taken first), after it when it did not fail
             // (events/lt-global-triggers-statements/P114PageActionEvents.al).
@@ -820,6 +824,11 @@ impl Session {
                 st.borrow_mut().refresh = false;
             }
             r?;
+            if let Some(shape) = empty {
+                if self.empty_page_after_action(st, shape)? {
+                    return Ok(Value::Null);
+                }
+            }
             // A new row of a card whose key the action set is stored right after the action, on fresh table globals: its
             // OnInsert and the next action see none of what the action set in them (pages/lt-table-globals-page/
             // TableGlobalsPageWithoutValidation.al:235 QG_NewDraft_KeySetByAction_WhenStored `stored after the action` Yes, `Seen
@@ -934,6 +943,214 @@ impl Session {
             }
         }
         Ok(Value::Null)
+    }
+
+    /// A page over a table that shows no stored row when an action with OnAction runs: a list opened for edit that stands on its
+    /// new-row line, a list or a card opened for view that shows nothing (misc/lt-probes-needed-7/PnGShowRow.al, pages/W1ShowRow.al).
+    /// A page with OnFindRecord or OnNextRecord, a part, a host of parts, and a page with an edit pending are not this shape.
+    fn empty_page_shape(&mut self, st: &St) -> Result<Option<EmptyShape>, Signal> {
+        let shape = {
+            let s = st.borrow();
+            if !s.open || s.host.is_some() || !s.parts.is_empty() || !s.window.is_empty() || s.dirty {
+                return Ok(None);
+            }
+            match (s.cursor, s.draft, s.mode) {
+                (Cursor::NewLine, true, PageMode::Edit) if s.new_line => EmptyShape::EditList,
+                (Cursor::None, _, PageMode::View) => EmptyShape::View,
+                _ => return Ok(None),
+            }
+        };
+        if !self.has_source(st)
+            || self.is_request_page(st)
+            || self.declares(st, "onfindrecord")
+            || self.declares(st, "onnextrecord")
+        {
+            return Ok(None);
+        }
+        match (shape, self.is_list(st)) {
+            (EmptyShape::EditList, true) => Ok(Some(EmptyShape::EditList)),
+            (EmptyShape::View, true) => Ok(Some(EmptyShape::View)),
+            // A card opened for view over an empty table that an action gave its one row shows it (pages/W1ShowRow.al:317
+            // Card_ViewOpen_InsertThroughAnotherVariable); which row triggers run then is not pinned.
+            (EmptyShape::View, false) if self.is_card(st) => {
+                if self.declares(st, "onaftergetrecord") || self.declares(st, "onaftergetcurrrecord") {
+                    return unsupported(
+                        "an action on a card opened for view that shows no row, with row triggers (which run is not pinned)",
+                    );
+                }
+                Ok(Some(EmptyShape::ViewCard))
+            }
+            _ => Ok(None),
+        }
+    }
+
+    /// The rows of the page's view, counted on a copy of its record.
+    fn view_row_count(&mut self, st: &St) -> Result<i32, Signal> {
+        let rec = self.page_rec(st);
+        let probe = Rc::new(RefCell::new(rec.borrow().clone()));
+        self.ret_used = true;
+        Ok(match self.record_op(RecordOp::Count, &probe, &mut [])? {
+            Value::Integer(n) => n,
+            _ => 0,
+        })
+    }
+
+    /// Before the action's trigger. A list opened for view over an empty table reads its blank record once when the test stored
+    /// a row of the view since (misc/lt-probes-needed-7/PnGShowRow.al:459 QG_ViewEmptyList_RowStoredByTest_ThenReads `action_log`
+    /// `List.AGR(,);ReadTable(,No);...`), and nothing when the view is still empty (:364 QG_ViewEmptyList_InsertViaRec_StepLog).
+    /// Rows stored before the action are pinned for no other shape.
+    fn empty_page_before_action(&mut self, st: &St, shape: EmptyShape) -> Result<(), Signal> {
+        let n = self.view_row_count(st)?;
+        match (shape, n) {
+            (_, 0) => Ok(()),
+            (EmptyShape::View, 1) => {
+                self.calc_row_flowfields(st)?;
+                self.populate_expressions(st)?;
+                self.page_trigger(st, "onaftergetrecord", vec![])?;
+                Ok(())
+            }
+            _ => unsupported(
+                "an action on a page that shows no row while its view holds rows (what the client reads first is not pinned)",
+            ),
+        }
+    }
+
+    /// After the action's trigger on a page that showed no stored row (`empty_page_shape`). Pinned for a view of none or one row
+    /// after the action (misc/lt-probes-needed-7/PnGShowRow.al, writer QG):
+    /// - Rec is that row (the action inserted it through Rec): the client reads it three times, then OnAfterGetCurrRecord, with
+    ///   xRec on the row in edit mode and blank in view mode, and stays on it (:176 QG_EmptyList_InsertViaRec_StepLog
+    ///   `List.AGR(NEW1,Created)` three times `;List.AGCR(NEW1,NEW1)`, :270 _InsertViaRecAndUpdate, :364
+    ///   QG_ViewEmptyList_InsertViaRec_StepLog `List.AGCR(NEW1,)`).
+    /// - another row (inserted through another variable, or stored by the test): read twice, OnAfterGetCurrRecord with a blank
+    ///   xRec; a list opened for edit then goes back to its new-row line, OnNewRecord and OnAfterGetCurrRecord again (:223
+    ///   QG_EmptyList_InsertViaOtherVariable_StepLog `List.AGR(NEW2,Created);List.AGR(NEW2,Created);List.AGCR(NEW2,);
+    ///   List.OnNewRecord;List.AGCR(,)`), a list opened for view stays on the row (:411, :459).
+    /// - no row: a list opened for edit runs its new-row line twice, as when it opened (:317 QG_EmptyList_ActionStoresNothing_StepLog).
+    /// A card opened for view shows the one row (pages/W1ShowRow.al:317). More rows, and an empty view after an action on a page
+    /// opened for view, are not pinned.
+    /// Answers whether it handled the action; the other cases go on as any action does: a view of more rows (testpart/
+    /// BnrBlankPart.al:491 NoRow_Action_TempListTwoInsertsAndFindLast_ShowsTheLastRow) and an empty view of a page with row triggers
+    /// opened for view (pages/lt-ap-testpage-642/ApTestPageTests.al:602 Ap10_SetSelectionFilter_FilterHidesAll_TestPageFilter) are pinned
+    /// there.
+    fn empty_page_after_action(&mut self, st: &St, shape: EmptyShape) -> Result<bool, Signal> {
+        if !st.borrow().open {
+            return Ok(false);
+        }
+        let n = self.view_row_count(st)?;
+        if n > 1 {
+            return Ok(false);
+        }
+        let rec = self.page_rec(st);
+        let table = rec.borrow().table as usize;
+        if n == 0 {
+            // A page opened for view still shows nothing, also when the action stored a row the view hides (pages/W1ShowRow.al:277
+            // FilteredList_InsertedRowTheViewHides, a page without row triggers). Which triggers run then is not pinned.
+            if shape != EmptyShape::EditList {
+                return Ok(false);
+            }
+            st.borrow_mut().refresh = false;
+            st.borrow_mut().save_record_called = false;
+            self.land_on_new_line(st)?;
+            self.land_on_new_line(st)?;
+            return Ok(true);
+        }
+        st.borrow_mut().refresh = false;
+        st.borrow_mut().save_record_called = false;
+        let own = self
+            .stored_row(&rec)?
+            .filter(|f| rec.borrow().filters.iter().all(|x| x.expr.matches(&f[x.field])));
+        let fields = match own.clone() {
+            Some(f) => f,
+            None => {
+                let probe = Rc::new(RefCell::new(rec.borrow().clone()));
+                self.ret_used = true;
+                self.record_op(RecordOp::FindFirst, &probe, &mut [])?;
+                let f = probe.borrow().fields.clone();
+                f
+            }
+        };
+        rec.borrow_mut().fields = fields.clone();
+        {
+            let mut s = st.borrow_mut();
+            s.cursor = Cursor::Row;
+            s.draft = false;
+            s.dirty = false;
+            s.blank_on_open = false;
+        }
+        if shape == EmptyShape::ViewCard {
+            self.set_xrec(st);
+            self.populate_expressions(st)?;
+            return Ok(true);
+        }
+        let reads = if own.is_some() { 3 } else { 2 };
+        for _ in 0..reads {
+            self.populate_current(st)?;
+        }
+        // The client holds the row it stays on: First then reads nothing (:176 `first_log` empty, :364). A list opened for edit that
+        // went back to its new-row line reads the row twice at First (:223 `first_log` `List.AGR(NEW2,Created);List.AGR(NEW2,Created);
+        // List.AGCR(NEW2,NEW2)`), as when it opens.
+        let back_to_new_line = shape == EmptyShape::EditList && own.is_none();
+        if !back_to_new_line {
+            let key = self.row_key(&rec)?;
+            let shown = rec.borrow().fields.clone();
+            let mut s = st.borrow_mut();
+            s.window = vec![al_builtins::value::WindowRow {
+                key,
+                stored: fields,
+                shown,
+            }];
+            s.window_from_start = true;
+            s.settled_first_row = true;
+        }
+        if !(shape == EmptyShape::EditList && own.is_some()) {
+            let blank = self.initial_fields(table);
+            self.set_xrec_fields(st, blank);
+        }
+        self.page_trigger(st, "onaftergetcurrrecord", vec![])?;
+        self.page_event(st, "onaftergetcurrrecordevent", None, None)?;
+        if back_to_new_line {
+            self.land_on_new_line(st)?;
+            st.borrow_mut().empty_list_row_behind = true;
+        }
+        Ok(true)
+    }
+
+    /// First on a list that went back to its new-row line with one row behind it (see `pageops.rs`): the row is read twice, then
+    /// OnAfterGetCurrRecord with xRec on it.
+    pub(super) fn first_after_empty_list_action(&mut self, st: &St) -> Result<Value, Signal> {
+        let rec = self.page_rec(st);
+        let probe = Rc::new(RefCell::new(rec.borrow().clone()));
+        self.ret_used = true;
+        if !matches!(
+            self.record_op(RecordOp::FindFirst, &probe, &mut [])?,
+            Value::Boolean(true)
+        ) {
+            return unsupported("First after the row behind the new-row line of an empty list is gone (not pinned)");
+        }
+        let fields = probe.borrow().fields.clone();
+        rec.borrow_mut().fields = fields.clone();
+        {
+            let mut s = st.borrow_mut();
+            s.cursor = Cursor::Row;
+            s.draft = false;
+            s.dirty = false;
+        }
+        self.populate_current(st)?;
+        self.populate_current(st)?;
+        let key = self.row_key(&rec)?;
+        {
+            let shown = rec.borrow().fields.clone();
+            let mut s = st.borrow_mut();
+            s.window = vec![al_builtins::value::WindowRow {
+                key,
+                stored: fields,
+                shown,
+            }];
+            s.window_from_start = true;
+        }
+        self.page_trigger(st, "onaftergetcurrrecord", vec![])?;
+        self.page_event(st, "onaftergetcurrrecordevent", None, None)?;
+        Ok(Value::Boolean(true))
     }
 
     /// The new row of an open card over a table, not a part, without DelayedInsert, extensions or a view of its own: the shape
@@ -1659,4 +1876,12 @@ fn action_error_code(code: &str, message: &str) -> String {
         c if c.starts_with("TestWrapped") || c == al_builtins::native::UNPINNED_ERROR => c.into(),
         _ => al_builtins::native::UNPINNED_ERROR.into(),
     }
+}
+
+/// What `empty_page_shape` found: a list opened for edit on its new-row line, a list or a card opened for view showing nothing.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum EmptyShape {
+    EditList,
+    View,
+    ViewCard,
 }

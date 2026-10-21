@@ -432,6 +432,9 @@ pub struct PageState {
     pub read_after_goto_set: bool,
     /// A Previous came after that GoToKey and no action since: what Close then reads is not pinned (it is refused).
     pub read_after_goto_prev: bool,
+    /// A list opened for edit over an empty view went back to its new-row line after an action stored one row through another
+    /// variable: First then reads that row as the list reads it on open (misc/lt-probes-needed-7/PnGShowRow.al:223).
+    pub empty_list_row_behind: bool,
     /// Page triggers (the page's or an extension's) run on this page so far.
     pub triggers_run: u64,
     /// The reads after an action on a list without OnAfterGetCurrRecord ended the refresh: `CurrPage.Update` reads nothing more
@@ -604,6 +607,7 @@ impl PageState {
             read_after_goto_quiet: false,
             read_after_goto_set: false,
             read_after_goto_prev: false,
+            empty_list_row_behind: false,
             triggers_run: 0,
             refresh_read_done: false,
             settled_first_row: false,

@@ -12,7 +12,7 @@ The catalog of each area is what the AL language server offers in probe files (`
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
 | attributes | 42 | 33 | 78.6% | 28 | 66.7% | 0 | 14 | 1 |
 | events | 23 | 16 | 69.6% | 22 | 95.7% | 0 | 1 | 0 |
-| properties | 720 | 671 | 93.2% | 563 | 78.2% | 18 | 139 | 2 |
+| properties | 720 | 671 | 93.2% | 565 | 78.5% | 18 | 137 | 2 |
 | syntax | 16 | 16 | 100.0% | 16 | 100.0% | 0 | 0 | 0 |
 | triggers | 128 | 128 | 100.0% | 116 | 90.6% | 3 | 9 | 0 |
 
@@ -73,10 +73,10 @@ Left out: 293 presentation-only properties (Caption, ToolTip, ApplicationArea, .
 | PageGrid | 16 | 10 | 62.5% | 10 | 62.5% | 0 | 6 | 0 |
 | PageGroup | 16 | 9 | 56.2% | 10 | 62.5% | 0 | 6 | 0 |
 | PageLabel | 16 | 16 | 100.0% | 9 | 56.2% | 0 | 7 | 0 |
-| PagePart | 15 | 15 | 100.0% | 13 | 86.7% | 0 | 2 | 0 |
+| PagePart | 15 | 15 | 100.0% | 14 | 93.3% | 0 | 1 | 0 |
 | PageRepeater | 16 | 14 | 87.5% | 10 | 62.5% | 0 | 6 | 0 |
 | PageSystemAction | 1 | 1 | 100.0% | 1 | 100.0% | 0 | 0 | 0 |
-| PageSystemPart | 13 | 11 | 84.6% | 12 | 92.3% | 0 | 1 | 0 |
+| PageSystemPart | 13 | 11 | 84.6% | 13 | 100.0% | 0 | 0 | 0 |
 | PageUserControl | 4 | 4 | 100.0% | 4 | 100.0% | 0 | 0 | 0 |
 | PageView | 7 | 7 | 100.0% | 5 | 71.4% | 0 | 2 | 0 |
 | PermissionSet | 8 | 8 | 100.0% | 8 | 100.0% | 0 | 0 | 0 |

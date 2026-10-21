@@ -358,7 +358,9 @@ impl Session {
     pub(super) fn populate_current(&mut self, st: &St) -> Result<(), Signal> {
         st.borrow_mut().dirty = false;
         self.calc_row_flowfields(st)?;
-        self.set_xrec(st);
+        if !st.borrow().read_keeps_xrec {
+            self.set_xrec(st);
+        }
         self.populate_expressions(st)?;
         self.page_trigger(st, "onaftergetrecord", vec![])?;
         Ok(())
@@ -1208,6 +1210,20 @@ impl Session {
             (st.borrow().window_eof && !self.declares(st, "onaftergetcurrrecord") && window.len() < Self::WINDOW)
                 || st.borrow().view_read_to_end;
         if how == PageMethod::Next && at + 1 == window.len() && read_to_end {
+            // An editable, insert-allowed page walks on from its last row onto the blank new-row line (handlers/
+            // TestPageNewRowLine_Tests.al:64-87), a part with OnFindRecord too (pagefindrecord/QcFindViewTests.al:505
+            // DocPart_OpenEdit_LinesOfH1 `part_walk = 10000,20000,0`); the page is asked nothing (AiListOrderTests.al:600). Whether a
+            // page with OnNextRecord is asked before the line is not pinned.
+            if st.borrow().new_line {
+                if self.declares(st, "onnextrecord") {
+                    return unsupported(
+                        "Next from the last row onto the new-row line of a page with OnNextRecord (whether the page is asked is not pinned)",
+                    );
+                }
+                self.refuse_read_only_part(st, "Next() onto the new-row line")?;
+                self.land_on_new_line(st)?;
+                return Ok(Some(true));
+            }
             return Ok(Some(false));
         }
         // First on the first row right after the refresh of CurrPage.Update settled the list there reads nothing: on a list with

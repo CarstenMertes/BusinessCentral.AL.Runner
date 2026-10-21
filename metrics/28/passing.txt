@@ -12931,6 +12931,7 @@
 78621 Tree_ThroughPageVariableRun
 78621 Tree_ThroughPageVariableRunModal
 78621 Tree_ThroughTestPageVariable
+78622 DocumentHost_HeaderEditAndPartEdit
 78622 DocumentHost_PartEditExistingLine
 78622 DocumentHost_PartNewLine
 78623 NonAsciiSingle_AcceptedCharacters

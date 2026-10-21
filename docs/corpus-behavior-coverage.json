@@ -2898,7 +2898,7 @@
           "ms_uses": 144,
           "name": "UpdatePropagation",
           "pinned": true,
-          "runtime_reads": false,
+          "runtime_reads": true,
           "site": "pageext/lt-u-page-props/UPageObjects.al:201"
         },
         {
@@ -11885,6 +11885,15 @@
         },
         {
           "corpus_uses": 1,
+          "group": "page/systempart",
+          "ms_uses": 0,
+          "name": "UpdatePropagation",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "pages/lt-page-controls-aa/AaControls.al:142"
+        },
+        {
+          "corpus_uses": 1,
           "group": "page/usercontrol",
           "ms_uses": 0,
           "name": "ObsoleteReason",
@@ -13430,15 +13439,6 @@
           "pinned": true,
           "runtime_reads": false,
           "site": "pages/lt-page-controls-aa/AaPartsLists.al:113"
-        },
-        {
-          "corpus_uses": 1,
-          "group": "page/systempart",
-          "ms_uses": 0,
-          "name": "UpdatePropagation",
-          "pinned": true,
-          "runtime_reads": false,
-          "site": "pages/lt-page-controls-aa/AaControls.al:142"
         },
         {
           "corpus_uses": 2,
@@ -24828,7 +24828,7 @@
         "pinned": true,
         "scope": "",
         "site": "pageext/lt-u-page-props/UPageObjects.al:201",
-        "state": "unknown"
+        "state": "implemented"
       },
       {
         "area": "properties",
@@ -25278,7 +25278,7 @@
         "pinned": true,
         "scope": "",
         "site": "pages/lt-page-controls-aa/AaControls.al:142",
-        "state": "unknown"
+        "state": "implemented"
       },
       {
         "area": "properties",

@@ -511,6 +511,18 @@ registry! {
         tests: "Tests-ERM ERM Update Currency - Sales (134087): UpdateCurrencyCodeOnSalesCrMemoPage and three more type a line into the subform, then set the header's Currency Code, whose validation recreates the lines; they pass in Microsoft's CI.",
         probe: "A document host with a linked ListPart: New() on the part, SetValue of a part field, then SetValue of a host field whose OnValidate counts the part table's rows and logs them; the same with a stored part row edited (Modify) and with the part's OnInsertRecord / OnModifyRecord logging: whether the row is saved before the host's OnValidate, after it, or not at all.",
     },
+    PartUpdatePropagationBothRefreshesHost => {
+        id: "part-update-propagation-both-refreshes-host",
+        assumed: "A part's CurrPage.Update in a trigger of a SetValue, after its code changed the host's stored row (another table): the host reads its row again in every UpdatePropagation mode (its OnAfterGetRecord and OnAfterGetCurrRecord still see the old row as xRec), the part's typed edit of a stored row is dropped (the line is read again; its OnAfterGetCurrRecord sees the typed row as xRec); with Both the host's triggers run before the parts read their rows, otherwise after. A part SetValue while the Document host holds an unsaved edit saves the host first. A card action that only called CurrPage.SaveRecord reads the row with OnAfterGetRecord alone, then its parts. A new part row with UpdatePropagation other than Both is refused; with Both it refreshes the part, then the host. Probed on every BC major the corpus CI runs, by corpus branch al-runtime-rs-staging-qj (pages/lt-qj-part-propagation/QjPartPropagation.al QJ_*_PartModifiesHost_ThenHostSave); flagged until corpus bump 41 lands on master. pages/lt-page-controls-aa/AaPartsLists.al:191-267 pins the part over the host's own table.",
+        tests: "Tests-ERM Document Totals Pages (134344) PurchaseQuoteUpdateCurrrencyFactor, PurchaseBlanketOrderUpdateCurrrencyFactor and about 160 more Tests-ERM tests (ERM Purchase Subform, ERM Sales Subform, Document Totals Pages): the subform's Invoice Discount Amount or Quantity changes the Purchase/Sales Header, then the card's AssistEdit or a field edit saves the header; they pass in Microsoft's CI.",
+        probe: "Written and green: corpus branch al-runtime-rs-staging-qj commit 1fd2ccd1 (lands with bump 41). Still open: a new part row (draft) in the same shape, and a host row the part's code did not change.",
+    },
+    PartSaveRecordInValidateKeepsXrec => {
+        id: "part-saverecord-in-validate-keeps-xrec",
+        assumed: "CurrPage.SaveRecord() in the OnValidate of a ListPart's control leaves Rec and xRec as they were for a stored row; for a new row Rec gets the inserted key (AutoSplitKey line number) while xRec stays the blank new row. The stored row becomes xRec once the SetValue returns. After New() on such a part, OnNewRecord sees the last row as xRec and OnAfterGetCurrRecord the blank new row. Probed on every BC major the corpus CI runs, by corpus branch al-runtime-rs-staging-qj (pages/lt-qj-part-propagation/QjPartPropagation.al QJ_SubformSaveRecord_StoredRow / _NewRow); flagged until corpus bump 41 lands on master.",
+        tests: "Tests-ERM Document Totals Pages (134394) BlanketOrderAddingLinesUpdatesTotals and BlanketOrderAddingLinesUpdatesTotalsStats: the Blanket Purchase Order Subform's Quantity OnValidate runs CurrPage.SaveRecord() then DeltaUpdateTotals (Rec minus xRec); they pass in Microsoft's CI.",
+        probe: "Written and green: corpus branch al-runtime-rs-staging-qj commit 1fd2ccd1 (lands with bump 41). Remove this assumption when the bump lands.",
+    },
 }
 
 thread_local! {

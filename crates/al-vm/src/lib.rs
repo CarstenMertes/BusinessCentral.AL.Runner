@@ -88,6 +88,9 @@ pub struct Engine {
     /// Stored platform tables whose fresh-tenant rows nothing pins (`al_builtins::platform::UNSEEDED_ROWS`):
     /// unseeded for the tests, but not for install code, which writes them.
     pub platform_unseeded: std::collections::HashSet<usize>,
+    /// Tables whose demo rows the corpus database holds and the runtime does not (ADR-047 rejected): a `Count` or `IsEmpty`
+    /// of one that the session's own code has not written to is refused (`al_testrun::baseline::demo_row_tables`).
+    pub demo_tables: std::collections::HashSet<usize>,
     /// Rows of a restored company, read when a session first touches a table (ADR-020). `None`: a
     /// run without test data.
     pub test_data: Option<al_host::testdata::TestData>,
@@ -343,6 +346,7 @@ impl Engine {
             dotnet,
             unseeded: Default::default(),
             platform_unseeded: unseeded,
+            demo_tables: Default::default(),
             test_data: None,
             unevaluable_init,
             table_facts,
@@ -458,6 +462,8 @@ pub struct Session {
     pub(crate) isolated_set_in_test: std::collections::HashSet<(String, String)>,
     /// An install codeunit is running.
     install_scope: bool,
+    /// The `Engine::demo_tables` this session's own code (not install code) wrote to.
+    demo_written: std::collections::HashSet<u32>,
     /// Registered table connections by (type member, lower-case name), and the default name per type.
     pub(crate) table_connections: std::collections::HashSet<(i32, String)>,
     pub(crate) default_table_connection: std::collections::HashMap<i32, String>,
@@ -736,6 +742,7 @@ impl Session {
             isolated_committed: Default::default(),
             isolated_set_in_test: Default::default(),
             install_scope: false,
+            demo_written: Default::default(),
             sequences,
             table_connections: Default::default(),
             default_table_connection: Default::default(),
@@ -1149,6 +1156,14 @@ impl Session {
     /// [`Session::inherited_random_draws`]).
     pub fn start_random_scope(&mut self) {
         self.reseeded_in_test = false;
+    }
+
+    /// The instance a codeunit runs on when the session starts it: the session's single instance for a SingleInstance
+    /// codeunit (the one its variables and event subscribers use), else a fresh one. A test codeunit with SingleInstance =
+    /// true runs its test methods on it (codeunit/QiSingleInstanceTestCodeunit.al:57, :98).
+    pub fn codeunit_instance(&mut self, object: usize) -> Rc<RefCell<Instance>> {
+        let fresh = self.instance(object);
+        self.shared_instance(fresh)
     }
 
     pub fn instance(&mut self, object: usize) -> Rc<RefCell<Instance>> {

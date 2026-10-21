@@ -135,17 +135,26 @@ impl Session {
             Some(ir::PropVal::Lit(v)) => Some(v.clone()),
             _ => None,
         };
-        // A table field's AutoFormatExpression that is an expression (`Rec."Currency Code"`, a procedure of the table), read
-        // through a control that names no expression of its own. The corpus pins only control expressions
-        // (autoformat/PWAutoFormatTypes.al:19-22, AutoFormatCard.Page.al:53) and literal field expressions
-        // (pages/lt-page-autoformat-lookups/P113AutoFormat.al). Microsoft's Tests-ERM "Amount AutoFormat Currency" (134833,
-        // TestAutoformatShowFCYCodeOnlyAfterAmount: Case4FCY, AutoFormatType = 4 with AutoFormatExpression =
-        // Rec."Currency Code" on the table field) needs it evaluated with the control's row, as a control expression is:
-        // assumption table-field-auto-format-expression. `field_expression` is its text.
+        // A table field's AutoFormatExpression that is an expression, read through a control that names no expression of its
+        // own: a field of the row is evaluated with the control's row (types/lt-auto-format-currency/QiTableFieldAutoFormat.al;
+        // control expressions: autoformat/PWAutoFormatTypes.al:19-22, AutoFormatCard.Page.al:53; literal field expressions:
+        // pages/lt-page-autoformat-lookups/P113AutoFormat.al). A procedure call and any other expression are refused.
+        // `field_expression` is its text.
         let mut field_expression = None;
         if ctl.prop("autoformatexpression").is_none() {
             if let Some(f) = field.as_ref() {
-                if from_field("autoformatexpression").is_some_and(|e| !is_text_literal(&e)) {
+                let text = from_field("autoformatexpression");
+                if text.as_deref().is_some_and(|e| !is_text_literal(e)) {
+                    // BC runs an expression that calls a procedure when the page fetches the row (open, Next,
+                    // GoToRecord), not when the text is read (types/lt-auto-format-currency/QiTableFieldAutoFormat.al:421
+                    // QI_Type10Procedure_Card_Calls `after-open` fmt();fmt(A);, `after-t10-read` empty). Evaluated on read,
+                    // its side effects and errors would come at the wrong time, so it is refused.
+                    if text.as_deref().is_some_and(|e| e.contains('(')) {
+                        return unsupported(format!(
+                            "a control over table field {} whose AutoFormatExpression calls a procedure (BC runs it when the row is fetched; not modelled)",
+                            f.name
+                        ));
+                    }
                     if let Some(why) = f.auto_format_refusal.clone() {
                         return unsupported(why);
                     }
@@ -154,9 +163,15 @@ impl Session {
                             "a control over a table field whose AutoFormatExpression is an expression that did not compile",
                         );
                     };
-                    al_builtins::assumptions::assume(
-                        al_builtins::assumptions::Assumption::TableFieldAutoFormatExpression,
-                    );
+                    // A field of the row (`Rec."Currency Code"`, `"Currency Code"`) is pinned on a Card and a List, read on every
+                    // row it moves to (QiTableFieldAutoFormat.al:272 QI_TableFieldExpression_Card_ShowCurrencyNever, :300
+                    // QI_TableFieldExpression_List_ShowCurrencyNever: First, Next, Previous). Any other expression is not.
+                    if !is_field_reference(text.as_deref().unwrap_or_default()) {
+                        return unsupported(format!(
+                            "a control over table field {} whose AutoFormatExpression is neither a field of the row nor a text (not pinned)",
+                            f.name
+                        ));
+                    }
                     let rec = self.page_rec(st);
                     field_expression = match self.call_on_record(object, routine, rec, None, Vec::new())?.0 {
                         Value::Text(t) | Value::Code(t) => Some(t.into_string()),
@@ -364,7 +379,10 @@ impl Session {
     /// 1 and 4 are amounts, 2 and 5 unit amounts. A blank expression gives 2:2 for an amount and 2:5 for a unit
     /// amount (:98-175). A currency code that exists gives the currency's "Amount Decimal Places" or
     /// "Unit-Amount Decimal Places" (:177-195), both empty gives 2:2 (:197-217), and a code that is no
-    /// currency gives 2:5 (:263-290). A currency with only one of the two places empty is not pinned.
+    /// currency gives the places of General Ledger Setup: 2:5 for all four under a setup of 2:5 and 2:5 (:263-290), 2:2 for
+    /// an amount and 2:5 for a unit amount under 2:2 and 2:5 (types/lt-auto-format-currency/QiTableFieldAutoFormat.al:272
+    /// `nocur_t1` 1,234.57, `nocur_t2` 1,234.56789). A currency with only one of the two places empty, and a code that is
+    /// no currency without a General Ledger Setup row or with its places empty, are not pinned.
     pub(super) fn auto_format_places(&mut self, kind: &str, expr: &str) -> Result<(u32, u32), Signal> {
         let unit = matches!(kind, "2" | "5");
         if expr.trim().is_empty() {
@@ -389,15 +407,15 @@ impl Session {
         else {
             return unsupported("AutoFormatType with a currency: the Currency table has no decimal places fields");
         };
-        let Ok(key) = ops::convert(Value::Text(expr.to_string().into()), &t.fields[0].ty) else {
-            return Ok((2, 5));
+        let row = match ops::convert(Value::Text(expr.to_string().into()), &t.fields[0].ty) {
+            Ok(key) => self
+                .store
+                .get(&self.cx, &t, &[key])
+                .map_err(|e| Signal::Unsupported(format!("store error {e}")))?,
+            Err(_) => None,
         };
-        let row = self
-            .store
-            .get(&self.cx, &t, &[key])
-            .map_err(|e| Signal::Unsupported(format!("store error {e}")))?;
         let Some(row) = row else {
-            return Ok((2, 5));
+            return self.setup_places(unit, expr);
         };
         let text = |at: usize| {
             al_builtins::native::text_of(&row[at])
@@ -415,6 +433,54 @@ impl Session {
             _ => unsupported(format!(
                 "AutoFormatType {kind} with the currency `{expr}`, whose places are `{wanted}` (one of the two empty is not pinned)"
             )),
+        }
+    }
+
+    /// The places of General Ledger Setup (table 98) for an amount or a unit amount whose currency code `expr` is no
+    /// currency (see [`Self::auto_format_places`]). A missing table, row or empty places are refused.
+    fn setup_places(&mut self, unit: bool, expr: &str) -> Result<(u32, u32), Signal> {
+        let refused = |why: &str| {
+            unsupported(format!(
+                "AutoFormatType with the currency `{expr}`, which is no currency: {why} (not pinned)"
+            ))
+        };
+        let engine = self.engine();
+        let Some(oi) = engine
+            .program
+            .objects
+            .iter()
+            .position(|o| o.id == Some(98) && o.table.is_some())
+        else {
+            return refused("the General Ledger Setup table is not in the program");
+        };
+        let Some(t) = engine.tables[oi].clone() else {
+            return refused("the General Ledger Setup table did not compile");
+        };
+        let name = if unit {
+            "Unit-Amount Decimal Places"
+        } else {
+            "Amount Decimal Places"
+        };
+        let Some(at) = t.fields.iter().position(|f| f.name.eq_ignore_ascii_case(name)) else {
+            return refused("General Ledger Setup has no decimal places fields");
+        };
+        let Ok(key) = ops::convert(Value::Text(String::new().into()), &t.fields[0].ty) else {
+            return refused("the key of General Ledger Setup is not a text");
+        };
+        let row = self
+            .store
+            .get(&self.cx, &t, &[key])
+            .map_err(|e| Signal::Unsupported(format!("store error {e}")))?;
+        let Some(row) = row else {
+            return refused("General Ledger Setup has no row");
+        };
+        let wanted = al_builtins::native::text_of(&row[at])
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        match pagefmt::parse_decimal_places(&wanted) {
+            Some(p) if !wanted.is_empty() => Ok(p),
+            _ => refused(&format!("General Ledger Setup's {name} is `{wanted}`")),
         }
     }
 
@@ -1087,4 +1153,19 @@ pub(super) fn raises_resolve(text: &str) -> bool {
         Some((area, _)) => area != "3" && !area.is_empty() && area.trim().parse::<u32>().is_err(),
         None => false,
     }
+}
+
+/// Whether an AutoFormatExpression is a plain field of the row: `Rec."Currency Code"`, `"Currency Code"`, `Rec.Code`, `Code`.
+fn is_field_reference(text: &str) -> bool {
+    let t = text.trim();
+    let t = match t.get(..4) {
+        Some(p) if p.eq_ignore_ascii_case("rec.") => &t[4..],
+        _ => t,
+    };
+    if let Some(inner) = t.strip_prefix('"').and_then(|s| s.strip_suffix('"')) {
+        return !inner.is_empty() && !inner.contains('"');
+    }
+    let mut chars = t.chars();
+    chars.next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }

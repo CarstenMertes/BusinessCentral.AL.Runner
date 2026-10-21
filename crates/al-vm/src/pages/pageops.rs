@@ -139,6 +139,7 @@ impl Session {
                     let mut s = st.borrow_mut();
                     s.lookup = used;
                     s.lookup_set = used;
+                    s.static_lookup = used;
                     s.statement_run = !used && record.is_some();
                 }
                 // A record of another table than the page's is refused before anything opens, and so is a field number the table

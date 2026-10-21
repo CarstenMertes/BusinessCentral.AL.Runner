@@ -439,6 +439,9 @@ pub struct PageState {
     /// move reads next is not pinned (misc/lt-probes-needed-7/PnGShowRow.al:144 NonEmptyListInsertViaRec `first-after` reads
     /// nothing, the Next after it reads the row it lands on twice); a move is refused.
     pub action_landed_on_new_row: bool,
+    /// The page was run by the static `Page.RunModal` with its return value used (lookup mode set by the call, not by
+    /// `LookupMode(true)` on a page variable).
+    pub static_lookup: bool,
     /// Page triggers (the page's or an extension's) run on this page so far.
     pub triggers_run: u64,
     /// The reads after an action on a list without OnAfterGetCurrRecord ended the refresh: `CurrPage.Update` reads nothing more
@@ -618,6 +621,7 @@ impl PageState {
             read_after_goto_prev: false,
             empty_list_row_behind: false,
             action_landed_on_new_row: false,
+            static_lookup: false,
             triggers_run: 0,
             refresh_read_done: false,
             settled_first_row: false,

@@ -1442,9 +1442,19 @@ impl Session {
             // A view that filters asks the same `=><` once, list, card and list part alike
             // (pagefindrecord/QcFindViewTests.al:78 ViewList_OpenView_FindStringAndRow, :361 ViewCard_OpenView_FindStringAndRow,
             // :505 DocPart_OpenEdit_LinesOfH1).
-            // A list run in lookup mode with no record is asked `=>` (pages/lt-ai-list-order/QgGoToKeyNextCall.al:629
-            // Nav_LookupHandler_GoToKey_ThenOK `log` `F:=>=Yes;R:R1001;N:1=1;...`).
-            if st.borrow().lookup && self.is_list(st) {
+            // A list page variable run in lookup mode (LookupMode(true)) with no record is asked `=>` (pages/lt-ai-list-order/
+            // QgGoToKeyNextCall.al:629 Nav_LookupHandler_GoToKey_ThenOK `log` `F:=>=Yes;R:R1001;N:1=1;...`). The static RunModal
+            // in lookup mode is not pinned; a TableRelation lookup keeps `=><` as before.
+            let (lookup, lookup_set, static_lookup) = {
+                let s = st.borrow();
+                (s.lookup, s.lookup_set, s.static_lookup)
+            };
+            if lookup && static_lookup && self.is_list(st) {
+                return unsupported(
+                    "a list with OnFindRecord run in lookup mode by the static Page.RunModal without a record (which Find it is asked is not pinned)",
+                );
+            }
+            if lookup && lookup_set && self.is_list(st) {
                 "=>"
             } else {
                 "=><"

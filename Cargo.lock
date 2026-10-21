@@ -103,6 +103,7 @@ name = "al-ir"
 version = "3.0.0-alpha.2"
 dependencies = [
  "al-builtins",
+ "postcard",
  "serde",
  "serde_json",
 ]
@@ -112,6 +113,7 @@ name = "al-link"
 version = "3.0.0-alpha.2"
 dependencies = [
  "al-ir",
+ "postcard",
  "serde_json",
 ]
 

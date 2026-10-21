@@ -33,6 +33,11 @@ pub trait RefVisitor {
     /// A control reference of an expression: an index into the object's control references, which
     /// lowering wrote there (`Expr::Control`).
     fn control(&mut self, r: &mut usize);
+    /// A routine body that is not decoded yet ([`Body`]). Return true when the visitor has deferred its work on the
+    /// body to the decode ([`Body::fix`]); false (the default) decodes the body now and walks it.
+    fn lazy_body(&mut self, _body: &mut Body) -> bool {
+        false
+    }
 }
 
 /// The marker lowering writes in place of the set a site stands for: an object or routine position that no
@@ -305,6 +310,13 @@ fn walk_routine<V: RefVisitor>(r: &mut Routine, v: &mut V) {
     if let Some(t) = ret {
         walk_rt(t, v);
     }
+    if body.is_loaded() || !v.lazy_body(body) {
+        walk_stmts(body, v);
+    }
+}
+
+/// Every reference of a list of statements (the body of a routine that [`RefVisitor::lazy_body`] deferred).
+pub fn walk_body<V: RefVisitor>(body: &mut [Stmt], v: &mut V) {
     walk_stmts(body, v);
 }
 

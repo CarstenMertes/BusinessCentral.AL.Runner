@@ -5,11 +5,13 @@ pub use al_builtins::builtin_id::BuiltinId;
 use al_builtins::value::RtType;
 use serde::{Deserialize, Serialize};
 
+mod body;
 mod facts;
 mod objkind;
 pub mod sym;
 pub mod types;
 pub mod walk;
+pub use body::{Body, BodyFixup};
 pub use facts::{FieldClass, FieldFacts, ObjectFacts, PageType, TableType};
 pub use objkind::{ObjKind, UnknownKind};
 
@@ -1147,7 +1149,8 @@ pub struct Routine {
     pub ret: Option<RtType>,
     /// Local index of a named return value.
     pub ret_local: Option<usize>,
-    pub body: Vec<Stmt>,
+    /// The statements; decoded on first read when the routine comes from a compact form (see [`Body`]).
+    pub body: Body,
     /// Position of the `procedure` or `trigger` keyword ([`NO_POS`] for a routine without source).
     /// BC counts the line of a call stack frame from this line.
     #[serde(default = "no_pos")]
@@ -1193,11 +1196,27 @@ impl Routine {
         if self.begin_pos != NO_POS {
             self.begin_pos = self.begin_pos.wrapping_add(by);
         }
-        shift_stmts(&mut self.body, by);
+        if self.body.is_loaded() {
+            shift_stmts(&mut self.body, by);
+        } else {
+            self.body
+                .fix(std::sync::Arc::new(ShiftPositions(by)))
+                .expect("a shift cannot fail");
+        }
     }
 }
 
-fn shift_stmts(stmts: &mut [Stmt], by: u32) {
+/// [`Routine::shift_positions`] of a body that is not decoded yet.
+struct ShiftPositions(u32);
+
+impl BodyFixup for ShiftPositions {
+    fn apply(&self, body: &mut Vec<Stmt>) -> Result<(), String> {
+        shift_stmts(body, self.0);
+        Ok(())
+    }
+}
+
+pub(crate) fn shift_stmts(stmts: &mut [Stmt], by: u32) {
     for s in stmts {
         match s {
             Stmt::Pos(id) => *id = id.wrapping_add(by),
@@ -1502,7 +1521,7 @@ mod tests {
             pos,
             end_pos: NO_POS,
             begin_pos: NO_POS,
-            body,
+            body: body.into(),
             expr_tys: vec![],
             reads_var_max_len: false,
         }
@@ -1647,7 +1666,8 @@ mod tests {
                             args: vec![Arg::Value(Expr::Const(Const::Text("x".into())))],
                             ret_used: false,
                         })]),
-                    ],
+                    ]
+                    .into(),
                 }],
             }],
         };

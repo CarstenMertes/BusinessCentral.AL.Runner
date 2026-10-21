@@ -122,7 +122,8 @@ pub enum Gate {
     /// differ from those of BC 27.0 and 27.3 (`The type NavInteger is unknown.`, `Invalid Conversion. Source: NavChar, ...`).
     /// The corpus compiles those tests from the BC 28 symbols on (`#if BC28PLUS`), so BC 27.5 is not covered either, and only the
     /// BC 28 and 29 values are pinned. HttpHeaders.al also pins the code of a blank header name per major (27 Format,
-    /// 28 Argument, 29 Format). Not consumed yet (corpus bump 10).
+    /// 28 Argument, 29 Format). BeEnumSetValueBlank.al pins both sides for a Text in a Variant on an Enum or Option TestPage
+    /// control (27.5 `The type NavOption is unknown.`, NotSupportedType): consumed by `al-vm` pages/controls.rs.
     ConversionErrorTextsFrom28,
     /// A test codeunit that runs a `List of [Interface ...]` is compiled only for BC 29: on BC 27 the server's generated C# does not
     /// compile and on BC 28 no result comes back (codeunit/lt-enums-interfaces/OjT71052.al, corpus bump 10). Corpus bump 30 adds

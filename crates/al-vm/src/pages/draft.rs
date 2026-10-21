@@ -634,6 +634,10 @@ impl Session {
             .as_ref()
             .and_then(|(h, _)| h.upgrade())
             .filter(|h| self.has_source(h) && !h.borrow().draft && h.borrow().cursor == Cursor::Row);
+        // The AutoSplitKey number is assigned before OnInsertRecord, which sees it (pages/lt-part-line-before-host-key/
+        // PartLineBeforeHostKey.al:612 `LP.OnInsertRecord:D2/20000 | L.OnInsert:D2/20000`, :551, :945; pages/
+        // lt-bg-part-line-all-versions/BgPartLineAllVersions.al:349).
+        self.auto_split_key(st)?;
         let go = self.page_trigger_answer(st, "oninsertrecord", vec![Value::Boolean(true)])?;
         if go == Some(false) {
             // A trigger that inserted the row itself and answered false leaves the page on a stored row: its next edit is
@@ -656,7 +660,6 @@ impl Session {
         if !self.page_event(st, "oninsertrecordevent", Some(true), Some(true))? {
             return Ok(());
         }
-        self.auto_split_key(st)?;
         self.ret_used = false;
         self.tx.immediate_errors = true;
         let inserted = self.record_op(RecordOp::Insert, &rec, &mut [Value::Boolean(true)]);

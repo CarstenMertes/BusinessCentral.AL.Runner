@@ -35,6 +35,7 @@ jobs:
     outputs:
       sha: ${{ steps.plan.outputs.sha }}
       publish: ${{ steps.plan.outputs.publish }}
+      version_suffix: ${{ steps.plan.outputs.version_suffix }}
     steps:
       - id: plan
         env:
@@ -47,6 +48,8 @@ jobs:
           # caller's event (schedule or workflow_dispatch), so this input is checked first.
           CALL_SHA: ${{ inputs.sha }}
         run: |
+          # The UTC date of this build, shown in `alrunner --version` as +edge.YYYYMMDD.
+          echo "version_suffix=+edge.$(date -u +%Y%m%d)" >> "$GITHUB_OUTPUT"
           if [ -n "$CALL_SHA" ]; then
             echo "Nightly build of $CALL_SHA."
             echo "sha=$CALL_SHA" >> "$GITHUB_OUTPUT"
@@ -75,6 +78,7 @@ jobs:
     with:
       label: edge
       sha: ${{ needs.plan.outputs.sha }}
+      version_suffix: ${{ needs.plan.outputs.version_suffix }}
 
   publish:
     needs: [plan, package]

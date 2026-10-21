@@ -621,6 +621,25 @@ What changed.
    codeunit's time minus its sidecar start. The start has its own limit (10 s for one process; a
    start is about 0.05 to 1.3 s). The limit was not raised.
 
+## Decided without owner review (2026-10-21, branch `lane-perf-small-app`): standbys on first use with the compile cache
+
+Item 1 of the decision of 2026-10-14 starts two standbys before the compile so that their start overlaps it. With
+a compile cache hit the compile takes about 0.5 to 1 s, and many runs of a small partner app never call `DotNet`:
+the two standbys then cost about 0.2 to 0.3 s of CPU and 0.9 G instructions of 7.4 G (a small partner app, one
+test codeunit, extends Base Application), for nothing. Now:
+
+1. `alrunner` with the compile cache on calls `SidecarHost::prewarm_on_first_use(2)` instead of `prewarm(2)`.
+   Nothing starts before a session needs a process. The first session that needs one starts its own, and the two
+   standbys start beside it for the sessions that follow (the pool then works as before).
+2. `alrunner --no-compile-cache` and `al-test-cli` keep `prewarm(2)`: their compile takes seconds, so the starts
+   overlap it.
+3. Measured. The small partner app: 6.45 G instructions against 7.39 G, CPU 2.2 to 2.36 s against 2.35 to 2.56 s
+   (5 alternating pairs, load 22 to 23 on 12 cores). Tests-ERM 27.5 with test data (cache on): 9 333 tests, 0
+   outcome differences; the sessions waited 0.10 s in total for their processes, against 0.01 s (one start that
+   no longer overlaps anything), out of 131 to 152 s of tests; 121 processes either way.
+4. No outcome can change: a session gets a process of its own either way, and a standby cannot be told from a
+   fresh process (section 6).
+
 ## Decided without owner review (2026-10-15, sidecar-find)
 
 - A binary outside the repository finds its helper. `alrunner` carries the sidecar sources

@@ -558,9 +558,6 @@ pub struct Session {
     /// Media objects a Modify or Delete removed from Tenant Media: `.0` since the last commit (a rollback puts them back),
     /// `.1` committed since the test runner's checkpoint (its restore puts them back). See `Session::release_media`.
     pub(crate) media_removed: (Vec<RemovedMedia>, Vec<RemovedMedia>),
-    /// Records a TransferFields from another table wrote into, with that row's version: the next Modify refuses when the stale
-    /// check would answer differently with it (records.rs `take_foreign_transfer`).
-    pub(crate) foreign_transfers: Vec<(std::rc::Weak<RefCell<RecordState>>, Value)>,
     /// A `ModifyAll(Field, Value, false)` of a table without modify events is running: every row is written, also one whose value
     /// does not change (recmeta.rs `modify_all`).
     pub(crate) bulk_modify: bool,
@@ -754,7 +751,6 @@ impl Session {
             adhoc_tables: Default::default(),
             media,
             media_removed: Default::default(),
-            foreign_transfers: Vec::new(),
             bulk_modify: false,
             get_table_from_variant: false,
             dotnet: Default::default(),
@@ -867,10 +863,19 @@ impl Session {
         self.media_removed.1.clear();
     }
 
+    /// Media a Modify or Delete removed come back into Tenant Media, with a value again.
+    fn restore_media(&mut self, removed: Vec<RemovedMedia>) {
+        let mut gone = self.media.removed.borrow_mut();
+        for (id, _) in &removed {
+            gone.remove(id);
+        }
+        self.media.objects.borrow_mut().extend(removed);
+    }
+
     /// The test runner went back to its checkpoint: the media removed since come back, as the rows that held them do.
     pub fn restore_media_checkpoint(&mut self) {
         let removed = std::mem::take(&mut self.media_removed.1);
-        self.media.objects.borrow_mut().extend(removed);
+        self.restore_media(removed);
     }
 
     /// The transaction a write call started has ended (record/TestProbeRecordRefContracts.al:WriteTransaction_State starts
@@ -906,7 +911,7 @@ impl Session {
         self.isolated_storage = self.isolated_committed.clone();
         // The Tenant Media rows a Modify or Delete of this transaction removed come back with the rows.
         let removed = std::mem::take(&mut self.media_removed.0);
-        self.media.objects.borrow_mut().extend(removed);
+        self.restore_media(removed);
         // The code coverage tables keep their rows through a rollback (codeunit/PWCodeCoverageRows.al:
         // Rollback_RowsReadBeforeAnAsserterror, Rollback_RowsFirstReadInsideFailingScope): what was
         // recorded is written into them again at the next read.

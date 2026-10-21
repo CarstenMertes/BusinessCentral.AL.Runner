@@ -324,13 +324,19 @@ codeunit 69985 M
         Row.Delete();
     end;
 
-    // Not pinned: the media is still held by a row of another table.
-    procedure SharedWithOtherTable()
-    var Row: Record "SV Media"; Other: Record "SV Media Other";
+    // media/TestMediaPngImport.al:441-470 QE_Media_OtherTable_Assigned_SourceRowDeleted.
+    procedure SharedWithOtherTable(): Text
+    var Row: Record "SV Media"; Other: Record "SV Media Other"; TenantMedia: Record "Tenant Media"; Id: Guid; outs: OutStream;
     begin
         Row.Id := 1; Row.Insert(); Import(Row, 'one'); Row.Modify();
+        Row.Get(1);
+        Id := Row.Pic.MediaId();
         Other.Id := 1; Other.Pic := Row.Pic; Other.Insert();
         Row.Delete();
+        Other.Get(1);
+        Row.Src.CreateOutStream(outs);
+        exit(Format(TenantMedia.Get(Id)) + Format(Other.Pic.MediaId() = Id) + Format(Other.Pic.HasValue())
+            + Format(Other.Pic.ExportStream(outs)));
     end;
 }
 "#;
@@ -347,10 +353,14 @@ fn a_rollback_restores_the_media_a_delete_removed() {
     assert_eq!(text(al_testkit::run_in(MEDIA, "M", "DeleteThenRollback")), "YesYes");
 }
 
+// TestMediaPngImport.al:441-470: a Delete of one holder removes the media from Tenant Media although a row of another
+// table holds it; that row keeps the MediaId, HasValue is false and ExportStream returns false.
 #[test]
-fn a_media_shared_with_another_table_is_refused() {
-    let r = al_testkit::run_in(MEDIA, "M", "SharedWithOtherTable");
-    assert!(matches!(r, Err(Signal::Unsupported(_))), "{r:?}");
+fn a_media_shared_with_another_table_leaves_with_its_first_holder() {
+    assert_eq!(
+        text(al_testkit::run_in(MEDIA, "M", "SharedWithOtherTable")),
+        "NoYesNoNo"
+    );
 }
 
 const DATES: &str = r#"
@@ -621,10 +631,15 @@ fn a_delete_of_a_row_with_a_media_set_is_refused() {
     assert!(matches!(r, Err(Signal::Unsupported(_))), "{r:?}");
 }
 
+// CnTransferFieldsModify.al:250-268 QE_TF_Other_StaleBuffer_SourceOlder: the buffer keeps its own row version, so a stale
+// buffer stays stale after a TransferFields from another table.
 #[test]
-fn a_modify_that_depends_on_the_row_version_of_another_tables_transferfields_is_refused() {
+fn a_stale_buffer_stays_stale_after_another_tables_transferfields() {
     let r = run("TransferFromOtherTableStale");
-    assert!(matches!(r, Err(Signal::Unsupported(_))), "{r:?}");
+    assert!(
+        matches!(&r, Err(Signal::Error(e)) if e.code == "DB:RecordChanged"),
+        "{r:?}"
+    );
     // CnTransferFieldsModify.al:194-214: a current buffer modifies either way.
     assert_eq!(text(run("TransferFromOtherTableCurrent")), "3");
 }

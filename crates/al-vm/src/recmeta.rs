@@ -1338,28 +1338,33 @@ impl Session {
                 updates.push((i, src_fields[i].clone()));
             }
         }
-        // From another table the version stays, which is not pinned beyond a current buffer: the next Modify checks whether the
-        // source row's version would have answered differently (records.rs `take_foreign_transfer`).
-        self.foreign_transfers
-            .retain(|(w, _)| w.upgrade().is_some_and(|r| !Rc::ptr_eq(&r, rec)));
+        // From another table the buffer keeps its own SystemId and SystemRowVersion, so a stale buffer stays stale and a current
+        // one modifies fine, and it takes the source's SystemCreatedAt and SystemModifiedAt (record/lt-cn-transferfields-modify/
+        // CnTransferFieldsModify.al:11-16, :250-479 QE_TF_Other_*). SystemCreatedBy and SystemModifiedBy are not pinned: a
+        // read of them is refused.
         if src_table != t.object as usize {
-            // From another table the buffer takes the source's SystemCreatedAt and SystemModifiedAt and keeps its own
-            // SystemId and SystemRowVersion (record/lt-cn-transferfields-modify/CnTransferFieldsModify.al:11-16,
-            // QE_TF_Other_SystemFields_AfterModify). Not built yet, so a read of them is refused; SystemCreatedBy and
-            // SystemModifiedBy are not pinned and refused too.
             for id in 2_000_000_001..=2_000_000_004 {
-                if let Some(i) = t.fields.iter().position(|f| f.id == id) {
-                    updates.push((
-                        i,
-                        Value::Unknown(std::sync::Arc::from(
-                            "a SystemCreatedAt, SystemCreatedBy, SystemModifiedAt or SystemModifiedBy after a TransferFields from another table (not built)",
-                        )),
-                    ));
-                }
-            }
-            if let Some(sp) = from.fields.iter().position(|f| f.id == 2_000_000_005) {
-                self.foreign_transfers
-                    .push((Rc::downgrade(rec), src_fields[sp].clone()));
+                let Some(i) = t.fields.iter().position(|f| f.id == id) else {
+                    continue;
+                };
+                let source = from.fields.iter().position(|f| f.id == id);
+                // Pinned for a source read from the database; a source that holds no stamp (built in memory, or a temporary
+                // record) is not, so its blank value is not copied but refused on read.
+                let v = match source {
+                    Some(sp)
+                        if (id == 2_000_000_001 || id == 2_000_000_003)
+                            && !matches!(src_fields[sp], Value::DateTime(0)) =>
+                    {
+                        src_fields[sp].clone()
+                    }
+                    Some(_) if id == 2_000_000_001 || id == 2_000_000_003 => Value::Unknown(std::sync::Arc::from(
+                        "a SystemCreatedAt or SystemModifiedAt after a TransferFields from another table's row that holds no stamp (not pinned)",
+                    )),
+                    _ => Value::Unknown(std::sync::Arc::from(
+                        "a SystemCreatedBy or SystemModifiedBy after a TransferFields from another table (not pinned)",
+                    )),
+                };
+                updates.push((i, v));
             }
         }
         let mut r = rec.borrow_mut();

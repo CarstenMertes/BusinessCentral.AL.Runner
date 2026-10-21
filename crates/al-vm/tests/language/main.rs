@@ -49,6 +49,7 @@ mod pageworks_probes;
 mod partner_gaps_1;
 mod private_use_chars;
 mod proc_assign;
+mod qe_decimal_digits;
 mod rec_field_by_var;
 mod relation_blank_member;
 mod setter_call;

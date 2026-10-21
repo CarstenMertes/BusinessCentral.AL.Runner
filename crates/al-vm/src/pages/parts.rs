@@ -473,9 +473,10 @@ impl Session {
             return self.refresh_linked_parts_after_save(st);
         }
         if !st.borrow().hidden_parts.is_empty() {
-            return unsupported(
-                "CurrPage.SaveRecord in a host control's OnValidate on a host with a part hidden by a Visible expression (the part reads are not pinned)",
-            );
+            // A host with a part hidden by a Visible expression is not pinned: its linked parts read again from their first
+            // rows as before, under assumption host-save-record-refreshes-linked-parts (Microsoft's Tests-ERM ERM Purchase
+            // Subform 134394 and Document Totals Pages: Purchase documents have such parts; 30 tests pass through it).
+            return self.refresh_linked_parts_after_save(st);
         }
         for (_, child) in &parts {
             let o = child.borrow().object as usize;

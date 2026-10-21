@@ -401,6 +401,47 @@ impl Session {
         Ok(())
     }
 
+    /// A host control's OnValidate called `CurrPage.SaveRecord` (and no `CurrPage.Update`): the parts with a SubPageLink
+    /// read their rows again, as after a refresh of the host (testpart/TestPartTriggerOrderAndRefresh.al:
+    /// HostCurrPageUpdate_ReReadsThePart), without the host reading its own row. Not pinned: assumption
+    /// host-save-record-refreshes-linked-parts (pageupdate/TestPageUpdate.al:116-139 pins only that a SetValue without
+    /// SaveRecord or Update leaves an unlinked FactBox alone).
+    pub(super) fn refresh_linked_parts_after_save(&mut self, st: &St) -> Result<(), Signal> {
+        let engine = self.engine();
+        let page = page_of(&engine, st);
+        let parts: Vec<(usize, St)> = st
+            .borrow()
+            .parts
+            .iter()
+            .filter(|(i, c)| {
+                c.borrow().open
+                    && page.controls[*i]
+                        .part_link
+                        .as_ref()
+                        .is_some_and(|l| l.entries.iter().any(|e| matches!(e, ir::LinkEntry::Field(..))))
+            })
+            .cloned()
+            .collect();
+        if parts.is_empty() {
+            return Ok(());
+        }
+        if parts.iter().any(|(i, _)| {
+            page.controls[*i]
+                .part_link
+                .as_ref()
+                .is_some_and(|l| l.provider.is_some())
+        }) {
+            return unsupported(
+                "CurrPage.SaveRecord in a host control's OnValidate with a part linked through a Provider (not pinned)",
+            );
+        }
+        al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::HostSaveRecordRefreshesLinkedParts);
+        for (i, child) in &parts {
+            self.sync_part(st, *i, child)?;
+        }
+        Ok(())
+    }
+
     /// The open parts of `st` (shown, and hidden by a Visible expression) whose `CurrPage.Update` waits for its refresh.
     pub(super) fn parts_waiting_refresh(&self, st: &St) -> Vec<(usize, St)> {
         let s = st.borrow();

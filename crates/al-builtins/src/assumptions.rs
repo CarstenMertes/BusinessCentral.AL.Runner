@@ -487,6 +487,18 @@ registry! {
         tests: "Every Microsoft test method of a codeunit without TestPermissions = Disabled when Tests-TestLibraries is loaded (about 6500 tests of the Base Application buckets in the 2026-10-20 measurement); they pass in Microsoft's CI under these sets.",
         probe: "Done for the corpus database (QcRunnerSets.al). Still wanted: the same reads and writes with Tests-TestLibraries installed, so TEST TABLES exists: a table of a Microsoft test app and of a test library under the runner sets.",
     },
+    HostSaveRecordRefreshesLinkedParts => {
+        id: "host-save-record-refreshes-linked-parts",
+        assumed: "A SetValue on a host page control whose OnValidate calls CurrPage.SaveRecord() (and no CurrPage.Update) makes the host's parts that have a SubPageLink read their rows again after the validation, as after CurrPage.Update on the host (testpart/TestPartTriggerOrderAndRefresh.al HostCurrPageUpdate_ReReadsThePart), without the host reading its own row again. pageupdate/TestPageUpdate.al:116-139 pins only that a SetValue without SaveRecord or Update leaves an unlinked FactBox alone.",
+        tests: "Tests-ERM ERM Purchase Subform (134394), for example OrderModifyindFieldOnHeaderSetsDiscountToZeroForInvoiceDiscountTypeAmount: Purchase Order \"Currency Code\" OnValidate calls CurrPage.SaveRecord(), and the subform's totals (OnAfterGetCurrRecord, Document Totals) must show the recalculated invoice discount; they pass in Microsoft's CI.",
+        probe: "A host card with a linked ListPart and an unlinked one, each logging OnAfterGetRecord / OnAfterGetCurrRecord and xRec's key and a field: SetValue on a host field whose OnValidate calls CurrPage.SaveRecord() (the row changes, and also when it does not), then the same with Modify() instead of SaveRecord, and with neither: which part triggers run, in which order, with which Rec and xRec, and whether the host's OnAfterGetCurrRecord runs.",
+    },
+    TableFieldAutoFormatExpression => {
+        id: "table-field-auto-format-expression",
+        assumed: "A page control over a table field whose AutoFormatExpression is an expression (Rec.\"Currency Code\", a field name, a procedure of the table), with no AutoFormatExpression of its own, formats its value as if the control had that expression: it is evaluated with the control's row each time the control's text is read, like a control expression (autoformat/PWAutoFormatTypes.al:19-22, TestAutoFormatExpressionTiming.al). The corpus pins control expressions and literal field expressions (pages/lt-page-autoformat-lookups/P113AutoFormat.al) only.",
+        tests: "Tests-ERM Amount AutoFormat Currency (134833): TestAutoformatShowFCYCodeOnlyAfterAmount and eight more (Case4FCY and Case5FCY, AutoFormatType 4 and 5 with AutoFormatExpression = Rec.\"Currency Code\" on the table field); about 100 Tests-ERM tests read such Base Application fields through pages (ERM Purchase Subform, ERM Payment Tolerance); they pass in Microsoft's CI.",
+        probe: "A table with Amount (AutoFormatType = 1, 2, 4, 5; AutoFormatExpression = Rec.\"Currency Code\") and a field with AutoFormatType = 10 and AutoFormatExpression = a procedure of the table that logs its calls and errors for one row: a Card and a List with plain controls over them, Value() of each control for rows with a currency of 3:3 / 4:4 places, a blank code and a code that is no currency; how often and when the procedure runs (open, Next, GoToRecord, Value()), and what the error does.",
+    },
 }
 
 thread_local! {

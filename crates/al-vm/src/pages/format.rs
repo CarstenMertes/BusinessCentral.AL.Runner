@@ -99,11 +99,49 @@ impl Session {
             Some(ir::PropVal::Lit(v)) => Some(v.clone()),
             _ => None,
         };
+        // A table field's AutoFormatExpression that is an expression (`Rec."Currency Code"`, a procedure of the table), read
+        // through a control that names no expression of its own. The corpus pins only control expressions
+        // (autoformat/PWAutoFormatTypes.al:19-22, AutoFormatCard.Page.al:53) and literal field expressions
+        // (pages/lt-page-autoformat-lookups/P113AutoFormat.al). Microsoft's Tests-ERM "Amount AutoFormat Currency" (134833,
+        // TestAutoformatShowFCYCodeOnlyAfterAmount: Case4FCY, AutoFormatType = 4 with AutoFormatExpression =
+        // Rec."Currency Code" on the table field) needs it evaluated with the control's row, as a control expression is:
+        // assumption table-field-auto-format-expression. `field_expression` is its text.
+        let mut field_expression = None;
+        if ctl.prop("autoformatexpression").is_none() {
+            if let Some(f) = field.as_ref() {
+                if from_field("autoformatexpression").is_some_and(|e| !is_text_literal(&e)) {
+                    if let Some(why) = f.auto_format_refusal.clone() {
+                        return unsupported(why);
+                    }
+                    let Some((object, routine)) = f.auto_format_expression else {
+                        return unsupported(
+                            "a control over a table field whose AutoFormatExpression is an expression that did not compile",
+                        );
+                    };
+                    al_builtins::assumptions::assume(
+                        al_builtins::assumptions::Assumption::TableFieldAutoFormatExpression,
+                    );
+                    let rec = self.page_rec(st);
+                    field_expression = match self.call_on_record(object, routine, rec, None, Vec::new())?.0 {
+                        Value::Text(t) | Value::Code(t) => Some(t.into_string()),
+                        other => {
+                            return unsupported(format!(
+                                "the AutoFormatExpression of field {} gave a {}",
+                                f.name,
+                                other.describe()
+                            ));
+                        }
+                    };
+                }
+            }
+        }
+        // The field's AutoFormatExpression: what its expression gave, else its literal text.
+        let field_afe = field_expression.or_else(|| from_field("autoformatexpression").map(|e| unquote(&e)));
         // The precision of the table field's AutoFormatExpression beats the control's DecimalPlaces when the control names no
         // expression of its own (pages/lt-page-autoformat-lookups/P113AutoFormat.al: PDec `DecimalPlaces = 1 : 1` over a field
         // with `<Precision,3:3>` shows three places).
         let field_precision = if ctl.prop("autoformatexpression").is_none() {
-            from_field("autoformatexpression").and_then(|e| pagefmt::parse_precision(&unquote(&e)))
+            field_afe.as_deref().and_then(pagefmt::parse_precision)
         } else {
             None
         };
@@ -130,8 +168,7 @@ impl Session {
             // The table field's own expression applies when the control has none (pages/lt-page-autoformat-lookups/
             // P113AutoFormat.al: T10 `<Precision,3:3>` shows 1,234.500, PovT0 with type 0 keeps the field's 3 places).
             if f.decimal_places.is_none() && expr.is_none() {
-                f.decimal_places =
-                    from_field("autoformatexpression").and_then(|e| pagefmt::parse_precision(&unquote(&e)));
+                f.decimal_places = field_afe.as_deref().and_then(pagefmt::parse_precision);
             }
             // AutoFormatType 1, 2, 4 and 5 (on the control, else on the table field): the places of an
             // amount or a unit amount, from the currency the expression names
@@ -143,9 +180,7 @@ impl Session {
                     .map(str::trim)
                     .filter(|k| matches!(*k, "1" | "2" | "4" | "5"))
                 {
-                    let expr = expr
-                        .or_else(|| from_field("autoformatexpression").map(|e| unquote(&e)))
-                        .unwrap_or_default();
+                    let expr = expr.or_else(|| field_afe.clone()).unwrap_or_default();
                     f.decimal_places = Some(self.auto_format_places(kind, &expr)?);
                 }
             }

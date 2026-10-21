@@ -136,6 +136,12 @@ fn unquote(s: &str) -> String {
     }
 }
 
+/// Whether a property value as written is one Text literal (`'..'`, with `''` for a quote inside), not an expression.
+fn is_text_literal(s: &str) -> bool {
+    let t = s.trim();
+    t.len() >= 2 && t.starts_with('\'') && t.ends_with('\'') && !t[1..t.len() - 1].replace("''", "").contains('\'')
+}
+
 fn is_true(s: &str) -> bool {
     s.trim().eq_ignore_ascii_case("true")
 }

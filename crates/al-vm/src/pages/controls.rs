@@ -637,6 +637,7 @@ impl Session {
             st.borrow_mut().dirty = true;
         }
         let from_page_trigger = std::cell::Cell::new(false);
+        st.borrow_mut().save_record_called = false;
         let result = (|| -> Result<(), Signal> {
             match ctl.binding.clone() {
                 ir::Binding::Field(pos) => {
@@ -709,7 +710,12 @@ impl Session {
                 // GetValidationError_ErrorThenCorrected, line 272: the page answers an empty text afterwards).
                 st.borrow_mut().errors.retain(|(i, _)| *i != idx);
                 st.borrow_mut().trigger_errors.retain(|(i, _)| *i != idx);
+                let saved = std::mem::take(&mut st.borrow_mut().save_record_called);
+                let update_asked = st.borrow().refresh;
                 self.run_refresh(st)?;
+                if saved && !update_asked && rec_bound {
+                    self.refresh_linked_parts_after_save(st)?;
+                }
                 self.refresh_caption_classes(st)?;
                 Ok(Value::Null)
             }

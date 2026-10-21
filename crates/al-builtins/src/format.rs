@@ -760,13 +760,16 @@ fn format_decimal(d: &rust_decimal::Decimal, standard: i32) -> Result<String, Fo
     };
     let n = d.normalize();
     // A negative value that is too small to show reads `-0` in the XML form, not `0` (misc/lt-probes-needed-1/
-    // PnAStreamDecimalBytes.al:Write_Decimal_Tiny `minus-1E-28`). The other standard formats are not pinned for it.
+    // PnAStreamDecimalBytes.al:Write_Decimal_Tiny `minus-1E-28`), and in the default format 0 too (types/lt-decimal-digits/
+    // DecimalDigits.al:480-541 QE_Decimal_SmallResults_DecimalPlaces, `neg tiny quotient default format`). The other
+    // standard formats are not pinned for it.
     if n.is_zero() && orig.is_sign_negative() && !orig.is_zero() {
-        if standard == 9 {
+        if standard == 9 || standard == 0 {
             return Ok("-0".to_string());
         }
         return Err(FormatFail::Unsupported(
-            "Format of a negative Decimal too small to show, in a standard format other than 9 (not pinned)".into(),
+            "Format of a negative Decimal too small to show, in a standard format other than 0 and 9 (not pinned)"
+                .into(),
         ));
     }
     let plain = n.to_string();

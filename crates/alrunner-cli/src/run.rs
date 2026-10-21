@@ -970,10 +970,18 @@ fn test_inner(a: &TestArgs, mut warm: Option<&mut WarmCtx>, collect: Option<&mut
             && std::env::var_os("AL_FORCE_BASELINE").is_none()
             && al_testrun::observe::text_looks_pure(&all_apps, &kinds, &symbols, opts_only.as_deref())
     };
+    let compile_cache_on =
+        !a.no_compile_cache && !std::env::var("ALRUNNER_NO_COMPILE_CACHE").is_ok_and(|v| !v.is_empty() && v != "0");
     if !dependencies.apps.is_empty() && !looks_pure {
-        // The Microsoft apps call .NET (Media, images). Start the helper processes now so the
-        // starts overlap the compile; a run without them starts nothing (ADR-014 section 6).
-        sidecar_host.prewarm(al_testrun::dotnet::STANDBY_SIDECARS);
+        // The Microsoft apps call .NET (Media, images). Without the compile cache the compile takes
+        // seconds: start the helper processes now so the starts overlap it. With the cache the
+        // compile is short and many runs never call .NET: the first session that calls starts its
+        // own helper and the standbys then (ADR-014 section 6). A run without them starts nothing.
+        if compile_cache_on {
+            sidecar_host.prewarm_on_first_use(al_testrun::dotnet::STANDBY_SIDECARS);
+        } else {
+            sidecar_host.prewarm(al_testrun::dotnet::STANDBY_SIDECARS);
+        }
     }
     let dotnet = al_vm::dotnet::DotNetConfig {
         host,
@@ -1029,9 +1037,7 @@ fn test_inner(a: &TestArgs, mut warm: Option<&mut WarmCtx>, collect: Option<&mut
         impact_trace: collect.as_ref().is_some_and(|c| c.impact_trace),
         narrow: collect.as_ref().and_then(|c| c.narrow.clone()),
         test_data: test_data.as_ref().map(|(d, _)| d.clone()),
-        compile_cache: (!a.no_compile_cache
-            && !std::env::var("ALRUNNER_NO_COMPILE_CACHE").is_ok_and(|v| !v.is_empty() && v != "0"))
-        .then(|| al_testrun::compile_cache::CompileCache {
+        compile_cache: compile_cache_on.then(|| al_testrun::compile_cache::CompileCache {
             dir: al_testrun::compile_cache::CompileCache::under(&al_deps::cache::cache_root_from_env(
                 a.cache_dir.as_deref(),
             )),

@@ -424,3 +424,61 @@ codeunit 69909 C
         format!("Yes:R:19;R:20;N:1=1;{on}R:25;N:1=0|21|22:|23:|24:|25:||25")
     );
 }
+
+/// handlers/TestPageNewRowLine_Tests.al:64-87: Next() past the last data row of an editable, insert-allowed page lands on the
+/// blank new-row line and answers true; the next Next() answers false. A list that declares OnAfterGetRecord and holds its whole
+/// view in the client walks onto the line as well, without asking the page (pagefindrecord/QcFindViewTests.al:505
+/// DocPart_OpenEdit_LinesOfH1 `part_walk = 10000,20000,0`, a part with OnFindRecord; pages/lt-ai-list-order/AiListOrderTests.al:600
+/// Next_TwoRows_Nav `next2_log` empty: after an open that read the view to its end, Next on the last row asks the page nothing).
+/// Tests-ERM 134344 SI_MoveNextLineAfterQuantityValidateCalcInvDiscount.
+#[test]
+fn next_past_the_last_row_of_an_editable_list_with_on_after_get_record_lands_on_the_new_line() {
+    let src = with_log(
+        r#"
+page 69905 "RW Edit List"
+{
+    PageType = List; SourceTable = "RW Row"; ApplicationArea = All; UsageCategory = None;
+    layout { area(Content) { repeater(Rows) { field(Id; Rec.Id) { } field(Name; Rec.Name) { } } } }
+    trigger OnAfterGetRecord() begin Rec.Amount := Rec.Id; end;
+    trigger OnAfterGetCurrRecord() begin Rec.Amount := Rec.Id; end;
+    trigger OnFindRecord(Which: Text): Boolean begin exit(Rec.Find(Which)); end;
+}
+codeunit 69906 C
+{
+    procedure F(): Text
+    var Row: Record "RW Row"; Pg: TestPage "RW Edit List"; R: Text;
+    begin
+        Row.Id := 1; Row.Name := 'one'; Row.Insert();
+        Pg.OpenEdit();
+        R := Format(Pg.Next()) + '|[' + Pg.Name.Value() + ']|' + Format(Pg.Next());
+        exit(R);
+    end;
+    procedure G(): Text
+    var Row: Record "RW Row"; Log: Record "RW Log"; Pg: TestPage "RW Host Card"; R: Text;
+    begin
+        Log.Id := 1; Log.Insert();
+        Row.Id := 1; Row.Name := 'one'; Row.Insert();
+        Pg.OpenEdit();
+        Pg.Lines.Name.SetValue('uno');
+        R := Format(Pg.Lines.Next()) + '|[' + Pg.Lines.Name.Value() + ']|' + Format(Pg.Lines.Next());
+        exit(R);
+    end;
+}
+page 69907 "RW Lines Part"
+{
+    PageType = ListPart; SourceTable = "RW Row"; ApplicationArea = All; UsageCategory = None;
+    layout { area(Content) { repeater(Rows) { field(Id; Rec.Id) { } field(Name; Rec.Name) { } } } }
+    trigger OnAfterGetRecord() begin Rec.Amount := Rec.Id; end;
+    trigger OnAfterGetCurrRecord() begin Rec.Amount := Rec.Id; end;
+    trigger OnFindRecord(Which: Text): Boolean begin exit(Rec.Find(Which)); end;
+}
+page 69908 "RW Host Card"
+{
+    PageType = Document; SourceTable = "RW Log"; ApplicationArea = All; UsageCategory = None;
+    layout { area(Content) { field(Id; Rec.Id) { } part(Lines; "RW Lines Part") { } } }
+}
+"#,
+    );
+    assert_eq!(al_testkit::text(al_testkit::run_in(&src, "C", "F")), "Yes|[]|No");
+    assert_eq!(al_testkit::text(al_testkit::run_in(&src, "C", "G")), "Yes|[]|No");
+}

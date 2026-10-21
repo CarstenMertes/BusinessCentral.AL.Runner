@@ -884,6 +884,15 @@ impl Session {
                     .stored_row(&rec)?
                     .is_some_and(|stored| Self::same_values(&rec.borrow().fields, &stored));
                 if !Self::same_values(&rec.borrow().fields, &before) && !saved_by_action {
+                    // The pinned actions change fields of the row the page shows. One that put another row into Rec
+                    // (`Rec := TempApplyingCustLedgEntry` in Apply Customer Entries' Post Application, Tests-ERM 134918) is not
+                    // pinned: whether the client saves that row, the one it showed, or nothing.
+                    let table = self.table(&rec)?;
+                    if !Self::same_key(&table.primary_key(&rec.borrow().fields), &table.primary_key(&before)) {
+                        return unsupported(
+                            "an action left another row (another primary key) in Rec with changes to save (not pinned)",
+                        );
+                    }
                     st.borrow_mut().dirty = true;
                     self.save_row(st)?;
                 }
@@ -929,6 +938,15 @@ impl Session {
                 let saved = std::mem::take(&mut st.borrow_mut().save_record_called) && !refresh_asked;
                 if reads_rows && !saved {
                     self.read_page_again(st)?;
+                }
+                // On a Document card that read is OnAfterGetRecord alone, no OnAfterGetCurrRecord, then the parts read their rows
+                // (corpus bump 41 pages/lt-qj-part-propagation/QjPartPropagation.al QJ_Both_PartModifiesHost_ThenHostSave
+                // `H.ACT.end(...) H.AGR(...) L.AGR(...) L.AGR(...) L.AGCR(...)`).
+                if saved && !self.is_list(st) && !st.borrow().parts.is_empty() {
+                    al_builtins::assumptions::assume(
+                        al_builtins::assumptions::Assumption::PartUpdatePropagationBothRefreshesHost,
+                    );
+                    st.borrow_mut().refresh_without_curr = true;
                 }
                 st.borrow_mut().refresh = true;
             } else if read_after_goto && reads_rows && self.is_list(st) && !self.declares(st, "onaftergetcurrrecord") {
@@ -1460,6 +1478,8 @@ impl Session {
     /// TestPageUpdateGoneRow.al StoredRow_OnValidateUpdateFalse_Trace). The row is read from the
     /// table unless the client holds edits of it that are not saved yet.
     pub(super) fn run_refresh(&mut self, st: &St) -> Result<(), Signal> {
+        let without_curr = std::mem::take(&mut st.borrow_mut().refresh_without_curr);
+        let without_parts = std::mem::take(&mut st.borrow_mut().refresh_without_parts);
         let read_done = std::mem::take(&mut st.borrow_mut().refresh_read_done);
         if !std::mem::take(&mut st.borrow_mut().refresh) || read_done {
             return Ok(());
@@ -1528,6 +1548,9 @@ impl Session {
         }
         let r = (|| {
             self.populate_current(st)?;
+            if without_curr {
+                return Ok(true);
+            }
             self.page_trigger(st, "onaftergetcurrrecord", vec![])?;
             self.page_event(st, "onaftergetcurrrecordevent", None, None)
         })();
@@ -1536,7 +1559,9 @@ impl Session {
         // The parts read their rows again after the host's own triggers (corpus
         // testpart/TestPartTriggerOrderAndRefresh.al:HostCurrPageUpdate_ReReadsThePart:
         // "host.Action;host.AGCR(2);part.AGCR(2);", and no part OnOpenPage).
-        self.sync_parts(st)?;
+        if !without_parts {
+            self.sync_parts(st)?;
+        }
         Ok(())
     }
 
@@ -1726,7 +1751,20 @@ impl Session {
             st.borrow_mut().refresh = false;
             let table = rec.borrow().table as usize;
             let fresh = self.initial_fields(table);
-            rec.borrow_mut().fields = fresh;
+            rec.borrow_mut().fields = fresh.clone();
+            // The pinned lists have no filter on a key field. When one names a single value (a journal's template and batch in
+            // filter group 2), whether the blank line takes it is not pinned (Tests-ERM 134002 ApplyAndPostPaymentToInvoice:
+            // Gen. Journal Line SetUpNewLine reads the template): refused.
+            if new_line {
+                self.stamp_from_filters(st, false)?;
+                let stamped = !Self::same_values(&rec.borrow().fields, &fresh);
+                rec.borrow_mut().fields = fresh;
+                if stamped {
+                    return unsupported(
+                        "a list filtered to one key value that lost its only row to an action (whether its blank line takes the filter values is not pinned)",
+                    );
+                }
+            }
             st.borrow_mut().cursor = Cursor::None;
             if new_line {
                 for _ in 0..3 {

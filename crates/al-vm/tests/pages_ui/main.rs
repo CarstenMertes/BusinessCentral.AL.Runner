@@ -1,5 +1,6 @@
 //! The tests of one area in one binary (ADR-037 item 5): fewer binaries to link. Each module is a file of pages_ui/.
 
+mod action_moved_rec;
 mod base_access;
 mod control_entry;
 mod control_properties;
@@ -12,6 +13,7 @@ mod filterpage;
 mod findrecord_view;
 mod flowfield_drilldown;
 mod gone_row;
+mod gone_row_key_filter;
 mod goto_next_call;
 mod host_save_record_parts;
 mod no_source_card;
@@ -19,7 +21,9 @@ mod page_inserts;
 mod pageext;
 mod pages;
 mod part_host_move;
+mod part_update_propagation;
 mod parts;
+mod qj_part_propagation;
 mod row_window;
 mod run_record_group2;
 mod trap_reopen;

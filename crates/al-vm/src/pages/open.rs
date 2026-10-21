@@ -1752,8 +1752,15 @@ impl Session {
             self.page_event(st, "onaftergetcurrrecordevent", None, None)?;
             return Err(error_code(e.message.clone(), "TestWrapped"));
         }
+        // OnNewRecord sees the xRec the part held before its first and third run, a blank one before the second
+        // (pages/lt-qj-part-propagation/QjPartPropagation.al:1346 QL_PartLastNew_NoLines `log-open` after GoToKey onto a host row
+        // without lines: `S.NEW(x=3 x.ln=30000) S.AGCR(0 r=0 x=0) S.NEW(x=0 x.ln=0) S.AGCR(0 r=0 x=0) S.NEW(x=3 x.ln=30000)`); the
+        // part's Last() and New() see it again (`PageState::empty_part_xrec`).
+        let held = self.page_xrec_fields(st);
+        st.borrow_mut().empty_part_xrec = Some(held.clone());
         for validate in [true, false, true] {
             if validate {
+                self.set_xrec_fields(st, held.clone());
                 self.stamp_from_filters(st, true)?;
             }
             self.page_trigger(st, "onnewrecord", vec![Value::Boolean(true)])?;

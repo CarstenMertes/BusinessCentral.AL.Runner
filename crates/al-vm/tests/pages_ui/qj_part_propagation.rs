@@ -845,13 +845,11 @@ fn qj_subform_save_record_new_row() {
         "log-close=",
         "lines-after-close=10000:q=1,a=1 20000:q=0,a=7",
     ];
-    // Not built: the open-and-new log (Last on the part's only row reads nothing; New() runs OnNewRecord, OnAfterGetCurrRecord,
-    // goes back to the stored row and runs both again, QjPartPropagation.al:743); only the edits after it are checked.
-    assert_eq!(run("QJ_SubformSaveRecord_NewRow")[1..], expected[1..]);
+    assert_eq!(run("QJ_SubformSaveRecord_NewRow"), expected);
 }
 
 /// QjPartPropagation.al:997 QL_Both_NewPartRow_PartModifiesHost (corpus bump 42): on a new part row with UpdatePropagation Both the
-/// host reads its row again and the part keeps its typed row, inserted at Close. The first observation (Last + New) is not compared.
+/// host reads its row again and the part keeps its typed row, inserted at Close.
 #[test]
 fn ql_both_new_part_row_part_modifies_host() {
     let expected = [
@@ -866,5 +864,5 @@ fn ql_both_new_part_row_part_modifies_host() {
         "stored-after-close=t=6 d=orig n=orig",
         "lines-after-close=10000:q=1,a=1 20000:q=5,a=0",
     ];
-    assert_eq!(run("QL_Both_NewPartRow_PartModifiesHost")[1..], expected[1..]);
+    assert_eq!(run("QL_Both_NewPartRow_PartModifiesHost"), expected);
 }

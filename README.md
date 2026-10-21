@@ -4,7 +4,7 @@ Run Business Central AL tests without a BC service tier, without Docker, without
 and without a BC license.
 
 > **AL Runner v3 replaces v2.** This repository now holds AL Runner v3, written in Rust.
-> AL Runner v2 (C#) is frozen on the [`v2` branch](https://github.com/aldevtools/BusinessCentral.AL.Runner/tree/v2).
+> AL Runner v2 (C#) is frozen on the [`v2` branch](https://github.com/aldevtools/BusinessCentral.AL.Runner/tree/v2) (MIT License).
 > Its dotnet tool [`MSDyn365BC.AL.Runner`](https://www.nuget.org/packages/MSDyn365BC.AL.Runner)
 > stays on NuGet. v2 gets no further releases; the versions published on NuGet keep working. If you maintain a tool that
 > calls AL Runner, see [Migrating tools from AL Runner v2 to v3](docs/integrations/migrating-tools-to-v3.md).
@@ -19,7 +19,7 @@ AL Runner is a standalone test runner for Business Central AL code. You point it
 and its test app, and it runs the test codeunits and reports each test as passed, failed or
 not run.
 
-v3 parses and checks AL source with its own front end and runs it in its own VM against an
+AL Runner parses and checks AL source with its own front end and runs it in its own VM against an
 in-memory database. It needs no BC service tier, no Microsoft DLLs and no .NET. AL code that
 uses the `DotNet` type calls an optional .NET helper process (see "DotNet" below). Microsoft's
 apps (System Application, Base Application, the test libraries) are compiled from their own
@@ -27,12 +27,12 @@ source, so your tests run against Microsoft's real AL code, not against stubs.
 
 It is meant for AL developers who want quick test results on their own machine or in a pull
 request build, before the full BC pipeline runs. The full pipeline with a service tier stays
-the final check; AL Runner does not replace it. v3 is an alpha: many tests are still refused,
+the final check; AL Runner does not replace it. It is an alpha: many tests are still refused,
 so do not gate a pipeline on it yet (see "Try the alpha").
 
 What it does not do is just as important. A feature AL Runner does not support is refused:
 the test is reported as "not run", with the reason. It never returns a guessed default
-instead. See "Can I trust the results?" and "What AL Runner v3 does not do" below.
+instead. See "Can I trust the results?" and "What AL Runner does not do" below.
 
 The goal is the whole AL language. How much of it runs today is in "Status" below and in
 `docs/status.md`.
@@ -40,8 +40,8 @@ The goal is the whole AL language. How much of it runs today is in "Status" belo
 ### Two commands named `al-runner`
 
 The v2 dotnet tool also installs a command named `al-runner`. If both are installed, two
-commands with that name are on your `PATH`, and the one found first runs. v3 prints a one-line
-note on stderr when it finds the v2 tool (at most once a day; the note can be turned off), and
+commands with that name are on your `PATH`, and the one found first runs. This `al-runner` prints a one-line note on
+stderr when it finds the v2 tool (at most once a day; the note can be turned off), and
 `al-runner --version` lists the other copies it finds. To avoid the clash, uninstall the
 dotnet tool:
 
@@ -319,19 +319,20 @@ BC, `al-runner --version` and the output of `--explain TEST`.
 
 ## Why it is built on the language, not on BC's internals
 
-AL Runner v3 reproduces what AL code can observe: values, errors, data, and the order of
+AL Runner reproduces what AL code can observe: values, errors, data, and the order of
 triggers and events. That surface is the public contract of the language. Microsoft cannot
 change it without a breaking change for every partner, so it changes slowly and visibly,
 behind versions and obsolete markers.
 
-AL Runner v2 ran Microsoft's compiled code on top of BC's internals: the C# runtime, its
-metadata and session classes, and patches into them. Microsoft can change those in any
-hotfix or release without notice, so a v2 fix can stop working with the next update, and
-v2 needed one engine per BC minor version. v3 is one binary for all supported versions.
+A runner can instead run Microsoft's compiled code on top of BC's internals: the C# runtime,
+its metadata and session classes, and patches into them. Microsoft can change those in any
+hotfix or release without notice, so a fix there can stop working with the next update, and
+such a runner needs one engine per BC minor version. AL Runner is one binary for all supported
+versions.
 
 Where the observable behavior does differ between BC versions (an error text, a system
 table column), the corpus measures it on every major and pins it per version, so a change
-in a new BC release shows up as a failing corpus case, not as a mystery. The one part that
+in a new BC release shows up as a failing corpus case with a known cause. The one part that
 still loads Microsoft's internals is the optional .NET helper for `DotNet` code, and it is
 kept small on purpose.
 
@@ -389,7 +390,7 @@ cargo build --release
 
 ## Try the alpha
 
-`al-runner` is in alpha (`3.0.0-alpha.2`). It does not match AL Runner v2 yet.
+`al-runner` is in alpha (`3.0.0-alpha.2`).
 Many tests are refused, and results may change between builds. Use it to try
 it out and to report what is wrong. Do not gate a pipeline on it.
 
@@ -459,7 +460,7 @@ load it.
   helper sources and builds the helper into the cache on first use. Without the
   SDK these tests are not run, with a reason.
 - Many features are missing. See `docs/status.md` and `docs/al-runner-v2-parity.md`.
-- No watch mode and no debugger. `al-runner serve` (AL Runner v2's server protocol, one child
+- No watch mode and no debugger. `al-runner serve` (a JSON-lines server, one child
   process per request, nothing kept between requests) and `--coverage` (Cobertura XML,
   `--coverage-json`) exist.
 - Only three targets are built: Linux x64, Windows x64 and macOS arm64.
@@ -468,14 +469,14 @@ load it.
 A wrong result is the most useful report: a test that passes or fails here and
 behaves differently on real Business Central.
 
-## What AL Runner v3 does not do
+## What AL Runner does not do
 
 Some AL features are refused on purpose. A test that reaches one is reported as
 "not run", with the reason. A few are not refused but are limited: for example, every
 permission is granted, so a test that expects a permission error fails here. The table
 says which.
 
-| Area | What v3 does | What to do instead |
+| Area | What AL Runner does | What to do instead |
 |---|---|---|
 | Email, outbound HTTP, web service endpoints | Not run. No network, no server | Put the call behind an AL interface and fake it in the test |
 | Cloud storage, Key Vault, external data connections | Not run | Same |
@@ -575,7 +576,7 @@ many more of these tests run.
 - `docs/adr/`: architecture decisions. Seams change only through an ADR.
 - `docs/alrunner-buckets.md`: how to run Microsoft's test buckets, and the measurements.
 - `docs/bcdb.md`: the `.bak` and `.bacpac` reader.
-- `docs/al-runner-v2-parity.md`: which features of BusinessCentral.AL.Runner exist here.
+- `docs/al-runner-v2-parity.md`: which features of AL Runner v2 exist in the current version.
 - `docs/owner-review.md`: decisions made without the owner, waiting for review.
 - `docs/dotnet-examples.md` and `docs/dotnet-generic.md`: how Microsoft's AL uses `DotNet`, and the options.
 - `docs/probes-needed.md`: behavior taken from documentation only, waiting for a probe on real BC.
@@ -589,10 +590,9 @@ many more of these tests run.
 
 ## License
 
-AL Runner v3 is licensed under the Business Source License 1.1 (`LICENSE`). You may use it for free,
+AL Runner is licensed under the Business Source License 1.1 (`LICENSE`). You may use it for free,
 including commercial work: developing, testing and building Business Central extensions for yourself or
 for your customers, on your own machines and in build pipelines. You may not sell it, or offer it or a
 product or service built substantially on it to others for a fee. Each version becomes available under
 the Apache License 2.0 four years after it is published. Versions published before this change remain
-under the MIT License. AL Runner v2 on the `v2` branch is under the MIT License (its own `LICENSE`
-file there). For other licensing arrangements, contact the author.
+under the MIT License. For other licensing arrangements, contact the author.

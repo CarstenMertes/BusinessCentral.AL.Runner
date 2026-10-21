@@ -79,7 +79,10 @@ codeunit 51464 "UP Test"
 
 #[test]
 fn a_part_update_with_propagation_both_refreshes_the_host_row_its_code_changed() {
-    assert_eq!(text(al_testkit::run_in(SRC, "UP Test", "Run")), "card=by part|stored=by action/by part");
+    assert_eq!(
+        text(al_testkit::run_in(SRC, "UP Test", "Run")),
+        "card=by part|stored=by action/by part"
+    );
 }
 
 #[test]

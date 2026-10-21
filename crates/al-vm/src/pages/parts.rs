@@ -920,7 +920,12 @@ impl Session {
     /// 134344 PurchaseQuoteUpdateCurrrencyFactor: the subform's Invoice Discount Amount changes the Purchase Header, the card's
     /// AssistEdit then saves the header). No corpus test pins the host's refresh (assumption part-update-propagation-both-refreshes-host).
     pub(super) fn host_after_part_update(&mut self, st: &St) -> Result<(), Signal> {
-        let Some((host, c)) = st.borrow().host.as_ref().and_then(|(h, c)| h.upgrade().map(|h| (h, *c))) else {
+        let Some((host, c)) = st
+            .borrow()
+            .host
+            .as_ref()
+            .and_then(|(h, c)| h.upgrade().map(|h| (h, *c)))
+        else {
             return Ok(());
         };
         let both = {
@@ -937,6 +942,11 @@ impl Session {
         }
         let hrec = self.page_rec(&host);
         if hrec.borrow().temporary {
+            return Ok(());
+        }
+        // A part over the host's own table: `refresh_host_after_part_edit` re-reads the host once, and only once
+        // (pages/lt-page-controls-aa/AaPartsLists.al:AA_UpdatePropagation_Both line 191: loads-after-part-edit = 2).
+        if self.has_source(st) && self.table(&hrec)?.object == self.table(&self.page_rec(st))?.object {
             return Ok(());
         }
         let Some(stored) = self.stored_row(&hrec)? else {

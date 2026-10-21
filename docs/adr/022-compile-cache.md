@@ -956,6 +956,32 @@ block would save about 12 % of the zstd part (1 % of the run). Of the raw bytes,
    bytecode compile of a routine, the reach walks of `observe.rs`, `written.rs`, coverage, impact), and none of the
    start-up loops reads one. This is the recommended next step.
 
+### Built 2026-10-21: routine bodies decoded and linked on first read (branch `lane-perf-small-app-2`)
+
+`Routine::body` is an `al_ir::Body`. In the compact form (postcard, the cache entry) a body is a byte string of its own;
+read back, it keeps the bytes and decodes them the first time the body is read. Link does not walk an unread body: it
+hands the body its reference rewrite (`BodyFixup`, with the object's resolved tables behind an `Arc`), and
+`Routine::shift_positions` hands it the position shift; both run, in order, right after the decode. A reader sees the
+statements an eager decode gives. JSON keeps the plain statement list. `al_cache::FORMAT` is 13, so older entries
+rebuild. Whole objects are still decoded at cache read (the "not now" above holds).
+
+One thing differs: a body that does not fit its object's reference tables was a link error at start; now it panics as an
+internal error when the body is read. Such a body cannot come from a build: the tables and the body are lowered
+together, and a damaged block is refused by its checksum before it is decoded.
+
+Measured (12 shared cores, load 12 to 24, so instructions and CPU are the columns to compare):
+
+| Run | Before | After |
+|---|---|---|
+| The small partner app, 1 test, cache hit | 6.45 G instructions, CPU 2.21 to 2.42 s, wall 0.64 to 0.94 s, peak 1 003 MB | 5.49 G instructions, CPU 1.49 to 1.65 s, wall 0.52 to 0.84 s, peak 625 MB |
+| Tests-ERM BC 27.5, cache hit | 2 907.5 G instructions (with the .NET helpers), compile 1.30 to 1.68 s, peak 4 478 MB | 2 907.2 G instructions, compile 1.16 to 1.24 s, peak 4 299 MB; 0 outcome differences, the same failure messages |
+| Corpus BC 29, full run with Microsoft's apps | 386.0 G instructions | 386.0 to 386.1 G instructions; 0 baseline cases lost |
+
+In the partner run 23 of 159 528 stored bodies are decoded. Tests-ERM reaches many more, so it gains little, and pays
+no more: the decode moves from the start into the first call. The corpus run does not read the compile cache.
+
+Not done: a zstd context per thread (about 1 % of the run, measured above); lazy objects.
+
 ## Consequences
 
 - **IR serialization becomes a seam.** The format is versioned by an integer in the header and the key. Changing an

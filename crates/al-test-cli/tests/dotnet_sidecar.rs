@@ -870,6 +870,26 @@ fn a_taken_standby_is_replaced_and_shutdown_removes_the_ones_nobody_used() {
 }
 
 #[test]
+fn a_pool_kept_for_first_use_starts_nothing_until_a_session_calls_then_keeps_standbys_ready() {
+    let Some(h) = host() else { return };
+    h.prewarm_on_first_use(1);
+    // A run that never calls .NET starts no process at all.
+    std::thread::sleep(Duration::from_millis(200));
+    assert_eq!(h.stats().started, 0, "{:?}", h.stats());
+    // The first session pays for its own start; a standby starts beside it for the next one.
+    let mut a = h.open_session(&DotNetSessionConfig::default());
+    a.invoke(st("System.Convert"), "ToInt32", vec![s("1")]).unwrap();
+    assert_eq!(h.stats().from_standby, 0, "{:?}", h.stats());
+    wait_for_started(&h, 2);
+    let mut b = h.open_session(&DotNetSessionConfig::default());
+    b.invoke(st("System.Convert"), "ToInt32", vec![s("1")]).unwrap();
+    assert_eq!(h.stats().from_standby, 1, "{:?}", h.stats());
+    a.close();
+    b.close();
+    h.shutdown();
+}
+
+#[test]
 fn a_standby_that_cannot_start_leaves_the_session_to_report_the_reason() {
     let dir = tempfile::tempdir().unwrap();
     let dll = dir.path().join("AlDotNetSidecar.dll");

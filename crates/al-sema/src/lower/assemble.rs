@@ -1932,14 +1932,22 @@ fn link_pieces(
     .collect::<Result<_, String>>()?;
     // A table nothing compiled has no field list, but other objects may name its fields: they are
     // counted from its members, for the tables that are named.
-    let at: HashMap<&ObjKey, usize> = keys.iter().enumerate().map(|(i, k)| (k, i)).collect();
+    // Only such a table can take the numbers. A cached run has none (every dependency table comes
+    // compiled), so the walk over every reference of every object is skipped then.
+    let unlisted = units
+        .iter()
+        .zip(&keys)
+        .any(|(s, k)| k.kind == ObjKind::Table && s.object.table.is_none() && !s.placeholder);
     let mut numbered = std::collections::HashSet::new();
-    for s in &units {
-        for f in &s.refs.fields {
-            let table = &s.refs.objects[f.table as usize];
-            if table.kind == ObjKind::Table {
-                if let Some(&t) = at.get(table) {
-                    numbered.insert(t);
+    if unlisted {
+        let at: HashMap<&ObjKey, usize> = keys.iter().enumerate().map(|(i, k)| (k, i)).collect();
+        for s in &units {
+            for f in &s.refs.fields {
+                let table = &s.refs.objects[f.table as usize];
+                if table.kind == ObjKind::Table {
+                    if let Some(&t) = at.get(table) {
+                        numbered.insert(t);
+                    }
                 }
             }
         }

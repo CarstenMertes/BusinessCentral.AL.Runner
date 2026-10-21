@@ -131,6 +131,11 @@ impl Session {
             return unsupported("SetValue on a control whose type is not known");
         };
         let rec_bound = matches!(ctl.binding, ir::Binding::Field(_));
+        // A SetValue on a host control while one of its parts holds a typed row that is not saved: the part saves that row
+        // first, as it does when the host moves (misc/lt-probes-needed-7/PnGPartRows.al:130-163
+        // PendingPartRowSavedWhenHostMoves) and when it closes (testpart/TestOkPartRow.al). Not pinned for a SetValue:
+        // assumption part-row-saved-before-host-set-value.
+        self.save_parts_before_host_edit(st)?;
         // OnBeforeValidate and OnAfterValidate of `modify` blocks wrap the control's own OnValidate
         // (corpus pageextensiontrigger/TestModifiedControlValidateTriggers_Tests.al:
         // ModifiedControlBeforeAndAfterValidateWrapTheBaseControlsOwnOnValidate). Only that
@@ -758,6 +763,7 @@ impl Session {
             st.borrow_mut().dirty = true;
         }
         let from_page_trigger = std::cell::Cell::new(false);
+        st.borrow_mut().save_record_called = false;
         let result = (|| -> Result<(), Signal> {
             match ctl.binding.clone() {
                 ir::Binding::Field(pos) => {
@@ -830,7 +836,12 @@ impl Session {
                 // GetValidationError_ErrorThenCorrected, line 272: the page answers an empty text afterwards).
                 st.borrow_mut().errors.retain(|(i, _)| *i != idx);
                 st.borrow_mut().trigger_errors.retain(|(i, _)| *i != idx);
+                let saved = std::mem::take(&mut st.borrow_mut().save_record_called);
+                let update_asked = st.borrow().refresh;
                 self.run_refresh(st)?;
+                if saved && !update_asked && rec_bound {
+                    self.refresh_linked_parts_after_save(st)?;
+                }
                 self.refresh_caption_classes(st)?;
                 Ok(Value::Null)
             }

@@ -364,6 +364,19 @@ fn needed(
 /// `modify` block first. The routine returns Text and runs with the record as Rec (FieldCaption, a page control's caption;
 /// pageext/lt-page-ext-properties/TableExtCaptionClass.al:56-74).
 pub fn field_caption_class_routines(obj: &ast::Object) -> Vec<(String, String, String)> {
+    field_expression_routines(obj, "CaptionClass")
+}
+
+/// The table field sections of a table or table extension whose `AutoFormatExpression` is an expression, as
+/// [`field_caption_class_routines`]. A page control over the field that names no expression of its own formats its value
+/// with the routine's result, run with the control's row as Rec (assumption table-field-auto-format-expression).
+pub fn field_auto_format_routines(obj: &ast::Object) -> Vec<(String, String, String)> {
+    field_expression_routines(obj, "AutoFormatExpression")
+}
+
+/// The table field sections that set the Text property `prop` to an expression: (field, synthetic routine name,
+/// expression).
+fn field_expression_routines(obj: &ast::Object, prop: &str) -> Vec<(String, String, String)> {
     let base = usize::from(obj.syntax().text_range().start());
     let mut out = Vec::new();
     for sec in ast::sections_in(obj.syntax()) {
@@ -378,7 +391,7 @@ pub fn field_caption_class_routines(obj: &ast::Object) -> Vec<(String, String, S
             continue;
         };
         for p in sec.properties() {
-            if !p.name().eq_ignore_ascii_case("CaptionClass") {
+            if !p.name().eq_ignore_ascii_case(prop) {
                 continue;
             }
             let value = p.value_text();
@@ -386,7 +399,7 @@ pub fn field_caption_class_routines(obj: &ast::Object) -> Vec<(String, String, S
                 continue;
             }
             let off = usize::from(p.syntax().text_range().start()) - base;
-            out.push((field.clone(), synthetic_name("captionclass", off), value));
+            out.push((field.clone(), synthetic_name(prop, off), value));
         }
     }
     out
@@ -470,6 +483,7 @@ fn expansion(src: &str, parse: &al_syntax::Parse) -> Option<(String, Vec<(usize,
         if kind == "table" || kind == "tableextension" {
             let text: String = field_caption_class_routines(&obj)
                 .into_iter()
+                .chain(field_auto_format_routines(&obj))
                 .map(|(_, name, expr)| format!("\nprocedure {name}(): Text begin exit({expr}); end;"))
                 .collect();
             if !text.is_empty() {

@@ -466,6 +466,11 @@ pub struct PageState {
     /// Controls given a value by `SetValue` since the page opened (a Decimal FlowFilter control at zero shows '' only
     /// while it is unset).
     pub set_controls: Vec<usize>,
+    /// The key of the row the page's OnAfterGetRecord ran with last: what the page's variables hold was computed for that
+    /// row (see `Session::control_value`).
+    pub agr_row: Option<Vec<Value>>,
+    /// The keys of every row OnAfterGetRecord ran with since the page opened.
+    pub agr_rows: Vec<Vec<Value>>,
     /// `P.Editable(false)` or `P.Editable := false` on a Page variable before it runs: the page
     /// opens non-editable (handlers/TestPageVariableEditableContracts.al).
     pub editable_preset: Option<bool>,
@@ -614,6 +619,8 @@ impl PageState {
             editable_off: false,
             editable_off_in_open: false,
             set_controls: Vec::new(),
+            agr_row: None,
+            agr_rows: Vec::new(),
             editable_preset: None,
             caption: None,
             parts: Vec::new(),

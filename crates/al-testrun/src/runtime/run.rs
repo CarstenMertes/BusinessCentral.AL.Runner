@@ -210,6 +210,20 @@ pub(crate) fn run_codeunit_core(
             "TestIsolation = Disabled: what the runner leaves between tests and test codeunits is not pinned".into(),
         ));
     }
+    // A test codeunit with SingleInstance = true: whether BC runs its test methods on the session's single instance (the one
+    // a variable of its own type and its event subscribers use) is not pinned (docs/probes-needed.md), and the runner runs
+    // them on an instance of their own, so it is refused (Tests-ERM 139844 Cost Adj. Sch. Notif. Tests binds a variable of
+    // itself and reads a global its subscriber sets).
+    if obj
+        .properties
+        .iter()
+        .any(|(k, v)| k.eq_ignore_ascii_case("SingleInstance") && v.trim().eq_ignore_ascii_case("true"))
+    {
+        return all(Outcome::NotRun(
+            "a test codeunit with SingleInstance = true (whether its tests run on the session's single instance is not pinned)"
+                .into(),
+        ));
+    }
     // A [TransactionModel] other than AutoCommit, AutoRollback or None is refused.
     let mut models = std::collections::HashMap::new();
     for &r in &tests {

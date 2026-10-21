@@ -240,3 +240,72 @@ fn opening_a_descending_find_list_with_on_after_get_curr_record_stands_on_the_la
 fn go_to_key_on_a_find_list_with_a_full_window_is_refused() {
     refused(al_testkit::run_in(FIND_LIST, "C", "GoToKeyFar"), "full window");
 }
+
+/// An error with an empty text out of a TestPage action (Gen. Jnl.-Post Preview ends every preview with `Error('')`):
+/// whether the test client raises it to the test or ends the Invoke quietly is not pinned (docs/probes-needed.md;
+/// Microsoft's Tests-ERM 134760 PmtJournalPostingPreviewClearsPage expects the Invoke to return).
+#[test]
+fn an_empty_error_out_of_an_action_is_refused() {
+    let src = r#"
+table 69995 "EE Row" { fields { field(1; Id; Integer) { } } keys { key(PK; Id) { } } }
+page 69996 "EE Card"
+{
+    PageType = Card; SourceTable = "EE Row"; ApplicationArea = All; UsageCategory = None;
+    layout { area(Content) { field(Id; Rec.Id) { } } }
+    actions { area(Processing) { action(Quiet) { trigger OnAction() begin Error(''); end; } action(Loud) { trigger OnAction() begin Error('loud'); end; } } }
+}
+codeunit 69997 C
+{
+    procedure F(): Text
+    var R: Record "EE Row"; P: TestPage "EE Card";
+    begin
+        R.Id := 1; R.Insert();
+        P.OpenEdit();
+        P.Quiet.Invoke();
+        exit('returned');
+    end;
+    procedure G(): Text
+    var R: Record "EE Row"; P: TestPage "EE Card";
+    begin
+        R.Id := 1; R.Insert();
+        P.OpenEdit();
+        asserterror P.Loud.Invoke();
+        exit(GetLastErrorText());
+    end;
+}
+"#;
+    refused(al_testkit::run_in(src, "C", "F"), "empty text");
+    assert_eq!(al_testkit::text(al_testkit::run_in(src, "C", "G")), "loud");
+}
+
+/// A list's repeater control over a page variable that OnAfterGetRecord computes: BC's client shows each row's own value;
+/// the runtime keeps one value (the last OnAfterGetRecord's), so a read on another row it ran for is refused
+/// (Tests-ERM 134760 Empl. Ledger Entries Preview AmountFCY after First()). A row it never ran for (a new row) reads the
+/// variable.
+#[test]
+fn a_page_variable_control_on_another_row_is_refused() {
+    let src = r#"
+table 69998 "PV Row" { fields { field(1; Id; Integer) { } field(2; Amt; Decimal) { } } keys { key(PK; Id) { } } }
+page 69999 "PV List"
+{
+    PageType = List; SourceTable = "PV Row"; ApplicationArea = All; UsageCategory = None;
+    layout { area(Content) { repeater(R) { field(Id; Rec.Id) { } field(Calc; CalcVar) { } } } }
+    var CalcVar: Decimal;
+    trigger OnAfterGetRecord() begin CalcVar := Rec.Amt * 10; end;
+}
+codeunit 69989 C
+{
+    procedure F(): Text
+    var R: Record "PV Row"; P: TestPage "PV List";
+    begin
+        R.Id := 1; R.Amt := 1; R.Insert(); R.Id := 2; R.Amt := 2; R.Insert();
+        P.OpenView();
+        P.First();
+        if P.Calc.AsDecimal() <> 10 then Error('first %1', P.Calc.Value());
+        P.Next();
+        exit(P.Calc.Value());
+    end;
+}
+"#;
+    refused(al_testkit::run_in(src, "C", "F"), "per-row values not modelled");
+}

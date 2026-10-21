@@ -1109,9 +1109,9 @@ impl Session {
                     return Ok(Value::Null);
                 }
                 // CurrPage.SaveRecord() in the OnValidate of a part's control changes neither Rec nor xRec of the stored row; a new
-                // row gets its inserted key in Rec while xRec stays the blank new row (corpus bump 41
-                // pages/lt-qj-part-propagation/QjPartPropagation.al: QJ_SubformSaveRecord_StoredRow `S.V.after(10000 r=5 x=1 ...)`,
-                // QJ_SubformSaveRecord_NewRow `S.V.after(20000 r=5 x=0 x.ln=0 delta=5)`). Pinned for a ListPart only.
+                // row gets its inserted key in Rec while xRec stays the blank new row
+                // (pages/lt-qj-part-propagation/QjPartPropagation.al:733 QJ_SubformSaveRecord_StoredRow `S.V.after(10000 r=5 x=1 ...)`,
+                // :764 QJ_SubformSaveRecord_NewRow `S.V.after(20000 r=5 x=0 x.ln=0 delta=5)`). Pinned for a ListPart only.
                 let keep_xrec = method == PageOp::PageSaveRecord
                     && {
                         let s = st.borrow();
@@ -1119,9 +1119,6 @@ impl Session {
                     }
                     && self.is_list(st);
                 if keep_xrec {
-                    al_builtins::assumptions::assume(
-                        al_builtins::assumptions::Assumption::PartSaveRecordInValidateKeepsXrec,
-                    );
                     let xrec = self.page_xrec_fields(st);
                     let r = self.save_record_now(st);
                     let stored = self.page_rec(st).borrow().fields.clone();

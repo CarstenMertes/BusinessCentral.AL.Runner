@@ -1,6 +1,6 @@
 //! A part with `UpdatePropagation = Both` whose trigger changes the host's stored row and calls `CurrPage.Update(false)`: the host
-//! reads its row again, so its later save keeps the change (assumption part-update-propagation-both-refreshes-host, needed by
-//! Tests-ERM Document Totals Pages 134344 PurchaseQuoteUpdateCurrrencyFactor). A host with an unsaved edit is saved first.
+//! reads its row again, so its later save keeps the change (pages/lt-qj-part-propagation/QjPartPropagation.al:508, corpus bump 41;
+//! Tests-ERM Document Totals Pages 134344 PurchaseQuoteUpdateCurrrencyFactor needs it). A host with an unsaved edit is saved first.
 
 use al_testkit::text;
 
@@ -86,7 +86,7 @@ fn a_part_update_with_propagation_both_refreshes_the_host_row_its_code_changed()
 
 #[test]
 fn a_part_edit_over_an_unsaved_host_edit_saves_the_host_first() {
-    // QjPartPropagation.al QJ_Both_HostEdited_PartModifiesHost_ThenHostSave (corpus bump 41): the host's edit is saved before the
+    // QjPartPropagation.al:623 QJ_Both_HostEdited_PartModifiesHost_ThenHostSave: the host's edit is saved before the
     // part's OnValidate, and the part's change to the host row shows after the host reads it again.
     assert_eq!(text(al_testkit::run_in(SRC, "UP Test", "Dirty")), "by part");
 }

@@ -188,7 +188,19 @@ pub fn choose_build(
     floor: Option<(u32, u32)>,
     target_major: u32,
 ) -> BuildChoice {
-    let floor_text = floor.map_or("no floor".to_string(), |(a, b)| format!("{a}.{b}"));
+    // What app.json asks for, in words that read right with and without a floor.
+    let (asks, above, above_floor) = match floor {
+        Some((a, b)) => (
+            format!("asks for {a}.{b}"),
+            format!(" at or above the floor {a}.{b}"),
+            format!(" at or above the app.json floor {a}.{b}"),
+        ),
+        None => (
+            "sets no floor".to_string(),
+            " (app.json sets no floor)".to_string(),
+            String::new(),
+        ),
+    };
     if let Some(v) = bc_version {
         return BuildChoice {
             preferred: None,
@@ -211,9 +223,7 @@ pub fn choose_build(
         let floor_ok = floor.is_none_or(|f| (b.major(), b.minor()) >= f);
         if b.major() == target_major && floor_ok {
             return BuildChoice {
-                rule: format!(
-                    "the build of the Microsoft packages the project carries ({from}); app.json asks for {floor_text}"
-                ),
+                rule: format!("the build of the Microsoft packages the project carries ({from}); app.json {asks}"),
                 minor: Some(b.minor()),
                 preferred: Some(b),
                 note: None,
@@ -222,17 +232,17 @@ pub fn choose_build(
         }
         return BuildChoice {
             preferred: None,
-            rule: format!("newest published build of BC {target_major} at or above the floor {floor_text}"),
+            rule: format!("newest published build of BC {target_major}{above}"),
             minor: None,
             note: Some(format!(
-                "the Microsoft packages in the project's package folders are build {b} ({from}), which is not of BC {target_major} at or above the app.json floor {floor_text}; not used to choose the build"
+                "the Microsoft packages in the project's package folders are build {b} ({from}), which is not of BC {target_major}{above_floor}; not used to choose the build"
             )),
             from_packages: false,
         };
     }
     BuildChoice {
         preferred: None,
-        rule: format!("newest published build of BC {target_major} at or above the floor {floor_text}"),
+        rule: format!("newest published build of BC {target_major}{above}"),
         minor: None,
         note: None,
         from_packages: false,
@@ -287,5 +297,20 @@ mod build_choice_tests {
         let c = choose_build(None, None, None, Some((28, 0)), 28);
         assert_eq!(c.preferred, None);
         assert!(c.rule.contains("at or above the floor 28.0"));
+    }
+
+    #[test]
+    fn without_a_floor_in_app_json_the_rule_says_so_in_words() {
+        let c = choose_build(None, None, None, None, 28);
+        assert_eq!(c.rule, "newest published build of BC 28 (app.json sets no floor)");
+        let c = choose_build(None, None, Some((b("28.4.53241.53504"), "x".into())), None, 28);
+        assert!(c.rule.ends_with("app.json sets no floor"), "{c:?}");
+        let c = choose_build(None, None, Some((b("27.5.46862.48827"), "x".into())), None, 28);
+        let note = c.note.clone().unwrap();
+        assert!(
+            !note.contains("no floor") && note.contains("which is not of BC 28;"),
+            "{note}"
+        );
+        assert!(!c.rule.contains("floor no floor"), "{c:?}");
     }
 }

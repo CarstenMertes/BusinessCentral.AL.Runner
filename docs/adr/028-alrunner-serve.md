@@ -42,7 +42,7 @@ The owner chose the warm design.
    `perTestCoverage`, `test`, `excludeTests`, `testIsolation`. Deferred fields (`affectedOnly`, `includeFailing`,
    `strictEnvironment`, `tdd`) answer an error; fields of other v2 commands (`code`, `captureValues`,
    `iterationTracking`) earn a `warnings` entry; others answer `unknown field`.
-   Additive, opt-in (2026-10-17): `announceStart: true` on `runTests` or `execute` writes one `{"type":"started","codeunit","test"}` line when the first test is about to run. A client that cancels at a known point waits for it (a cancel during the compile ends the run with `cancelled`, exit code 6 and no test).
+   Additive, opt-in (2026-10-17): `announceStart: true` on `runTests` or `execute` writes one `{"type":"started","codeunit","test"}` line when the first test is about to run. A client that cancels at a known point waits for it (a cancel during the compile ends the run with `cancelled` and no test; a `runTests` summary then has exit code 130, item 7).
 9. **`execute`** (step 4) runs the `OnRun` trigger of one codeunit per app, or of inline `code`, in the same warm process,
    and answers with one line without a `type`: `{"exitCode","tests":[{"name","status","durationMs","message","stackTrace",
    "stackFrames","messages"}],"warnings","coverage","perTestCoverage"}`. Fields: `sourcePaths` or `code` (not both),

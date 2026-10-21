@@ -102,7 +102,7 @@ last `{` in column 0 to the end" still works). Null and empty fields are left ou
 | `tests[].status` | `pass`, `fail`, `error`, `skipped` | `pass`, `fail`, `error` | `fail` is **every** failing test. v2 used `error` for an unexpected .NET exception; v3 has no such split. `skipped` is never sent. A tool that counts `error` as "the runner broke" must look at `notRun` first. |
 | `tests[].message` | text with a .NET prefix such as `NavNCLDialogException: ` | the BC message only (ADR-009) | Do not match .NET type prefixes. Match the message text. |
 | `tests[].stackTrace` | .NET stack | the AL call stack, one frame per line, innermost first | Show it as text. |
-| `tests[].durationMs` | present | present when the test ran | none |
+| `tests[].durationMs` | present | present when the test started (also on a test refused while it ran); absent on a test refused before it started | none |
 | `tests[].notRun` | absent | `true` on a test that did not run | New. v3 refuses what it cannot answer instead of running it (hard rule 4). Count these separately. |
 | not-run tests | no such thing in v2 | a row with `status: "error"`, `notRun: true`, `message: "NotRun: out-of-scope: <reason>"` | The prefix `<Type>: out-of-scope: ` is the form LethAL reads as "the runner refused" (not a killed mutant). Treat it as "unknown", not "killed". |
 | timed-out test | row with `Test exceeded <N>s timeout.` | the same sentence, `status: "error"`, `notRun: true` | none |
@@ -141,8 +141,10 @@ load), no document is written, the message is on stderr and the exit code is 2.
                          "coverage": [ { "file": "/abs/path/src/T.al", "statements": [ { "id": 17, "hits": 1, "..." : "..." } ] } ] } ] }
 ```
 
-- `coverage` has every statement of the APPs with its runs (0 when nothing ran it). `perTestCoverage` has, for each test
-  that ran, only the statements it ran, with its own `hits`. A test that did not run has no entry.
+- `coverage` has every statement of the APPs with its runs (0 when nothing ran it). With `--codeunit` or `--test`, the test codeunits
+  left out are not compiled, so their statements are missing; the other objects of the APPs are listed. `perTestCoverage` has, for each test
+  that ran, only the statements it ran, with its own `hits`. A test refused while it ran has an entry with the statements it ran
+  before; a test refused before it started has none.
 - `id` is stable inside one run only. `scope` is the procedure or trigger name. `column` is a byte column, from 1.
 - v2 also sent `endColumn`; v3 does not know it.
 - Selected tests only: a codeunit runs whole, but the tests that `--test` and `--exclude-test` leave out do not count.
@@ -154,23 +156,28 @@ Cost: with coverage off the VM pays one `Option` check per statement. With it on
 
 Same wire as v2 (`protocolVersion` 2): one JSON object per line on stdin, answers on stdout, logs on stderr; first
 stdout line `{"ready":true}`; command names are case insensitive; `[server] request <n> done` on stderr after each
-request except `cancel`. Start options are the request-independent options of `al-runner test`
+request except `cancel` and a line that is not a JSON object. Each request also prints the human `Tests:` and `Result:`
+lines on stderr. Start options are the request-independent options of `al-runner test`
 (`--package-cache`, `--dep`, `--define`, `--preprocessor-symbols`, `--test-timeout`, `--bc-version`, `--cache-dir`,
-`--no-download`, `--test-data`, `--no-test-data`, `--allow-not-run`); `--protocol 2` is accepted. Anything else is an
-error at start-up (exit 2).
+`--no-download`, `--test-data`, `--no-test-data`, `--allow-not-run`, `--server-url`, `--environment` and the like);
+`--protocol 2` is accepted. An APP and the options that select tests or write reports (`--filter`, `--test`,
+`--codeunit`, `--test-exact`, `--exclude-test`, `--isolation`, `--junit`, `--output-json`, `--coverage*`, `--explain`)
+are an error at start-up (exit 2). So are `--recipe microsoft` and `--impact-of`: a request runs the tests once, the
+plain way, and these make a run of another kind.
 
 | Command | v3 |
 |---|---|
-| `runTests` | Fields `sourcePaths` (required), `packagePaths`, `coverage`, `perTestCoverage`, `test`, `excludeTests`, `testIsolation` (`codeunit`, `test`, `disabled`). `affectedOnly`, `includeFailing`, `strictEnvironment`, `tdd`: `{"error": ...}` (deferred). `captureValues`, `iterationTracking`: `capturedValues` and `loops` on each `test` line (ADR-030; v2 has them for `execute` only). `code`: accepted, with a `warnings` entry in the summary. Any other field: `{"error": "unknown field ..."}`. |
-| `execute` | Runs the `OnRun` trigger of one codeunit per app (`sourcePaths`) or of inline `code`; one answer line without `type`: `{"exitCode","tests":[{"name","status","durationMs","message","stackTrace","stackFrames","messages"}],"warnings","coverage","perTestCoverage"}`. `captureValues` and `iterationTracking` give `capturedValues` and `loops` on each test and, with `iterationTracking`, the tagged `messages` on the response (ADR-030; `runTests` takes both too: they are on the `test` lines). Names: `Codeunit<ID>.OnRun`, for `code` `<object name>.OnRun`. Details in ADR-028, item 9. |
-| `cancel` | Answered at once: `{"type":"ack","command":"cancel","noop":bool}`. During a run it stops **after the current test**: the tests that ran were already streamed, and the summary has `cancelled: true`, `exitCode: 130`, as in v2. |
-| `shutdown` | `{"status":"shutting down"}`, then exit 0. EOF on stdin exits too. |
+| `runTests` | Fields `sourcePaths` (required), `packagePaths`, `coverage`, `perTestCoverage`, `test` (matched like `--test`, section 3: `Codeunit50100.` with the dot selects a codeunit), `excludeTests`, `testIsolation` (`codeunit`, `test`, `disabled`; the aliases of `--isolation` are refused), `serverUrl` (as `--server-url`), `announceStart` (one `{"type":"started","codeunit":<id>,"test":"<method>"}` line when the first test starts; ADR-028). `affectedOnly`, `includeFailing`, `strictEnvironment`, `tdd`: `{"error": ...}` (deferred). `captureValues`, `iterationTracking`: `capturedValues` and `loops` on each `test` line (ADR-030; v2 has them for `execute` only). `code`: accepted, with a `warnings` entry in the summary. Any other field: `{"error": "unknown field ..."}`. |
+| `execute` | Runs the `OnRun` trigger of one codeunit per app (`sourcePaths`) or of inline `code`; one answer line without `type`: `{"exitCode","tests":[{"name","status","durationMs","message","stackTrace","stackFrames","messages"}],"warnings","coverage","perTestCoverage"}`. `captureValues` and `iterationTracking` give `capturedValues` and `loops` on each test and, with `iterationTracking`, the tagged `messages` on the response (ADR-030; `runTests` takes both too: they are on the `test` lines). Names: `Codeunit<ID>.OnRun`, for `code` `<object name>.OnRun`. `code` and `sourcePaths` together are an error. `testIsolation` and the `runTests`-only fields are accepted with a `warnings` entry. An app with no codeunit that has an `OnRun` trigger answers `exitCode` 6, `tests: []` and a warning. Details in ADR-028, item 9. |
+| `cancel` | Answered at once: `{"type":"ack","command":"cancel","noop":bool}`. During a run it stops **after the current test**: the tests that ran were already streamed, and the summary has `cancelled: true`, `exitCode: 130`, as in v2. A run that `shutdown` or the end of input stops has exit code 130 too. |
+| `shutdown` | `{"status":"shutting down"}`, then exit 0. During a run it stops the run after the current test like `cancel`: the summary (`cancelled: true`) comes first, then `{"status":"shutting down"}`. EOF on stdin stops a run the same way and exits 0. |
 
 Differences a client must adapt to:
 
 1. **Test lines stream**, one per test as it finishes, then the summary.
-2. The server is **warm and in-process**: compiled dependency apps and test data stay in memory. Same sources as the
-   last request: the compiled workspace is reused and `cached` is `true`. A changed source always shows. When only the
+2. The server is **warm and in-process**: compiled dependency apps and test data stay in memory. Same sources and the
+   same selected test codeunits as the last request: the compiled workspace is reused and `cached` is `true` (a request
+   that selects another codeunit compiles again and has `cached: false`). A changed source always shows. When only the
    code of routines of codeunits, tables or table extensions changed, just those objects are compiled again and the
    summary has `incremental: true` (ADR-029; a request takes 0.4 s on the corpus app and 2.2 s on Tests-ERM, of which
    1.8 s is the tests); any other change compiles the workspace again. Every request starts from the same post-install
@@ -185,9 +192,12 @@ Differences a client must adapt to:
    `notRun`, `total`, `cached`, `incremental` when only some objects were compiled again, `protocolVersion`, `wallSeconds`,
    `warnings` when there are some, `cancelled` when cancelled, and `coverage` / `perTestCoverage` when asked for (section 4a shapes). `compilationErrors`,
    `changedFiles`, `selection`, `companyInitFailures`, `sourceScanFailures` are not sent.
-5. A run that cannot start (a bad path, an app that does not load) answers `{"error": "the run produced no result (exit 2): ..."}`
-   instead of a summary with exit code 2 or 3.
-6. While a run is in progress `cancel` and `shutdown` are answered at once; other requests are queued, as in v2.
+5. A request that cannot run answers one `{"error": "<reason>"}` line instead of a summary with exit code 2 or 3:
+   for example `{"error":"/x: no such file or folder"}`, ``{"error":"unknown field `cobertura` for runTests"}``,
+   ``{"error":"`sourcePaths` needs at least one app folder"}``. A `test` or `excludeTests` that matches no test is not
+   an error: it answers a summary with exit code 6, all counts 0, and the reason in `warnings`.
+6. While a run is in progress `cancel` is answered at once. `shutdown` takes effect after the current test (see the
+   table). Other requests are queued and run in order, as in v2.
 7. `testIsolation: "test"` means TestIsolation Function (section 3), `"disabled"` runs nothing.
 
 ## 5. Exit codes
@@ -216,12 +226,14 @@ rows on 7 (and 8); otherwise every run with a refused test hides all its rows.
 ## 7. Output on stderr and stdout
 
 v2 printed machine-readable and human lines mixed (`[bc] selected BC 27.5`, `al-runner ... BC ... N apps`,
-`[dep] ...`, `[provision] ...`, `[pkg-cache] ...`). v3 prints none of them. It prints its own
-header (`al-runner <version> (<commit>)`, `target: BC <v>, runtime <r>, Microsoft apps from build <b>`,
-`dependencies: N apps`). With `--output-json` and no file, all of it goes to stderr.
+`[dep] ...`, `[provision] ...`, `[pkg-cache] ...`). v3 prints none of them. By default it prints the
+version line (`al-runner <version> (<commit>)`), the failures, the top refusals, the `Tests:` line and the
+`Result:` line. The setup lines (`target: BC <v>, runtime <r>, Microsoft apps from build <b>`,
+`build chosen by: ...`, `dependencies: N apps`) are printed only with `--verbose`. With `--output-json` and no
+file, all of it goes to stderr.
 
 Change for a tool that read the `[bc]` or `[dep]` lines: treat the BC build and the
-platform-apps pin as "unknown", or parse `target: BC <v>, ... build <b>` from stderr.
+platform-apps pin as "unknown", or add `--verbose` and parse `target: BC <v>, ... build <b>` from stderr.
 
 ## 8. LethAL (one-shot mode, `serverMode: false`)
 

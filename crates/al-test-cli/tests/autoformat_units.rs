@@ -76,6 +76,16 @@ fn a_unit_amount_without_a_currency_has_two_to_five_places() {
 }
 
 const CURRENCY: &str = r#"
+table 98 "General Ledger Setup"
+{
+    fields
+    {
+        field(1; "Primary Key"; Code[10]) { }
+        field(73; "Amount Decimal Places"; Text[5]) { }
+        field(74; "Unit-Amount Decimal Places"; Text[5]) { }
+    }
+    keys { key(PK; "Primary Key") { } }
+}
 table 4 Currency
 {
     fields
@@ -122,8 +132,24 @@ fn currency_outcomes(tests: &str) -> Vec<(String, Outcome)> {
 /// A test that seeds the currency `Code` with the places, reads the page of a row with value `v`, and checks the
 /// six controls (t1, t2, t4, t5, t1 blank, t2 blank).
 fn arm(code: &str, amount_places: &str, unit_places: &str, row_currency: &str, v: &str, want: [&str; 6]) -> String {
+    arm_with("2:5", "2:5", code, amount_places, unit_places, row_currency, v, want)
+}
+
+/// [`arm`] with the places of General Ledger Setup.
+#[allow(clippy::too_many_arguments)]
+fn arm_with(
+    setup_amount: &str,
+    setup_unit: &str,
+    code: &str,
+    amount_places: &str,
+    unit_places: &str,
+    row_currency: &str,
+    v: &str,
+    want: [&str; 6],
+) -> String {
     format!(
-        "[Test] procedure A{code}{row_currency}() var C: Record Currency; R: Record \"AF Cur Row\"; P: TestPage \"AF Cur Card\"; begin
+        "[Test] procedure A{code}{row_currency}() var G: Record \"General Ledger Setup\"; C: Record Currency; R: Record \"AF Cur Row\"; P: TestPage \"AF Cur Card\"; begin
+           G.\"Amount Decimal Places\" := '{setup_amount}'; G.\"Unit-Amount Decimal Places\" := '{setup_unit}'; G.Insert();
            C.Code := '{code}'; C.\"Amount Decimal Places\" := '{amount_places}'; C.\"Unit-Amount Decimal Places\" := '{unit_places}'; C.Insert();
            R.\"No.\" := 'X{code}'; R.Amount := {v}; R.\"Currency Code\" := '{row_currency}'; R.Insert(); P.OpenView(); P.GoToRecord(R);
            if P.T1.Value() <> '{}' then Error('t1 %1', P.T1.Value());
@@ -184,7 +210,7 @@ fn a_currency_without_places_reads_two_places() {
     assert_eq!(o[0].1, Outcome::Pass, "{o:?}");
 }
 
-// :263-290 (cur_unknown): a code that is no currency reads 2:5 for all four types.
+// :263-290 (cur_unknown): a code that is no currency reads the places of General Ledger Setup, 2:5 for all four types there.
 #[test]
 fn a_code_that_is_no_currency_reads_two_to_five_places() {
     let o = currency_outcomes(&arm(
@@ -235,11 +261,9 @@ page 62520 "AF Field Expr Card"
 }
 "#;
 
-// A table field's AutoFormatExpression that is an expression, read through a control without one of its own. Microsoft's
-// Tests-ERM "Amount AutoFormat Currency" (134833, TestAutoformatShowFCYCodeOnlyAfterAmount and eight more) needs the
-// field's expression evaluated with the control's row: Case4FCY (AutoFormatType = 4; AutoFormatExpression =
-// Rec."Currency Code") shows the currency's amount places. Not pinned by the corpus: assumption
-// table-field-auto-format-expression.
+// types/lt-auto-format-currency/QiTableFieldAutoFormat.al:272, :300: a table field's AutoFormatExpression that is a field of
+// the row (`Rec."Currency Code"`, `"Currency Code"`), read through a control without one of its own, is evaluated with the
+// control's row.
 #[test]
 fn a_table_field_expression_is_evaluated_with_the_row() {
     let src = format!(
@@ -250,15 +274,65 @@ fn a_table_field_expression_is_evaluated_with_the_row() {
            P.OpenView(); P.GoToRecord(R);
            if P.AmountCtl.Value() <> '248.029' then Error('amount %1', P.AmountCtl.Value());
            if P.UnitCtl.Value() <> '248.0292' then Error('unit %1', P.UnitCtl.Value());
-           if P.FmtCtl.Value() <> '2.3' then Error('fmt %1', P.FmtCtl.Value());
            if P.OwnCtl.Value() <> '248.03' then Error('own %1', P.OwnCtl.Value());
            exit('ok'); end; }}"
     );
-    al_builtins::assumptions::clear_hits();
     assert_eq!(al_testkit::text(al_testkit::run_in(&src, "T", "F")), "ok");
-    assert!(
-        al_builtins::assumptions::take_hits()
-            .contains(&al_builtins::assumptions::Assumption::TableFieldAutoFormatExpression),
-        "the pass must be flagged"
+}
+
+// types/lt-auto-format-currency/QiTableFieldAutoFormat.al:272 QI_TableFieldExpression_Card_ShowCurrencyNever (`nocur_t1`
+// 1,234.57, `nocur_t2` 1,234.56789 with General Ledger Setup 2:2 and 2:5): a code that is no currency reads General Ledger
+// Setup's "Amount Decimal Places" for the amounts and its "Unit-Amount Decimal Places" for the unit amounts.
+#[test]
+fn a_code_that_is_no_currency_reads_the_places_of_general_ledger_setup() {
+    let o = currency_outcomes(&arm_with(
+        "2:2",
+        "2:5",
+        "PWE",
+        "3:3",
+        "4:4",
+        "NOPE",
+        "1234.56789",
+        [
+            "1,234.57",
+            "1,234.56789",
+            "1,234.57",
+            "1,234.56789",
+            "1,234.57",
+            "1,234.56789",
+        ],
+    ));
+    assert_eq!(o[0].1, Outcome::Pass, "{o:?}");
+}
+
+// A code that is no currency without a General Ledger Setup row: not pinned, refused.
+#[test]
+fn a_code_that_is_no_currency_without_a_setup_row_is_refused() {
+    let o = currency_outcomes(
+        "[Test] procedure NoSetup() var R: Record \"AF Cur Row\"; P: TestPage \"AF Cur Card\"; begin
+           R.\"No.\" := 'X'; R.Amount := 1.5; R.\"Currency Code\" := 'NOPE'; R.Insert(); P.OpenView(); P.GoToRecord(R);
+           if P.T1.Value() <> '' then; end;",
     );
+    assert!(
+        matches!(&o[0].1, Outcome::NotRun(why) if why.contains("General Ledger Setup")),
+        "{o:?}"
+    );
+}
+
+// types/lt-auto-format-currency/QiTableFieldAutoFormat.al:421 QI_Type10Procedure_Card_Calls (`after-open` fmt();fmt(A);,
+// `after-t10-read` empty): BC runs a table field's AutoFormatExpression that calls a procedure when the page fetches the row,
+// not when the control's text is read. The runtime evaluates it on read, so a procedure there is refused.
+#[test]
+fn a_table_field_expression_that_calls_a_procedure_is_refused() {
+    let src = format!(
+        "{CURRENCY}{FIELD_EXPRESSION}\ncodeunit 62521 T {{
+         procedure F(): Text var R: Record \"AF Field Expr Row\"; P: TestPage \"AF Field Expr Card\"; begin
+           R.\"No.\" := 'X'; R.Fmt := 2.25; R.Insert();
+           P.OpenView(); P.GoToRecord(R);
+           exit(P.FmtCtl.Value()); end; }}"
+    );
+    match al_testkit::run_in(&src, "T", "F") {
+        Err(al_builtins::native::Signal::Unsupported(why)) => assert!(why.contains("calls a procedure"), "{why}"),
+        other => panic!("expected a refusal, got {other:?}"),
+    }
 }

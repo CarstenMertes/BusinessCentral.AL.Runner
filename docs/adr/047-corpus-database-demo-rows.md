@@ -1,6 +1,6 @@
 # ADR-047: The corpus database's demo rows in corpus runs
 
-- Status: Proposed
+- Status: Rejected (owner, 2026-10-21)
 - Date: 2026-10-21
 
 ## Context
@@ -71,3 +71,8 @@ Two things the runtime does not have today:
 
 - Unit tests in `al-data` for the mask (read, write clears, filter refuses).
 - The corpus cases named above.
+
+## Outcome
+
+Rejected by the owner on 2026-10-21. The runtime does not seed the corpus database's demo rows. The corpus tests that read
+demo rows are changed to write their own setup rows. The tests that pin the demo rows themselves stay refused.

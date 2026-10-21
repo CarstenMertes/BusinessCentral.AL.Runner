@@ -693,6 +693,17 @@ impl CorpusRuntime {
                 e.unseeded = unseeded;
             }
         }
+        // Without test data the tests run against the corpus database's company, whose demo rows the runtime does not
+        // have (ADR-047 rejected): a Count or IsEmpty of one of those tables before the test wrote to it is refused (`demo_row_tables`).
+        if opts.test_data.is_none() {
+            let demo = crate::baseline::demo_row_tables(lowered);
+            if !demo.is_empty() {
+                match Arc::get_mut(&mut engine) {
+                    Some(e) => e.demo_tables = demo,
+                    None => panic!("the test engine is shared before the tests start"),
+                }
+            }
+        }
         let baseline_time = started.elapsed();
         let mut baseline_run = baseline_run;
         let baseline_trace = baseline_run.as_mut().and_then(|b| b.trace.take());

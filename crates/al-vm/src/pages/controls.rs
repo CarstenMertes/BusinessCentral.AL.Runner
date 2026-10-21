@@ -873,6 +873,22 @@ impl Session {
                 // An error of the write through an expression source (a text too long for the field) is a TestValidation
                 // error, as for a variable (misc/lt-probes-needed-7/PnGTempControl.al:SetValueTooLongAndInvalid).
                 // The text goes into a TestValidation error or the page's error list.
+                // An error with an empty text (`Error('')`) out of a card control's own OnValidate ends the SetValue quietly: the
+                // test goes on, the entry does not stay, the last error has the empty text and code NSValidateField:Dialog, and
+                // the rows the trigger wrote stay (pages/lt-qi-empty-error/QiEmptyErrorPages.al:253
+                // QI_EE_EmptyValidate_NoAsserterror). On a list it is not pinned.
+                if from_page_trigger.get() && e.message.is_empty() {
+                    if self.is_list(st) {
+                        return unsupported(
+                            "an error with an empty text out of a list control's OnValidate (what the test client does with it is not pinned)",
+                        );
+                    }
+                    let mut e = e;
+                    e.code = format!("NSValidateField:{}", e.code);
+                    self.error_finals = None;
+                    self.last_error = *e;
+                    return Ok(Value::Null);
+                }
                 al_builtins::native::refuse_unpinned_text(&e, "A page validation error built from an error")?;
                 if matches!(ctl.binding, ir::Binding::Expr(_)) {
                     return Err(refuse_bound(e.message));

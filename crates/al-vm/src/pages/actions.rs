@@ -813,6 +813,15 @@ impl Session {
                     .stored_row(&rec)?
                     .is_some_and(|stored| Self::same_values(&rec.borrow().fields, &stored));
                 if !Self::same_values(&rec.borrow().fields, &before) && !saved_by_action {
+                    // The pinned actions change fields of the row the page shows. One that put another row into Rec
+                    // (`Rec := TempApplyingCustLedgEntry` in Apply Customer Entries' Post Application, Tests-ERM 134918) is not
+                    // pinned: whether the client saves that row, the one it showed, or nothing.
+                    let table = self.table(&rec)?;
+                    if !Self::same_key(&table.primary_key(&rec.borrow().fields), &table.primary_key(&before)) {
+                        return unsupported(
+                            "an action left another row (another primary key) in Rec with changes to save (not pinned)",
+                        );
+                    }
                     st.borrow_mut().dirty = true;
                     self.save_row(st)?;
                 }
@@ -1405,7 +1414,20 @@ impl Session {
             st.borrow_mut().refresh = false;
             let table = rec.borrow().table as usize;
             let fresh = self.initial_fields(table);
-            rec.borrow_mut().fields = fresh;
+            rec.borrow_mut().fields = fresh.clone();
+            // The pinned lists have no filter on a key field. When one names a single value (a journal's template and batch in
+            // filter group 2), whether the blank line takes it is not pinned (Tests-ERM 134002 ApplyAndPostPaymentToInvoice:
+            // Gen. Journal Line SetUpNewLine reads the template): refused.
+            if new_line {
+                self.stamp_from_filters(st, false)?;
+                let stamped = !Self::same_values(&rec.borrow().fields, &fresh);
+                rec.borrow_mut().fields = fresh;
+                if stamped {
+                    return unsupported(
+                        "a list filtered to one key value that lost its only row to an action (whether its blank line takes the filter values is not pinned)",
+                    );
+                }
+            }
             st.borrow_mut().cursor = Cursor::None;
             if new_line {
                 for _ in 0..3 {

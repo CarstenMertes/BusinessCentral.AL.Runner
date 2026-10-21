@@ -1634,7 +1634,12 @@ impl Session {
             && !self.gl_setup_written
             && !self.install_scope
             && !rec.borrow().temporary
-            && self.engine.program.objects.get(t.object as usize).is_some_and(|o| o.id == Some(98))
+            && self
+                .engine
+                .program
+                .objects
+                .get(t.object as usize)
+                .is_some_and(|o| o.id == Some(98))
         {
             self.gl_setup_written = true;
         }

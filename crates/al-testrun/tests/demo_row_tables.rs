@@ -85,7 +85,12 @@ fn a_count_of_an_empty_corpus_demo_table_is_refused() {
         let o = outcome(&rt, name);
         assert!(matches!(o, Outcome::NotRun(_)), "{name}: {o:?}");
     }
-    for name in ["CountsTheRowItWrote", "GetsTheInstalledRow", "ScansAnOtherTable", "WritesGeneralLedgerSetup"] {
+    for name in [
+        "CountsTheRowItWrote",
+        "GetsTheInstalledRow",
+        "ScansAnOtherTable",
+        "WritesGeneralLedgerSetup",
+    ] {
         let o = outcome(&rt, name);
         assert!(matches!(o, Outcome::Pass), "{name}: {o:?}");
     }

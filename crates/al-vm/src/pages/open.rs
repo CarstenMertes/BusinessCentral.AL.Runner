@@ -1429,7 +1429,13 @@ impl Session {
             // A view that filters asks the same `=><` once, list, card and list part alike
             // (pagefindrecord/QcFindViewTests.al:78 ViewList_OpenView_FindStringAndRow, :361 ViewCard_OpenView_FindStringAndRow,
             // :505 DocPart_OpenEdit_LinesOfH1).
-            "=><"
+            // A list run in lookup mode with no record is asked `=>` (pages/lt-ai-list-order/QgGoToKeyNextCall.al:629
+            // Nav_LookupHandler_GoToKey_ThenOK `log` `F:=>=Yes;R:R1001;N:1=1;...`).
+            if st.borrow().lookup && self.is_list(st) {
+                "=>"
+            } else {
+                "=><"
+            }
         } else {
             "-"
         };

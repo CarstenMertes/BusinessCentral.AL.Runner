@@ -209,28 +209,44 @@ impl Session {
         } else {
             Vec::new()
         };
-        // Only an action right after the GoToKey is pinned to read the row once more (AiListOrderTests.al:39, :233): whether any
-        // other call reads it is not pinned, so that call is refused.
+        // After a GoToKey that moved a list without OnAfterGetCurrRecord every action reads the row twice before its trigger
+        // (`actions.rs`), until a move clears it (pages/lt-ai-list-order/QgGoToKeyNextCall.al, writer QG).
         // A move after it reads only what the move reads: Next (AiListOrderTests.al:1012-1021 Paging_GoToKeyThenWalk_Nav, every
         // `at` log empty), GoToKey, Last and First (handlers/TestPageRuntimeContracts.al:342-357 on a list with OnAfterGetRecord
-        // alone). Close after a GoToKey that ran no trigger reads the row once, also after field value reads
-        // (pages/lt-ai-list-order/QgGoToKeyNextCall.al:223 Plain_GoToKey_ThenValueRead, :277 Plain_GoToKey_ThenClose, and the Nav_
-        // tests: `close_log` `R:R1003`); after a GoToKey that read rows it reads nothing (handlers/
+        // alone). Previous reads nothing and the next action reads the new row twice (QgGoToKeyNextCall.al:254
+        // Plain_GoToKey_ThenPrevious `previous_log` empty, `action_log` `R:R1002;R:R1002;A:act=R1002`, and Nav_GoToKey_ThenPrevious);
+        // what Close reads right after it is not pinned (refused). OK of a lookup-mode page reads the row once (`controls.rs`).
+        // Close after a GoToKey that ran no trigger reads the row once, also after field value reads and after an action
+        // (QgGoToKeyNextCall.al:223 Plain_GoToKey_ThenValueRead, :277 Plain_GoToKey_ThenClose, :236 Plain_GoToKey_ThenSetValue_ThenAction,
+        // and the Nav_ tests: `close_log` `R:R1003`); after a GoToKey that read rows it reads nothing (handlers/
         // TestPageSystemPartListWindowContracts.al:219 List_Window_SmallTable: the next open's log holds no read of the Close). After a
-        // SetValue between them Close reads nothing: not pinned, kept for baseline case 68164
+        // SetValue between them (no action since) Close reads nothing: not pinned, kept for baseline case 68164
         // TestPage_SetValue_OfTheValueAlreadyHeld_StillRunsOnValidate (it does not observe the Close).
-        let read_after_goto = std::mem::take(&mut st.borrow_mut().read_after_goto);
-        let doubt = std::mem::take(&mut st.borrow_mut().read_after_goto_doubt);
-        let quiet = std::mem::take(&mut st.borrow_mut().read_after_goto_quiet);
-        let set = std::mem::take(&mut st.borrow_mut().read_after_goto_set);
+        // The page's own code (CurrPage in the action's trigger) is not a call of the test client: the mark stays as it is.
+        let client = method.recv() != PageRecv::Page;
+        let read_after_goto = client && std::mem::take(&mut st.borrow_mut().read_after_goto);
+        let doubt = client && std::mem::take(&mut st.borrow_mut().read_after_goto_doubt);
+        let quiet = client && std::mem::take(&mut st.borrow_mut().read_after_goto_quiet);
+        let set = client && std::mem::take(&mut st.borrow_mut().read_after_goto_set);
+        let prev = client && std::mem::take(&mut st.borrow_mut().read_after_goto_prev);
         if read_after_goto {
+            let keep = |st: &St, doubt: bool, prev: bool| {
+                let mut s = st.borrow_mut();
+                s.read_after_goto = true;
+                s.read_after_goto_doubt = doubt;
+                s.read_after_goto_quiet = quiet;
+                s.read_after_goto_set = set;
+                s.read_after_goto_prev = prev;
+            };
             match name {
-                PageMethod::Invoke => {
-                    let mut s = st.borrow_mut();
-                    s.read_after_goto = true;
-                    s.read_after_goto_doubt = doubt;
-                    s.read_after_goto_quiet = quiet;
-                    s.read_after_goto_set = set;
+                PageMethod::Invoke => keep(st, doubt, prev),
+                // QgGoToKeyNextCall.al:406 Plain_LookupHandler_GoToKey_ThenOK, :426 _ValueRead_ThenOK (lookup-mode modal only).
+                PageMethod::OK if st.borrow().lookup => keep(st, doubt, prev),
+                PageMethod::Previous => keep(st, doubt, true),
+                PageMethod::Close if prev => {
+                    return unsupported(
+                        "TestPage.Close right after a Previous that followed a GoToKey on a list without OnAfterGetCurrRecord (what it reads is not pinned)",
+                    );
                 }
                 PageMethod::Close if quiet && !set && method.recv() != PageRecv::Page && st.borrow().open => {
                     let rec = self.page_rec(st);
@@ -245,13 +261,7 @@ impl Session {
                 | PageMethod::Caption
                 | PageMethod::Editable
                 | PageMethod::ValidationErrorCount
-                | PageMethod::GetValidationError => {
-                    let mut s = st.borrow_mut();
-                    s.read_after_goto = true;
-                    s.read_after_goto_doubt = true;
-                    s.read_after_goto_quiet = quiet;
-                    s.read_after_goto_set = set;
-                }
+                | PageMethod::GetValidationError => keep(st, true, prev),
                 _ => {
                     return unsupported(format!(
                         "TestPage.{} right after a GoToKey moved a list without OnAfterGetCurrRecord (whether the row is read again is not pinned)",

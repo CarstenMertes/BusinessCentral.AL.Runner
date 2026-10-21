@@ -10,6 +10,7 @@ mod filterpage;
 mod findrecord_view;
 mod flowfield_drilldown;
 mod gone_row;
+mod goto_next_call;
 mod page_inserts;
 mod pageext;
 mod pages;

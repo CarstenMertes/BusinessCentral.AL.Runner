@@ -647,10 +647,19 @@ impl Session {
         // (pageext/PCCurrRecordReads.al:Card_DirtyPage_ReadsAfterEachAction and
         // List_DirtyPage_ReadsAfterEachAction: one OnAfterGetRecord before the action body, no
         // OnAfterGetCurrRecord); the reads after it follow below.
+        // After a GoToKey that moved a list without OnAfterGetCurrRecord a SetValue before the action changes nothing in what it
+        // reads, also on a list with OnFindRecord and OnNextRecord (pages/lt-ai-list-order/QgGoToKeyNextCall.al:477
+        // Nav_GoToKey_ThenSetValue_ThenAction `action_log` as in Nav_GoToKey_ThenActionWithoutUpdate_Twice).
+        let goto_nav = st.borrow().read_after_goto
+            && self.is_list(st)
+            && self.declares(st, "onfindrecord")
+            && self.declares(st, "onnextrecord")
+            && !self.declares(st, "onaftergetcurrrecord");
         let dirty_reread_only = was_dirty
             && self.declares(st, "onaftergetrecord")
             && (!self.declares(st, "onfindrecord") && !self.declares(st, "onnextrecord")
-                || self.declares(st, "onfindrecord") && self.declares(st, "onaftergetcurrrecord"))
+                || self.declares(st, "onfindrecord") && self.declares(st, "onaftergetcurrrecord")
+                || goto_nav)
             && self.has_source(st)
             && st.borrow().open
             && st.borrow().cursor == Cursor::Row
@@ -690,13 +699,17 @@ impl Session {
             && !st.borrow().draft
             && page_of(&engine, st).controls[idx].run_object.is_none()
             && page_of(&engine, st).controls[idx].trigger("onaction").is_some();
-        let read_after_goto = std::mem::take(&mut st.borrow_mut().read_after_goto);
-        let doubt = std::mem::take(&mut st.borrow_mut().read_after_goto_doubt);
-        st.borrow_mut().read_after_goto_quiet = false;
-        st.borrow_mut().read_after_goto_set = false;
-        // Pinned only for an action that reads rows, right after the GoToKey (AiListOrderTests.al:39, :233). After a field call
-        // between them it is refused. An action that reads no rows (a RunObject action) reads nothing more: not pinned, kept for
-        // baseline case 67019 PrecompiledRunPageModeView_OpensTheTargetReadOnly.
+        // Every action after such a GoToKey reads the row twice before its trigger: the second action too, and an action after
+        // a Value read, a SetValue, a Previous or a RunObject action (pages/lt-ai-list-order/QgGoToKeyNextCall.al:236, :254, :278,
+        // :297, :317, :336 and the Nav_ tests, `action_log` `R:R1003;R:R1003;A:act=R1003`). So the mark stays until a move clears
+        // it (`pageops.rs`). A RunObject action reads nothing (:278 `runobject_log` `T:open;H:target`). After a call that is not
+        // pinned (a property read) between them the action is refused.
+        let (read_after_goto, doubt) = {
+            let mut s = st.borrow_mut();
+            s.read_after_goto_set = false;
+            s.read_after_goto_prev = false;
+            (s.read_after_goto, s.read_after_goto_doubt)
+        };
         if read_after_goto && doubt {
             return unsupported(
                 "an action after a GoToKey moved a list without OnAfterGetCurrRecord, with a field call between them (not pinned)",
@@ -706,7 +719,7 @@ impl Session {
             let rec = self.page_rec(st);
             if self.stored_row(&rec)?.is_some() {
                 // A GoToKey that moved a list without OnAfterGetCurrRecord: the row is read once more first
-                // (pages/lt-ai-list-order/AiListOrderTests.al:39, :233, :301, :335 `R:R1002;R:R1002;A:...`).
+                // (pages/lt-ai-list-order/AiListOrderTests.al:39, :233, :301, :335 `R:R1002;R:R1002;A:...`; QgGoToKeyNextCall.al).
                 if read_after_goto {
                     self.populate_current(st)?;
                 }
@@ -852,6 +865,12 @@ impl Session {
                 if reads_rows && !saved {
                     self.read_page_again(st)?;
                 }
+                st.borrow_mut().refresh = true;
+            } else if read_after_goto && reads_rows && self.is_list(st) && !self.declares(st, "onaftergetcurrrecord") {
+                // After such a GoToKey an action without CurrPage.Update on a list with OnFindRecord and OnNextRecord is followed by
+                // the same refresh as one with it (pages/lt-ai-list-order/QgGoToKeyNextCall.al:566 Nav_GoToKey_ThenActionWithoutUpdate_Twice
+                // `R:R1003;R:R1003;A:act=R1003;R:R1003;F:=>=Yes;R:R1003;N:1=1;...` against :607 Nav_GoToKey_ThenValueRead_ThenUpdateAction).
+                // Without that GoToKey it is not pinned and stays as it was.
                 st.borrow_mut().refresh = true;
             }
             if !find_pinned {

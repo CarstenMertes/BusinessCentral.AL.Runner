@@ -48,6 +48,48 @@ impl Lowerer<'_> {
         )))
     }
 
+    /// `n` reads the "Method ID" of a stored Code Coverage Test Lookup row (field 3 of 2000000288). BC's number is a
+    /// compiler-assigned id of the procedure (31658110 for `RecordedInner`, codeunit/PWCodeCoverageRows.al:309; per name and
+    /// signature, coverage/PxCodeCoverageIds.al:7-8) whose rule is not known; the runtime's own number would show. Kept: an
+    /// argument of `AreNotEqual`/`AreEqual` (codeunit/TestCodeCoveragePerTest.al:121, pinned: it differs from the Tests Run
+    /// id) and a comparison (coverage/W6CodeCoverageIds.al:133-134, kept, not pinned: no lookup row exists there, case
+    /// MethodId_TestsRunVersusTestLookup). Any other read is refused.
+    pub(crate) fn coverage_lookup_method_id_read(&self, n: &SyntaxNode, table: usize, id: u32) -> L<()> {
+        if id != 3 || self.ws.objects[table].id != Some(2_000_000_288) {
+            return Ok(());
+        }
+        let (child, parent) = up(n);
+        if let Some(p) = &parent {
+            match p.kind() {
+                SyntaxKind::AssignStmt if p.children().next().as_ref() == Some(&child) => return Ok(()),
+                SyntaxKind::BinExpr => {
+                    let op = sig_tokens(p).first().map(|t| t.text().to_string()).unwrap_or_default();
+                    if matches!(op.as_str(), "=" | "<>" | "<" | ">" | "<=" | ">=") {
+                        return Ok(());
+                    }
+                }
+                SyntaxKind::ArgList => {
+                    let callee = p
+                        .parent()
+                        .filter(|c| c.kind() == SyntaxKind::CallExpr)
+                        .and_then(|c| c.children().next())
+                        .map(|f| f.text().to_string());
+                    if callee.is_some_and(|f| {
+                        let name = f.rsplit('.').next().unwrap_or("").trim().to_ascii_lowercase();
+                        name == "arenotequal" || name == "areequal"
+                    }) {
+                        return Ok(());
+                    }
+                }
+                _ => {}
+            }
+        }
+        Err(format!(
+            "`{}`: the value of the Code Coverage Test Lookup Method ID is not pinned (a compiler-assigned id, codeunit/PWCodeCoverageRows.al:309)",
+            parent.as_ref().unwrap_or(n).text().to_string().trim()
+        ))
+    }
+
     /// A builtin call on a coverage record that would show the Test ID's value: a filter or a key given as a number or a
     /// text, a filter read back, `Get`.
     pub(crate) fn coverage_test_id_call(&self, id: &str, receiver: Option<&SyntaxNode>, args: &[SyntaxNode]) -> L<()> {

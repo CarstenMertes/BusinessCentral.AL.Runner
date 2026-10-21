@@ -1591,3 +1591,21 @@ fn company_table_reads_that_could_list_another_company_are_refused() {
     passes(&o, "FilteredToSession");
     passes(&o, "GetSession");
 }
+
+// codeunit/PWCodeCoverageRows.al:303,309: BC's Test Lookup "Method ID" is a compiler-assigned id (31658110 for
+// `RecordedInner`) whose rule is not known, so a read that shows it is refused; comparing it with another id is kept
+// (codeunit/TestCodeCoveragePerTest.al:121, coverage/W6CodeCoverageIds.al:133-134).
+#[test]
+fn a_test_lookup_method_id_is_refused_where_its_number_would_show() {
+    let o = outcomes(
+        r#"codeunit 50000 "T" { Subtype = Test;
+  [Test] procedure ShowsIt() var L: Record "Code Coverage Test Lookup"; T: Text; begin if L.FindFirst() then T := StrSubstNo('%1', L."Method ID"); end;
+  [Test] procedure ComparesIt() var L: Record "Code Coverage Test Lookup"; R: Record "Code Coverage Tests Run"; B: Boolean; begin if L.FindFirst() then B := L."Method ID" = R."Method ID"; end; }"#,
+    );
+    let why = not_run(&o, "ShowsIt");
+    assert!(why.contains("Test Lookup Method ID is not pinned"), "{why}");
+    assert!(
+        !matches!(o.iter().find(|(n, _)| n == "ComparesIt").map(|(_, o)| o), Some(Outcome::NotRun(_))),
+        "{o:?}"
+    );
+}

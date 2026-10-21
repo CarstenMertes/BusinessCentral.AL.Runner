@@ -435,6 +435,10 @@ pub struct PageState {
     /// A list opened for edit over an empty view went back to its new-row line after an action stored one row through another
     /// variable: First then reads that row as the list reads it on open (misc/lt-probes-needed-7/PnGShowRow.al:223).
     pub empty_list_row_behind: bool,
+    /// An action put a list that showed stored rows on a row the client did not hold before it (an insert through Rec): what a
+    /// move reads next is not pinned (misc/lt-probes-needed-7/PnGShowRow.al:144 NonEmptyListInsertViaRec `first-after` reads
+    /// nothing, the Next after it reads the row it lands on twice); a move is refused.
+    pub action_landed_on_new_row: bool,
     /// Page triggers (the page's or an extension's) run on this page so far.
     pub triggers_run: u64,
     /// The reads after an action on a list without OnAfterGetCurrRecord ended the refresh: `CurrPage.Update` reads nothing more
@@ -613,6 +617,7 @@ impl PageState {
             read_after_goto_set: false,
             read_after_goto_prev: false,
             empty_list_row_behind: false,
+            action_landed_on_new_row: false,
             triggers_run: 0,
             refresh_read_done: false,
             settled_first_row: false,

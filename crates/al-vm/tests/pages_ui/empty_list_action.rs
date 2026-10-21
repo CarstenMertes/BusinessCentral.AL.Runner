@@ -45,6 +45,16 @@ codeunit 69993 C
         exit(R);
     end;
 
+    procedure NonEmptyInsertThenFirst(): Boolean
+    var P: TestPage "EL List"; Item: Record "EL Item";
+    begin
+        Item."No." := 'S1';
+        Item.Insert();
+        P.OpenEdit();
+        P.InsertViaRec.Invoke();
+        exit(P.First());
+    end;
+
     procedure ViewStoredByTest(): Text
     var P: TestPage "EL List"; Item: Record "EL Item"; Log: Codeunit "EL Log"; R: Text;
     begin
@@ -98,5 +108,16 @@ fn a_view_list_shows_a_row_the_test_stored_only_after_an_action() {
     assert_eq!(
         al_testkit::text(al_testkit::run_in(SRC, "C", "ViewStoredByTest")),
         "No:|R:;R:T1;R:T1;C:T1/|T1"
+    );
+}
+
+/// :144 NonEmptyListInsertViaRec: after an action put a list on a row it did not hold, what First and Next read is pinned by one
+/// test only (First reads nothing, Next reads its row twice): a move is refused.
+#[test]
+fn a_move_after_an_action_landed_on_a_row_the_client_did_not_hold_is_refused() {
+    let r = al_testkit::run_in(SRC, "C", "NonEmptyInsertThenFirst");
+    assert!(
+        matches!(&r, Err(al_builtins::native::Signal::Unsupported(m)) if m.contains("did not hold")),
+        "{r:?}"
     );
 }

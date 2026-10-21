@@ -244,6 +244,18 @@ impl Session {
                 }
             }
         }
+        // See `PageState::action_landed_on_new_row`: a move then is not pinned; Close and the rest leave the mark behind.
+        if method.recv() != PageRecv::Page && std::mem::take(&mut st.borrow_mut().action_landed_on_new_row) {
+            if matches!(
+                name,
+                PageMethod::First | PageMethod::Last | PageMethod::Next | PageMethod::Previous
+            ) {
+                return unsupported(format!(
+                    "TestPage.{}() after an action put a list on a row the client did not hold (what it reads is not pinned)",
+                    name.name()
+                ));
+            }
+        }
         // The page's own code (CurrPage in the action's trigger) is not a call of the test client: the mark stays as it is.
         let client = method.recv() != PageRecv::Page;
         let read_after_goto = client && std::mem::take(&mut st.borrow_mut().read_after_goto);

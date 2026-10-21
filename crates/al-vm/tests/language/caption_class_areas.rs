@@ -189,7 +189,10 @@ fn a_card_open_runs_the_expressions_and_caption_reads_what_it_filled() {
         got,
         "100|20@3;21@3;24@3;|Inv. Discount Amount Excl. VAT|Amount Excl. VAT||Id 3 call 103|Id 3 call 103|"
     );
-    assert_eq!(al_builtins::assumptions::take_hits(), vec![al_builtins::assumptions::Assumption::PageOpenCaptionClassEmptyRecordCount]);
+    assert_eq!(
+        al_builtins::assumptions::take_hits(),
+        vec![al_builtins::assumptions::Assumption::PageOpenCaptionClassEmptyRecordCount]
+    );
 }
 
 /// QdCaptionClassAreas.al:591-630 QF_List_OpenView and :632-668 QF_List_OpenEdit (corpus bump 37): a List runs the expressions
@@ -216,7 +219,11 @@ fn a_list_runs_the_expressions_for_its_first_row_only_and_next_and_close_run_not
     end;"#
         ));
         assert_eq!(got, "Yes:20@3;24@3;|3|Yes|No:|5|Yes|Amount Excl. VAT|No:", "{open}");
-        assert_eq!(al_builtins::assumptions::take_hits(), vec![al_builtins::assumptions::Assumption::PageOpenCaptionClassEmptyRecordCount], "{open}");
+        assert_eq!(
+            al_builtins::assumptions::take_hits(),
+            vec![al_builtins::assumptions::Assumption::PageOpenCaptionClassEmptyRecordCount],
+            "{open}"
+        );
     }
 }
 
@@ -241,7 +248,10 @@ fn next_on_a_card_runs_no_expression_and_keeps_the_caption() {
     end;"#
     ));
     assert_eq!(got, "Yes:20@3;21@3;24@3;|Yes|No:|5|Yes|No:");
-    assert_eq!(al_builtins::assumptions::take_hits(), vec![al_builtins::assumptions::Assumption::PageOpenCaptionClassEmptyRecordCount]);
+    assert_eq!(
+        al_builtins::assumptions::take_hits(),
+        vec![al_builtins::assumptions::Assumption::PageOpenCaptionClassEmptyRecordCount]
+    );
 }
 
 /// QdCaptionClassAreas.al QF_ListPart_OnCard (corpus bump 37): a ListPart on a card opened with OpenView runs the expressions
@@ -265,5 +275,8 @@ fn a_list_part_on_a_card_runs_the_expressions_for_its_first_row_and_next_runs_no
     end;"#
     ));
     assert_eq!(got, "Yes:24@3;|3|Yes|No:|5|Yes|No:");
-    assert_eq!(al_builtins::assumptions::take_hits(), vec![al_builtins::assumptions::Assumption::PageOpenCaptionClassEmptyRecordCount]);
+    assert_eq!(
+        al_builtins::assumptions::take_hits(),
+        vec![al_builtins::assumptions::Assumption::PageOpenCaptionClassEmptyRecordCount]
+    );
 }

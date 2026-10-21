@@ -804,6 +804,14 @@ impl Session {
             let stored_before = !st.borrow().never_stored;
             st.borrow_mut().save_record_called = false;
             let empty = self.empty_page_shape(st)?;
+            let held_before = (empty.is_none()
+                && self.is_list(st)
+                && self.has_source(st)
+                && st.borrow().host.is_none()
+                && st.borrow().cursor == Cursor::Row
+                && !st.borrow().draft
+                && !st.borrow().window.is_empty())
+            .then(|| st.borrow().window.iter().map(|w| w.key.clone()).collect::<Vec<_>>());
             if let Some(shape) = empty {
                 self.empty_page_before_action(st, shape)?;
             }
@@ -834,6 +842,15 @@ impl Session {
             if let Some(shape) = empty {
                 if self.empty_page_after_action(st, shape)? {
                     return Ok(Value::Null);
+                }
+            }
+            if let Some(held) = &held_before {
+                let rec = self.page_rec(st);
+                if st.borrow().cursor == Cursor::Row && !st.borrow().draft && self.stored_row(&rec)?.is_some() {
+                    let key = self.row_key(&rec)?;
+                    if !held.iter().any(|k| Self::same_key(k, &key)) {
+                        st.borrow_mut().action_landed_on_new_row = true;
+                    }
                 }
             }
             // A new row of a card whose key the action set is stored right after the action, on fresh table globals: its

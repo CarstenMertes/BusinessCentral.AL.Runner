@@ -37,6 +37,7 @@ const EXECUTE_FIELDS: &[&str] = &[
     "coverage",
     "perTestCoverage",
     "testIsolation",
+    "announceStart",
 ];
 /// Fields v2 knows and v3 defers (ADR-016).
 const DEFERRED: &[&str] = &["affectedOnly", "includeFailing", "strictEnvironment", "tdd"];
@@ -293,6 +294,11 @@ fn run_tests(base: &TestArgs, fields: &Map<String, Value>, ctx: &mut WarmCtx, fl
                 return error("the run produced no report");
             };
             let doc = &report.doc;
+            // ADR-028 item 7: a cancelled run (also one that `shutdown` or the end of input stopped) has exit code
+            // 130, as in v2, whatever the tests that ran came to.
+            let code = if cancelled { 130 } else { code };
+            let mut warnings = warnings;
+            warnings.extend(report.warnings.iter().cloned());
             let mut summary = json!({
                 "type": "summary",
                 "exitCode": code,

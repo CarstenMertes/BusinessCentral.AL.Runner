@@ -55,12 +55,19 @@ fn real_main() -> ExitCode {
     };
     // Another `al-runner` on PATH (AL Runner v2's dotnet tool): one line on stderr, at most once a day. `--version`
     // lists the copies instead; `serve` talks a protocol on stdout and stderr and gets no note.
-    if !matches!(command, Command::Help | Command::Version | Command::Serve(_)) {
+    if !matches!(
+        command,
+        Command::Help | Command::CacheHelp | Command::Version | Command::Serve(_)
+    ) {
         path_note::maybe_note();
     }
     match command {
         Command::Help => {
             print!("{}", args::HELP);
+            ExitCode::SUCCESS
+        }
+        Command::CacheHelp => {
+            print!("{}", args::cache_help());
             ExitCode::SUCCESS
         }
         Command::Version => {

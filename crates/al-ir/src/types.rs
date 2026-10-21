@@ -399,7 +399,7 @@ mod tests {
             pos: NO_POS,
             end_pos: NO_POS,
             begin_pos: NO_POS,
-            body,
+            body: body.into(),
             expr_tys,
             reads_var_max_len: false,
         }
@@ -436,10 +436,10 @@ mod tests {
         };
         assert_eq!(t.of(a), ExprTy::Integer);
         assert_eq!(t.of(&int(1)), ExprTy::Unknown, "a node of another tree");
-        let short = routine(r.body.clone(), vec![ExprTy::Integer]);
+        let short = routine(r.body.to_vec(), vec![ExprTy::Integer]);
         let Stmt::Expr(e) = &short.body[0] else { unreachable!() };
         assert_eq!(ExprTypes::new(&short).of(e), ExprTy::Unknown);
-        let none = routine(r.body.clone(), vec![]);
+        let none = routine(r.body.to_vec(), vec![]);
         let Stmt::Expr(e) = &none.body[0] else { unreachable!() };
         assert_eq!(ExprTypes::new(&none).of(e), ExprTy::Unknown);
     }

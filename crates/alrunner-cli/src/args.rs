@@ -24,6 +24,8 @@ pub enum Command {
     },
     /// `al-runner cache info [--cache-dir DIR]`.
     CacheInfo(Option<PathBuf>),
+    /// `al-runner cache --help`: the cache part of the help.
+    CacheHelp,
     /// `al-runner impact-index build APP... [OPTIONS]` (ADR-043 step 2): run the tests of the APPs once and keep, per
     /// test, what it raised and touched, for the impact runs that follow.
     ImpactIndexBuild(Box<TestArgs>),
@@ -390,7 +392,8 @@ SERVE
                          and stops the run after the current test; shutdown stops a run the same way
                          and exits. The start options are those of `test` that do not depend on a
                          request (--package-cache, --dep, --define, --test-timeout, --bc-version,
-                         --cache-dir, --no-download, --test-data, ...). A runTests request carries
+                         --cache-dir, --no-download, --test-data, ...); --recipe and --impact-of are
+                         refused. A runTests request carries
                          sourcePaths, packagePaths, test, excludeTests, testIsolation, coverage,
                          perTestCoverage, captureValues, iterationTracking, announceStart, serverUrl.
                          Fields and answers: docs/integrations/migrating-tools-to-v3.md, section 4b.
@@ -488,9 +491,17 @@ fn number(flag: &str, v: &str) -> Result<usize, String> {
     v.parse().map_err(|_| format!("{flag} needs a number, got `{v}`"))
 }
 
+/// The COMPILE CACHE section of the help: what `al-runner cache --help` prints.
+pub fn cache_help() -> &'static str {
+    let start = HELP.find("COMPILE CACHE\n").unwrap_or(0);
+    let end = HELP[start..].find("\n\n").map_or(HELP.len(), |e| start + e + 1);
+    &HELP[start..end]
+}
+
 /// `al-runner cache clear|prune|info`.
 fn parse_cache(mut it: impl Iterator<Item = String>) -> Result<Command, String> {
     let sub = match it.next().as_deref() {
+        Some("--help" | "-h") => return Ok(Command::CacheHelp),
         Some(s @ ("clear" | "prune" | "info")) => s.to_string(),
         Some(other) => {
             return Err(format!(
@@ -502,6 +513,7 @@ fn parse_cache(mut it: impl Iterator<Item = String>) -> Result<Command, String> 
     let (mut dir, mut dry_run, mut all_other_builds) = (None, false, false);
     while let Some(f) = it.next() {
         match f.as_str() {
+            "--help" | "-h" => return Ok(Command::CacheHelp),
             "--cache-dir" => dir = Some(it.next().ok_or("--cache-dir needs a value")?.into()),
             "--dry-run" if sub == "prune" => dry_run = true,
             "--all-other-builds" if sub == "prune" => all_other_builds = true,
@@ -591,6 +603,19 @@ fn parse_serve(args: Vec<String>) -> Result<Command, String> {
         || t.isolation.is_some()
     {
         return Err("al-runner serve takes only the options that do not depend on a request: --package-cache, --dep, --define, --preprocessor-symbols, --test-timeout, --bc-version, --cache-dir, --no-download, --test-data and the like; the rest comes in each `runTests` request".into());
+    }
+    // Hard rule 4: every request is one plain test run (`run::test_with`). A recipe run (one run per lane) and an
+    // impact run (a run without and one with the extensions) are other kinds of run, so they are refused here, not
+    // ignored by every request.
+    for (set, flag) in [
+        (t.recipe, "--recipe microsoft"),
+        (!t.impact_of.is_empty(), "--impact-of"),
+    ] {
+        if set {
+            return Err(format!(
+                "al-runner serve cannot be combined with {flag}: a request runs the tests once, the plain way; use `al-runner test {flag} ...`"
+            ));
+        }
     }
     Ok(Command::Serve(daemon))
 }
@@ -1009,6 +1034,9 @@ mod tests {
             }
         );
         assert_eq!(p("cache info").unwrap(), Command::CacheInfo(None));
+        assert_eq!(p("cache --help").unwrap(), Command::CacheHelp);
+        assert_eq!(p("cache prune --help").unwrap(), Command::CacheHelp);
+        assert!(cache_help().starts_with("COMPILE CACHE") && cache_help().contains("al-runner cache clear"));
         assert!(p("cache info --dry-run").is_err(), "--dry-run belongs to prune");
         assert!(p("cache wipe").unwrap_err().contains("wipe"));
         assert!(p("cache clear --all").unwrap_err().contains("--all"));
@@ -1153,6 +1181,12 @@ mod tests {
         assert!(p("serve --test Codeunit1.X").unwrap_err().contains("do not depend"));
         assert!(p("serve --coverage").unwrap_err().contains("do not depend"));
         assert!(p("serve OtherApp").unwrap_err().contains("do not depend"));
+        // Hard rule 4: a request runs one plain test run, so the options that make a run of another kind are refused at
+        // the start, not ignored by every request.
+        let e = p("serve --recipe microsoft").unwrap_err();
+        assert!(e.contains("--recipe microsoft") && e.contains("serve"), "{e}");
+        let e = p("serve --impact-of ext").unwrap_err();
+        assert!(e.contains("--impact-of") && e.contains("serve"), "{e}");
     }
 
     #[test]

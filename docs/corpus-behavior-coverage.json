@@ -14942,7 +14942,7 @@
         {
           "corpus_uses": 784372,
           "group": "expression",
-          "ms_uses": 1808198,
+          "ms_uses": 1809637,
           "name": "NameRef",
           "pinned": true,
           "runtime_reads": true,
@@ -14951,7 +14951,7 @@
         {
           "corpus_uses": 285370,
           "group": "expression",
-          "ms_uses": 474891,
+          "ms_uses": 475470,
           "name": "MemberExpr",
           "pinned": true,
           "runtime_reads": true,
@@ -14960,7 +14960,7 @@
         {
           "corpus_uses": 340779,
           "group": "expression",
-          "ms_uses": 389440,
+          "ms_uses": 389686,
           "name": "CallExpr",
           "pinned": true,
           "runtime_reads": true,
@@ -14978,7 +14978,7 @@
         {
           "corpus_uses": 37526,
           "group": "statement",
-          "ms_uses": 187979,
+          "ms_uses": 188839,
           "name": "Block",
           "pinned": true,
           "runtime_reads": true,
@@ -15005,7 +15005,7 @@
         {
           "corpus_uses": 6660,
           "group": "statement",
-          "ms_uses": 80317,
+          "ms_uses": 81177,
           "name": "ExitStmt",
           "pinned": true,
           "runtime_reads": true,
@@ -16342,7 +16342,7 @@
         "code": "FormAbort:Dialog",
         "file": "crates/al-vm/src/pages.rs",
         "generic": false,
-        "line": 267,
+        "line": 273,
         "pinned": true,
         "site": "pages/lt-cc-page-leads/CcPageLeads.al:525",
         "template": "Page % has to close."
@@ -29627,7 +29627,7 @@
           28,
           29
         ],
-        "ms_uses": 187979,
+        "ms_uses": 188839,
         "name": "begin",
         "owner": "keyword",
         "pinned": true,
@@ -29687,7 +29687,7 @@
           28,
           29
         ],
-        "ms_uses": 80317,
+        "ms_uses": 81177,
         "name": "exit",
         "owner": "keyword",
         "pinned": true,

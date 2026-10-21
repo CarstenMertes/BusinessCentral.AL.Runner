@@ -3,10 +3,10 @@
 #   install.sh [VERSION]
 # VERSION: "edge" (newest build of the release branch), "latest-alpha" (default: the newest numbered
 # alpha), or a tag such as v3.0.0-alpha.2.
-# Environment: ALRUNNER_DOWNLOAD_BASE (a folder or URL holding the files, for tests), ALRUNNER_INSTALL_DIR (default ~/.local/bin), ALRUNNER_REPO (default StefanMaron/al-runtime-rs).
+# Environment: ALRUNNER_DOWNLOAD_BASE (a folder or URL holding the files, for tests), ALRUNNER_INSTALL_DIR (default ~/.local/bin), ALRUNNER_REPO (default aldevtools/BusinessCentral.AL.Runner).
 set -eu
 
-repo="${ALRUNNER_REPO:-StefanMaron/al-runtime-rs}"
+repo="${ALRUNNER_REPO:-aldevtools/BusinessCentral.AL.Runner}"
 dir="${ALRUNNER_INSTALL_DIR:-$HOME/.local/bin}"
 want="${1:-latest-alpha}"
 

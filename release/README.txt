@@ -23,6 +23,6 @@ The binary is not signed.
            or: Unblock-File .\alrunner.exe
 
 Report problems, especially wrong results:
-https://github.com/StefanMaron/al-runtime-rs/issues/new?template=alpha-feedback.md
+https://github.com/aldevtools/BusinessCentral.AL.Runner/issues/new?template=alpha-feedback.md
 
 License: MIT (see LICENSE).

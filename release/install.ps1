@@ -1,12 +1,12 @@
 # Installs alrunner from GitHub releases (Windows x64).
 #   install.ps1 [-Version <edge | latest-alpha | v3.0.0-alpha.2>]
 # Default is latest-alpha. Environment: ALRUNNER_INSTALL_DIR (default %LOCALAPPDATA%\alrunner\bin),
-# ALRUNNER_REPO (default StefanMaron/al-runtime-rs).
+# ALRUNNER_REPO (default aldevtools/BusinessCentral.AL.Runner).
 param([string]$Version = "latest-alpha")
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 
-$repo = if ($env:ALRUNNER_REPO) { $env:ALRUNNER_REPO } else { "StefanMaron/al-runtime-rs" }
+$repo = if ($env:ALRUNNER_REPO) { $env:ALRUNNER_REPO } else { "aldevtools/BusinessCentral.AL.Runner" }
 $dir = if ($env:ALRUNNER_INSTALL_DIR) { $env:ALRUNNER_INSTALL_DIR } else { Join-Path $env:LOCALAPPDATA "alrunner\bin" }
 $target = "x86_64-pc-windows-msvc"
 

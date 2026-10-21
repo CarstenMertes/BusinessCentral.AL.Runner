@@ -5,3 +5,4 @@ __pycache__/
 /*.al
 # Worktrees live inside the main checkout (CLAUDE.md, "Parallel work")
 /.worktrees/
+coverage.cobertura.xml

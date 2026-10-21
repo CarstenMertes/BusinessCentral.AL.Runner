@@ -1575,8 +1575,15 @@ impl Session {
             // A list with no row but the blank line reads it twice, as a list of one row reads its row (misc/lt-probes-needed-3/
             // PnC07TestPage.al:New_OnEmptyPage `OnNewRecord` three times with the New() call, misc/lt-probes-needed-7/
             // PnGNewRecord.al:HandedRecordKeyFieldFilter `OnNewRecord;AGCR(FILTERED,FILTERED)` twice).
+            // xRec is blank again at the second OnNewRecord (misc/lt-probes-needed-7/PnGRefresh.al:792 QL_Jnl_SheetFG2_OpenOnNoRow
+            // `P.NEW(T1/B1/0 x=//0 below=Yes);P.AGCR(T1/B1/0 x=T1/B1/0)` twice).
             if self.is_list(st) && st.borrow().host.is_none() {
+                let table = self.page_rec(st).borrow().table as usize;
+                let blank = self.initial_fields(table);
+                self.set_xrec_fields(st, blank.clone());
                 self.land_on_new_line(st)?;
+                let stamped = !Self::same_values(&self.page_rec(st).borrow().fields, &blank);
+                st.borrow_mut().split_starts_low = stamped;
             }
             self.populate_expressions(st)
         } else if self.runs_on_blank_record(st) {
@@ -1964,7 +1971,11 @@ impl Session {
         use rust_decimal::Decimal as D;
         let step = D::from(10000);
         let is_decimal = matches!(ty, RtType::Decimal);
+        let starts_low = st.borrow().split_starts_low;
         let number = match (lower, upper) {
+            // The blank line of a top-level list that took key filter values, typed without New(), starts at 10000
+            // (misc/lt-probes-needed-7/PnGRefresh.al:672 QL_Jnl_SheetFG2_DeleteNoUpdate_OnlyRow, :792 QL_Jnl_SheetFG2_OpenOnNoRow).
+            (None, _) if starts_low && !burned => step,
             // An empty grid burns one interval on the blank placeholder row.
             (None, _) => D::from(20000),
             // Appended after the last line (handlers/TestPageAutoSplitKeyMoreShapes.al:104-117,

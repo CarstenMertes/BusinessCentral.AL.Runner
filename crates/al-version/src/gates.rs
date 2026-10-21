@@ -140,7 +140,7 @@ pub enum Gate {
     /// runtime implements it. Corpus bumps 31 and 32 add two tests held on Linux that assert only from BC 28, because BC 27.5
     /// through the TestRunnerHub ends them with CallbackNotAllowed: the control add-in error of a test page
     /// (pages/lt-ao-testpage/AoTests.al:786) and the Reporting Triggers events of Report.Run/RunModal/Execute
-    /// (events/lt-platform-events-v/PeVTests.al:750). Corpus bump 37 pins the corpus database's General Ledger Setup: its
+    /// (events/lt-platform-events-v/PeVTests.al:725). Corpus bump 37 pins the corpus database's General Ledger Setup: its
     /// Additional Reporting Currency is EUR from BC 28 and blank on BC 27 (record/lt-qd-captionclass-areas/QdCaptionClassAreas.al:808,
     /// QF_GLSetup_CorpusRow). Not consumed yet.
     ProbedValuesDifferFrom28,
@@ -636,7 +636,7 @@ impl Gate {
                 },
                 Evidence {
                     file: "events/lt-platform-events-v/PeVTests.al",
-                    lines: "750",
+                    lines: "725",
                 },
                 Evidence {
                     file: "pages/lt-px-controls/PxControls.al",

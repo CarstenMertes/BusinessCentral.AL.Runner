@@ -460,6 +460,24 @@ pub struct PageState {
     /// The reads after an action on a list without OnAfterGetCurrRecord ended the refresh: `CurrPage.Update` reads nothing more
     /// (pages/lt-ai-list-order/AiListOrderTests.al:233 Keep_Plain).
     pub refresh_read_done: bool,
+    /// The fields of the row a list showed when the running action started (None outside an action): an action that put another
+    /// row into Rec and called CurrPage.Close() gets this row back (misc/lt-probes-needed-7/PnGRefresh.al:608).
+    pub action_shown_row: Option<Vec<Value>>,
+    /// The action left another row (another primary key) in Rec: the list reads that row again from the table, unsaved values
+    /// dropped (misc/lt-probes-needed-7/PnGRefresh.al:387 QL_RecAssign_OtherChanged_ThenClose `P.AGR(B,changed B);P.AGR(B,orig B)`).
+    pub rec_moved_other: bool,
+    /// CurrPage.Close() in the running action put the shown row back into Rec (PnGRefresh.al:608): one more read follows the action.
+    pub close_restored_row: bool,
+    /// The blank line of a top-level list took key filter values (a journal filtered to one template and batch, open on no row or
+    /// after its only row went): its first line is numbered 10000 by AutoSplitKey, not 20000 (misc/lt-probes-needed-7/
+    /// PnGRefresh.al:672, :792 `P.INSR(T1/B1/10000,typed)`).
+    pub split_starts_low: bool,
+    /// The action changed the row a list shows: it is saved after the first read of the refresh (misc/lt-probes-needed-7/
+    /// PnGRefresh.al:503).
+    pub save_after_first_read: bool,
+    /// The parts read their rows for a host row a GoToKey walked past (pages/lt-qj-part-propagation/QjPartPropagation.al:1183):
+    /// on the target row they read again even when the host stayed on it.
+    pub walk_synced_parts: bool,
     /// The client's rows were read again from the row a list settled on after an action's filter left its row, with no row before
     /// it: First stays on that row and reads nothing (pages/lt-ai-list-order/AiListOrderTests.al:339, :373 `after_first` empty).
     /// Also set by the refresh of CurrPage.Update on a list with OnFindRecord and OnNextRecord that ends on the first row (:174,
@@ -665,6 +683,12 @@ impl PageState {
             static_lookup: false,
             triggers_run: 0,
             refresh_read_done: false,
+            action_shown_row: None,
+            rec_moved_other: false,
+            close_restored_row: false,
+            split_starts_low: false,
+            save_after_first_read: false,
+            walk_synced_parts: false,
             settled_first_row: false,
             caption_assigned_closed: false,
             draft_stored: false,

@@ -412,3 +412,35 @@ fn a_codeunit_of_a_lane_the_runner_cannot_build_is_not_verified_with_the_lane_re
     assert_eq!(source_row(&out, "microsoft"), "0 0 0 0 0 0 0", "{out}");
     assert_eq!(o.status.code(), Some(0), "{out}");
 }
+
+#[test]
+fn the_microsoft_source_writes_one_impact_json_entry_per_test_app_and_lane_and_reads_it_back_as_accept_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let (ext, _, lib) = source_fixture(dir.path());
+    let diff = dir.path().join("diff.json");
+    let o = run(
+        dir.path(),
+        &[&ext, "--dep", &lib, "--impact-json", diff.to_str().unwrap()],
+    );
+    assert_eq!(o.status.code(), Some(1), "{}", text(&o));
+    let doc: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&diff).unwrap()).unwrap();
+    assert_eq!(doc["format"], 2, "{doc}");
+    let imp: Vec<&serde_json::Value> = doc["sources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|s| s["testApp"] == "Tests-Imp")
+        .collect();
+    assert_eq!(imp.len(), 1, "{doc}");
+    assert_eq!(imp[0]["source"], "microsoft", "{doc}");
+    assert_eq!(imp[0]["lane"], "UnitTest", "{doc}");
+    assert_eq!(imp[0]["counts"]["newlyFailing"], 1, "{doc}");
+    // Given back, the change is accepted in its run, and no entry is stale in the runs of the other test apps.
+    let o = run(
+        dir.path(),
+        &[&ext, "--dep", &lib, "--impact-accept", diff.to_str().unwrap()],
+    );
+    let out = text(&o);
+    assert_eq!(o.status.code(), Some(0), "{out}");
+    assert!(!out.contains("no longer match"), "{out}");
+}

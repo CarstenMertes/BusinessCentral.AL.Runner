@@ -526,3 +526,31 @@ serve refusals of `--affected-from` and `--microsoft-app` (section 4). Code: `so
 - **The no-index warning** of a source run prints `al-runner impact-index build --from microsoft --microsoft-app
   <app> --bc-version <build>` plus the options that are part of the key (`--country`, `--bcapps`, `--cache-dir`,
   `--dep`, `--package-cache`, `--define`), not the run's own command line.
+
+## Decided without owner review (2026-10-22, build step 3)
+
+Step 3 as built: `al-runner test APP... --affected-from PATH` (ISV test apps), own tests next to any sources, the
+grouped report, `--output-json` with `sources`, `--impact-json` format 2, `--impact-accept` format 1 and 2. Code:
+`sources.rs` (`resolve`, `isv_source`, `SourceOut`), `impact::Part::{json, stale}`, `impact::Accepts::for_source`,
+`TestArgs::accept_source`. Tests: `crates/alrunner-cli/tests/test_sources.rs` (plan items 7-11, 14, 15) and the
+format-2 test of the `microsoft` source in `tests/test_microsoft.rs`.
+
+- **Section header.** `== <name> <version> (<path>) ==`: the "(path given)" of 1.6 is read as the path the user gave
+  (for a folder of apps, the app's path inside it). The row, `test_source` and `source` use the app.json name only.
+- **Checks before the run.** Every source is read before the own tests start. A compiled-only source (`.app` without
+  AL source), a non-Microsoft dependency found only without AL source in `--dep`, `--package-cache` or an
+  `.alpackages` folder, a source that depends on an extension app, the same app id twice, and a source that is also an
+  APP exit 2 with no test run. Only direct dependencies are checked here; a deeper compiled-only dependency fails the
+  source's run with the dependency loader's message (exit 2 for that source, the other parts still run).
+- **The "without" side** of an ISV source also searches the `.alpackages` folder of each folder APP, so both sides
+  resolve the source's dependencies in the same places (ADR-052 1.2 item 3). Those folders are then part of the index
+  key and of the printed `impact-index build` command.
+- **`--impact-json` format 2** has one entry per impact run, not one per source: the `microsoft` source has one run
+  per test app and lane, and each entry adds `testApp` and `lane`. The top level also has the run's `exitCode`.
+- **Stale accept entries** are listed once per source: an entry is stale when no run of that source matched it. An
+  entry whose `source` names a source the run does not have is listed on one line per source name. Neither changes
+  the exit code (as ADR-043).
+- **`--output-json`.** The top-level `exitCode` is the whole run's (the worst part), not the own tests' alone, so a v2
+  reader sees the run's result. Without own tests the v2 part is empty. `--output-json` without a FILE is refused
+  with sources (the text report is on stdout). Each `sources` entry has `mode` (`mixed` when the runs of a source
+  differ), `path` for a source given as a path, `lanes` for `microsoft`, `error` when the source could not run.

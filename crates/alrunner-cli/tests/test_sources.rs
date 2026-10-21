@@ -66,7 +66,7 @@ fn an_isv_test_app_runs_the_tests_that_reach_the_extension_with_and_without_it()
     );
     let out = text(&o);
     // A source is named by its app.json, never by its path.
-    assert!(out.contains("== Impact Tests 1.0.0.0 (path given) =="), "{out}");
+    assert!(out.contains("== Impact Tests 1.0.0.0 ("), "{out}");
     // No index: static selection, with the command that builds the index of this source.
     assert!(
         out.contains(&format!("al-runner impact-index build {}", s(&tests))),
@@ -116,8 +116,8 @@ fn own_tests_and_a_folder_of_two_test_apps_make_three_parts_and_the_worst_part_s
     );
     let out = text(&o);
     let own = out.find("== own tests: Impact Ext 1.0.0.0 ==").expect(&out);
-    let a = out.find("== Impact Tests 1.0.0.0 (path given) ==").expect(&out);
-    let b = out.find("== Impact Tests B 1.0.0.0 (path given) ==").expect(&out);
+    let a = out.find("== Impact Tests 1.0.0.0 (").expect(&out);
+    let b = out.find("== Impact Tests B 1.0.0.0 (").expect(&out);
     assert!(own < a && a < b, "{out}");
     assert_eq!(source_row(&out, "own tests"), "1 - - - - 0 not run 1", "{out}");
     assert_eq!(source_row(&out, "Impact Tests"), "4 2 1 0 0 0 1", "{out}");
@@ -180,7 +180,10 @@ fn a_compiled_only_source_or_dependency_of_a_source_exits_2_before_the_run() {
     let out = text(&o);
     assert_eq!(o.status.code(), Some(2), "{out}");
     assert!(
-        out.contains("Impact Lib 1.0.0.0 (a dependency of Impact Tests) is a compiled-only app; AL Runner compiles test apps from their AL source (ADR-013)"),
+        out.contains("Impact Lib 1.0.0.0 (a dependency of Impact Tests, ")
+            && out.contains(
+                "Impact Lib.app) is a compiled-only app; AL Runner compiles test apps from their AL source (ADR-013)"
+            ),
         "{out}"
     );
 }
@@ -305,7 +308,7 @@ fn output_json_keeps_the_own_tests_in_the_v2_shape_and_adds_the_sources() {
     // The own tests, as a plain run writes them.
     assert_eq!(doc["failed"], 1, "{doc}");
     assert_eq!(doc["total"], 1, "{doc}");
-    assert_eq!(doc["tests"][0]["name"], "OwnTest", "{doc}");
+    assert_eq!(doc["tests"][0]["method"], "OwnTest", "{doc}");
     assert_eq!(doc["exitCode"], 1, "{doc}");
     let source = &doc["sources"][0];
     assert_eq!(source["source"], "Impact Tests", "{doc}");

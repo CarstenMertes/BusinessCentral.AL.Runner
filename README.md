@@ -599,9 +599,16 @@ test app, lane by lane with the recipe, as an impact run of `MYEXT` (with and wi
 report with one summary table and one `--junit` file (each source suite has the property
 `test_source`, the first one `not_selected`). Without a cached impact index the tests are selected by
 static reach, with a warning that prints the command that builds the index:
-`al-runner impact-index build --from microsoft --microsoft-app Tests-ERM --bc-version ...`. An ISV test
-app as a source (`--affected-from PATH`), `--output-json`, `--impact-json` and `--impact-accept` with
-sources are later steps of ADR-052 and are refused for now; `al-runner serve` refuses test sources.
+`al-runner impact-index build --from microsoft --microsoft-app Tests-ERM --bc-version ...`.
+
+An ISV's test app is a test source too: `al-runner test MYEXT --affected-from ../vendor/Product.Tests`
+(an app folder, an `.app` with AL source or a `*.Source.zip`; a folder of several test apps is one source
+per app; repeatable, also next to `--affected-from microsoft`). It runs with the run's normal test data,
+and its dependencies resolve as for any APP. A test app or dependency without AL source is refused before
+the run, as is a test app that depends on your extension (pass that one as an APP). `--output-json FILE`
+writes your own tests as a plain run does plus a `sources` array; `--impact-json FILE` writes format 2
+(one entry per impact run, each with its `source`); `--impact-accept FILE` reads format 1 and 2, and an
+entry with a `source` matches only in that source. `al-runner serve` refuses test sources.
 
 `al-runner` can run Microsoft's own Base Application test buckets. Most of these tests are
 still refused, not run. The full run of 2026-10-16 (main `fae0c8df`, BC 27.5, all buckets

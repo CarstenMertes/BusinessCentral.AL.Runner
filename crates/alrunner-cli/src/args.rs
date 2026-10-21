@@ -164,8 +164,8 @@ pub struct TestArgs {
     /// artifact (`Tests-ERM`), without case. Repeatable. Empty: all of them.
     pub microsoft_apps: Vec<String>,
     /// `--affected-from SOURCE` (ADR-052): further test sources whose tests that reach the extension among the APPs
-    /// run with and without it. Only `microsoft` (every Microsoft test app of the build) is built. Repeatable. In
-    /// `impact-index build` it is `--from SOURCE`.
+    /// run with and without it: `microsoft` (every Microsoft test app of the build) or the path of an ISV test app.
+    /// Repeatable. In `impact-index build` it is `--from microsoft`.
     pub affected_from: Vec<String>,
     /// Not a command line option: the command that builds the impact index of this run, when it is one run of a test
     /// source (ADR-052 1.8); the no-index warning prints it instead of the run's own command line.
@@ -416,8 +416,12 @@ IMPACT (ADR-043)
                          --dep and --define of the runs that read it.
 
 TEST SOURCES (ADR-052)
-    --affected-from microsoft
-                         Also run the Microsoft tests your extension can affect: the APPs without a
+    --affected-from SOURCE
+                         SOURCE is `microsoft` or the path of an ISV test app (an app folder, an .app
+                         with AL source or a *.Source.zip; a folder of several test apps is one
+                         source per app). Repeatable; the sources run in the order given.
+                         --affected-from microsoft: also run the Microsoft tests your extension can
+                         affect: the APPs without a
                          test codeunit are the extension, the APPs with one are your own tests (an
                          app with both is both). Your own tests run as a normal run. Then every
                          Microsoft test app of the build (--microsoft-app NAME narrows, repeatable)
@@ -429,11 +433,24 @@ TEST SOURCES (ADR-052)
                          and one Result line. --junit FILE writes one file: your own tests, then the
                          source's tests with the impact properties and the suite property
                          test_source; the source's first suite has not_selected (its count).
+                         --affected-from PATH: the ISV test app runs as one impact run with the
+                         run's normal test data and no disabled tests; its dependencies resolve as
+                         for any APP (--dep, --package-cache, the .alpackages folder of the APPs and
+                         of the source). Its section and row are named by its app.json name; the
+                         no-index warning prints `al-runner impact-index build PATH ...`. A source
+                         that is compiled only (no AL source) or has such a dependency, depends on
+                         the extension, is also an APP or is given twice: exit 2 before any test.
                          --filter, --codeunit, --test-exact and --exclude-test apply to your own
-                         tests only. Exit code: the worst part (2, then 1, 8, 7; a source that
-                         selects nothing gives 0). Refused with it: --recipe, --impact-of,
-                         --no-compile-cache, --explain, --coverage*, --tdd, and (not built yet)
-                         --output-json, --impact-json, --impact-accept and an ISV test app as SOURCE.
+                         tests only. --output-json FILE: your own tests as a plain run writes them,
+                         plus `sources` (per source: source, kind, testApps, mode, lanes, counts,
+                         notSelected, exitCode, tests). --impact-json FILE: format 2, `sources`
+                         holds the format-1 document of each impact run with `source` (and testApp,
+                         lane for microsoft). --impact-accept FILE reads format 1 and 2; an entry
+                         with `source` matches only in that source, and the entries that match
+                         nothing are listed once per source. Exit code: the worst part (2, then 1,
+                         8, 7; a source that selects nothing gives 0). Refused with it: --recipe,
+                         --impact-of, --no-compile-cache, --explain, --coverage*, --tdd and
+                         --output-json without a FILE.
 
 ISOLATION
     --isolation MODE     (`--test-isolation MODE` is the same) `codeunit` (default): the database

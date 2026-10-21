@@ -494,11 +494,6 @@ pub struct JsonRun<'a> {
 
 /// The JSON diff of an impact run (`--impact-json`): the counts per class and every test with both sides. Its shape is
 /// also the accept file's.
-pub fn json(rows: &[Row], routines: &Routines, run: &JsonRun) -> String {
-    serde_json::to_string_pretty(&json_value(rows, routines, run)).expect("a JSON value serializes")
-}
-
-/// The document of [`json`].
 pub fn json_value(rows: &[Row], routines: &Routines, run: &JsonRun) -> serde_json::Value {
     use serde_json::{Value, json};
     let side = |s: Side, present: bool| -> Value {
@@ -1871,7 +1866,7 @@ mod tests {
         let without = vec![result("T", pass(), vec![]), result("S", pass(), vec![])];
         let with = vec![result("T", fail("boom"), vec![(4, 1)]), result("S", pass(), vec![])];
         let mut rows = diff(&without, &with, &routines);
-        let doc = json(
+        let doc = json_value(
             &rows,
             &routines,
             &JsonRun {
@@ -1881,11 +1876,37 @@ mod tests {
                 not_selected: None,
                 exit_code: 1,
             },
-        );
+        )
+        .to_string();
         let accepts = Accepts::parse(&doc).unwrap();
         assert_eq!(accepts.entries.len(), 1, "{doc}");
         assert!(accepts.apply(&mut rows).is_empty());
         assert!(rows[0].accepted && !rows[1].accepted);
         assert_eq!(exit_code(&rows), 0);
+    }
+
+    #[test]
+    fn a_format_2_accept_file_keeps_the_source_of_each_entry() {
+        let entry =
+            r#"{"codeunit": 5, "test": "T", "class": "newly failing", "with": {"outcome": "fail", "message": "boom"}}"#;
+        let doc = format!(
+            r#"{{"format": 2, "sources": [{{"source": "microsoft", "tests": [{entry}]}}, {{"source": "Vendor Tests", "tests": [{entry}]}}]}}"#
+        );
+        let accepts = Accepts::parse(&doc).unwrap();
+        assert_eq!(accepts.entries.len(), 2);
+        let vendor = Accepts::parse(&doc).unwrap().for_source("Vendor Tests");
+        assert_eq!(vendor.entries.len(), 1);
+        assert_eq!(vendor.entries[0].source.as_deref(), Some("Vendor Tests"));
+        // A format-1 entry has no source and stays in every source.
+        let one = format!(r#"{{"tests": [{entry}]}}"#);
+        assert_eq!(
+            Accepts::parse(&one).unwrap().for_source("Vendor Tests").entries.len(),
+            1
+        );
+        assert!(
+            Accepts::parse(r#"{"sources": [{"source": "x"}]}"#)
+                .unwrap_err()
+                .contains("sources[0].no `tests` list")
+        );
     }
 }

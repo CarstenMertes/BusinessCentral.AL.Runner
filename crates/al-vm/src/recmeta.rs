@@ -1348,8 +1348,18 @@ impl Session {
                     continue;
                 };
                 let source = from.fields.iter().position(|f| f.id == id);
+                // Pinned for a source read from the database; a source that holds no stamp (built in memory, or a temporary
+                // record) is not, so its blank value is not copied but refused on read.
                 let v = match source {
-                    Some(sp) if id == 2_000_000_001 || id == 2_000_000_003 => src_fields[sp].clone(),
+                    Some(sp)
+                        if (id == 2_000_000_001 || id == 2_000_000_003)
+                            && !matches!(src_fields[sp], Value::DateTime(0)) =>
+                    {
+                        src_fields[sp].clone()
+                    }
+                    Some(_) if id == 2_000_000_001 || id == 2_000_000_003 => Value::Unknown(std::sync::Arc::from(
+                        "a SystemCreatedAt or SystemModifiedAt after a TransferFields from another table's row that holds no stamp (not pinned)",
+                    )),
                     _ => Value::Unknown(std::sync::Arc::from(
                         "a SystemCreatedBy or SystemModifiedBy after a TransferFields from another table (not pinned)",
                     )),

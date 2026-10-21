@@ -357,7 +357,10 @@ fn a_rollback_restores_the_media_a_delete_removed() {
 // table holds it; that row keeps the MediaId, HasValue is false and ExportStream returns false.
 #[test]
 fn a_media_shared_with_another_table_leaves_with_its_first_holder() {
-    assert_eq!(text(al_testkit::run_in(MEDIA, "M", "SharedWithOtherTable")), "NoYesNoNo");
+    assert_eq!(
+        text(al_testkit::run_in(MEDIA, "M", "SharedWithOtherTable")),
+        "NoYesNoNo"
+    );
 }
 
 const DATES: &str = r#"
@@ -633,7 +636,10 @@ fn a_delete_of_a_row_with_a_media_set_is_refused() {
 #[test]
 fn a_stale_buffer_stays_stale_after_another_tables_transferfields() {
     let r = run("TransferFromOtherTableStale");
-    assert!(matches!(&r, Err(Signal::Error(e)) if e.code == "DB:RecordChanged"), "{r:?}");
+    assert!(
+        matches!(&r, Err(Signal::Error(e)) if e.code == "DB:RecordChanged"),
+        "{r:?}"
+    );
     // CnTransferFieldsModify.al:194-214: a current buffer modifies either way.
     assert_eq!(text(run("TransferFromOtherTableCurrent")), "3");
 }

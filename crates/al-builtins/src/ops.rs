@@ -1017,7 +1017,13 @@ fn arith_general(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
     // `4611686018427387905L - Power(2, 62)` is 10, not 5 (types/lt-decimal-digits/DecimalDigits.al:257-346
     // QE_Decimal_BigIntegerOperands, `b62p1 - p62`; `dec := b62p1` holds ...910).
     let (a, b) = if any_dec && any_big {
-        let round = |v: &Value, d: Decimal| if matches!(v, V::BigInteger(_)) { keep_18_digits(d) } else { d };
+        let round = |v: &Value, d: Decimal| {
+            if matches!(v, V::BigInteger(_)) {
+                keep_18_digits(d)
+            } else {
+                d
+            }
+        };
         (round(l, a), round(r, b))
     } else {
         (a, b)
@@ -1073,7 +1079,8 @@ fn arith_general(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
 #[inline]
 pub fn over_18_digits(d: Decimal) -> bool {
     // A mantissa of at most 18 digits needs no normalize (the hot path of Decimal arithmetic).
-    d.mantissa().unsigned_abs() > 999_999_999_999_999_999 && d.normalize().mantissa().unsigned_abs() > 999_999_999_999_999_999
+    d.mantissa().unsigned_abs() > 999_999_999_999_999_999
+        && d.normalize().mantissa().unsigned_abs() > 999_999_999_999_999_999
 }
 
 /// A Decimal of more than 18 significant digits rounded at the 18th, half away from zero; a shorter one (trailing zeros

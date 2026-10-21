@@ -160,7 +160,9 @@ fn has_value(c: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Out {
     }
     // A holder whose media another holder let go keeps the id but has no value (media/TestMediaPngImport.al:441-470
     // QE_Media_OtherTable_Assigned_SourceRowDeleted, `after delete has_value`).
-    Ok(Value::Boolean(c.media_store().is_none_or(|m| !m.removed.borrow().contains(&id))))
+    Ok(Value::Boolean(
+        c.media_store().is_none_or(|m| !m.removed.borrow().contains(&id)),
+    ))
 }
 
 fn media_id(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Out {

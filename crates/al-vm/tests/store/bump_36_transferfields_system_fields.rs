@@ -92,6 +92,15 @@ codeunit 69993 C
         exit(Format(R.SystemCreatedBy));
     end;
 
+    procedure CreatedAtAfterTransferFromMemory(): Text
+    var R: Record "QE Row"; O: Record "QE Other";
+    begin
+        R.Id := 1; R.Name := 'own'; R.Insert();
+        O.Id := 1; O.Name := 'mem';
+        R.TransferFields(O);
+        exit(Format(R.SystemCreatedAt));
+    end;
+
     procedure NameAfterTransferFromOther(): Text
     var R: Record "QE Row"; O: Record "QE Other";
     begin
@@ -108,12 +117,25 @@ codeunit 69993 C
 // SystemCreatedAt and SystemModifiedAt.
 #[test]
 fn system_created_at_after_a_transfer_from_another_table_is_the_source_one() {
-    assert_eq!(al_testkit::text(al_testkit::run_in(SRC, "C", "CreatedAtAfterTransferFromOther")), "Yes");
+    assert_eq!(
+        al_testkit::text(al_testkit::run_in(SRC, "C", "CreatedAtAfterTransferFromOther")),
+        "Yes"
+    );
 }
 
 #[test]
 fn system_modified_at_after_a_transfer_from_another_table_is_the_source_one() {
-    assert_eq!(al_testkit::text(al_testkit::run_in(SRC, "C", "ModifiedAtAfterTransferFromOther")), "Yes");
+    assert_eq!(
+        al_testkit::text(al_testkit::run_in(SRC, "C", "ModifiedAtAfterTransferFromOther")),
+        "Yes"
+    );
+}
+
+// Pinned only for a source read from the database: from a row built in memory, a read is refused.
+#[test]
+fn system_created_at_after_a_transfer_from_a_row_in_memory_is_refused() {
+    let r = al_testkit::run_in(SRC, "C", "CreatedAtAfterTransferFromMemory");
+    assert!(matches!(r, Err(Signal::Unsupported(_))), "{r:?}");
 }
 
 // SystemCreatedBy and SystemModifiedBy are not pinned there: a read is refused.
@@ -127,20 +149,29 @@ fn system_created_by_after_a_transfer_from_another_table_is_refused() {
 // buffer stays stale whatever the source.
 #[test]
 fn a_stale_buffer_stays_stale_after_a_transfer_from_another_table() {
-    assert_eq!(al_testkit::text(al_testkit::run_in(SRC, "C", "StaleBufferSourceNewer")), "DB:RecordChanged|second");
+    assert_eq!(
+        al_testkit::text(al_testkit::run_in(SRC, "C", "StaleBufferSourceNewer")),
+        "DB:RecordChanged|second"
+    );
 }
 
 // CnTransferFieldsModify.al:336-355 QE_TF_Other_CurrentBuffer_SourceOlder: a current buffer modifies fine.
 #[test]
 fn a_current_buffer_modifies_after_a_transfer_from_an_older_row() {
-    assert_eq!(al_testkit::text(al_testkit::run_in(SRC, "C", "CurrentBufferSourceOlder")), "other");
+    assert_eq!(
+        al_testkit::text(al_testkit::run_in(SRC, "C", "CurrentBufferSourceOlder")),
+        "other"
+    );
 }
 
 // CnTransferFieldsModify.al:414-479: after the Modify the row keeps its own SystemId and SystemCreatedAt and gets a new
 // SystemModifiedAt.
 #[test]
 fn the_row_keeps_its_own_created_at_after_the_modify() {
-    assert_eq!(al_testkit::text(al_testkit::run_in(SRC, "C", "AfterModify")), "Yes|Yes|Yes|other");
+    assert_eq!(
+        al_testkit::text(al_testkit::run_in(SRC, "C", "AfterModify")),
+        "Yes|Yes|Yes|other"
+    );
 }
 
 // The same test pins that the buffer keeps its own SystemId (`buffer systemid = own`) and that normal fields move.

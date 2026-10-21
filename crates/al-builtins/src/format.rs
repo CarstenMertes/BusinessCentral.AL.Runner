@@ -768,7 +768,8 @@ fn format_decimal(d: &rust_decimal::Decimal, standard: i32) -> Result<String, Fo
             return Ok("-0".to_string());
         }
         return Err(FormatFail::Unsupported(
-            "Format of a negative Decimal too small to show, in a standard format other than 0 and 9 (not pinned)".into(),
+            "Format of a negative Decimal too small to show, in a standard format other than 0 and 9 (not pinned)"
+                .into(),
         ));
     }
     let plain = n.to_string();

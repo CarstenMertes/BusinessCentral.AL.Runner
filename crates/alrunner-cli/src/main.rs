@@ -14,6 +14,7 @@ mod run;
 mod serve;
 mod style;
 mod testdata;
+mod version;
 
 use args::Command;
 use std::process::ExitCode;
@@ -57,7 +58,7 @@ fn real_main() -> ExitCode {
             ExitCode::SUCCESS
         }
         Command::Version => {
-            println!("alrunner {} ({})", env!("CARGO_PKG_VERSION"), env!("ALRUNNER_COMMIT"));
+            println!("{}", version::line());
             ExitCode::SUCCESS
         }
         Command::ListAssumptions(dir) => {

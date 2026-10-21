@@ -1761,7 +1761,20 @@ impl Session {
     /// The error of the table relation of the first link value `stamp_from_filters` would validate on the part's new line, when
     /// the related table lacks it; the line is left as it was.
     fn part_link_relation_error(&mut self, st: &St) -> Result<Option<Box<al_builtins::native::AlError>>, Signal> {
-        if st.borrow().host.is_none() || !self.has_source(st) {
+        // Pinned for a const link (`SubPageLink = "Document No." = const(D9)`); a field link keeps the validation in its turn.
+        let Some((host, idx)) = st
+            .borrow()
+            .host
+            .as_ref()
+            .and_then(|(h, c)| h.upgrade().map(|h| (h, *c)))
+        else {
+            return Ok(None);
+        };
+        let const_link = page_of(&self.engine(), &host).controls[idx]
+            .part_link
+            .as_ref()
+            .is_some_and(|l| !l.entries.is_empty() && l.entries.iter().all(|e| matches!(e, ir::LinkEntry::Filter(..))));
+        if !const_link || !self.has_source(st) {
             return Ok(None);
         }
         let rec = self.page_rec(st);

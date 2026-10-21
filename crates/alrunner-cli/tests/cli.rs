@@ -1501,3 +1501,21 @@ fn version_read_by_a_tool_that_takes_only_the_first_line_still_exits_0() {
     let o = child.wait_with_output().unwrap();
     assert_eq!(code(&o), 0, "{}", String::from_utf8_lossy(&o.stderr));
 }
+
+#[test]
+fn cache_help_prints_the_cache_commands_and_exits_0() {
+    for args in [
+        &["cache", "--help"][..],
+        &["cache", "-h"],
+        &["cache", "prune", "--help"],
+    ] {
+        let o = alrunner(args);
+        assert_eq!(code(&o), 0, "{args:?}: {}", text(&o));
+        let out = String::from_utf8_lossy(&o.stdout);
+        for needle in ["al-runner cache prune", "al-runner cache info", "al-runner cache clear"] {
+            assert!(out.contains(needle), "{args:?}: {needle}: {out}");
+        }
+        // Only the cache part of the help, not the whole of it.
+        assert!(!out.contains("SELECTION"), "{args:?}: {out}");
+    }
+}

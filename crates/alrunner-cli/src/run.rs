@@ -519,6 +519,22 @@ pub struct Report {
     pub object_names: Vec<String>,
     /// Per test of `doc["tests"]`: its capture as JSON (`capture::json`), when one was asked for.
     pub captured: Vec<Option<serde_json::Value>>,
+    /// Why the run came to its exit code when no test could tell (a selection that matches no test).
+    pub warnings: Vec<String>,
+}
+
+impl Report {
+    /// The report of a run that ran no test: exit code `code`, all counts 0, and why.
+    fn empty(code: u8, wall_s: f64, why: &str) -> Report {
+        Report {
+            doc: serde_json::from_str(&output::json(&[], code, wall_s)).unwrap_or_default(),
+            coverage: None,
+            messages: Vec::new(),
+            object_names: Vec::new(),
+            captured: Vec::new(),
+            warnings: vec![why.to_string()],
+        }
+    }
 }
 
 /// Everything the compile depends on but the selection and the text of the workspace files: the workspace file names, the dependency apps, the symbols, the target.
@@ -679,6 +695,10 @@ fn test_inner(a: &TestArgs, mut warm: Option<&mut WarmCtx>, collect: Option<&mut
             "no test codeunit (Subtype = Test) in the given apps"
         };
         eprintln!("error: {what}");
+        // A server request answers a summary with exit code 6, as `al-runner test` exits 6 (ADR-028 item 1).
+        if let Some(w) = warm.as_deref_mut() {
+            w.report = Some(Report::empty(6, started.elapsed().as_secs_f64(), what));
+        }
         return Ok(6);
     }
 
@@ -1550,6 +1570,7 @@ fn test_inner(a: &TestArgs, mut warm: Option<&mut WarmCtx>, collect: Option<&mut
                     })
                     .collect()
             },
+            warnings: Vec::new(),
         });
     }
     if let Some(target) = &a.output_json {

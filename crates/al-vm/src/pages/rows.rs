@@ -1894,7 +1894,8 @@ impl Session {
         } && !self.is_list(st)
             && st.borrow().host.is_none()
             && !st.borrow().parts.is_empty();
-        let mut parts_show = (doc_host && before_cursor == Cursor::Row && !before_draft).then(|| table.primary_key(&before_fields));
+        let mut parts_show =
+            (doc_host && before_cursor == Cursor::Row && !before_draft).then(|| table.primary_key(&before_fields));
         st.borrow_mut().walk_synced_parts = false;
         while at {
             st.borrow_mut().cursor = Cursor::Row;

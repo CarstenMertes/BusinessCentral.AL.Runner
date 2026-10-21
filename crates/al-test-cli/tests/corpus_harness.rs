@@ -459,8 +459,9 @@ fn all_versions_runs_each_oracle_writes_per_version_files_and_compares() {
     // Linux CI does not define, so no major has them. Three come: PW_RaisedEvents_OtherFormats and PW_RaisedEvents_RunRunModal
     // of 17234 (events/lt-platform-events-v/PeVTests.al:750, the RDLC holds lifted to `#if BC28PLUS`) and 85312
     // CodeunitRun_ByQualifiedName (misc/lt-cu-odd-leads/CuWriteTxTests.al, hold LT_HELD_BCLINUX_159 lifted inside its BC28PLUS
-    // guard).
-    assert!(out.contains("oracle: 195 case(s) differ between versions"), "{out}");
+    // guard). Corpus bump 42 makes it 196: PW_RaisedEvents_Execute of 69852 (PeVTests.al:725, hold LT_HELD_BCLINUX_158 lifted
+    // inside the BC28PLUS guard) now runs on BC 28 and 29.
+    assert!(out.contains("oracle: 196 case(s) differ between versions"), "{out}");
     // The known BC 29 differences are gated (ADR-015 3.4), so the runtime passes the same cases on every version, among the
     // cases every oracle has. One difference is known and open (corpus bump 10, backlog): the runtime passes
     // 71500 Get_Uses_Primary_Key_Not_Current_Key on BC 27 only. A new difference would be listed here.

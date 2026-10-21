@@ -121,6 +121,7 @@ fn apps(
                 target: String::new(),
                 layout_files: Vec::new(),
                 symbols: vec![],
+                ..Default::default()
             })
             .collect(),
     )

@@ -383,6 +383,79 @@ impl Session {
     /// an amount and 2:5 for a unit amount under 2:2 and 2:5 (types/lt-auto-format-currency/QiTableFieldAutoFormat.al:272
     /// `nocur_t1` 1,234.57, `nocur_t2` 1,234.56789). A currency with only one of the two places empty, and a code that is
     /// no currency without a General Ledger Setup row or with its places empty, are not pinned.
+    /// `Format` in code of the field numbered `field_no` of `record`, a Decimal table field whose AutoFormatExpression is an expression: BC
+    /// applies the field's AutoFormat outside a page too (types/lt-auto-format-currency/QiTableFieldAutoFormat.al:400-418
+    /// QI_TableFieldExpression_FormatInCode: a field of the row for types 1 and 2, the places of its currency; a procedure for
+    /// type 10, the precision of the format it answers). The lowering sends only those shapes here.
+    pub(crate) fn auto_format_field_places_of(&mut self, record: &Value, field_no: usize) -> Result<String, Signal> {
+        let Value::Record(rec) = record else {
+            return unsupported("Format of an AutoFormat field of something that is no record");
+        };
+        let engine = self.engine();
+        let table = rec.borrow().table as usize;
+        let Some(f) = engine.program.objects[table]
+            .table
+            .as_ref()
+            .and_then(|t| t.fields.iter().find(|f| f.id as usize == field_no))
+            .cloned()
+        else {
+            return unsupported("Format of an AutoFormat field the table does not have");
+        };
+        if let Some(why) = f.auto_format_refusal.clone() {
+            return unsupported(why);
+        }
+        let Some((object, routine)) = f.auto_format_expression else {
+            return unsupported(format!(
+                "Format of field {} whose AutoFormatExpression is an expression that did not compile",
+                f.name
+            ));
+        };
+        let kind = f
+            .properties
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case("AutoFormatType"))
+            .map(|(_, v)| v.trim().to_string())
+            .unwrap_or_default();
+        let text = f
+            .properties
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case("AutoFormatExpression"))
+            .map(|(_, v)| v.trim().to_string())
+            .unwrap_or_default();
+        let pinned = match kind.as_str() {
+            "1" | "2" => is_field_reference(&text),
+            "10" => text.contains('('),
+            _ => false,
+        };
+        if !pinned {
+            return unsupported(format!(
+                "Format in code of field {} with AutoFormatType {kind} and the AutoFormatExpression `{text}` (only a field of the row for types 1 and 2 and a procedure for type 10 are pinned)",
+                f.name
+            ));
+        }
+        let probe = Rc::new(RefCell::new(rec.borrow().clone()));
+        let expr = match self.call_on_record(object, routine, probe, None, Vec::new())?.0 {
+            Value::Text(t) | Value::Code(t) => t.into_string(),
+            other => {
+                return unsupported(format!("the AutoFormatExpression of field {} gave a {}", f.name, other.describe()));
+            }
+        };
+        let (min, max) = if kind == "10" {
+            match pagefmt::parse_precision(&expr) {
+                Some(p) => p,
+                None => {
+                    return unsupported(format!(
+                        "Format of field {} whose AutoFormatExpression of type 10 gave `{expr}` (only a precision is pinned)",
+                        f.name
+                    ));
+                }
+            }
+        } else {
+            self.auto_format_places(&kind, &expr)?
+        };
+        Ok(format!("{min}:{max}"))
+    }
+
     pub(super) fn auto_format_places(&mut self, kind: &str, expr: &str) -> Result<(u32, u32), Signal> {
         let unit = matches!(kind, "2" | "5");
         if expr.trim().is_empty() {

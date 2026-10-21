@@ -66,3 +66,4 @@ mod version_gates;
 mod xml_doctype;
 mod xml_xmlns_attribute;
 mod xml_xpath_axes;
+mod format_auto_format_field;

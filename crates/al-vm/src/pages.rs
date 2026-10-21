@@ -293,7 +293,8 @@ impl Session {
         }
         let mut answer = None;
         let mut result = Ok(());
-        let declared = page.triggers.iter().any(|(n, _)| n == name) || page.ext_triggers.iter().any(|(n, _, _)| n == name);
+        let declared =
+            page.triggers.iter().any(|(n, _)| n == name) || page.ext_triggers.iter().any(|(n, _, _)| n == name);
         if declared {
             st.borrow_mut().triggers_run += 1;
         }
@@ -308,7 +309,8 @@ impl Session {
             let s = st.borrow();
             !s.draft && s.cursor == Cursor::Row
         };
-        let fetch = (name == "onaftergetrecord" || (name == "onaftergetcurrrecord" && stored_row)) && self.has_source(st);
+        let fetch =
+            (name == "onaftergetrecord" || (name == "onaftergetcurrrecord" && stored_row)) && self.has_source(st);
         let after_new = if name == "onaftergetcurrrecord" && self.has_source(st) {
             let mut s = st.borrow_mut();
             let was = s.agcr_after_new;
@@ -320,7 +322,11 @@ impl Session {
         let held_xrec = if fetch && declared && !after_new {
             let before = {
                 let s = st.borrow();
-                if name == "onaftergetrecord" { s.agr_xrec.clone() } else { s.agcr_xrec.clone() }
+                if name == "onaftergetrecord" {
+                    s.agr_xrec.clone()
+                } else {
+                    s.agcr_xrec.clone()
+                }
             };
             let before = match before {
                 Some(f) => f,
@@ -383,8 +389,16 @@ impl Session {
         // What the repeater's page-variable controls show for the row: what the variables hold after its OnAfterGetRecord, and for
         // the current row after OnAfterGetCurrRecord (pages/lt-qi-row-page-var/QiRowPageVar.al:223 QI_RV_List_Navigation, :312
         // QI_RV_Part_Navigation: every row shows its own `agr N | cur N` after every move).
-        if declared && result.is_ok() && (name == "onaftergetrecord" || (name == "onaftergetcurrrecord" && stored_row)) {
-            self.note_row_vars(st, if name == "onaftergetcurrrecord" { vars_before.as_deref() } else { None })?;
+        if declared && result.is_ok() && (name == "onaftergetrecord" || (name == "onaftergetcurrrecord" && stored_row))
+        {
+            self.note_row_vars(
+                st,
+                if name == "onaftergetcurrrecord" {
+                    vars_before.as_deref()
+                } else {
+                    None
+                },
+            )?;
         }
         result.map(|()| answer)
     }

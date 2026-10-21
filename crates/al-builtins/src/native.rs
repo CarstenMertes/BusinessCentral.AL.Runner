@@ -198,7 +198,9 @@ pub trait Ctx: FormatCtx {
     /// The places `min:max` the AutoFormat of the field numbered `field_no` of `record` gives (its AutoFormatExpression evaluated with the
     /// record as Rec), for `Format` in code. Refused where the context has no session.
     fn auto_format_field_places(&mut self, _record: &Value, _field_no: usize) -> Result<String, Signal> {
-        Err(Signal::Unsupported("Format of a field with an AutoFormatExpression outside a session".into()))
+        Err(Signal::Unsupported(
+            "Format of a field with an AutoFormatExpression outside a session".into(),
+        ))
     }
     /// `CopyStream` where one side is a `DotNet` stream (ADR-024). `None` where the context has no
     /// .NET host.
@@ -1104,11 +1106,20 @@ fn format_decimal_field(ctx: &mut dyn Ctx, r: Option<&mut Value>, args: &mut [Va
 fn format_auto_format_field(ctx: &mut dyn Ctx, r: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
     let pos = match args.get(4) {
         Some(Value::Integer(p)) => *p as usize,
-        _ => return Err(Signal::Unsupported("Format of an AutoFormat field without its number".into())),
+        _ => {
+            return Err(Signal::Unsupported(
+                "Format of an AutoFormat field without its number".into(),
+            ));
+        }
     };
     let record = args.get(3).cloned().unwrap_or(Value::Null);
     let places = ctx.auto_format_field_places(&record, pos)?;
-    let mut rest = vec![args[0].clone(), args[1].clone(), args[2].clone(), Value::Text(places.into())];
+    let mut rest = vec![
+        args[0].clone(),
+        args[1].clone(),
+        args[2].clone(),
+        Value::Text(places.into()),
+    ];
     format_decimal_field(ctx, r, &mut rest)
 }
 

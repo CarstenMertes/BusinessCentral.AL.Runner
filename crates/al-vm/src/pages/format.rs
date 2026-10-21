@@ -450,7 +450,11 @@ impl Session {
         let expr = match self.call_on_record(object, routine, probe, None, Vec::new())?.0 {
             Value::Text(t) | Value::Code(t) => t.into_string(),
             other => {
-                return unsupported(format!("the AutoFormatExpression of field {} gave a {}", f.name, other.describe()));
+                return unsupported(format!(
+                    "the AutoFormatExpression of field {} gave a {}",
+                    f.name,
+                    other.describe()
+                ));
             }
         };
         let (min, max) = if kind == "10" {

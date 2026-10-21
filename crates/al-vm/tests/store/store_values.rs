@@ -664,5 +664,8 @@ fn a_stale_buffer_stays_stale_after_another_tables_transferfields() {
 // fields; Modify stamps the modified pair on the buffer and in the database; the database keeps its own created pair.
 #[test]
 fn transfer_fields_from_another_table_copies_the_four_audit_fields() {
-    assert_eq!(text(run("TransferAuditFromMemory")), "YesYesYesYes|YesNoYesYes|NoYesYes");
+    assert_eq!(
+        text(run("TransferAuditFromMemory")),
+        "YesYesYesYes|YesNoYesYes|NoYesYes"
+    );
 }

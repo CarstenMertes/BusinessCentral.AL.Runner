@@ -432,16 +432,26 @@ fn run(routine: &str) -> String {
 }
 
 fn obs(s: &str, name: &str) -> String {
-    s.split('#').find_map(|p| p.strip_prefix(&format!("{name}="))).unwrap_or("<missing>").to_string()
+    s.split('#')
+        .find_map(|p| p.strip_prefix(&format!("{name}=")))
+        .unwrap_or("<missing>")
+        .to_string()
 }
-
 
 /// testpart/QiHostSaveParts.al QI_HostSaveRecord_ChangedValue (:361-367).
 #[test]
 fn qi_hostsaverecord_changedvalue() {
     let s = run("SaveChanged");
-    assert_eq!(obs(&s, "open"), "H.AGR(D1 x=);H.AGCR(D1 x=);L.AGR(D1/10000|d1 l1 x=/0);L.AGR(D1/20000|d1 l2 x=D1/10000);L.AGR(D1/10000|d1 l1 x=D1/20000);L.AGR(D1/10000|d1 l1 x=D1/10000);L.AGCR(D1/10000|d1 l1 x=D1/0);U.AGR(D1/10000 x=/0);U.AGR(D1/20000 x=D1/10000);U.AGR(D2/10000 x=D1/20000);U.AGR(D1/10000 x=D2/10000);U.AGR(D1/10000 x=D1/10000);U.AGCR(D1/10000 x=/0);", "open");
-    assert_eq!(obs(&s, "setvalue"), "H.V(save b x=a);H.MOD(D1);T.HeadModify(D1);H.V(save done);L.AGR(D1/10000|d1 l1 x=D1/10000);L.AGR(D1/20000|d1 l2 x=D1/10000);L.AGR(D1/10000|d1 l1 x=D1/20000);L.AGR(D1/10000|d1 l1 x=D1/10000);L.AGCR(D1/10000|d1 l1 x=D1/10000);U.AGR(D1/10000 x=D1/10000);U.AGR(D1/20000 x=D1/10000);U.AGR(D2/10000 x=D1/20000);U.AGR(D1/10000 x=D2/10000);U.AGR(D1/10000 x=D1/10000);U.AGCR(D1/10000 x=D1/10000);", "setvalue");
+    assert_eq!(
+        obs(&s, "open"),
+        "H.AGR(D1 x=);H.AGCR(D1 x=);L.AGR(D1/10000|d1 l1 x=/0);L.AGR(D1/20000|d1 l2 x=D1/10000);L.AGR(D1/10000|d1 l1 x=D1/20000);L.AGR(D1/10000|d1 l1 x=D1/10000);L.AGCR(D1/10000|d1 l1 x=D1/0);U.AGR(D1/10000 x=/0);U.AGR(D1/20000 x=D1/10000);U.AGR(D2/10000 x=D1/20000);U.AGR(D1/10000 x=D2/10000);U.AGR(D1/10000 x=D1/10000);U.AGCR(D1/10000 x=/0);",
+        "open"
+    );
+    assert_eq!(
+        obs(&s, "setvalue"),
+        "H.V(save b x=a);H.MOD(D1);T.HeadModify(D1);H.V(save done);L.AGR(D1/10000|d1 l1 x=D1/10000);L.AGR(D1/20000|d1 l2 x=D1/10000);L.AGR(D1/10000|d1 l1 x=D1/20000);L.AGR(D1/10000|d1 l1 x=D1/10000);L.AGCR(D1/10000|d1 l1 x=D1/10000);U.AGR(D1/10000 x=D1/10000);U.AGR(D1/20000 x=D1/10000);U.AGR(D2/10000 x=D1/20000);U.AGR(D1/10000 x=D2/10000);U.AGR(D1/10000 x=D1/10000);U.AGCR(D1/10000 x=D1/10000);",
+        "setvalue"
+    );
     assert_eq!(obs(&s, "stored"), "b|a|a|", "stored");
     assert_eq!(obs(&s, "part-descr"), "d1 l1", "part-descr");
     assert_eq!(obs(&s, "after-part-read"), "", "after-part-read");
@@ -453,8 +463,16 @@ fn qi_hostsaverecord_changedvalue() {
 #[test]
 fn qi_hostsaverecord_samevalue() {
     let s = run("SaveSame");
-    assert_eq!(obs(&s, "open"), "H.AGR(D1 x=);H.AGCR(D1 x=);L.AGR(D1/10000|d1 l1 x=/0);L.AGR(D1/20000|d1 l2 x=D1/10000);L.AGR(D1/10000|d1 l1 x=D1/20000);L.AGR(D1/10000|d1 l1 x=D1/10000);L.AGCR(D1/10000|d1 l1 x=D1/0);U.AGR(D1/10000 x=/0);U.AGR(D1/20000 x=D1/10000);U.AGR(D2/10000 x=D1/20000);U.AGR(D1/10000 x=D2/10000);U.AGR(D1/10000 x=D1/10000);U.AGCR(D1/10000 x=/0);", "open");
-    assert_eq!(obs(&s, "setvalue"), "H.V(save a x=a);H.V(save done);L.AGR(D1/10000|d1 l1 x=D1/10000);L.AGR(D1/20000|d1 l2 x=D1/10000);L.AGR(D1/10000|d1 l1 x=D1/20000);L.AGR(D1/10000|d1 l1 x=D1/10000);L.AGCR(D1/10000|d1 l1 x=D1/10000);U.AGR(D1/10000 x=D1/10000);U.AGR(D1/20000 x=D1/10000);U.AGR(D2/10000 x=D1/20000);U.AGR(D1/10000 x=D2/10000);U.AGR(D1/10000 x=D1/10000);U.AGCR(D1/10000 x=D1/10000);", "setvalue");
+    assert_eq!(
+        obs(&s, "open"),
+        "H.AGR(D1 x=);H.AGCR(D1 x=);L.AGR(D1/10000|d1 l1 x=/0);L.AGR(D1/20000|d1 l2 x=D1/10000);L.AGR(D1/10000|d1 l1 x=D1/20000);L.AGR(D1/10000|d1 l1 x=D1/10000);L.AGCR(D1/10000|d1 l1 x=D1/0);U.AGR(D1/10000 x=/0);U.AGR(D1/20000 x=D1/10000);U.AGR(D2/10000 x=D1/20000);U.AGR(D1/10000 x=D2/10000);U.AGR(D1/10000 x=D1/10000);U.AGCR(D1/10000 x=/0);",
+        "open"
+    );
+    assert_eq!(
+        obs(&s, "setvalue"),
+        "H.V(save a x=a);H.V(save done);L.AGR(D1/10000|d1 l1 x=D1/10000);L.AGR(D1/20000|d1 l2 x=D1/10000);L.AGR(D1/10000|d1 l1 x=D1/20000);L.AGR(D1/10000|d1 l1 x=D1/10000);L.AGCR(D1/10000|d1 l1 x=D1/10000);U.AGR(D1/10000 x=D1/10000);U.AGR(D1/20000 x=D1/10000);U.AGR(D2/10000 x=D1/20000);U.AGR(D1/10000 x=D2/10000);U.AGR(D1/10000 x=D1/10000);U.AGCR(D1/10000 x=D1/10000);",
+        "setvalue"
+    );
     assert_eq!(obs(&s, "close"), "", "close");
 }
 
@@ -462,11 +480,19 @@ fn qi_hostsaverecord_samevalue() {
 #[test]
 fn qi_hostmodify_changedvalue() {
     let s = run("ModChanged");
-    assert_eq!(obs(&s, "open"), "H.AGR(D1 x=);H.AGCR(D1 x=);L.AGR(D1/10000|d1 l1 x=/0);L.AGR(D1/20000|d1 l2 x=D1/10000);L.AGR(D1/10000|d1 l1 x=D1/20000);L.AGR(D1/10000|d1 l1 x=D1/10000);L.AGCR(D1/10000|d1 l1 x=D1/0);U.AGR(D1/10000 x=/0);U.AGR(D1/20000 x=D1/10000);U.AGR(D2/10000 x=D1/20000);U.AGR(D1/10000 x=D2/10000);U.AGR(D1/10000 x=D1/10000);U.AGCR(D1/10000 x=/0);", "open");
+    assert_eq!(
+        obs(&s, "open"),
+        "H.AGR(D1 x=);H.AGCR(D1 x=);L.AGR(D1/10000|d1 l1 x=/0);L.AGR(D1/20000|d1 l2 x=D1/10000);L.AGR(D1/10000|d1 l1 x=D1/20000);L.AGR(D1/10000|d1 l1 x=D1/10000);L.AGCR(D1/10000|d1 l1 x=D1/0);U.AGR(D1/10000 x=/0);U.AGR(D1/20000 x=D1/10000);U.AGR(D2/10000 x=D1/20000);U.AGR(D1/10000 x=D2/10000);U.AGR(D1/10000 x=D1/10000);U.AGCR(D1/10000 x=/0);",
+        "open"
+    );
     assert_eq!(obs(&s, "setvalue"), "H.V(mod b x=a);H.V(mod done);", "setvalue");
     assert_eq!(obs(&s, "stored"), "a|b|a|", "stored");
     assert_eq!(obs(&s, "part-descr"), "d1 l1", "part-descr");
-    assert_eq!(obs(&s, "after-part-read"), "H.MOD(D1);T.HeadModify(D1);", "after-part-read");
+    assert_eq!(
+        obs(&s, "after-part-read"),
+        "H.MOD(D1);T.HeadModify(D1);",
+        "after-part-read"
+    );
     assert_eq!(obs(&s, "close"), "", "close");
     assert_eq!(obs(&s, "stored-after-close"), "a|b|a|", "stored-after-close");
 }
@@ -475,11 +501,19 @@ fn qi_hostmodify_changedvalue() {
 #[test]
 fn qi_hostplain_changedvalue() {
     let s = run("PlainChanged");
-    assert_eq!(obs(&s, "open"), "H.AGR(D1 x=);H.AGCR(D1 x=);L.AGR(D1/10000|d1 l1 x=/0);L.AGR(D1/20000|d1 l2 x=D1/10000);L.AGR(D1/10000|d1 l1 x=D1/20000);L.AGR(D1/10000|d1 l1 x=D1/10000);L.AGCR(D1/10000|d1 l1 x=D1/0);U.AGR(D1/10000 x=/0);U.AGR(D1/20000 x=D1/10000);U.AGR(D2/10000 x=D1/20000);U.AGR(D1/10000 x=D2/10000);U.AGR(D1/10000 x=D1/10000);U.AGCR(D1/10000 x=/0);", "open");
+    assert_eq!(
+        obs(&s, "open"),
+        "H.AGR(D1 x=);H.AGCR(D1 x=);L.AGR(D1/10000|d1 l1 x=/0);L.AGR(D1/20000|d1 l2 x=D1/10000);L.AGR(D1/10000|d1 l1 x=D1/20000);L.AGR(D1/10000|d1 l1 x=D1/10000);L.AGCR(D1/10000|d1 l1 x=D1/0);U.AGR(D1/10000 x=/0);U.AGR(D1/20000 x=D1/10000);U.AGR(D2/10000 x=D1/20000);U.AGR(D1/10000 x=D2/10000);U.AGR(D1/10000 x=D1/10000);U.AGCR(D1/10000 x=/0);",
+        "open"
+    );
     assert_eq!(obs(&s, "setvalue"), "H.V(plain b x=a);", "setvalue");
     assert_eq!(obs(&s, "stored"), "a|a|a|", "stored");
     assert_eq!(obs(&s, "part-descr"), "d1 l1", "part-descr");
-    assert_eq!(obs(&s, "after-part-read"), "H.MOD(D1);T.HeadModify(D1);", "after-part-read");
+    assert_eq!(
+        obs(&s, "after-part-read"),
+        "H.MOD(D1);T.HeadModify(D1);",
+        "after-part-read"
+    );
     assert_eq!(obs(&s, "close"), "", "close");
     assert_eq!(obs(&s, "stored-after-close"), "a|a|b|", "stored-after-close");
 }
@@ -489,12 +523,28 @@ fn qi_hostplain_changedvalue() {
 fn qi_partnewrow_thenhostsetvalue() {
     let s = run("PartNew");
     assert_eq!(obs(&s, "stored-before"), "2 10000=d1 l1 20000=d1 l2", "stored-before");
-    assert_eq!(obs(&s, "setvalue"), "L.INS(D1/30000|typed);T.LineInsert(D1/30000|typed);U.AGR(D1/30000 x=D1/10000);U.AGR(D1/30000 x=D1/30000);U.AGCR(D1/30000 x=/0);H.V(count 3 10000=d1 l1 20000=d1 l2 30000=typed);", "setvalue");
-    assert_eq!(obs(&s, "stored-after"), "3 10000=d1 l1 20000=d1 l2 30000=typed", "stored-after");
+    assert_eq!(
+        obs(&s, "setvalue"),
+        "L.INS(D1/30000|typed);T.LineInsert(D1/30000|typed);U.AGR(D1/30000 x=D1/10000);U.AGR(D1/30000 x=D1/30000);U.AGCR(D1/30000 x=/0);H.V(count 3 10000=d1 l1 20000=d1 l2 30000=typed);",
+        "setvalue"
+    );
+    assert_eq!(
+        obs(&s, "stored-after"),
+        "3 10000=d1 l1 20000=d1 l2 30000=typed",
+        "stored-after"
+    );
     assert_eq!(obs(&s, "part-descr"), "typed", "part-descr");
     assert_eq!(obs(&s, "after-part-read"), "", "after-part-read");
-    assert_eq!(obs(&s, "close"), "H.MOD(D1);T.HeadModify(D1);U.AGR(D1/10000 x=D1/30000);", "close");
-    assert_eq!(obs(&s, "stored-after-close"), "3 10000=d1 l1 20000=d1 l2 30000=typed", "stored-after-close");
+    assert_eq!(
+        obs(&s, "close"),
+        "H.MOD(D1);T.HeadModify(D1);U.AGR(D1/10000 x=D1/30000);",
+        "close"
+    );
+    assert_eq!(
+        obs(&s, "stored-after-close"),
+        "3 10000=d1 l1 20000=d1 l2 30000=typed",
+        "stored-after-close"
+    );
 }
 
 /// testpart/QiHostSaveParts.al QI_PartNewRowUntouched_ThenHostSetValue (:527-530).
@@ -504,7 +554,11 @@ fn qi_partnewrowuntouched_thenhostsetvalue() {
     assert_eq!(obs(&s, "setvalue"), "H.V(count 2 10000=d1 l1 20000=d1 l2);", "setvalue");
     assert_eq!(obs(&s, "stored-after"), "2 10000=d1 l1 20000=d1 l2", "stored-after");
     assert_eq!(obs(&s, "close"), "H.MOD(D1);T.HeadModify(D1);", "close");
-    assert_eq!(obs(&s, "stored-after-close"), "2 10000=d1 l1 20000=d1 l2", "stored-after-close");
+    assert_eq!(
+        obs(&s, "stored-after-close"),
+        "2 10000=d1 l1 20000=d1 l2",
+        "stored-after-close"
+    );
 }
 
 /// testpart/QiHostSaveParts.al QI_PartEditedRow_ThenHostSetValue (:553-557).
@@ -512,20 +566,40 @@ fn qi_partnewrowuntouched_thenhostsetvalue() {
 fn qi_parteditedrow_thenhostsetvalue() {
     let s = run("PartEdited");
     assert_eq!(obs(&s, "stored-before"), "2 10000=d1 l1 20000=d1 l2", "stored-before");
-    assert_eq!(obs(&s, "setvalue"), "L.MOD(D1/10000|edited x=d1 l1);T.LineModify(D1/10000|edited);U.AGR(D1/10000 x=D1/10000);U.AGCR(D1/10000 x=/0);H.V(count 2 10000=edited 20000=d1 l2);", "setvalue");
+    assert_eq!(
+        obs(&s, "setvalue"),
+        "L.MOD(D1/10000|edited x=d1 l1);T.LineModify(D1/10000|edited);U.AGR(D1/10000 x=D1/10000);U.AGCR(D1/10000 x=/0);H.V(count 2 10000=edited 20000=d1 l2);",
+        "setvalue"
+    );
     assert_eq!(obs(&s, "stored-after"), "2 10000=edited 20000=d1 l2", "stored-after");
     assert_eq!(obs(&s, "close"), "H.MOD(D1);T.HeadModify(D1);", "close");
-    assert_eq!(obs(&s, "stored-after-close"), "2 10000=edited 20000=d1 l2", "stored-after-close");
+    assert_eq!(
+        obs(&s, "stored-after-close"),
+        "2 10000=edited 20000=d1 l2",
+        "stored-after-close"
+    );
 }
 
 /// testpart/QiHostSaveParts.al QI_PartNewRow_ThenHostSaveRecord (:580-583).
 #[test]
 fn qi_partnewrow_thenhostsaverecord() {
     let s = run("PartNewSave");
-    assert_eq!(obs(&s, "setvalue"), "L.INS(D1/30000|typed);T.LineInsert(D1/30000|typed);U.AGR(D1/30000 x=D1/10000);U.AGR(D1/30000 x=D1/30000);U.AGCR(D1/30000 x=/0);H.V(save b x=a);H.MOD(D1);T.HeadModify(D1);H.V(save done);L.AGR(D1/30000|typed x=D1/20000);L.AGR(D1/20000|d1 l2 x=D1/30000);L.AGR(D1/10000|d1 l1 x=D1/20000);L.AGR(D1/30000|typed x=D1/10000);L.AGR(D1/30000|typed x=D1/30000);L.AGCR(D1/30000|typed x=D1/30000);U.AGR(D1/10000 x=D1/30000);U.AGR(D1/10000 x=D1/10000);U.AGR(D1/20000 x=D1/10000);U.AGR(D1/30000 x=D1/20000);U.AGR(D2/10000 x=D1/30000);U.AGR(D1/10000 x=D2/10000);U.AGR(D1/10000 x=D1/10000);U.AGCR(D1/10000 x=D1/10000);", "setvalue");
-    assert_eq!(obs(&s, "stored-after"), "3 10000=d1 l1 20000=d1 l2 30000=typed", "stored-after");
+    assert_eq!(
+        obs(&s, "setvalue"),
+        "L.INS(D1/30000|typed);T.LineInsert(D1/30000|typed);U.AGR(D1/30000 x=D1/10000);U.AGR(D1/30000 x=D1/30000);U.AGCR(D1/30000 x=/0);H.V(save b x=a);H.MOD(D1);T.HeadModify(D1);H.V(save done);L.AGR(D1/30000|typed x=D1/20000);L.AGR(D1/20000|d1 l2 x=D1/30000);L.AGR(D1/10000|d1 l1 x=D1/20000);L.AGR(D1/30000|typed x=D1/10000);L.AGR(D1/30000|typed x=D1/30000);L.AGCR(D1/30000|typed x=D1/30000);U.AGR(D1/10000 x=D1/30000);U.AGR(D1/10000 x=D1/10000);U.AGR(D1/20000 x=D1/10000);U.AGR(D1/30000 x=D1/20000);U.AGR(D2/10000 x=D1/30000);U.AGR(D1/10000 x=D2/10000);U.AGR(D1/10000 x=D1/10000);U.AGCR(D1/10000 x=D1/10000);",
+        "setvalue"
+    );
+    assert_eq!(
+        obs(&s, "stored-after"),
+        "3 10000=d1 l1 20000=d1 l2 30000=typed",
+        "stored-after"
+    );
     assert_eq!(obs(&s, "close"), "", "close");
-    assert_eq!(obs(&s, "stored-after-close"), "3 10000=d1 l1 20000=d1 l2 30000=typed", "stored-after-close");
+    assert_eq!(
+        obs(&s, "stored-after-close"),
+        "3 10000=d1 l1 20000=d1 l2 30000=typed",
+        "stored-after-close"
+    );
 }
 
 /// testpart/QiHostSaveParts.al QI_HostSaveRecord_PartMovedToSecondRow (:409-415).
@@ -534,8 +608,16 @@ fn qi_hostsaverecord_partmovedtosecondrow() {
     let s = run("PartMoved");
     assert_eq!(obs(&s, "part-next"), "Yes", "part-next");
     assert_eq!(obs(&s, "part-row"), "20000", "part-row");
-    assert_eq!(obs(&s, "open-and-next"), "H.AGR(D1 x=);H.AGCR(D1 x=);L.AGR(D1/10000|d1 l1 x=/0);L.AGR(D1/20000|d1 l2 x=D1/10000);L.AGR(D1/10000|d1 l1 x=D1/20000);L.AGR(D1/10000|d1 l1 x=D1/10000);L.AGCR(D1/10000|d1 l1 x=D1/0);U.AGR(D1/10000 x=/0);U.AGR(D1/20000 x=D1/10000);U.AGR(D2/10000 x=D1/20000);U.AGR(D1/10000 x=D2/10000);U.AGR(D1/10000 x=D1/10000);U.AGCR(D1/10000 x=/0);L.AGR(D1/20000|d1 l2 x=D1/10000);L.AGR(D1/20000|d1 l2 x=D1/20000);L.AGCR(D1/20000|d1 l2 x=D1/10000);", "open-and-next");
-    assert_eq!(obs(&s, "setvalue"), "H.V(save b x=a);H.MOD(D1);T.HeadModify(D1);H.V(save done);L.AGR(D1/20000|d1 l2 x=D1/20000);L.AGR(D1/10000|d1 l1 x=D1/20000);L.AGR(D1/20000|d1 l2 x=D1/10000);L.AGR(D1/20000|d1 l2 x=D1/20000);L.AGCR(D1/20000|d1 l2 x=D1/20000);U.AGR(D1/10000 x=D1/10000);U.AGR(D1/20000 x=D1/10000);U.AGR(D2/10000 x=D1/20000);U.AGR(D1/10000 x=D2/10000);U.AGR(D1/10000 x=D1/10000);U.AGCR(D1/10000 x=D1/10000);", "setvalue");
+    assert_eq!(
+        obs(&s, "open-and-next"),
+        "H.AGR(D1 x=);H.AGCR(D1 x=);L.AGR(D1/10000|d1 l1 x=/0);L.AGR(D1/20000|d1 l2 x=D1/10000);L.AGR(D1/10000|d1 l1 x=D1/20000);L.AGR(D1/10000|d1 l1 x=D1/10000);L.AGCR(D1/10000|d1 l1 x=D1/0);U.AGR(D1/10000 x=/0);U.AGR(D1/20000 x=D1/10000);U.AGR(D2/10000 x=D1/20000);U.AGR(D1/10000 x=D2/10000);U.AGR(D1/10000 x=D1/10000);U.AGCR(D1/10000 x=/0);L.AGR(D1/20000|d1 l2 x=D1/10000);L.AGR(D1/20000|d1 l2 x=D1/20000);L.AGCR(D1/20000|d1 l2 x=D1/10000);",
+        "open-and-next"
+    );
+    assert_eq!(
+        obs(&s, "setvalue"),
+        "H.V(save b x=a);H.MOD(D1);T.HeadModify(D1);H.V(save done);L.AGR(D1/20000|d1 l2 x=D1/20000);L.AGR(D1/10000|d1 l1 x=D1/20000);L.AGR(D1/20000|d1 l2 x=D1/10000);L.AGR(D1/20000|d1 l2 x=D1/20000);L.AGCR(D1/20000|d1 l2 x=D1/20000);U.AGR(D1/10000 x=D1/10000);U.AGR(D1/20000 x=D1/10000);U.AGR(D2/10000 x=D1/20000);U.AGR(D1/10000 x=D2/10000);U.AGR(D1/10000 x=D1/10000);U.AGCR(D1/10000 x=D1/10000);",
+        "setvalue"
+    );
     assert_eq!(obs(&s, "part-row-after"), "20000", "part-row-after");
     assert_eq!(obs(&s, "after-part-read"), "", "after-part-read");
     assert_eq!(obs(&s, "close"), "", "close");

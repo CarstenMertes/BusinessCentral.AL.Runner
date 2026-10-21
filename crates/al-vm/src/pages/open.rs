@@ -1495,16 +1495,21 @@ impl Session {
         // A part of a Document or Card host opened for view on no row shows no row, though rows of the blank key exist
         // (pages/lt-part-line-before-host-key/PartLineBeforeHostKey.al:1578 QH_OpenView_NoRow_BlankKeyLinesExist
         // `part_description=[]`).
-        let host_shows_no_row = st.borrow().host.as_ref().and_then(|(h, _)| h.upgrade()).is_some_and(|h| {
-            let hb = h.borrow();
-            hb.host.is_none()
-                && hb.mode == PageMode::View
-                && hb.cursor == Cursor::None
-                && matches!(
-                    self.engine.object_facts[hb.object as usize].page_type,
-                    Some(al_ir::PageType::Document | al_ir::PageType::Card)
-                )
-        });
+        let host_shows_no_row = st
+            .borrow()
+            .host
+            .as_ref()
+            .and_then(|(h, _)| h.upgrade())
+            .is_some_and(|h| {
+                let hb = h.borrow();
+                hb.host.is_none()
+                    && hb.mode == PageMode::View
+                    && hb.cursor == Cursor::None
+                    && matches!(
+                        self.engine.object_facts[hb.object as usize].page_type,
+                        Some(al_ir::PageType::Document | al_ir::PageType::Card)
+                    )
+            });
         if !host_shows_no_row && self.nav_find(st, which)? {
             // A part linked by a field that shows rows of a host that is a new, unsaved record: BC inserts the host at Close although
             // nothing was typed (PartLineBeforeHostKey.al:838 PYB_OpenNew_LinkedPart_BlankKeyRowsExist `close =

@@ -79,7 +79,10 @@ codeunit 86822 "QI AF Test"
 
 #[test]
 fn format_in_code_applies_the_fields_auto_format_expression() {
-    assert_eq!(text(al_testkit::run_in(SRC, "QI AF Test", "InCode")), "1,234.568|1,234.5679|1,234.568");
+    assert_eq!(
+        text(al_testkit::run_in(SRC, "QI AF Test", "InCode")),
+        "1,234.568|1,234.5679|1,234.568"
+    );
 }
 
 /// AutoFormatType 4 with an expression is not observed in code (only 1, 2 and 10 are): refused.

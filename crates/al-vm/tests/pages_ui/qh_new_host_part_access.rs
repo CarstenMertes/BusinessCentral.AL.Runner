@@ -342,7 +342,10 @@ fn a_part_field_read_of_an_empty_part_inserts_the_new_host() {
 /// PartLineBeforeHostKey.al:1725 QH_BlankRows_OpenNew_CloseOnly.
 #[test]
 fn close_inserts_no_new_host() {
-    assert_eq!(run("CloseOnly"), "open=[HP.OnNewRecord]#log=[]#close=[]#headers=0 lines=2");
+    assert_eq!(
+        run("CloseOnly"),
+        "open=[HP.OnNewRecord]#log=[]#close=[]#headers=0 lines=2"
+    );
 }
 
 /// PartLineBeforeHostKey.al:2083 QH_BlankRows_PartFirst.
@@ -357,29 +360,44 @@ fn a_part_first_inserts_the_new_host() {
 /// PartLineBeforeHostKey.al:2116 QH_BlankRows_ReadHostControl.
 #[test]
 fn a_host_field_read_inserts_nothing() {
-    assert_eq!(run("HostRead"), "open=[HP.OnNewRecord]#host-read=#log=[]#close=[]#headers=0 lines=1");
+    assert_eq!(
+        run("HostRead"),
+        "open=[HP.OnNewRecord]#host-read=#log=[]#close=[]#headers=0 lines=1"
+    );
 }
 
 /// PartLineBeforeHostKey.al:1909 QH_BlankRows_HostNew_ThenClose.
 #[test]
 fn a_host_new_inserts_nothing() {
-    assert_eq!(run("HostNew"), "open=[HP.OnNewRecord]#log=[HP.OnNewRecord]#close=[]#headers=0 lines=1");
+    assert_eq!(
+        run("HostNew"),
+        "open=[HP.OnNewRecord]#log=[HP.OnNewRecord]#close=[]#headers=0 lines=1"
+    );
 }
 
 /// PartLineBeforeHostKey.al:1939 QH_BlankRows_OkInvoke.
 #[test]
 fn ok_inserts_no_new_host() {
-    assert_eq!(run("OkInvoke"), "open=[HP.OnNewRecord]#log=[]#close=[]#headers=0 lines=1");
+    assert_eq!(
+        run("OkInvoke"),
+        "open=[HP.OnNewRecord]#log=[]#close=[]#headers=0 lines=1"
+    );
 }
 
 /// PartLineBeforeHostKey.al:1503 QH_OpenView_NoRow_Document: the part runs OnNewRecord once, no validation, nothing is inserted.
 #[test]
 fn open_view_on_no_host_row_runs_the_parts_on_new_record_once() {
-    assert_eq!(run("ViewNoRow"), "open=[LP.OnNewRecord:]#no=#read=#log=[]#close=[]#headers=0 lines=0");
+    assert_eq!(
+        run("ViewNoRow"),
+        "open=[LP.OnNewRecord:]#no=#read=#log=[]#close=[]#headers=0 lines=0"
+    );
 }
 
 /// PartLineBeforeHostKey.al:1578 QH_OpenView_NoRow_BlankKeyLinesExist: the part shows no row although lines of the blank key exist.
 #[test]
 fn open_view_on_no_host_row_shows_no_part_row() {
-    assert_eq!(run("ViewNoRowBlankLines"), "open=[LP.OnNewRecord:]#no=#read=#log=[]#close=[]#headers=0 lines=1");
+    assert_eq!(
+        run("ViewNoRowBlankLines"),
+        "open=[LP.OnNewRecord:]#no=#read=#log=[]#close=[]#headers=0 lines=1"
+    );
 }

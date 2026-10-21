@@ -379,8 +379,8 @@ impl Session {
                     // A GoToKey of a Document host onto the row it stands on reads the host again, not its parts (pages/
                     // lt-qj-part-propagation/QjPartPropagation.al:485 QJ_Both_PartModifiesHost_ThenHostSave `log-open`, :714
                     // QJ_SubformSaveRecord_StoredRow `log-open = S.AGCR(10000 r=1 x=0)`).
-                    let document_host =
-                        self.engine.object_facts[st.borrow().object as usize].page_type == Some(al_ir::PageType::Document);
+                    let document_host = self.engine.object_facts[st.borrow().object as usize].page_type
+                        == Some(al_ir::PageType::Document);
                     if how == Sync::Stayed && child.borrow().open && document_host {
                         continue;
                     }
@@ -455,7 +455,13 @@ impl Session {
     /// :580 QI_PartNewRow_ThenHostSaveRecord). Pinned for a Document host whose parts are ListParts of 2 to 4 rows standing
     /// on a stored row; any other shape is refused.
     pub(super) fn reread_parts_after_host_save_record(&mut self, st: &St) -> Result<(), Signal> {
-        let parts: Vec<(usize, St)> = st.borrow().parts.iter().filter(|(_, c)| c.borrow().open).cloned().collect();
+        let parts: Vec<(usize, St)> = st
+            .borrow()
+            .parts
+            .iter()
+            .filter(|(_, c)| c.borrow().open)
+            .cloned()
+            .collect();
         if parts.is_empty() {
             return Ok(());
         }
@@ -473,7 +479,8 @@ impl Session {
         }
         for (_, child) in &parts {
             let o = child.borrow().object as usize;
-            let list_part = matches!(&self.engine.object_facts[o].page_type, Some(al_ir::PageType::Other(t)) if t == "listpart");
+            let list_part =
+                matches!(&self.engine.object_facts[o].page_type, Some(al_ir::PageType::Other(t)) if t == "listpart");
             let (cursor, draft, dirty) = {
                 let c = child.borrow();
                 (c.cursor, c.draft, c.dirty)
@@ -562,7 +569,11 @@ impl Session {
             .into_iter()
             .map(|stored| al_builtins::value::WindowRow {
                 key: table.primary_key(&stored),
-                shown: if Self::same_key(&table.primary_key(&stored), &key) { shown_current.clone() } else { stored.clone() },
+                shown: if Self::same_key(&table.primary_key(&stored), &key) {
+                    shown_current.clone()
+                } else {
+                    stored.clone()
+                },
                 stored,
             })
             .collect();
@@ -1176,7 +1187,9 @@ impl Session {
             if pending {
                 let o = st.borrow().object as usize;
                 if self.engine.object_facts[o].page_type != Some(al_ir::PageType::Document) {
-                    al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::PartRowSavedBeforeHostSetValue);
+                    al_builtins::assumptions::assume(
+                        al_builtins::assumptions::Assumption::PartRowSavedBeforeHostSetValue,
+                    );
                     self.save_row(&child)?;
                     continue;
                 }
@@ -1204,15 +1217,24 @@ impl Session {
         let page = page_of(&engine, host);
         let siblings: Vec<(usize, St)> = {
             let h = host.borrow();
-            h.parts.iter().chain(h.hidden_parts.iter()).filter(|(_, c)| !Rc::ptr_eq(c, child) && c.borrow().open).cloned().collect()
+            h.parts
+                .iter()
+                .chain(h.hidden_parts.iter())
+                .filter(|(_, c)| !Rc::ptr_eq(c, child) && c.borrow().open)
+                .cloned()
+                .collect()
         };
         for (i, sib) in siblings {
             if !self.has_source(&sib) || self.page_rec(&sib).borrow().table != table {
                 continue;
             }
             let o = sib.borrow().object as usize;
-            let list_part = matches!(&self.engine.object_facts[o].page_type, Some(al_ir::PageType::Other(t)) if t == "listpart");
-            let linked = page.controls[i].part_link.as_ref().is_some_and(|l| !l.entries.is_empty() || l.provider.is_some());
+            let list_part =
+                matches!(&self.engine.object_facts[o].page_type, Some(al_ir::PageType::Other(t)) if t == "listpart");
+            let linked = page.controls[i]
+                .part_link
+                .as_ref()
+                .is_some_and(|l| !l.entries.is_empty() || l.provider.is_some());
             let (cursor, draft, dirty, stale, hidden) = {
                 let c = sib.borrow();
                 let hidden = host.borrow().hidden_parts.iter().any(|(h, _)| *h == i);

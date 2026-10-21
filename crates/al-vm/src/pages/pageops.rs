@@ -184,7 +184,10 @@ impl Session {
         }
         if method.recv() == PageRecv::TestPart {
             self.first_part_access(st, name, false)?;
-        } else if st.borrow().new_host_part_rows && st.borrow().host.is_none() && !matches!(name, PageMethod::Close | PageMethod::New | PageMethod::OK) {
+        } else if st.borrow().new_host_part_rows
+            && st.borrow().host.is_none()
+            && !matches!(name, PageMethod::Close | PageMethod::New | PageMethod::OK)
+        {
             // A new host whose part shows rows of the blank key: Close and New() are pinned (PartLineBeforeHostKey.al:1725
             // QH_BlankRows_OpenNew_CloseOnly, :1909 QH_BlankRows_HostNew_ThenClose), nothing else.
             return unsupported(format!(

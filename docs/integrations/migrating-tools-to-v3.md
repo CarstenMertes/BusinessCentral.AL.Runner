@@ -162,13 +162,14 @@ lines on stderr. Start options are the request-independent options of `al-runner
 `--no-download`, `--test-data`, `--no-test-data`, `--allow-not-run`, `--server-url`, `--environment` and the like);
 `--protocol 2` is accepted. An APP and the options that select tests or write reports (`--filter`, `--test`,
 `--codeunit`, `--test-exact`, `--exclude-test`, `--isolation`, `--junit`, `--output-json`, `--coverage*`, `--explain`)
-are an error at start-up (exit 2).
+are an error at start-up (exit 2). So are `--recipe microsoft` and `--impact-of`: a request runs the tests once, the
+plain way, and these make a run of another kind.
 
 | Command | v3 |
 |---|---|
 | `runTests` | Fields `sourcePaths` (required), `packagePaths`, `coverage`, `perTestCoverage`, `test` (matched like `--test`, section 3: `Codeunit50100.` with the dot selects a codeunit), `excludeTests`, `testIsolation` (`codeunit`, `test`, `disabled`; the aliases of `--isolation` are refused), `serverUrl` (as `--server-url`), `announceStart` (one `{"type":"started","codeunit":<id>,"test":"<method>"}` line when the first test starts; ADR-028). `affectedOnly`, `includeFailing`, `strictEnvironment`, `tdd`: `{"error": ...}` (deferred). `captureValues`, `iterationTracking`: `capturedValues` and `loops` on each `test` line (ADR-030; v2 has them for `execute` only). `code`: accepted, with a `warnings` entry in the summary. Any other field: `{"error": "unknown field ..."}`. |
 | `execute` | Runs the `OnRun` trigger of one codeunit per app (`sourcePaths`) or of inline `code`; one answer line without `type`: `{"exitCode","tests":[{"name","status","durationMs","message","stackTrace","stackFrames","messages"}],"warnings","coverage","perTestCoverage"}`. `captureValues` and `iterationTracking` give `capturedValues` and `loops` on each test and, with `iterationTracking`, the tagged `messages` on the response (ADR-030; `runTests` takes both too: they are on the `test` lines). Names: `Codeunit<ID>.OnRun`, for `code` `<object name>.OnRun`. `code` and `sourcePaths` together are an error. `testIsolation` and the `runTests`-only fields are accepted with a `warnings` entry. An app with no codeunit that has an `OnRun` trigger answers `exitCode` 6, `tests: []` and a warning. Details in ADR-028, item 9. |
-| `cancel` | Answered at once: `{"type":"ack","command":"cancel","noop":bool}`. During a run it stops **after the current test**: the tests that ran were already streamed, and the summary has `cancelled: true`, `exitCode: 130`, as in v2. (Known bug in 3.0.0-alpha.2 and later builds up to this note: the summary has `cancelled: true` but the exit code of the tests that ran, for example 0.) |
+| `cancel` | Answered at once: `{"type":"ack","command":"cancel","noop":bool}`. During a run it stops **after the current test**: the tests that ran were already streamed, and the summary has `cancelled: true`, `exitCode: 130`, as in v2. A run that `shutdown` or the end of input stops has exit code 130 too. |
 | `shutdown` | `{"status":"shutting down"}`, then exit 0. During a run it stops the run after the current test like `cancel`: the summary (`cancelled: true`) comes first, then `{"status":"shutting down"}`. EOF on stdin stops a run the same way and exits 0. |
 
 Differences a client must adapt to:
@@ -193,9 +194,8 @@ Differences a client must adapt to:
    `changedFiles`, `selection`, `companyInitFailures`, `sourceScanFailures` are not sent.
 5. A request that cannot run answers one `{"error": "<reason>"}` line instead of a summary with exit code 2 or 3:
    for example `{"error":"/x: no such file or folder"}`, ``{"error":"unknown field `cobertura` for runTests"}``,
-   ``{"error":"`sourcePaths` needs at least one app folder"}``. (Known bug: a `test` or `excludeTests` that matches no
-   test answers `{"error":"the run produced no report"}`, and the reason is only on stderr; a summary with exit code 6
-   is meant.)
+   ``{"error":"`sourcePaths` needs at least one app folder"}``. A `test` or `excludeTests` that matches no test is not
+   an error: it answers a summary with exit code 6, all counts 0, and the reason in `warnings`.
 6. While a run is in progress `cancel` is answered at once. `shutdown` takes effect after the current test (see the
    table). Other requests are queued and run in order, as in v2.
 7. `testIsolation: "test"` means TestIsolation Function (section 3), `"disabled"` runs nothing.

@@ -663,10 +663,23 @@ impl Session {
     pub(super) fn load_first_row(&mut self, st: &St, mode: PageMode, with_record: bool) -> Result<(), Signal> {
         let has_source = self.has_source(st);
         if !has_source {
-            // A page over no table shows its one implicit row: the expressions, then OnAfterGetRecord.
+            // A card over no table: OpenNew fails with DB:ClientInsertDenied after OnOpenPage, and no other trigger runs
+            // (misc/lt-protected-var-abs-query-views/P146PageExprSetValue.al:460 QG_NoSource_OpenNew_StepLog `qg open;`). Another
+            // page type is not pinned.
+            if mode == PageMode::New && !self.is_request_page(st) {
+                if !self.is_card(st) {
+                    return unsupported("OpenNew of a page without a source table other than a card (not pinned)");
+                }
+                return Err(self.no_source_open_new_denied(st)?);
+            }
+            // A page over no table shows its one implicit row: the expressions, then OnAfterGetCurrRecord. A card runs no
+            // OnAfterGetRecord (P146PageExprSetValue.al:420 QG_NoSource_OpenEdit_StepLog, :440 QG_NoSource_OpenView_StepLog
+            // `qg open;qg agcr;`); for another page type it is not pinned and stays as it was.
             st.borrow_mut().cursor = Cursor::Row;
             self.populate_expressions(st)?;
-            self.page_trigger(st, "onaftergetrecord", vec![])?;
+            if !self.is_card(st) || self.is_request_page(st) {
+                self.page_trigger(st, "onaftergetrecord", vec![])?;
+            }
             self.page_trigger(st, "onaftergetcurrrecord", vec![])?;
             self.page_event(st, "onaftergetcurrrecordevent", None, None)?;
             return Ok(());

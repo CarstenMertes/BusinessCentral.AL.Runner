@@ -638,6 +638,19 @@ impl Session {
         if st.borrow().host.is_some() {
             self.save_row(st)?;
         }
+        // A new row of a card whose key a SetValue typed is stored before the next action's trigger (pages/lt-table-globals-page/
+        // TableGlobalsPageWithoutValidation.al:318 QG_NewDraft_KeyTyped_ThenBumpAction: `stored after the SetValue` No, `stored
+        // after BumpOnly` Yes, `Seen after BumpOnly` I0, `LastCount after ReadCount` 2).
+        // Pinned for an action with OnAction only; before a RunObject action it is not pinned and stays as it was.
+        let plain_draft = page_of(&engine, st).controls[idx].run_object.is_none()
+            && page_of(&engine, st).controls[idx].trigger("onaction").is_some()
+            && self.plain_card_draft(st)?;
+        if was_dirty && plain_draft && self.draft_key_changed(st)? {
+            let rec = self.page_rec(st);
+            self.reset_table_globals(&rec);
+            self.save_row(st)?;
+        }
+        let draft_before = (plain_draft && st.borrow().draft).then(|| self.page_rec(st).borrow().fields.clone());
         st.borrow_mut().refresh = false;
         // An edit the client sends before the action (a control SetValue left the page dirty) is
         // saved, and the saved row is read again: OnAfterGetRecord of the base runs before the
@@ -807,6 +820,25 @@ impl Session {
                 st.borrow_mut().refresh = false;
             }
             r?;
+            // A new row of a card whose key the action set is stored right after the action, on fresh table globals: its
+            // OnInsert and the next action see none of what the action set in them (pages/lt-table-globals-page/
+            // TableGlobalsPageWithoutValidation.al:235 QG_NewDraft_KeySetByAction_WhenStored `stored after the action` Yes, `Seen
+            // read` I0, `LastCount after the second action` 0; :272 _ThenCloseAtOnce; :293 _ThenBumpAction; :187
+            // Card_NewDraft_KeySetByActionThenClose). An action that changes nothing leaves it as it is (:348
+            // QG_NewDraft_NoKey_BumpAction_ThenClose). One that changes other fields of it and not the key is not pinned.
+            if let Some(before) = draft_before.filter(|_| st.borrow().draft && st.borrow().open) {
+                let rec = self.page_rec(st);
+                if self.stored_row(&rec)?.is_none() && !Self::same_values(&rec.borrow().fields, &before) {
+                    if !self.draft_key_changed(st)? {
+                        return unsupported(
+                            "an action that changes a new row of a card but not its key (when the row is stored is not pinned)",
+                        );
+                    }
+                    self.reset_table_globals(&rec);
+                    st.borrow_mut().dirty = true;
+                    self.save_row(st)?;
+                }
+            }
             // What the action left in Rec is saved when the client leaves the row (corpus
             // record/PWTableGlobals.al:408-431, PageModify_AfterActionChangedRec_NoValidation).
             if let Some(before) =
@@ -876,6 +908,22 @@ impl Session {
             if !find_pinned {
                 self.run_refresh(st)?;
             }
+            // A card without a source table runs OnAfterGetCurrRecord once after each action, also after one that called
+            // CurrPage.Update(false) (misc/lt-protected-var-abs-query-views/P146PageExprSetValue.al:351
+            // P146_NoSourceTable_SetValue_And_Action `log after bump`, :420 QG_NoSource_OpenEdit_StepLog `qg action;qg agcr;`,
+            // `qg update;qg update done;qg agcr;`). Another page type is not pinned.
+            if !self.has_source(st) && st.borrow().open && !self.is_request_page(st) {
+                if !self.is_card(st) {
+                    if self.declares(st, "onaftergetcurrrecord") {
+                        return unsupported(
+                            "an action on a page without a source table other than a card that declares OnAfterGetCurrRecord (not pinned)",
+                        );
+                    }
+                } else {
+                    self.page_trigger(st, "onaftergetcurrrecord", vec![])?;
+                    self.page_event(st, "onaftergetcurrrecordevent", None, None)?;
+                }
+            }
             // An action that closed the page: the client still reads the row once more (pages/lt-page-runtime/P82PageRun.al:
             // RunModal_CurrPageClose_Action `...;OnClosePage;OnAfterGetRecord(A)`).
             if reads_rows && !st.borrow().open && !self.is_list(st) && !self.declares(st, "onaftergetcurrrecord") {
@@ -886,6 +934,41 @@ impl Session {
             }
         }
         Ok(Value::Null)
+    }
+
+    /// The new row of an open card over a table, not a part, without DelayedInsert, extensions or a view of its own: the shape
+    /// pages/lt-table-globals-page/TableGlobalsPageWithoutValidation.al pins for when an action stores it.
+    fn plain_card_draft(&self, st: &St) -> Result<bool, Signal> {
+        if !st.borrow().open || !st.borrow().draft || st.borrow().host.is_some() || !st.borrow().parts.is_empty() {
+            return Ok(false);
+        }
+        if !self.has_source(st) || !self.is_card(st) || self.is_request_page(st) {
+            return Ok(false);
+        }
+        let engine = self.engine();
+        let object = st.borrow().object as usize;
+        let delayed =
+            effective_prop(&engine, object, "DelayedInsert")?.is_some_and(|v| v.trim().eq_ignore_ascii_case("true"));
+        let extended = engine.program.objects[object]
+            .page
+            .as_ref()
+            .is_some_and(|p| !p.extensions.is_empty());
+        // A filtered view stamps the new row (misc/W2TableGlobals.al FilterStamp_*): not this shape.
+        let own_props_pinned = ["SourceTableView", "SourceTableTemporary", "Editable", "InsertAllowed"]
+            .iter()
+            .all(|p| effective_prop(&engine, object, p).ok().flatten().is_none());
+        Ok(!delayed && !extended && own_props_pinned)
+    }
+
+    /// Whether the primary key of the page's new row differs from a new record's.
+    fn draft_key_changed(&mut self, st: &St) -> Result<bool, Signal> {
+        let rec = self.page_rec(st);
+        let table = self.table(&rec)?;
+        let fresh = self.initial_fields(table.object as usize);
+        let now = rec.borrow().fields.clone();
+        Ok(table.keys[0]
+            .iter()
+            .any(|&k| !Self::same_values(std::slice::from_ref(&now[k]), std::slice::from_ref(&fresh[k]))))
     }
 
     /// The reads of an action that did not call `CurrPage.Update`, before the refresh's own (see

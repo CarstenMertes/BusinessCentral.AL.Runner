@@ -100,6 +100,34 @@ impl Session {
         ))
     }
 
+    /// The error of `TestPage.OpenNew` on a card without a source table, after OnOpenPage: the text and code of the API page
+    /// denial (misc/lt-protected-var-abs-query-views/P146PageExprSetValue.al:460 QG_NoSource_OpenNew_StepLog `Sorry, the current
+    /// permissions prevented the action. (Page 86704 LT QG NoSource Card Insert: AL Language Coverage Tests)`,
+    /// `DB:ClientInsertDenied`). An extended page is not pinned.
+    pub(super) fn no_source_open_new_denied(&self, st: &St) -> Result<Signal, Signal> {
+        let engine = self.engine();
+        let o = &engine.program.objects[st.borrow().object as usize];
+        if o.page.as_ref().is_some_and(|p| !p.extensions.is_empty()) {
+            return unsupported("OpenNew of an extended page without a source table (not pinned)");
+        }
+        let Some(id) = o.id else {
+            return unsupported("OpenNew of a page without an id (the error text is not pinned)");
+        };
+        let app = engine
+            .program
+            .apps
+            .get(o.app as usize)
+            .map(|a| a.name.clone())
+            .unwrap_or_default();
+        Ok(error_code(
+            format!(
+                "Sorry, the current permissions prevented the action. (Page {id} {} Insert: {app})",
+                o.name
+            ),
+            "DB:ClientInsertDenied",
+        ))
+    }
+
     /// After the page inserted its new row: a row outside the page's filters. SetValue on a field outside the key of a list
     /// raises `Validation error for Field: ,  Message = 'The view is filtered, and the entry is outside the filter. Some actions
     /// may not work.'` (TestValidation) and the row stays stored (corpus pages/lt-ao-testpage/AoTests.al:467-487

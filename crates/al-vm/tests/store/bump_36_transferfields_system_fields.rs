@@ -1,6 +1,6 @@
 //! TransferFields from another table and the buffer's SystemCreatedAt and SystemModifiedAt (corpus bump 36, writer QE).
 
-use al_builtins::native::Signal;
+use al_testkit::text;
 
 const SRC: &str = r#"
 table 69991 "QE Row"
@@ -89,7 +89,7 @@ codeunit 69993 C
         O.Id := 1; O.Name := 'other'; O.Insert();
         R.Id := 1; R.Name := 'own'; R.Insert();
         R.TransferFields(O);
-        exit(Format(R.SystemCreatedBy));
+        exit(Format(R.SystemCreatedBy = O.SystemCreatedBy) + Format(IsNullGuid(R.SystemCreatedBy)));
     end;
 
     procedure CreatedAtAfterTransferFromMemory(): Text
@@ -131,18 +131,20 @@ fn system_modified_at_after_a_transfer_from_another_table_is_the_source_one() {
     );
 }
 
-// Pinned only for a source read from the database: from a row built in memory, a read is refused.
+// From a row built in memory the buffer takes its blank SystemCreatedAt (CnTransferFieldsModify.al:543
+// QH_TF_Other_SourceInMemory_AuditFields `buffer createdat blank`).
 #[test]
-fn system_created_at_after_a_transfer_from_a_row_in_memory_is_refused() {
+fn system_created_at_after_a_transfer_from_a_row_in_memory_is_blank() {
     let r = al_testkit::run_in(SRC, "C", "CreatedAtAfterTransferFromMemory");
-    assert!(matches!(r, Err(Signal::Unsupported(_))), "{r:?}");
+    assert_eq!(text(r), "");
 }
 
-// SystemCreatedBy and SystemModifiedBy are not pinned there: a read is refused.
+// SystemCreatedBy comes from the source too (CnTransferFieldsModify.al:501 QH_TF_Other_ByFields_SourceFromDb `buffer createdby =
+// other`): the source's stamp, the session's user.
 #[test]
-fn system_created_by_after_a_transfer_from_another_table_is_refused() {
+fn system_created_by_after_a_transfer_from_another_table_is_the_sources() {
     let r = al_testkit::run_in(SRC, "C", "CreatedByAfterTransferFromOther");
-    assert!(matches!(r, Err(Signal::Unsupported(_))), "{r:?}");
+    assert_eq!(text(r), "YesNo");
 }
 
 // CnTransferFieldsModify.al:271-290 QE_TF_Other_StaleBuffer_SourceNewer: the buffer keeps its own row version, so a stale

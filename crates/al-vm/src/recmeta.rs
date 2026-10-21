@@ -1339,29 +1339,20 @@ impl Session {
             }
         }
         // From another table the buffer keeps its own SystemId and SystemRowVersion, so a stale buffer stays stale and a current
-        // one modifies fine, and it takes the source's SystemCreatedAt and SystemModifiedAt (record/lt-cn-transferfields-modify/
-        // CnTransferFieldsModify.al:11-16, :250-479 QE_TF_Other_*). SystemCreatedBy and SystemModifiedBy are not pinned: a
-        // read of them is refused.
+        // one modifies fine, and it takes the source's four audit fields as they are (record/lt-cn-transferfields-modify/
+        // CnTransferFieldsModify.al:11-16, :250-479 QE_TF_Other_*; :501 QH_TF_Other_ByFields_SourceFromDb for SystemCreatedBy and
+        // SystemModifiedBy): a source built in memory, or a temporary row after Insert, holds blank At and null By fields and the
+        // buffer gets those (:543 QH_TF_Other_SourceInMemory_AuditFields, :612 _SourceTemporary_, :717
+        // _TargetInMemory_SourceInMemory_); a temporary row filled from a database row keeps that row's stamps (:670).
         if src_table != t.object as usize {
             for id in 2_000_000_001..=2_000_000_004 {
                 let Some(i) = t.fields.iter().position(|f| f.id == id) else {
                     continue;
                 };
-                let source = from.fields.iter().position(|f| f.id == id);
-                // Pinned for a source read from the database; a source that holds no stamp (built in memory, or a temporary
-                // record) is not, so its blank value is not copied but refused on read.
-                let v = match source {
-                    Some(sp)
-                        if (id == 2_000_000_001 || id == 2_000_000_003)
-                            && !matches!(src_fields[sp], Value::DateTime(0)) =>
-                    {
-                        src_fields[sp].clone()
-                    }
-                    Some(_) if id == 2_000_000_001 || id == 2_000_000_003 => Value::Unknown(std::sync::Arc::from(
-                        "a SystemCreatedAt or SystemModifiedAt after a TransferFields from another table's row that holds no stamp (not pinned)",
-                    )),
-                    _ => Value::Unknown(std::sync::Arc::from(
-                        "a SystemCreatedBy or SystemModifiedBy after a TransferFields from another table (not pinned)",
+                let v = match from.fields.iter().position(|f| f.id == id) {
+                    Some(sp) => src_fields[sp].clone(),
+                    None => Value::Unknown(std::sync::Arc::from(
+                        "an audit field after a TransferFields from a table without it (not pinned)",
                     )),
                 };
                 updates.push((i, v));

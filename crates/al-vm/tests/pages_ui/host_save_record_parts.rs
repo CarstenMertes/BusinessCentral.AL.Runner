@@ -9,7 +9,7 @@ const SRC: &str = r#"
 table 51450 "SR Head" { fields { field(1; "Code"; Code[20]) { } field(2; Descr; Text[30]) { } } keys { key(PK; "Code") { } } }
 table 51451 "SR Line"
 {
-    fields { field(1; "Head Code"; Code[20]) { } field(2; "Line No."; Integer) { } }
+    fields { field(1; "Head Code"; Code[20]) { } field(2; "Line No."; Integer) { } field(3; Descr; Text[30]) { } }
     keys { key(PK; "Head Code", "Line No.") { } }
 }
 codeunit 51452 "SR Log"
@@ -24,7 +24,8 @@ page 51453 "SR Linked"
 {
     PageType = ListPart;
     SourceTable = "SR Line";
-    layout { area(Content) { repeater(R) { field(L; Rec."Line No.") { } } } }
+    AutoSplitKey = true;
+    layout { area(Content) { repeater(R) { field(L; Rec."Line No.") { } field(D; Rec.Descr) { } } } }
     trigger OnAfterGetCurrRecord() var Log: Codeunit "SR Log"; begin Log.Add('L:' + Format(Rec."Line No.")); end;
 }
 page 51454 "SR Plain"
@@ -45,6 +46,7 @@ page 51455 "SR Host"
             field(CodeCtl; Rec."Code") { }
             field(Saved; Rec.Descr) { trigger OnValidate() var Log: Codeunit "SR Log"; begin Log.Add('validate'); CurrPage.SaveRecord(); end; }
             field(NotSaved; Rec.Descr) { trigger OnValidate() var Log: Codeunit "SR Log"; begin Log.Add('validate'); end; }
+            field(Counted; Rec.Descr) { trigger OnValidate() var Log: Codeunit "SR Log"; L: Record "SR Line"; begin L.SetRange(Descr, 'typed'); Log.Add('stored=' + Format(L.Count())); end; }
             part(LinkedP; "SR Linked") { SubPageLink = "Head Code" = field("Code"); }
             part(PlainP; "SR Plain") { }
         }
@@ -64,6 +66,21 @@ codeunit 51456 "SR Test"
         Doc.Close();
         exit(T);
     end;
+    procedure Typed(): Text
+    var H: Record "SR Head"; L: Record "SR Line"; Log: Codeunit "SR Log"; Doc: TestPage "SR Host"; T: Text;
+    begin
+        H."Code" := 'H1'; H.Insert();
+        L."Head Code" := 'H1'; L."Line No." := 10000; L.Insert();
+        Doc.OpenEdit();
+        Doc.LinkedP.Last();
+        Doc.LinkedP.New();
+        Doc.LinkedP.D.SetValue('typed');
+        L.SetRange(Descr, 'typed');
+        T := 'before=' + Format(L.Count());
+        Log.Reset(); Doc.Counted.SetValue('c'); T += '|' + Log.Dump();
+        Doc.Close();
+        exit(T);
+    end;
 }
 "#;
 
@@ -75,5 +92,16 @@ fn a_save_record_in_a_host_validate_rereads_the_linked_parts() {
     assert!(
         al_builtins::assumptions::take_hits()
             .contains(&al_builtins::assumptions::Assumption::HostSaveRecordRefreshesLinkedParts)
+    );
+}
+
+#[test]
+fn a_host_set_value_saves_the_typed_part_row_first() {
+    al_builtins::assumptions::clear_hits();
+    let r = al_testkit::run_in(SRC, "SR Test", "Typed");
+    assert_eq!(text(r), "before=0|stored=1;");
+    assert!(
+        al_builtins::assumptions::take_hits()
+            .contains(&al_builtins::assumptions::Assumption::PartRowSavedBeforeHostSetValue)
     );
 }

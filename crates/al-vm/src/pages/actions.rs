@@ -617,6 +617,13 @@ impl Session {
                 e.code = action_error_code(&e.code, &e.message);
                 Err(Signal::Error(e))
             }
+            // An error with an empty text (`Error('')`, Gen. Jnl.-Post Preview ends every preview with one) out of the action:
+            // what the test client does with it (raise it to the test, or end the Invoke quietly) is not pinned
+            // (docs/probes-needed.md). Microsoft's Tests-ERM 134760 PmtJournalPostingPreviewClearsPage expects the Invoke to
+            // return; raising it failed the test.
+            Err(Signal::Error(e)) if e.message.is_empty() => unsupported(
+                "an error with an empty text out of a TestPage action's Invoke (what the test client does with it is not pinned)",
+            ),
             other => other,
         }
     }

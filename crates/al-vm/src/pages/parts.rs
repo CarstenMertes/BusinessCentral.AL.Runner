@@ -425,19 +425,20 @@ impl Session {
         if parts.is_empty() {
             return Ok(());
         }
-        if parts.iter().any(|(i, _)| {
-            page.controls[*i]
+        al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::HostSaveRecordRefreshesLinkedParts);
+        // As `sync_parts_with`: a part linked through a Provider reads the provider's row, so it goes after the others.
+        let has_provider = |i: usize| {
+            page.controls[i]
                 .part_link
                 .as_ref()
                 .is_some_and(|l| l.provider.is_some())
-        }) {
-            return unsupported(
-                "CurrPage.SaveRecord in a host control's OnValidate with a part linked through a Provider (not pinned)",
-            );
-        }
-        al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::HostSaveRecordRefreshesLinkedParts);
-        for (i, child) in &parts {
-            self.sync_part(st, *i, child)?;
+        };
+        for pass in [false, true] {
+            for (i, child) in &parts {
+                if has_provider(*i) == pass {
+                    self.sync_part(st, *i, child)?;
+                }
+            }
         }
         Ok(())
     }
@@ -912,6 +913,23 @@ impl Session {
             self.page_event(&host, "onaftergetcurrrecordevent", None, None)
         })();
         self.torn_down_on_error(&host, r).map(|_| ())
+    }
+
+    /// A host control is about to take a value: the open parts that hold a typed row that is not saved save it first
+    /// (assumption part-row-saved-before-host-set-value).
+    pub(super) fn save_parts_before_host_edit(&mut self, st: &St) -> Result<(), Signal> {
+        let parts = st.borrow().parts.clone();
+        for (_, child) in parts {
+            let pending = {
+                let c = child.borrow();
+                c.open && (c.dirty || c.draft)
+            };
+            if pending {
+                al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::PartRowSavedBeforeHostSetValue);
+                self.save_row(&child)?;
+            }
+        }
+        Ok(())
     }
 
     /// Saves what was typed into the rows the parts stand on.

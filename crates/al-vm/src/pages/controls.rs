@@ -129,6 +129,11 @@ impl Session {
             return unsupported("SetValue on a control whose type is not known");
         };
         let rec_bound = matches!(ctl.binding, ir::Binding::Field(_));
+        // A SetValue on a host control while one of its parts holds a typed row that is not saved: the part saves that row
+        // first, as it does when the host moves (misc/lt-probes-needed-7/PnGPartRows.al:130-163
+        // PendingPartRowSavedWhenHostMoves) and when it closes (testpart/TestOkPartRow.al). Not pinned for a SetValue:
+        // assumption part-row-saved-before-host-set-value.
+        self.save_parts_before_host_edit(st)?;
         // OnBeforeValidate and OnAfterValidate of `modify` blocks wrap the control's own OnValidate
         // (corpus pageextensiontrigger/TestModifiedControlValidateTriggers_Tests.al:
         // ModifiedControlBeforeAndAfterValidateWrapTheBaseControlsOwnOnValidate). Only that

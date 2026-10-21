@@ -41,7 +41,7 @@ The goal is the whole AL language. How much of it runs today is in "Status" belo
 
 The v2 dotnet tool also installs a command named `al-runner`. If both are installed, two
 commands with that name are on your `PATH`, and the one found first runs. This `al-runner` prints a one-line note on
-stderr when it finds the v2 tool (at most once a day; the note can be turned off), and
+stderr when it finds the v2 tool (at most once a day; `ALRUNNER_NO_PATH_NOTE=1` turns it off), and
 `al-runner --version` lists the other copies it finds. To avoid the clash, uninstall the
 dotnet tool:
 
@@ -122,15 +122,22 @@ must carry its AL source.
 4. Microsoft's artifact feed. It supplies Microsoft's apps, the test libraries and the
    platform `System.app`. `--no-download` turns the feed off.
 
+A Microsoft app in `.alpackages` that is older than the BC version of the run gives way to the
+feed's copy of that version. Apps from `--dep` and `--package-cache` are always used as found.
+
 Microsoft's apps are compiled from their own source. A package that carries no AL source
 cannot be used, and tests that reach it are not run (the message names the app).
-Downloads are kept in a cache folder: `--cache-dir DIR`, or `$ALRUNNER_CACHE`.
+Downloads are kept in a cache folder: `--cache-dir DIR`, else `$ALRUNNER_CACHE`, else
+`$XDG_CACHE_HOME/al-runtime`, else `~/.cache/al-runtime`.
 
 **4. Choose the BC version.** `--bc-version V` takes a major (`28`), a major and minor
 (`28.5`) or an exact build (four numbers). Without it, `al-runner` uses these in order: the
-build of the Microsoft packages in your `.alpackages` (if it is at or above the `application`
-and `platform` version in `app.json`), then the newest published build of the newest BC major
-the runtime is verified against (29). The corpus is checked against BC 27, 28 and 29.
+build of the tests when they are Microsoft's own test apps; the build of the Microsoft packages
+in your package folders (`.alpackages`, `--dep`, `--package-cache`), if it is of the target BC
+major and at or above the `application` and `platform` versions in `app.json`; then the newest
+published build of the target major. The target major is the major of `application` in
+`app.json`, else the newest BC major the runtime is verified against (29). `--verbose` prints
+which rule chose the build. The corpus is checked against BC 27, 28 and 29.
 
 **5. Test data.** A run that uses Microsoft's apps restores the CRONUS demo company of the
 same BC build. It is on by default. The first run downloads about 520 MB into the cache; progress
@@ -460,9 +467,12 @@ load it.
   helper sources and builds the helper into the cache on first use. Without the
   SDK these tests are not run, with a reason.
 - Many features are missing. See `docs/status.md` and `docs/al-runner-v2-parity.md`.
-- No watch mode and no debugger. `al-runner serve` (a JSON-lines server, one child
-  process per request, nothing kept between requests) and `--coverage` (Cobertura XML,
-  `--coverage-json`) exist.
+- No watch mode and no debugger. `al-runner serve` and `--coverage` (Cobertura XML,
+  `--coverage-json`) exist. `serve` speaks AL Runner v2's JSON-lines protocol (`runTests`,
+  `execute`, `cancel`, `shutdown`). All requests run in the one server process, which keeps the
+  compile of the last request, so a repeated request with the same sources takes 0.2 to 2 s
+  (more with Microsoft's apps when many tests run). Each request starts from the same database. Fields and answers are in
+  `docs/integrations/migrating-tools-to-v3.md`, section 4b.
 - Only three targets are built: Linux x64, Windows x64 and macOS arm64.
 
 **Report problems** as a GitHub issue, using the "Alpha feedback" template.

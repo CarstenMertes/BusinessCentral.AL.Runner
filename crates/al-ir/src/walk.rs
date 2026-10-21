@@ -631,6 +631,8 @@ fn walk_field<V: RefVisitor>(f: &mut Field, v: &mut V) {
         on_lookup,
         caption_class,
         caption_class_refusal: _,
+        auto_format_expression,
+        auto_format_refusal: _,
         properties: _,
         relation_arms,
         relation_meta,
@@ -658,6 +660,9 @@ fn walk_field<V: RefVisitor>(f: &mut Field, v: &mut V) {
         pair(v, p);
     }
     if let Some(p) = caption_class {
+        pair(v, p);
+    }
+    if let Some(p) = auto_format_expression {
         pair(v, p);
     }
     for a in relation_arms.iter_mut().chain(relation_runtime.iter_mut()) {

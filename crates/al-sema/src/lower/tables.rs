@@ -377,6 +377,79 @@ impl Lowerer<'_> {
         extensions: &[usize],
         routine_at: &RoutineAt,
     ) -> Option<(usize, usize)> {
+        self.field_expression_routine(
+            oi,
+            f,
+            extensions,
+            routine_at,
+            crate::pages::field_caption_class_routines,
+        )
+    }
+
+    /// The routine that evaluates field `f`'s `AutoFormatExpression` expression, found as `field_caption_class`.
+    fn field_auto_format(
+        &self,
+        oi: usize,
+        f: &crate::members::FieldInfo,
+        extensions: &[usize],
+        routine_at: &RoutineAt,
+    ) -> Option<(usize, usize)> {
+        self.field_expression_routine(oi, f, extensions, routine_at, crate::pages::field_auto_format_routines)
+    }
+
+    /// Why field `f`'s `AutoFormatExpression` is refused: the table and its `extensions` set it two or more times and
+    /// one is an expression (which one BC reads is not pinned).
+    fn field_auto_format_refusal(
+        &self,
+        oi: usize,
+        f: &crate::members::FieldInfo,
+        extensions: &[usize],
+    ) -> Option<String> {
+        let declared = f.declared_in.unwrap_or(oi);
+        let (mut settings, mut expressions) = (0, 0);
+        for o in std::iter::once(declared).chain(extensions.iter().copied().filter(|&e| e != declared)) {
+            if !self.ws.usable(o) {
+                continue;
+            }
+            let obj = self.ws.object_ast(o);
+            settings += ast::sections_in(obj.syntax())
+                .iter()
+                .filter(|s| {
+                    let at = if s.name().eq_ignore_ascii_case("field") {
+                        1
+                    } else if s.name().eq_ignore_ascii_case("modify") {
+                        0
+                    } else {
+                        return false;
+                    };
+                    s.args().get(at).is_some_and(|n| n.eq_ignore_ascii_case(&f.name))
+                        && s.properties()
+                            .any(|p| p.name().eq_ignore_ascii_case("AutoFormatExpression"))
+                })
+                .count();
+            expressions += crate::pages::field_auto_format_routines(&obj)
+                .iter()
+                .filter(|(n, _, _)| n.eq_ignore_ascii_case(&f.name))
+                .count();
+        }
+        (settings >= 2 && expressions >= 1).then(|| {
+            format!(
+                "the format of field {}, whose AutoFormatExpression is set {settings} times by the table and its extensions, one of them an expression (which one BC reads is not pinned)",
+                f.name
+            )
+        })
+    }
+
+    /// The routine `routines` names for field `f`: of the object that declares the field, or of the last of the table's
+    /// `extensions` whose `modify` block sets one.
+    fn field_expression_routine(
+        &self,
+        oi: usize,
+        f: &crate::members::FieldInfo,
+        extensions: &[usize],
+        routine_at: &RoutineAt,
+        routines: fn(&ast::Object) -> Vec<(String, String, String)>,
+    ) -> Option<(usize, usize)> {
         let declared = f.declared_in.unwrap_or(oi);
         let mut found = None;
         for o in std::iter::once(declared).chain(extensions.iter().copied().filter(|&e| e != declared)) {
@@ -384,7 +457,7 @@ impl Lowerer<'_> {
                 continue;
             }
             let obj = self.ws.object_ast(o);
-            for (field, name, _) in crate::pages::field_caption_class_routines(&obj) {
+            for (field, name, _) in routines(&obj) {
                 if !field.eq_ignore_ascii_case(&f.name) {
                     continue;
                 }
@@ -528,6 +601,8 @@ impl Lowerer<'_> {
                     },
                     caption_class: self.field_caption_class(oi, f, &extensions, routine_at),
                     caption_class_refusal: self.field_caption_class_refusal(oi, f, &extensions),
+                    auto_format_expression: self.field_auto_format(oi, f, &extensions, routine_at),
+                    auto_format_refusal: self.field_auto_format_refusal(oi, f, &extensions),
                     flow_filter: f.class == crate::members::FieldClass::FlowFilter,
                     calc,
                     calc_refusal: refusal,

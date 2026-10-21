@@ -204,3 +204,61 @@ fn a_code_that_is_no_currency_reads_two_to_five_places() {
     ));
     assert_eq!(o[0].1, Outcome::Pass, "{o:?}");
 }
+
+const FIELD_EXPRESSION: &str = r#"
+table 62520 "AF Field Expr Row"
+{
+    fields
+    {
+        field(1; "No."; Code[20]) { }
+        field(2; Amount; Decimal) { AutoFormatType = 4; AutoFormatExpression = Rec."Currency Code"; }
+        field(3; UnitAmount; Decimal) { AutoFormatType = 5; AutoFormatExpression = "Currency Code"; }
+        field(4; Fmt; Decimal) { AutoFormatType = 10; AutoFormatExpression = Pattern(); }
+        field(5; "Currency Code"; Code[10]) { }
+    }
+    keys { key(PK; "No.") { } }
+    procedure Pattern(): Text
+    begin
+        if "No." = 'BOOM' then Error('field format failed');
+        exit('<Precision,1:1><Standard Format,0>');
+    end;
+}
+page 62520 "AF Field Expr Card"
+{
+    PageType = Card; SourceTable = "AF Field Expr Row";
+    layout { area(Content) {
+        field(AmountCtl; Rec.Amount) { }
+        field(UnitCtl; Rec.UnitAmount) { }
+        field(FmtCtl; Rec.Fmt) { }
+        field(OwnCtl; Rec.Amount) { AutoFormatType = 4; AutoFormatExpression = ''; }
+    } }
+}
+"#;
+
+// A table field's AutoFormatExpression that is an expression, read through a control without one of its own. Microsoft's
+// Tests-ERM "Amount AutoFormat Currency" (134833, TestAutoformatShowFCYCodeOnlyAfterAmount and eight more) needs the
+// field's expression evaluated with the control's row: Case4FCY (AutoFormatType = 4; AutoFormatExpression =
+// Rec."Currency Code") shows the currency's amount places. Not pinned by the corpus: assumption
+// table-field-auto-format-expression.
+#[test]
+fn a_table_field_expression_is_evaluated_with_the_row() {
+    let src = format!(
+        "{CURRENCY}{FIELD_EXPRESSION}\ncodeunit 62521 T {{
+         procedure F(): Text var C: Record Currency; R: Record \"AF Field Expr Row\"; P: TestPage \"AF Field Expr Card\"; begin
+           C.Code := 'PWC'; C.\"Amount Decimal Places\" := '3:3'; C.\"Unit-Amount Decimal Places\" := '4:4'; C.Insert();
+           R.\"No.\" := 'X'; R.Amount := 248.02915; R.UnitAmount := 248.02915; R.Fmt := 2.25; R.\"Currency Code\" := 'PWC'; R.Insert();
+           P.OpenView(); P.GoToRecord(R);
+           if P.AmountCtl.Value() <> '248.029' then Error('amount %1', P.AmountCtl.Value());
+           if P.UnitCtl.Value() <> '248.0292' then Error('unit %1', P.UnitCtl.Value());
+           if P.FmtCtl.Value() <> '2.3' then Error('fmt %1', P.FmtCtl.Value());
+           if P.OwnCtl.Value() <> '248.03' then Error('own %1', P.OwnCtl.Value());
+           exit('ok'); end; }}"
+    );
+    al_builtins::assumptions::clear_hits();
+    assert_eq!(al_testkit::text(al_testkit::run_in(&src, "T", "F")), "ok");
+    assert!(
+        al_builtins::assumptions::take_hits()
+            .contains(&al_builtins::assumptions::Assumption::TableFieldAutoFormatExpression),
+        "the pass must be flagged"
+    );
+}

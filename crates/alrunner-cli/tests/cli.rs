@@ -1473,3 +1473,31 @@ fn version_waits_at_most_2_seconds_for_another_al_runner() {
     let out = String::from_utf8_lossy(&o.stdout);
     assert!(out.contains("no answer within 2 s"), "{out}");
 }
+
+#[cfg(unix)]
+#[test]
+fn version_read_by_a_tool_that_takes_only_the_first_line_still_exits_0() {
+    use std::io::BufRead;
+    let d = tempfile::tempdir().unwrap();
+    let bin = d.path().join("v2bin");
+    // The other copy answers after the reader has gone (`al-runner --version | head -1`).
+    fake_al_runner(&bin, "/bin/sleep 1; echo 'AL Runner 1.0.99'");
+    let home = d.path().join("home");
+    let mut child = Command::new(env!("CARGO_BIN_EXE_al-runner"))
+        .env_remove("ALRUNNER_NO_PATH_NOTE")
+        .env("PATH", &bin)
+        .env("HOME", &home)
+        .env("ALRUNNER_CACHE", home.join("cache"))
+        .arg("--version")
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut first = String::new();
+    std::io::BufReader::new(child.stdout.take().unwrap())
+        .read_line(&mut first)
+        .unwrap();
+    assert!(first.starts_with("al-runner "), "{first}");
+    let o = child.wait_with_output().unwrap();
+    assert_eq!(code(&o), 0, "{}", String::from_utf8_lossy(&o.stderr));
+}

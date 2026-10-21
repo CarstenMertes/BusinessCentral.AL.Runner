@@ -65,8 +65,13 @@ fn real_main() -> ExitCode {
         }
         Command::Version => {
             println!("{}", version::line());
+            // A tool that reads only the first line may close the pipe before the list: not an error.
+            use std::io::Write;
+            let mut out = std::io::stdout();
             for l in path_note::version_lines() {
-                println!("{l}");
+                if writeln!(out, "{l}").is_err() {
+                    break;
+                }
             }
             ExitCode::SUCCESS
         }

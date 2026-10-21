@@ -329,10 +329,10 @@ impl Affected {
         }))
     }
 
-    /// After the run: the stored result for the next run is written (a warning when it cannot be), and the report
-    /// is made. `None` when the run stopped before its compile was done. `impact_keys` are the keys
-    /// `TestResult::impact` numbers.
-    pub fn finish(self, results: &[TestResult], impact_keys: &[String]) -> Option<Report> {
+    /// After the run: the stored result for the next run is written when `store` (a warning when it cannot be; a
+    /// cancelled run writes nothing), and the report is made. `None` when the run stopped before its compile was
+    /// done. `impact_keys` are the keys `TestResult::impact` numbers.
+    pub fn finish(self, results: &[TestResult], impact_keys: &[String], store: bool) -> Option<Report> {
         let d = self.decided.lock().expect("the decision").take()?;
         let id_of: BTreeMap<usize, &String> = d.caller.iter().map(|(id, &app)| (app, id)).collect();
         let mut ran: BTreeMap<(String, u32), StoredCodeunit> = BTreeMap::new();
@@ -389,7 +389,7 @@ impl Affected {
             })
             .collect();
         let after = before.merge(self.header, d.objects, &d.codeunits, ran, d.selection.full.is_some());
-        if let Err(e) = write(&self.store, &after) {
+        if store && let Err(e) = write(&self.store, &after) {
             eprintln!("warning: the stored result of --affected was not written: {e}");
         }
         Some(Report {
@@ -576,6 +576,31 @@ mod tests {
             assert_ne!(before, options_of(&line(&one)), "{flag}: new content, same name");
         }
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_cancelled_run_writes_no_stored_result() {
+        // Test plan 17: a cancelled serve request leaves the stored result as it was.
+        let dir = std::env::temp_dir().join(format!("alrunner-affected-cancel-{}", std::process::id()));
+        let store = dir.join("store.json.gz");
+        let make = || Affected {
+            store: store.clone(),
+            header: Header::default(),
+            stored: Err(NO_STORED_RESULT.into()),
+            include_failing: false,
+            workspace: 1,
+            decided: Arc::new(Mutex::new(Some(Decided {
+                selection: Selection::default(),
+                objects: Vec::new(),
+                codeunits: Vec::new(),
+                caller: BTreeMap::new(),
+            }))),
+        };
+        assert!(make().finish(&[], &[], false).is_some());
+        assert!(!store.exists());
+        assert!(make().finish(&[], &[], true).is_some());
+        assert!(store.exists());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

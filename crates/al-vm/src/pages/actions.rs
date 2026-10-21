@@ -617,13 +617,19 @@ impl Session {
                 e.code = action_error_code(&e.code, &e.message);
                 Err(Signal::Error(e))
             }
-            // An error with an empty text (`Error('')`, Gen. Jnl.-Post Preview ends every preview with one) out of the action:
-            // what the test client does with it (raise it to the test, or end the Invoke quietly) is not pinned
-            // (docs/probes-needed.md). Microsoft's Tests-ERM 134760 PmtJournalPostingPreviewClearsPage expects the Invoke to
-            // return; raising it failed the test.
-            Err(Signal::Error(e)) if e.message.is_empty() => unsupported(
-                "an error with an empty text out of a TestPage action's Invoke (what the test client does with it is not pinned)",
-            ),
+            // An error with an empty text (`Error('')`, Gen. Jnl.-Post Preview ends every preview with one) out of the action
+            // ends the Invoke quietly: the test goes on, the error becomes the last error (empty text, code Dialog) and the
+            // rows the action wrote before it stay (pages/lt-qi-empty-error/QiEmptyErrorPages.al:192
+            // QI_EE_EmptyAction_NoAsserterror `went-on` yes, `after-invoke|code` Dialog, `rows` 1=seed;100=empty action ran;).
+            // The code is the error's own, not wrapped as the test client wraps an error it raises.
+            Err(Signal::Error(mut e)) if e.message.is_empty() => {
+                if let Some(own) = e.code.strip_prefix("TestWrapped:") {
+                    e.code = own.to_string();
+                }
+                self.error_finals = None;
+                self.last_error = *e;
+                Ok(Value::Null)
+            }
             other => other,
         }
     }

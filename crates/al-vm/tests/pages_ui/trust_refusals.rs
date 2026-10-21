@@ -241,18 +241,18 @@ fn go_to_key_on_a_find_list_with_a_full_window_is_refused() {
     refused(al_testkit::run_in(FIND_LIST, "C", "GoToKeyFar"), "full window");
 }
 
-/// An error with an empty text out of a TestPage action (Gen. Jnl.-Post Preview ends every preview with `Error('')`):
-/// whether the test client raises it to the test or ends the Invoke quietly is not pinned (docs/probes-needed.md;
-/// Microsoft's Tests-ERM 134760 PmtJournalPostingPreviewClearsPage expects the Invoke to return).
+/// An error with an empty text out of a TestPage action's Invoke ends the Invoke quietly: the test goes on, the last error
+/// has an empty text and code Dialog, and the rows the action wrote before the error stay
+/// (pages/lt-qi-empty-error/QiEmptyErrorPages.al:192 QI_EE_EmptyAction_NoAsserterror). An error with a text still raises.
 #[test]
-fn an_empty_error_out_of_an_action_is_refused() {
+fn an_empty_error_out_of_an_action_ends_the_invoke_quietly() {
     let src = r#"
 table 69995 "EE Row" { fields { field(1; Id; Integer) { } } keys { key(PK; Id) { } } }
 page 69996 "EE Card"
 {
     PageType = Card; SourceTable = "EE Row"; ApplicationArea = All; UsageCategory = None;
     layout { area(Content) { field(Id; Rec.Id) { } } }
-    actions { area(Processing) { action(Quiet) { trigger OnAction() begin Error(''); end; } action(Loud) { trigger OnAction() begin Error('loud'); end; } } }
+    actions { area(Processing) { action(Quiet) { trigger OnAction() var W: Record "EE Row"; begin W.Id := 100; W.Insert(); Error(''); end; } action(Loud) { trigger OnAction() begin Error('loud'); end; } } }
 }
 codeunit 69997 C
 {
@@ -262,7 +262,7 @@ codeunit 69997 C
         R.Id := 1; R.Insert();
         P.OpenEdit();
         P.Quiet.Invoke();
-        exit('returned');
+        exit('returned text=[' + GetLastErrorText() + '] code=[' + GetLastErrorCode() + '] kept=' + Format(R.Get(100)));
     end;
     procedure G(): Text
     var R: Record "EE Row"; P: TestPage "EE Card";
@@ -274,7 +274,10 @@ codeunit 69997 C
     end;
 }
 "#;
-    refused(al_testkit::run_in(src, "C", "F"), "empty text");
+    assert_eq!(
+        al_testkit::text(al_testkit::run_in(src, "C", "F")),
+        "returned text=[] code=[Dialog] kept=Yes"
+    );
     assert_eq!(al_testkit::text(al_testkit::run_in(src, "C", "G")), "loud");
 }
 
@@ -308,4 +311,34 @@ codeunit 69989 C
 }
 "#;
     refused(al_testkit::run_in(src, "C", "F"), "per-row values not modelled");
+}
+
+/// pages/lt-qi-empty-error/QiEmptyErrorPages.al:253 QI_EE_EmptyValidate_NoAsserterror: an error with an empty text out of a card
+/// control's own OnValidate ends the SetValue quietly; the entry does not stay, the last error is empty with code
+/// NSValidateField:Dialog, and what the trigger wrote stays.
+#[test]
+fn an_empty_error_out_of_a_card_controls_on_validate_ends_the_set_value_quietly() {
+    let src = r#"
+table 69985 "EV Row" { fields { field(1; Id; Integer) { } field(2; Name; Text[30]) { } } keys { key(PK; Id) { } } }
+page 69986 "EV Card"
+{
+    PageType = Card; SourceTable = "EV Row"; ApplicationArea = All; UsageCategory = None;
+    layout { area(Content) { field(Id; Rec.Id) { } field(NameCtl; Rec.Name) { trigger OnValidate() var W: Record "EV Row"; begin W.Id := 300; W.Insert(); Error(''); end; } } }
+}
+codeunit 69987 C
+{
+    procedure F(): Text
+    var R: Record "EV Row"; P: TestPage "EV Card";
+    begin
+        R.Id := 1; R.Name := 'seed'; R.Insert();
+        P.OpenEdit();
+        P.NameCtl.SetValue('empty');
+        exit('went on text=[' + GetLastErrorText() + '] code=[' + GetLastErrorCode() + '] kept=' + Format(R.Get(300)) + ' name=' + P.NameCtl.Value());
+    end;
+}
+"#;
+    assert_eq!(
+        al_testkit::text(al_testkit::run_in(src, "C", "F")),
+        "went on text=[] code=[NSValidateField:Dialog] kept=Yes name=seed"
+    );
 }

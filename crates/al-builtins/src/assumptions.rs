@@ -157,11 +157,11 @@ registry! {
         tests: "Tests-ERM ERM Budget (134922, 36 tests) and ERM Budget UI (134927, 11 tests): Initialize calls Budget.GLAccCategory.SetValue(0) on page 113 Budget, a control over GLAccCategoryFilter: Enum \"G/L Account Category\" (value 0 \" \", Caption ' ').",
         probe: "The BeEnumSetValueBlank cases (SetValue(0) on a blank-captioned Enum variable control) on a page without a source table and on a list page.",
     },
-    PartOpenLineAfterGetCurrRecordOnce => {
-        id: "part-open-line-after-get-curr-record-once",
-        assumed: "The blank line of a part that shows no row of an editable host runs OnAfterGetCurrRecord once, after its three OnNewRecord runs at the host's open (PartLineBeforeHostKey.al pins the three OnNewRecord runs; its pages declare no OnAfterGetCurrRecord).",
-        tests: "Tests-ERM: about 540 tests that open a document page (Sales and Purchase orders, invoices, quotes) with OpenNew or OpenEdit on an empty lines subpart whose OnAfterGetCurrRecord runs (ERM Invoice Discount And VAT, ERM Update Currency - Sales, ERM Purchase Subform, ...).",
-        probe: "The PYB_OpenNew_Document_LogOnly shape with a part that logs OnAfterGetCurrRecord too: where it comes among the three OnNewRecord runs and how often.",
+    PartHostNewAfterGetCurrRecordOnce => {
+        id: "part-host-new-after-get-curr-record-once",
+        assumed: "When a host's New() starts a new record, the empty lines part runs no OnNewRecord (pinned, PartLineBeforeHostKey.al PYB_OpenEdit_ThenHostNew) and runs its OnAfterGetCurrRecord once (the PYB pages declare none, so this is not pinned).",
+        tests: "Tests-ERM ERM Update Currency - Sales and - Purchase: UpdateCurrencyCodeOn*Page (15 tests, New() on a sales or purchase document page whose lines subform declares OnAfterGetCurrRecord); they pass in Microsoft's CI.",
+        probe: "PYB_OpenEdit_ThenHostNew and PYB_OpenNew_ThenHostNew with a lines part that logs OnAfterGetCurrRecord (the QH_EmptyPart_*_CurrRecordOrder pages): whether and how often it runs after the host's New().",
     },
     PartFieldUnderTruePartExpression => {
         id: "part-field-under-true-part-expression",
@@ -510,12 +510,6 @@ registry! {
         assumed: "A SetValue on a host page control while a part holds a typed row that is not saved (a new row or an edited one) saves that row first (Insert or Modify with its triggers), as the part does when the host moves (misc/lt-probes-needed-7/PnGPartRows.al:130-163 PendingPartRowSavedWhenHostMoves) or closes (testpart/TestOkPartRow.al); then the host field validates.",
         tests: "Tests-ERM ERM Update Currency - Sales (134087): UpdateCurrencyCodeOnSalesCrMemoPage and three more type a line into the subform, then set the header's Currency Code, whose validation recreates the lines; they pass in Microsoft's CI.",
         probe: "A document host with a linked ListPart: New() on the part, SetValue of a part field, then SetValue of a host field whose OnValidate counts the part table's rows and logs them; the same with a stored part row edited (Modify) and with the part's OnInsertRecord / OnModifyRecord logging: whether the row is saved before the host's OnValidate, after it, or not at all.",
-    },
-    TableFieldAutoFormatExpression => {
-        id: "table-field-auto-format-expression",
-        assumed: "A page control over a table field whose AutoFormatExpression is an expression (Rec.\"Currency Code\", a field name, a procedure of the table), with no AutoFormatExpression of its own, formats its value as if the control had that expression: it is evaluated with the control's row each time the control's text is read, like a control expression (autoformat/PWAutoFormatTypes.al:19-22, TestAutoFormatExpressionTiming.al). The corpus pins control expressions and literal field expressions (pages/lt-page-autoformat-lookups/P113AutoFormat.al) only.",
-        tests: "Tests-ERM Amount AutoFormat Currency (134833): TestAutoformatShowFCYCodeOnlyAfterAmount and eight more (Case4FCY and Case5FCY, AutoFormatType 4 and 5 with AutoFormatExpression = Rec.\"Currency Code\" on the table field); about 100 Tests-ERM tests read such Base Application fields through pages (ERM Purchase Subform, ERM Payment Tolerance); they pass in Microsoft's CI.",
-        probe: "A table with Amount (AutoFormatType = 1, 2, 4, 5; AutoFormatExpression = Rec.\"Currency Code\") and a field with AutoFormatType = 10 and AutoFormatExpression = a procedure of the table that logs its calls and errors for one row: a Card and a List with plain controls over them, Value() of each control for rows with a currency of 3:3 / 4:4 places, a blank code and a code that is no currency; how often and when the procedure runs (open, Next, GoToRecord, Value()), and what the error does.",
     },
 }
 

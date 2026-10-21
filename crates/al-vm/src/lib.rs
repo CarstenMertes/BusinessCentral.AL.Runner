@@ -1151,6 +1151,14 @@ impl Session {
         self.reseeded_in_test = false;
     }
 
+    /// The instance a codeunit runs on when the session starts it: the session's single instance for a SingleInstance
+    /// codeunit (the one its variables and event subscribers use), else a fresh one. A test codeunit with SingleInstance =
+    /// true runs its test methods on it (codeunit/QiSingleInstanceTestCodeunit.al:57, :98).
+    pub fn codeunit_instance(&mut self, object: usize) -> Rc<RefCell<Instance>> {
+        let fresh = self.instance(object);
+        self.shared_instance(fresh)
+    }
+
     pub fn instance(&mut self, object: usize) -> Rc<RefCell<Instance>> {
         let tys: Vec<RtType> = self.engine.program.objects[object]
             .globals

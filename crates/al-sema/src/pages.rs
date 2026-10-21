@@ -369,7 +369,7 @@ pub fn field_caption_class_routines(obj: &ast::Object) -> Vec<(String, String, S
 
 /// The table field sections of a table or table extension whose `AutoFormatExpression` is an expression, as
 /// [`field_caption_class_routines`]. A page control over the field that names no expression of its own formats its value
-/// with the routine's result, run with the control's row as Rec (assumption table-field-auto-format-expression).
+/// with the routine's result, run with the control's row as Rec (a field of the row: types/lt-auto-format-currency/QiTableFieldAutoFormat.al).
 pub fn field_auto_format_routines(obj: &ast::Object) -> Vec<(String, String, String)> {
     field_expression_routines(obj, "AutoFormatExpression")
 }

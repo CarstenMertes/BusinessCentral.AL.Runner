@@ -200,6 +200,50 @@ page 51030 "PT Doc Card"
         }
     }
 }
+codeunit 51032 "PT Log" { SingleInstance = true; var L: Text; procedure Add(T: Text) begin if L <> '' then L += ' | '; L += T; end; procedure Take(): Text var T: Text; begin T := L; L := ''; exit(T); end; }
+page 51032 "PT Doc Lines Cur"
+{
+    PageType = ListPart;
+    SourceTable = "PT Doc Line";
+    AutoSplitKey = true;
+    layout { area(Content) { repeater(Rows) { field(LineNo; Rec."Line No.") { } } } }
+    trigger OnNewRecord(BelowxRec: Boolean) var G: Codeunit "PT Log"; begin G.Add('New:' + Rec."Doc No."); end;
+    trigger OnAfterGetCurrRecord() var G: Codeunit "PT Log"; begin G.Add('Cur:' + Rec."Doc No."); end;
+}
+page 51033 "PT Doc Lines CurOnly"
+{
+    PageType = ListPart;
+    SourceTable = "PT Doc Line";
+    AutoSplitKey = true;
+    layout { area(Content) { repeater(Rows) { field(LineNo; Rec."Line No.") { } } } }
+    trigger OnAfterGetCurrRecord() var G: Codeunit "PT Log"; begin G.Add('Cur:' + Rec."Doc No."); end;
+}
+page 51034 "PT Doc Card Cur"
+{
+    PageType = Card;
+    SourceTable = "PT Doc";
+    layout
+    {
+        area(Content)
+        {
+            field(DocNo; Rec."No.") { }
+            part(Lines; "PT Doc Lines Cur") { SubPageLink = "Doc No." = field("No."); }
+        }
+    }
+}
+page 51035 "PT Doc Card CurOnly"
+{
+    PageType = Card;
+    SourceTable = "PT Doc";
+    layout
+    {
+        area(Content)
+        {
+            field(DocNo; Rec."No.") { }
+            part(Lines; "PT Doc Lines CurOnly") { SubPageLink = "Doc No." = field("No."); }
+        }
+    }
+}
 
 page 51040 "PT Info Part"
 {
@@ -1132,4 +1176,61 @@ fn an_empty_part_of_an_editable_host_runs_on_new_record_three_times_and_host_new
         "F",
     );
     assert_eq!(text(r), "3,3,0");
+}
+
+// pages/lt-part-line-before-host-key/PartLineBeforeHostKey.al:1349 QH_EmptyPart_OpenNew_CurrRecordOrder, :1381
+// QH_EmptyPart_OpenEdit_CurrRecordOrder, :1495 QH_EmptyPart_OpenEdit_HostNext, :1418 QH_EmptyPart_OpenNew_KeyTyped: the
+// empty part of an editable host runs OnAfterGetCurrRecord right after each of its three OnNewRecord runs; :1439
+// QH_EmptyPart_OpenNew_CurrRecordOnlyPart, :1455 QH_EmptyPart_OpenEdit_CurrRecordOnlyPart: a part declaring only
+// OnAfterGetCurrRecord runs it three times. No assumption is marked on this path any more.
+#[test]
+fn an_empty_part_runs_on_after_get_curr_record_after_each_of_its_three_new_records() {
+    let r = run(
+        "procedure F(): Text var D: Record \"PT Doc\"; C: TestPage \"PT Doc Card Cur\"; E: TestPage \"PT Doc Card Cur\"; O: TestPage \"PT Doc Card CurOnly\"; G: Codeunit \"PT Log\"; T: Text; begin
+            G.Take();
+            C.OpenNew();
+            T := G.Take();
+            C.Close();
+            D.\"No.\" := 'D1'; D.Insert(); D.\"No.\" := 'D2'; D.Insert();
+            G.Take();
+            E.OpenEdit();
+            T += ' / ' + G.Take();
+            E.Next();
+            T += ' / ' + G.Take();
+            E.Close();
+            O.OpenNew();
+            T += ' / ' + G.Take();
+            O.Close();
+            exit(T);
+        end;",
+        "F",
+    );
+    assert_eq!(
+        text(r),
+        "New: | Cur: | New: | Cur: | New: | Cur: / New:D1 | Cur:D1 | New:D1 | Cur:D1 | New:D1 | Cur:D1 / New:D2 | Cur:D2 | New:D2 | Cur:D2 | New:D2 | Cur:D2 / Cur: | Cur: | Cur:"
+    );
+}
+
+// PartLineBeforeHostKey.al:879 PYB_OpenEdit_ThenHostNew: a host's New() runs none of the part's OnNewRecord; the part's
+// OnAfterGetCurrRecord then runs once under assumption part-host-new-after-get-curr-record-once (not pinned).
+#[test]
+fn a_host_new_runs_the_empty_parts_on_after_get_curr_record_once_under_an_assumption() {
+    al_builtins::assumptions::clear_hits();
+    let r = run(
+        "procedure F(): Text var D: Record \"PT Doc\"; E: TestPage \"PT Doc Card Cur\"; G: Codeunit \"PT Log\"; T: Text; begin
+            D.\"No.\" := 'D1'; D.Insert();
+            E.OpenEdit();
+            G.Take();
+            E.New();
+            T := G.Take();
+            E.Close();
+            exit(T);
+        end;",
+        "F",
+    );
+    assert_eq!(text(r), "Cur:");
+    assert!(
+        al_builtins::assumptions::take_hits()
+            .contains(&al_builtins::assumptions::Assumption::PartHostNewAfterGetCurrRecordOnce)
+    );
 }

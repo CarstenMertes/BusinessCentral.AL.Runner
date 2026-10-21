@@ -1,5 +1,5 @@
-//! Corpus probe QJ (corpus branch al-runtime-rs-staging-qj 1fd2ccd1, tests/al-language/pages/lt-qj-part-propagation/QjPartPropagation.al,
-//! green on BC 27, 28, 29; lands on corpus master with bump 41). The objects are copied from the probe; the test codeunit returns its
+//! Corpus probe QJ (tests/al-language/pages/lt-qj-part-propagation/QjPartPropagation.al, on corpus master since bump 41, the same as
+//! corpus branch al-runtime-rs-staging-qj 1fd2ccd1; green on BC 27, 28, 29). The objects are copied from the probe; the test codeunit returns its
 //! observations instead of asserting them, and each Rust test compares them with the values the probe asserts on real BC.
 //! The first observation (the trigger log of OpenEdit + GoToKey, and of Last + New on the part) is not compared yet: after GoToKey on
 //! the Document host the runtime re-reads the part once more than BC, and BC runs the part's New twice (to be fixed with the

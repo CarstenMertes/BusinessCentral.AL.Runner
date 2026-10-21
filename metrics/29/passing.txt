@@ -4581,8 +4581,6 @@
 67755 Header_Values_ReportWithCaption
 67755 Identity_DataItemGuid_IsTheSystemIdOfTheRow
 67755 Names_ColumnsWithSpacesPunctuationAndLetters
-67755 PW_DumpPlain_Lines01To18
-67755 PW_DumpPlain_Lines19To36
 67755 Rows_NoRowsAtAll
 67755 Rows_OnlyTheSiblingItemHasRows
 67755 Rows_ParentsWithChildRowsAndSiblingItem
@@ -7498,11 +7496,6 @@
 70535 Header_RawBytes
 70535 Names_SpacesAndParentheses
 70535 OtherFormats_NoLayout
-70535 PW_Dump_Lines001To016
-70535 PW_Dump_Lines017To032
-70535 PW_Dump_Lines081To096
-70535 PW_Dump_Lines097To112
-70535 PW_Dump_Lines113To128
 70535 Rows_BlockAfterHeader
 70535 Rows_ColumnBoundToVariable
 70535 Rows_SkipAndBreak
@@ -13539,6 +13532,7 @@
 84362 SetTableView_ConflictingFilterOnTheSameField
 84362 SetTableView_FilterOnAnotherField
 84362 SetTableView_WiderFilterOnTheSameField
+84363 ClearAll_InBaseAppPage_ExtensionGlobal
 84363 ClearAll_InOwnBasePage_ExtensionGlobal
 84363 ExtensionAction_VisibleFromVariableSetInOnOpenPage
 84439 ApiPage_OnInsertRecordInsertsAndReturnsFalse
@@ -13906,7 +13900,9 @@
 86504 Expression_ChangesRec
 86504 Expression_PerRead_CallCount
 86504 Expression_VatSwitch_SameRecord
+86504 Expressions_FieldCaption
 86504 Expressions_FieldRefCaption
+86504 Literals_FieldCaption
 86504 Page_ControlCaptions
 86504 QF_Card_Next
 86504 QF_ListPart_OnCard

@@ -834,8 +834,8 @@ impl Session {
         })();
         st.borrow_mut().validating_control = was_validating;
         // CurrPage.SaveRecord in the validation left xRec as it was; the row it stored is xRec from here on (the next SetValue's
-        // OnValidate sees it: QjPartPropagation.al QJ_SubformSaveRecord_StoredRow / _NewRow `S.V.before(... x=5 ...)`, pinned in
-        // corpus bump 41).
+        // OnValidate sees it: pages/lt-qj-part-propagation/QjPartPropagation.al:735 QJ_SubformSaveRecord_StoredRow and :766 _NewRow
+        // `S.V.before(... x=5 ...)`).
         let pending_xrec = st.borrow_mut().xrec_after_validate.take();
         if let Some(fields) = pending_xrec {
             self.set_xrec_fields(st, fields);

@@ -240,8 +240,9 @@ pub fn run_traced(engine: &Arc<Engine>, lowered: &Lowered, trace: bool) -> Optio
 /// CompanyInformationValues.al:45 QG_CompanyInformation_CorpusRow `count` 1, :89 QG_AccountingPeriod_CorpusRows `count` 36).
 /// ADR-047 (seed them) is rejected, so without test data a `Count` or `IsEmpty` of one of them before the test's own code
 /// wrote to it is refused, the shape those two tests read (install code may have written a row with other values). Other reads stay answered: refusing every read of those tables lost 116 BC 29
-/// baseline cases (reports and pages that read Company Information without asserting its values). Object indexes of the
-/// dependency tables 50 and 79.
+/// baseline cases (reports and pages that read Company Information without asserting its values). General Ledger Setup holds
+/// one demo row there too (record/lt-qd-captionclass-areas/QdCaptionClassAreas.al:804 QF_GLSetup_CorpusRow `count` 1, :815).
+/// Object indexes of the dependency tables 50, 79 and 98.
 pub fn demo_row_tables(lowered: &Lowered) -> std::collections::HashSet<usize> {
     let objs = &lowered.program.objects;
     (0..objs.len())
@@ -250,7 +251,9 @@ pub fn demo_row_tables(lowered: &Lowered) -> std::collections::HashSet<usize> {
                 && objs[oi].table.is_some()
                 && matches!(
                     (objs[oi].id, objs[oi].name.as_str()),
-                    (Some(50), "Accounting Period") | (Some(79), "Company Information")
+                    (Some(50), "Accounting Period")
+                        | (Some(79), "Company Information")
+                        | (Some(98), "General Ledger Setup")
                 )
         })
         .collect()

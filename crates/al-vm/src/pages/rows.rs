@@ -65,6 +65,9 @@ impl Session {
             let caption = caption.clone();
             return self.refuse_setup_caption(area, text, caption);
         }
+        if matches!(area.trim(), "1" | "101") && !self.gl_setup_written {
+            self.setup_caption_read_early = true;
+        }
         let caption = self.raise_resolve_caption_class(area, expr, text)?;
         self.caption_translations
             .push((text.to_string(), self.global_language, caption.clone()));
@@ -76,8 +79,20 @@ impl Session {
     /// without Microsoft's test data the runtime's setup row is the one the install code writes, so a caption those areas
     /// resolved is refused. A text they leave as written does not read the setup (pages/lt-page-report-events/P84Captions.al:
     /// '1,1,x' and the other area 1 texts).
+    /// A test that wrote General Ledger Setup before any caption of these areas was resolved in the session is answered for what
+    /// it wrote: area 101 type 0 (the LCY Code) and area 1 type 1 reference 1 (Global Dimension 1 Code and its Dimension row)
+    /// (QdCaptionClassAreas.al:267 `lit101` 'Amount (GBP)', :269 `lit11` 'Department Code', :311 `expr101`, after
+    /// misc/lt-qk-setup-rows/QkSetupRows.al WriteGLSetupCaptions). The other types read fields that test does not write.
     fn refuse_setup_caption(&self, area: &str, text: &str, caption: String) -> Result<String, Signal> {
-        if self.engine.test_data.is_none() && matches!(area.trim(), "1" | "101") && caption != text {
+        let written = self.gl_setup_written && !self.setup_caption_read_early && {
+            let expr = text.split_once(',').map_or("", |(_, e)| e);
+            match area.trim() {
+                "101" => expr.starts_with("0,"),
+                "1" => expr == "1,1" || expr.starts_with("1,1,"),
+                _ => false,
+            }
+        };
+        if self.engine.test_data.is_none() && matches!(area.trim(), "1" | "101") && caption != text && !written {
             return unsupported(format!(
                 "CaptionClass `{text}`: Base Application resolves area {area} from General Ledger Setup, whose corpus database row the runtime's database does not hold"
             ));

@@ -529,9 +529,8 @@ impl Session {
                 .is_some_and(|h| !self.is_list(&h))
         {
             // The same for a ListPart in a Document page: OnNewRecord sees the last row as xRec, OnAfterGetCurrRecord the blank new
-            // row (corpus bump 41 pages/lt-qj-part-propagation/QjPartPropagation.al QJ_SubformSaveRecord_NewRow
+            // row (pages/lt-qj-part-propagation/QjPartPropagation.al:763 QJ_SubformSaveRecord_NewRow
             // `S.NEW(x=1 x.ln=10000) S.AGCR(0 r=0 x=0)`).
-            al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::PartSaveRecordInValidateKeepsXrec);
             self.set_xrec(st);
         }
         // A new row nobody has saved raises OnAfterGetCurrRecord but no OnAfterGetRecord (corpus

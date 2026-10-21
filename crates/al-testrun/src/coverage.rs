@@ -1,4 +1,4 @@
-//! Statement coverage for `alrunner test --coverage`: the statements of the workspace's apps, and a per-thread sink in
+//! Statement coverage for `al-runner test --coverage`: the statements of the workspace's apps, and a per-thread sink in
 //! which a test codeunit's run leaves what each of its tests executed.
 //!
 //! A statement is a `Stmt::Pos` marker of the lowered program (`ir::Program::positions`); the VM counts how often each

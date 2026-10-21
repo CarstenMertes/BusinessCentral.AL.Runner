@@ -48,7 +48,7 @@ jobs:
           # caller's event (schedule or workflow_dispatch), so this input is checked first.
           CALL_SHA: ${{ inputs.sha }}
         run: |
-          # The UTC date of this build, shown in `alrunner --version` as +edge.YYYYMMDD.
+          # The UTC date of this build, shown in `al-runner --version` as +edge.YYYYMMDD.
           echo "version_suffix=+edge.$(date -u +%Y%m%d)" >> "$GITHUB_OUTPUT"
           if [ -n "$CALL_SHA" ]; then
             echo "Nightly build of $CALL_SHA."
@@ -135,8 +135,8 @@ jobs:
             done
             gh release upload edge dist/* --clobber
             gh release edit edge --prerelease --latest=false --draft=false \
-              --title "alrunner edge ($(echo "$SHA" | cut -c1-9))" --notes-file notes.md
+              --title "al-runner edge ($(echo "$SHA" | cut -c1-9))" --notes-file notes.md
           else
             gh release create edge dist/* --prerelease --latest=false --verify-tag \
-              --title "alrunner edge ($(echo "$SHA" | cut -c1-9))" --notes-file notes.md
+              --title "al-runner edge ($(echo "$SHA" | cut -c1-9))" --notes-file notes.md
           fi

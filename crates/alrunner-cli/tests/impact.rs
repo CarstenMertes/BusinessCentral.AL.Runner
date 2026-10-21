@@ -1,4 +1,4 @@
-//! `alrunner test --impact-of` (ADR-043 step 1: two runs and a diff) end to end on the small fixture apps in
+//! `al-runner test --impact-of` (ADR-043 step 1: two runs and a diff) end to end on the small fixture apps in
 //! `tests/fixtures/impact`. Nothing here is Microsoft's code: `lib` stands in for the Base App (a publisher),
 //! `tests` for a Microsoft test app, `ext` for a partner extension (a subscriber), `unrelated` for an app that
 //! touches nothing the tests reach.
@@ -16,14 +16,16 @@ fn fixture(name: &str) -> String {
 
 fn alrunner(args: &[&str]) -> Output {
     let cache = tempfile::tempdir().unwrap();
-    Command::new(env!("CARGO_BIN_EXE_alrunner"))
+    Command::new(env!("CARGO_BIN_EXE_al-runner"))
         .env("AL_CHECK_THREADS", "2")
         .env("AL_LOWER_THREADS", "2")
         .env("AL_TEST_THREADS", "2")
+        // The note about another al-runner on PATH (the machine may have AL Runner v2) stays out of these outputs.
+        .env("ALRUNNER_NO_PATH_NOTE", "1")
         .args(args)
         .args(["--no-download", "--cache-dir", cache.path().to_str().unwrap()])
         .output()
-        .expect("run alrunner")
+        .expect("run al-runner")
 }
 
 fn text(o: &Output) -> String {
@@ -172,7 +174,7 @@ fn without_an_index_the_run_selects_by_static_reach_and_says_what_that_misses() 
         "{t}"
     );
     assert!(
-        t.contains("Build the index once with: alrunner impact-index build"),
+        t.contains("Build the index once with: al-runner impact-index build"),
         "{t}"
     );
     // Only codeunit 50510 calls the publisher the extension subscribes to; both sides run it.
@@ -225,14 +227,16 @@ fn without_an_index_the_run_selects_by_static_reach_and_says_what_that_misses() 
 }
 
 fn alrunner_in(cache: &std::path::Path, args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_alrunner"))
+    Command::new(env!("CARGO_BIN_EXE_al-runner"))
         .env("AL_CHECK_THREADS", "2")
         .env("AL_LOWER_THREADS", "2")
         .env("AL_TEST_THREADS", "2")
+        // The note about another al-runner on PATH (the machine may have AL Runner v2) stays out of these outputs.
+        .env("ALRUNNER_NO_PATH_NOTE", "1")
         .args(args)
         .args(["--no-download", "--cache-dir", cache.to_str().unwrap()])
         .output()
-        .expect("run alrunner")
+        .expect("run al-runner")
 }
 
 #[test]

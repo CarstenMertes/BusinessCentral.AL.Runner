@@ -1,4 +1,4 @@
-//! `alrunner test`: load the APPs and their dependencies, compile, run, report.
+//! `al-runner test`: load the APPs and their dependencies, compile, run, report.
 
 use crate::apps::{self, AppInput};
 use crate::args::{DEFAULT_TOP, TestArgs};
@@ -214,12 +214,12 @@ pub fn write_file(path: &Path, text: &str) -> Result<(), String> {
     std::fs::write(path, text).map_err(|e| format!("{}: {e}", path.display()))
 }
 
-/// With `alrunner serve`: the backup opened last, kept with the tables read from it, for the next request.
+/// With `al-runner serve`: the backup opened last, kept with the tables read from it, for the next request.
 type KeptBackup = ((PathBuf, Option<String>), TestData);
 static KEPT_BACKUP: std::sync::Mutex<Option<KeptBackup>> = std::sync::Mutex::new(None);
 static KEEP_BACKUPS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-/// `alrunner serve` keeps the opened backup (and so the tables read from it) between requests.
+/// `al-runner serve` keeps the opened backup (and so the tables read from it) between requests.
 pub fn keep_backups() {
     KEEP_BACKUPS.store(true, std::sync::atomic::Ordering::Relaxed);
 }
@@ -406,7 +406,7 @@ fn should_choose_test_data(a: &TestArgs, already_open: bool, microsoft: bool) ->
     a.wants_test_data() && !already_open && (microsoft || a.test_data_asked_for())
 }
 
-/// `alrunner warm`: finds the backup, opens it, and so builds the index kept next to the compile cache.
+/// `al-runner warm`: finds the backup, opens it, and so builds the index kept next to the compile cache.
 pub fn warm(a: &TestArgs) -> Result<(), String> {
     if a.country.is_some() && !a.no_download {
         al_deps::artifact::check_country(&al_deps::artifact::HttpCdn::from_env(), a.country())?;
@@ -461,7 +461,7 @@ pub fn test(a: &TestArgs) -> Result<u8, String> {
 /// What one side of an impact run (ADR-043), or the run that builds its index, asks for and keeps of its run.
 #[derive(Default)]
 pub struct Collected {
-    /// Asked for: note what each test raised and touched (`alrunner impact-index build`).
+    /// Asked for: note what each test raised and touched (`al-runner impact-index build`).
     pub impact_trace: bool,
     /// Asked for: narrow the test codeunits once the compile is done (dynamic selection).
     pub narrow: Option<al_testrun::runtime::Narrow>,
@@ -490,7 +490,7 @@ pub fn test_collect(a: &TestArgs, into: &mut Collected) -> Result<u8, String> {
 /// What the server hears for each test as it finishes: the event, and its capture as JSON.
 pub type OnTest = Arc<dyn Fn(al_testrun::events::TestEvent, Option<serde_json::Value>) + Send + Sync>;
 
-/// What `alrunner serve` keeps between requests, and how it hears about a request's run (ADR-028).
+/// What `al-runner serve` keeps between requests, and how it hears about a request's run (ADR-028).
 #[derive(Default)]
 pub struct WarmCtx {
     pub runtime: al_testrun::runtime::Warm,

@@ -15,5 +15,5 @@ al-ir.workspace = true
 al-testrun = { workspace = true, optional = true }
 
 [features]
-# `outcomes_in`: run the tests of a codeunit the way `alrunner test` does (al-testrun).
+# `outcomes_in`: run the tests of a codeunit the way `al-runner test` does (al-testrun).
 runner = ["dep:al-testrun"]

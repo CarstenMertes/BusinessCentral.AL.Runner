@@ -38,7 +38,7 @@ The IR is compiled to register bytecode per routine on its first call (ADR-034);
 | `al-host` | Capability traits for the host (ADR-006): `Clock` and `Identity` with AL Runner's defaults (ADR-013); the session reads them for `Today`, `UserId`, the system field stamps and the like. The command line injects the system clock (`al-test-cli/src/host.rs`). Also `DotNetHost` / `DotNetSession` and the default `NoDotNet` (ADR-014) |
 | `al-deps` | Dependency apps (ADR-013): version selection, the ZIP and NAVX reader (CRC checked), the `.alpackages` pool. May touch the OS |
 | `al-bcdb` | Reads BC data straight from a SQL Server backup (`.bak`) or a cloud export (`.bacpac`): backup container, page map, system catalog, row and page decompression, off-page BLOBs, zip and `model.xml`, native BCP rows. A port of the owner's `bcdb` (C#). Core crate: works on a `ByteSource`, no OS access (ADR-006). Not wired into test runs yet; ADR-020 proposes how. See `docs/bcdb.md` |
-| `al-bcdb-std` | The OS side of `al-bcdb`: the pread file source and `BackupProvider`, the table provider behind `alrunner test --test-data` (ADR-020). May touch the OS |
+| `al-bcdb-std` | The OS side of `al-bcdb`: the pread file source and `BackupProvider`, the table provider behind `al-runner test --test-data` (ADR-020). May touch the OS |
 | `al-bcdb-cli` | The `al-bcdb` development command line: the bcdb read commands over `al-bcdb`, a parallel `export`, and the parity tests against the published bcdb. May touch the OS |
 | `al-test-cli` | Corpus discovery, oracle reading, the BC test-runner semantics, reports (text, Markdown, JSON, JUnit), the ratchet; `SidecarHost` (`dotnet.rs`), the one place that starts a process (the .NET sidecar) |
 

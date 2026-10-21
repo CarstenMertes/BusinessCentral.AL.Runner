@@ -1,5 +1,5 @@
 //! The rows of a restored company, from a SQL Server backup (`.bak`) or a BC cloud export
-//! (`.bacpac`), as `alrunner test --test-data` reads them (ADR-020 point 3).
+//! (`.bacpac`), as `al-runner test --test-data` reads them (ADR-020 point 3).
 //!
 //! The provider does no naming of its own beyond finding the database table: a table is its AL
 //! name with SQL's character substitutions, selected by company and, when two apps declare the same

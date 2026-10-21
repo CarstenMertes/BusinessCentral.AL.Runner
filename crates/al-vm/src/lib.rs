@@ -529,7 +529,7 @@ pub struct Session {
     pub test_object: Option<usize>,
     /// The `TestHttpRequestPolicy` of the running test codeunit (`None`: the property is absent).
     pub(crate) http_policy: Option<&'static str>,
-    /// A scratch run (`alrunner serve`'s `execute`): the text of every `Message` raised outside a test
+    /// A scratch run (`al-runner serve`'s `execute`): the text of every `Message` raised outside a test
     /// method, in order. `None`: such a call is refused, as BC's behaviour then is not pinned.
     pub(crate) scratch_messages: Option<Vec<String>>,
     /// Value capture and loop tracking (`capture.rs`); `None`: off, and the statements run as they always did.
@@ -1574,7 +1574,7 @@ impl Session {
         self.stop.clone()
     }
 
-    /// Starts counting how often each statement runs (`alrunner test --coverage`).
+    /// Starts counting how often each statement runs (`al-runner test --coverage`).
     pub fn enable_coverage(&mut self) {
         self.coverage.coverage_counts = Some((Vec::new(), Vec::new()));
     }

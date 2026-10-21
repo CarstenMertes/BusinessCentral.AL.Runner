@@ -51,7 +51,7 @@ class T(unittest.TestCase):
             self.assertEqual(top["tests"], 4)
             bank = [b for b in top["buckets"] if b["bucket"] == "Bank"][0]
             self.assertEqual(bank["codeunits"], [100, 101])
-            self.assertEqual(bank["rerun"], "alrunner test /z/Tests-Bank.Source.zip --codeunit 100 --codeunit 101")
+            self.assertEqual(bank["rerun"], "al-runner test /z/Tests-Bank.Source.zip --codeunit 100 --codeunit 101")
             self.assertEqual(j["items"][1]["kind"], "failed")
             self.assertEqual(j["buckets"]["Bank"]["exit"], 7)
             self.assertEqual([x["test"] for x in j["lost_passes"]], ["D"])

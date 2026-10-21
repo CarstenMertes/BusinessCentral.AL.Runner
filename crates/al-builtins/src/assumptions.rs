@@ -495,15 +495,15 @@ registry! {
     },
     HostSaveRecordRefreshesLinkedParts => {
         id: "host-save-record-refreshes-linked-parts",
-        assumed: "A SetValue on a host page control whose OnValidate calls CurrPage.SaveRecord() (and no CurrPage.Update) makes the host's parts that have a SubPageLink read their rows again after the validation, as after CurrPage.Update on the host (testpart/TestPartTriggerOrderAndRefresh.al HostCurrPageUpdate_ReReadsThePart), without the host reading its own row again. pageupdate/TestPageUpdate.al:116-139 pins only that a SetValue without SaveRecord or Update leaves an unlinked FactBox alone.",
-        tests: "Tests-ERM ERM Purchase Subform (134394), for example OrderModifyindFieldOnHeaderSetsDiscountToZeroForInvoiceDiscountTypeAmount: Purchase Order \"Currency Code\" OnValidate calls CurrPage.SaveRecord(), and the subform's totals (OnAfterGetCurrRecord, Document Totals) must show the recalculated invoice discount; they pass in Microsoft's CI.",
-        probe: "A host card with a linked ListPart and an unlinked one, each logging OnAfterGetRecord / OnAfterGetCurrRecord and xRec's key and a field: SetValue on a host field whose OnValidate calls CurrPage.SaveRecord() (the row changes, and also when it does not), then the same with Modify() instead of SaveRecord, and with neither: which part triggers run, in which order, with which Rec and xRec, and whether the host's OnAfterGetCurrRecord runs.",
+        assumed: "A SetValue on a control of a host page that is not a Document page (a Card), whose OnValidate calls CurrPage.SaveRecord() (and no CurrPage.Update), makes the host's parts that have a SubPageLink read their rows again from their first rows, as after CurrPage.Update on the host (testpart/TestPartTriggerOrderAndRefresh.al HostCurrPageUpdate_ReReadsThePart), without the host reading its own row again. On a Document host testpart/QiHostSaveParts.al pins it: every part reads again where it stands, the unlinked ones too.",
+        tests: "Corpus baseline case 60412 NewHostRowSavedByItsOwnTrigger_IsInsertedOnce (a Card host); Tests-ERM ERM Purchase Subform (134394) when the host is a Document page no longer goes through it.",
+        probe: "The QiHostSaveParts.al probe (testpart/QiHostSaveParts.al QI_HostSaveRecord_*) on a Card host with a linked ListPart and an unlinked one: which part triggers run, in which order, with which Rec and xRec.",
     },
     PartRowSavedBeforeHostSetValue => {
         id: "part-row-saved-before-host-set-value",
-        assumed: "A SetValue on a host page control while a part holds a typed row that is not saved (a new row or an edited one) saves that row first (Insert or Modify with its triggers), as the part does when the host moves (misc/lt-probes-needed-7/PnGPartRows.al:130-163 PendingPartRowSavedWhenHostMoves) or closes (testpart/TestOkPartRow.al); then the host field validates.",
-        tests: "Tests-ERM ERM Update Currency - Sales (134087): UpdateCurrencyCodeOnSalesCrMemoPage and three more type a line into the subform, then set the header's Currency Code, whose validation recreates the lines; they pass in Microsoft's CI.",
-        probe: "A document host with a linked ListPart: New() on the part, SetValue of a part field, then SetValue of a host field whose OnValidate counts the part table's rows and logs them; the same with a stored part row edited (Modify) and with the part's OnInsertRecord / OnModifyRecord logging: whether the row is saved before the host's OnValidate, after it, or not at all.",
+        assumed: "A SetValue on a control of a host page that is not a Document page, while a part holds a typed row that is not saved (a new row or an edited one), saves that row first (Insert or Modify with its triggers), as on a Document host (testpart/QiHostSaveParts.al:500 QI_PartNewRow_ThenHostSetValue, :554 QI_PartEditedRow_ThenHostSetValue); then the host field validates.",
+        tests: "Microsoft tests that type a line into a subform of a host other than a Document page, then set a host field; and the corpus cases that do the same on a Card host.",
+        probe: "The QiHostSaveParts.al probe (QI_PartNewRow_ThenHostSetValue, QI_PartEditedRow_ThenHostSetValue) on a Card host.",
     },
     PartUpdatePropagationBothRefreshesHost => {
         id: "part-update-propagation-both-refreshes-host",

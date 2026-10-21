@@ -133,8 +133,8 @@ impl Session {
         let rec_bound = matches!(ctl.binding, ir::Binding::Field(_));
         // A SetValue on a host control while one of its parts holds a typed row that is not saved: the part saves that row
         // first, as it does when the host moves (misc/lt-probes-needed-7/PnGPartRows.al:130-163
-        // PendingPartRowSavedWhenHostMoves) and when it closes (testpart/TestOkPartRow.al). Not pinned for a SetValue:
-        // assumption part-row-saved-before-host-set-value.
+        // PendingPartRowSavedWhenHostMoves) and when it closes (testpart/TestOkPartRow.al); for a SetValue on a Document host
+        // testpart/QiHostSaveParts.al:500, :554 pin it (other hosts: assumption part-row-saved-before-host-set-value).
         self.save_parts_before_host_edit(st)?;
         self.save_host_before_part_edit(st)?;
         // OnBeforeValidate and OnAfterValidate of `modify` blocks wrap the control's own OnValidate
@@ -842,6 +842,13 @@ impl Session {
         }
         match result {
             Ok(()) => {
+                // The row as typed is the current row the next OnAfterGetCurrRecord sees as xRec (corpus bump 41
+                // pages/lt-qj-part-propagation/QjPartPropagation.al QJ_Both_PartModifiesHost_ThenHostSave `L.Qty.V(5 x=1) ...
+                // L.AGCR(10000 q=1 x.q=5)`).
+                if rec_bound && !st.borrow().draft && st.borrow().cursor == Cursor::Row {
+                    let typed = self.page_rec(st).borrow().fields.clone();
+                    st.borrow_mut().agcr_xrec = Some(typed);
+                }
                 // A SetValue that goes through clears the control's refused entries (pages/lt-f3-pages/F3ValidationAddinFilter.al:
                 // GetValidationError_ErrorThenCorrected, line 272: the page answers an empty text afterwards).
                 st.borrow_mut().errors.retain(|(i, _)| *i != idx);
@@ -852,7 +859,7 @@ impl Session {
                     self.run_refresh(st)?;
                 }
                 if saved && !update_asked && rec_bound {
-                    self.refresh_linked_parts_after_save(st)?;
+                    self.reread_parts_after_host_save_record(st)?;
                 }
                 self.refresh_caption_classes(st)?;
                 Ok(Value::Null)
@@ -948,6 +955,8 @@ impl Session {
         self.refuse_unpinned_state(&c.page)?;
         let st = &c.page;
         let m = method.method();
+        let field_read = m == PageMethod::Value && args.is_empty();
+        self.first_part_access(st, m, field_read)?;
         // After a GoToKey that moved a list without OnAfterGetCurrRecord a Value read and SetValue read nothing, and the action
         // after them reads the row twice (pages/lt-ai-list-order/QgGoToKeyNextCall.al:223 Plain_GoToKey_ThenValueRead `no_log`,
         // `qty_log` empty; :236 Plain_GoToKey_ThenSetValue_ThenAction `setvalue_log` empty; :317 _ThenValueRead_ThenAction; the Nav_

@@ -495,6 +495,22 @@ pub struct PageState {
     pub agr_row: Option<Vec<Value>>,
     /// The keys of every row OnAfterGetRecord ran with since the page opened.
     pub agr_rows: Vec<Vec<Value>>,
+    /// The row OnAfterGetRecord ran with last (its fields after the trigger): the next OnAfterGetRecord sees it as xRec;
+    /// `None` before the first fetch, when xRec is a blank row (testpart/QiHostSaveParts.al:361 `L.AGR(D1/10000|d1 l1 x=/0)`).
+    pub agr_xrec: Option<Vec<Value>>,
+    /// The row OnAfterGetCurrRecord ran with last: the next OnAfterGetCurrRecord sees it as xRec; `None` before the first,
+    /// when xRec is a blank row with the single-value key filters (the part link) on it (QiHostSaveParts.al:361
+    /// `L.AGCR(D1/10000|d1 l1 x=D1/0)`, `U.AGCR(D1/10000 x=/0)`).
+    pub agcr_xrec: Option<Vec<Value>>,
+    /// OnAfterGetCurrRecord ran last on a row that is not stored (a new row): the next one on a stored row sees the xRec the
+    /// page holds (misc/lt-probes-needed-7/PnGShowRow.al EmptyListInsertViaRec `List.AGCR(,);List.AGR(NEW1,Created);...;
+    /// List.AGCR(NEW1,NEW1)`).
+    pub agcr_after_new: bool,
+    /// A sibling part saved a row before a host SetValue and this unlinked part over the same table read it and shows it
+    /// (testpart/QiHostSaveParts.al:500 `U.AGR(D1/30000 ...);U.AGCR(D1/30000 x=/0)`): the fields of the row it stands on.
+    pub shows_sibling_save: Option<Vec<Value>>,
+    /// A part: a TestPart call or a call on one of its fields reached it since its host opened.
+    pub part_accessed: bool,
     /// `P.Editable(false)` or `P.Editable := false` on a Page variable before it runs: the page
     /// opens non-editable (handlers/TestPageVariableEditableContracts.al).
     pub editable_preset: Option<bool>,
@@ -654,6 +670,11 @@ impl PageState {
             set_controls: Vec::new(),
             agr_row: None,
             agr_rows: Vec::new(),
+            agr_xrec: None,
+            agcr_xrec: None,
+            agcr_after_new: false,
+            shows_sibling_save: None,
+            part_accessed: false,
             editable_preset: None,
             caption: None,
             parts: Vec::new(),

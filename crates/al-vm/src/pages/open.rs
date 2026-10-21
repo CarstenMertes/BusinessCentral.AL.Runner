@@ -223,6 +223,10 @@ impl Session {
             s.editable_off = false;
             s.editable_off_in_open = false;
             s.set_controls = Vec::new();
+            s.agr_xrec = None;
+            s.agcr_xrec = None;
+            s.agcr_after_new = false;
+            s.part_accessed = false;
             s.expanded = Vec::new();
             // A caption assigned to the variable before its first run stays.
             // It stays for a second run too (types/lt-caption-assigned-before-run/CaptionAssignedBeforeRun.al:P187_SecondRun_NoReassign,
@@ -1023,6 +1027,7 @@ impl Session {
             self.tx.immediate_errors = false;
             inserted?;
         }
+        let host_saves = st.borrow().dirty || st.borrow().draft;
         let save = self.close_denied_modify(st).and_then(|()| self.save_row(st));
         match save {
             Err(Signal::Error(e)) if swallow_save_errors => {
@@ -1033,6 +1038,7 @@ impl Session {
             }
             other => other?,
         }
+        self.stale_parts_read_at_close(st, host_saves)?;
         let members: std::sync::Arc<[String]> = al_builtins::value::ACTION_MEMBERS
             .iter()
             .map(|m| m.to_string())

@@ -29,3 +29,4 @@ mod run_record_group2;
 mod trap_reopen;
 mod trigger_errors;
 mod trust_refusals;
+mod qi_host_save_parts;

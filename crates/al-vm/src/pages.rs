@@ -293,9 +293,45 @@ impl Session {
         }
         let mut answer = None;
         let mut result = Ok(());
-        if page.triggers.iter().any(|(n, _)| n == name) || page.ext_triggers.iter().any(|(n, _, _)| n == name) {
+        let declared = page.triggers.iter().any(|(n, _)| n == name) || page.ext_triggers.iter().any(|(n, _, _)| n == name);
+        if declared {
             st.borrow_mut().triggers_run += 1;
         }
+        // In OnAfterGetRecord xRec is the row the page fetched before (a blank row first); in OnAfterGetCurrRecord on a stored
+        // row it is the row OnAfterGetCurrRecord ran with before (a blank row with the part link first). Every other trigger
+        // keeps the xRec the page holds (testpart/QiHostSaveParts.al:361-362, :411-412, :580).
+        // On a new row OnAfterGetCurrRecord sees the xRec the page holds, the new row as it was set up (misc/lt-probes-needed-7/
+        // PnGNewRecord.al:94 HandedRecordNoFilters `List.OnNewRecord;List.AGCR(,)` after `List.AGCR(N1,)`; PnGShowRow.al
+        // ListLosesOnlyRowDeleteNoUpdate `List.OnNewRecord;List.AGCR(,)` after `List.AGR(U1,Upd 1)`), and so does the next one on a
+        // stored row (`agcr_after_new`).
+        let stored_row = {
+            let s = st.borrow();
+            !s.draft && s.cursor == Cursor::Row
+        };
+        let fetch = (name == "onaftergetrecord" || (name == "onaftergetcurrrecord" && stored_row)) && self.has_source(st);
+        let after_new = if name == "onaftergetcurrrecord" && self.has_source(st) {
+            let mut s = st.borrow_mut();
+            let was = s.agcr_after_new;
+            s.agcr_after_new = !stored_row;
+            was
+        } else {
+            false
+        };
+        let held_xrec = if fetch && declared && !after_new {
+            let before = {
+                let s = st.borrow();
+                if name == "onaftergetrecord" { s.agr_xrec.clone() } else { s.agcr_xrec.clone() }
+            };
+            let before = match before {
+                Some(f) => f,
+                None => self.blank_fetch_xrec(st, name == "onaftergetcurrrecord")?,
+            };
+            let held = self.page_xrec_fields(st);
+            self.set_xrec_fields(st, before);
+            Some(held)
+        } else {
+            None
+        };
         if let Some(r) = page.triggers.iter().find(|(n, _)| n == name).map(|(_, r)| *r) {
             let inst = st.borrow().instance.clone().expect("open page");
             match self.call(object, r, inst, args.clone()) {
@@ -320,6 +356,18 @@ impl Session {
                 }
             }
         }
+        if fetch {
+            if let Some(held) = held_xrec {
+                self.set_xrec_fields(st, held);
+            }
+            let now = self.page_rec(st).borrow().fields.clone();
+            let mut s = st.borrow_mut();
+            if name == "onaftergetrecord" {
+                s.agr_xrec = Some(now);
+            } else {
+                s.agcr_xrec = Some(now);
+            }
+        }
         self.end_page_call(st);
         if name == "onaftergetrecord" && result.is_ok() && self.has_source(st) {
             let rec = self.page_rec(st);
@@ -331,6 +379,33 @@ impl Session {
             s.agr_row = Some(key);
         }
         result.map(|()| answer)
+    }
+
+    /// xRec of the first OnAfterGetRecord (a blank row) or OnAfterGetCurrRecord (a blank row with each primary-key field
+    /// whose filter is a single value on it: the part link) of an open page (testpart/QiHostSaveParts.al:361
+    /// `L.AGR(D1/10000|d1 l1 x=/0)`, `L.AGCR(D1/10000|d1 l1 x=D1/0)`, `U.AGCR(D1/10000 x=/0)`, `H.AGCR(D1 x=)`).
+    fn blank_fetch_xrec(&mut self, st: &St, with_filters: bool) -> Result<Vec<Value>, Signal> {
+        let rec = self.page_rec(st);
+        let table = self.table(&rec)?;
+        let mut fields = self.initial_fields(rec.borrow().table as usize);
+        if with_filters {
+            let r = rec.borrow();
+            for &pos in &table.keys[0] {
+                let mut single = r.filters.iter().filter(|f| f.field == pos).map(|f| match &f.expr {
+                    al_builtins::filter::FilterExpr::Eq(v) => Some(v.clone()),
+                    al_builtins::filter::FilterExpr::Range(Some(a), Some(b))
+                        if ops::compare(a, b).is_ok_and(|o| o.is_eq()) =>
+                    {
+                        Some(a.clone())
+                    }
+                    _ => None,
+                });
+                if let (Some(Some(v)), None) = (single.next(), single.next()) {
+                    fields[pos] = v;
+                }
+            }
+        }
+        Ok(fields)
     }
 
     /// The instance that runs the code of `owner`: the page itself, or one of its extensions.

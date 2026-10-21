@@ -182,6 +182,9 @@ impl Session {
         if name != PageMethod::Close || st.borrow().unpinned_close {
             self.refuse_unpinned_state(st)?;
         }
+        if method.recv() == PageRecv::TestPart {
+            self.first_part_access(st, name, false)?;
+        }
         // A card whose OnNewRecord inserted its new row: only Close of the unchanged row is pinned (corpus
         // pages/lt-cf-page-leads/CfPageLeads.al:241-289 Card_OnNewRecordInserts_OpenNewSetClose).
         if st.borrow().new_row_inserted_by_trigger

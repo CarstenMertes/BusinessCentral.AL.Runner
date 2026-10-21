@@ -28,7 +28,7 @@ fn off() -> bool {
 fn home() -> Option<PathBuf> {
     ["HOME", "USERPROFILE"]
         .iter()
-        .filter_map(|k| std::env::var_os(k))
+        .filter_map(std::env::var_os)
         .find(|v| !v.is_empty())
         .map(PathBuf::from)
 }

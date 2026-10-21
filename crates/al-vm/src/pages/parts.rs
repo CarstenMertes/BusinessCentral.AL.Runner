@@ -1070,8 +1070,8 @@ impl Session {
     /// OnAfterGetCurrRecord sees the typed row as xRec). With Both the host's triggers run first and then its parts read their rows;
     /// with SubPart or none the part reads its rows first, then the host's triggers run. Pinned by
     /// pages/lt-qj-part-propagation/QjPartPropagation.al:508 (QJ_Both_), :545 (QJ_SubPart_) and :582 (QJ_Default_PartModifiesHost_
-    /// ThenHostSave `log-part-edit`). A new part row is pinned for none of this: with Both it keeps the earlier behavior (the part
-    /// refreshes, then the host) under the assumption part-update-new-row-both-refreshes-host, otherwise it is refused.
+    /// ThenHostSave `log-part-edit`). A new part row with Both is pinned below; with SubPart or none it is refused (QjPartPropagation.al:
+    /// 1034 and :1071 pin it, but their first observation, Last and New on the part, is not built yet).
     /// Returns whether the part's own refresh was done here.
     pub(super) fn host_after_part_update(&mut self, st: &St) -> Result<bool, Signal> {
         let Some((host, c)) = st
@@ -1122,11 +1122,21 @@ impl Session {
                 "a part's CurrPage.Update on a new part row after its code changed the host's stored row, UpdatePropagation not Both (not pinned)",
             );
         }
+        // A new part row with Both: the part keeps its typed row (no read of the part, the row is inserted at Close) and the host
+        // reads its row again, its triggers seeing the row read before as xRec (pages/lt-qj-part-propagation/QjPartPropagation.al:997
+        // QL_Both_NewPartRow_PartModifiesHost `log-part-edit` = `L.Qty.V(5 x=0) L.Qty.V.end H.AGR(t=6 ... x.t=1) H.AGCR(t=6 ... x.t=1)`,
+        // `part-qty-after-part` 5.00, `lines-after-close` with 20000:q=5).
         if !part_stored {
-            al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::PartUpdateNewRowBothRefreshesHost);
-            self.run_refresh(st)?;
-            host.borrow_mut().refresh = true;
-            self.run_refresh(&host)?;
+            st.borrow_mut().refresh = false;
+            let mut h = host.borrow_mut();
+            h.refresh = true;
+            h.refresh_without_parts = true;
+            h.read_keeps_xrec = true;
+            drop(h);
+            let r = self.run_refresh(&host);
+            host.borrow_mut().read_keeps_xrec = false;
+            r?;
+            self.set_xrec(&host);
             return Ok(true);
         }
         {

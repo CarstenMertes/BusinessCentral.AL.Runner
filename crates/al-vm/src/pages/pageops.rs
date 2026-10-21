@@ -410,7 +410,7 @@ impl Session {
                         self.sync_parts_after_move(st, name == PageMethod::First)?;
                         true
                     }
-                    PageMethod::GoToKey | PageMethod::GoToRecord if stayed => {
+                    PageMethod::GoToKey | PageMethod::GoToRecord if stayed && !st.borrow().walk_synced_parts => {
                         self.sync_parts_stayed(st)?;
                         false
                     }

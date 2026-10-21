@@ -668,6 +668,32 @@ codeunit 86889 "LT QJ Part Propagation Tests"
         R += '|lines-after-close=' + StoredLines();
         exit(R);
     end;
+
+    procedure QL_Both_NewPartRow_PartModifiesHost(): Text
+    var
+        R: Text;
+        TP: TestPage "LT QJ Host Both";
+    begin
+        Seed();
+        TP.OpenEdit();
+        TP.GoToKey('H1');
+        Log.Take();
+        TP.Lines.Last();
+        TP.Lines.New();
+        R += '|log-new=' + Log.Take();
+        TP.Lines.QtyF.SetValue(5);
+        R += '|log-part-edit=' + Log.Take();
+        R += '|host-total-after-part=' + TP.TotalF.Value();
+        R += '|part-line-after-part=' + TP.Lines.LineNoF.Value();
+        R += '|part-qty-after-part=' + TP.Lines.QtyF.Value();
+        R += '|stored-after-part=' + Stored();
+        R += '|lines-after-part=' + StoredLines();
+        TP.Close();
+        R += '|log-close=' + Log.Take();
+        R += '|stored-after-close=' + Stored();
+        R += '|lines-after-close=' + StoredLines();
+        exit(R);
+    end;
 }
 
 "#;
@@ -822,4 +848,23 @@ fn qj_subform_save_record_new_row() {
     // Not built: the open-and-new log (Last on the part's only row reads nothing; New() runs OnNewRecord, OnAfterGetCurrRecord,
     // goes back to the stored row and runs both again, QjPartPropagation.al:743); only the edits after it are checked.
     assert_eq!(run("QJ_SubformSaveRecord_NewRow")[1..], expected[1..]);
+}
+
+/// QjPartPropagation.al:997 QL_Both_NewPartRow_PartModifiesHost (corpus bump 42): on a new part row with UpdatePropagation Both the
+/// host reads its row again and the part keeps its typed row, inserted at Close. The first observation (Last + New) is not compared.
+#[test]
+fn ql_both_new_part_row_part_modifies_host() {
+    let expected = [
+        "log-new=L.AGCR(0 q=0 x.q=0) L.AGR(10000 q=1 x.q=0) L.AGR(10000 q=1 x.q=1) L.AGCR(10000 q=1 x.q=1) L.AGCR(0 q=0 x.q=0)",
+        "log-part-edit=L.Qty.V(5 x=0) L.Qty.V.end H.AGR(t=6 d=orig n=orig x.t=1) H.AGCR(t=6 d=orig n=orig x.t=1)",
+        "host-total-after-part=6.00",
+        "part-line-after-part=0",
+        "part-qty-after-part=5.00",
+        "stored-after-part=t=6 d=orig n=orig",
+        "lines-after-part=10000:q=1,a=1",
+        "log-close=",
+        "stored-after-close=t=6 d=orig n=orig",
+        "lines-after-close=10000:q=1,a=1 20000:q=5,a=0",
+    ];
+    assert_eq!(run("QL_Both_NewPartRow_PartModifiesHost")[1..], expected[1..]);
 }

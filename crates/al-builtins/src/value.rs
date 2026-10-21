@@ -475,6 +475,9 @@ pub struct PageState {
     /// The action changed the row a list shows: it is saved after the first read of the refresh (misc/lt-probes-needed-7/
     /// PnGRefresh.al:503).
     pub save_after_first_read: bool,
+    /// The parts read their rows for a host row a GoToKey walked past (pages/lt-qj-part-propagation/QjPartPropagation.al:1183):
+    /// on the target row they read again even when the host stayed on it.
+    pub walk_synced_parts: bool,
     /// The client's rows were read again from the row a list settled on after an action's filter left its row, with no row before
     /// it: First stays on that row and reads nothing (pages/lt-ai-list-order/AiListOrderTests.al:339, :373 `after_first` empty).
     /// Also set by the refresh of CurrPage.Update on a list with OnFindRecord and OnNextRecord that ends on the first row (:174,
@@ -685,6 +688,7 @@ impl PageState {
             close_restored_row: false,
             split_starts_low: false,
             save_after_first_read: false,
+            walk_synced_parts: false,
             settled_first_row: false,
             caption_assigned_closed: false,
             draft_stored: false,

@@ -14,6 +14,7 @@ mod findrecord_view;
 mod flowfield_drilldown;
 mod gone_row;
 mod gone_row_key_filter;
+mod gotokey_walk_parts;
 mod goto_next_call;
 mod host_save_record_parts;
 mod no_source_card;

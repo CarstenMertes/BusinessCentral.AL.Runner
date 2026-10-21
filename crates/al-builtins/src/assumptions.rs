@@ -505,12 +505,6 @@ registry! {
         tests: "Microsoft tests that type a line into a subform of a host other than a Document page, then set a host field; and the corpus cases that do the same on a Card host.",
         probe: "The QiHostSaveParts.al probe (QI_PartNewRow_ThenHostSetValue, QI_PartEditedRow_ThenHostSetValue) on a Card host.",
     },
-    PartUpdateNewRowBothRefreshesHost => {
-        id: "part-update-new-row-both-refreshes-host",
-        assumed: "A part's CurrPage.Update in a trigger of a SetValue on a NEW part row (not saved yet), after its code changed the host's stored row (another table), with UpdatePropagation = Both: the part refreshes, then the host reads its row again. The same shape over a stored part row is pinned (pages/lt-qj-part-propagation/QjPartPropagation.al:485-596, corpus bump 41); a new part row with another UpdatePropagation is refused.",
-        tests: "Kept from the stored-row assumption that corpus bump 41 settled (Tests-ERM Document Totals Pages (134344), ERM Purchase Subform, ERM Sales Subform: the subform's Quantity or Invoice Discount Amount changes the Purchase/Sales Header); which of them reach a new part row is not measured.",
-        probe: "QjPartPropagation.al's QJ_Both_PartModifiesHost_ThenHostSave with the part on a new row (New() on the part, then the SetValue of Quantity whose OnValidate modifies the host and calls CurrPage.Update(false)): which part and host triggers run, in which order, with which Rec and xRec.",
-    },
 }
 
 thread_local! {

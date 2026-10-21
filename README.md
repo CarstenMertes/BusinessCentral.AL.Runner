@@ -6,7 +6,7 @@ and without a BC license.
 > **AL Runner v3 replaces v2.** This repository now holds AL Runner v3, written in Rust.
 > AL Runner v2 (C#) is frozen on the [`v2` branch](https://github.com/aldevtools/BusinessCentral.AL.Runner/tree/v2).
 > Its dotnet tool [`MSDyn365BC.AL.Runner`](https://www.nuget.org/packages/MSDyn365BC.AL.Runner)
-> stays on NuGet, and the versions published there keep working. If you maintain a tool that
+> stays on NuGet. v2 gets no further releases; the versions published on NuGet keep working. If you maintain a tool that
 > calls AL Runner, see [Migrating tools from AL Runner v2 to v3](docs/integrations/migrating-tools-to-v3.md).
 >
 > v3 was developed in the repository `StefanMaron/al-runtime-rs`, now archived. Issue and pull
@@ -562,7 +562,7 @@ other `DotNet` call are not run, with the reason stated, and the exit code is 8.
 `al-runner` can run Microsoft's own Base Application test buckets. Most of these tests are
 still refused, not run. The full run of 2026-10-16 (main `fae0c8df`, BC 27.5, all buckets
 together) held 40300 tests: 16848 passed, 2508 failed and 20944 were not run. It took 298 s on a
-12-thread Ryzen 5 5600X. `docs/alrunner-buckets.md` has the per-bucket numbers, the recipe and
+a 12-thread desktop CPU. `docs/alrunner-buckets.md` has the per-bucket numbers, the recipe and
 the failure analysis. Speed numbers of such a run cannot be compared with other runners until
 many more of these tests run.
 

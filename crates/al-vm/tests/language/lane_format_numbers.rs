@@ -131,7 +131,7 @@ fn power_results_keep_18_significant_digits_into_big_integer() {
     );
 }
 
-const UNPINNED_DIGITS: &str = r#"
+const SIGNED_DIGITS: &str = r#"
 codeunit 69914 UD
 {
     procedure NegativeSum(): Text
@@ -140,23 +140,7 @@ codeunit 69914 UD
     begin
         V := -Power(2, 63);
         V := V + 5;
-        exit('');
-    end;
-
-    procedure FractionSum(): Text
-    var
-        V: Decimal;
-    begin
-        V := -100000000000000000.5 - 0.25;
-        exit('');
-    end;
-
-    procedure LongProduct(): Text
-    var
-        V: Decimal;
-    begin
-        V := 200000000000000001.0 * -5;
-        exit('');
+        exit(Format(V = -Power(2, 63)));
     end;
 
     procedure NegativeBigCompare(): Text
@@ -171,14 +155,11 @@ codeunit 69914 UD
 }
 "#;
 
-// Only non-negative sums and differences (CqOddLeads.al:419-446, Round.al:370-409, DecimalDigits.al:116-137) and
-// comparisons of non-negative whole numbers are pinned: a negative sum, difference or product of more than 18 significant
-// digits is refused.
+// Negative sums and comparisons of more than 18 significant digits round as the non-negative ones do
+// (types/lt-decimal-digits/DecimalDigits.al:179-346, QE_Decimal_SumDifference_SignsAndTies, QE_Decimal_BigIntegerOperands).
 #[test]
-fn more_than_18_digits_outside_the_pinned_shape_is_refused() {
-    for r in ["NegativeSum", "FractionSum", "LongProduct", "NegativeBigCompare"] {
-        let got = run_in(UNPINNED_DIGITS, "UD", r);
-        assert!(matches!(got, Err(Signal::Unsupported(_))), "{r}: {got:?}");
-    }
-    assert_eq!(text(run_in(UNPINNED_DIGITS, "UD", "ShortSum")), "-1.25|10");
+fn negative_results_of_more_than_18_digits_keep_18() {
+    assert_eq!(text(run_in(SIGNED_DIGITS, "UD", "NegativeSum")), "Yes");
+    assert_eq!(text(run_in(SIGNED_DIGITS, "UD", "NegativeBigCompare")), "Yes");
+    assert_eq!(text(run_in(SIGNED_DIGITS, "UD", "ShortSum")), "-1.25|10");
 }

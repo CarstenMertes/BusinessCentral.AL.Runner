@@ -206,6 +206,8 @@ impl Session {
             s.control_captions = Vec::new();
             s.field_captions = Vec::new();
             s.field_captions_opened = false;
+            s.field_captions_settled = false;
+            s.moving_next = false;
             s.window = Vec::new();
             s.window_from_start = false;
             s.window_eof = false;
@@ -479,6 +481,7 @@ impl Session {
             let waiting = self.parts_waiting_refresh(st);
             let (loaded, origin) = self.traced(st, |s| s.load_first_row(st, mode, record.is_some()));
             st.borrow_mut().test_opened_new = false;
+            st.borrow_mut().field_captions_settled = true;
             self.open_row_error(st, mode, test_open, loaded, origin)?;
             // A card over a table with no row to show stands on a blank Rec that was never stored: an action cannot have deleted it.
             if has_source && !self.is_list(st) && st.borrow().cursor == Cursor::Row && !st.borrow().draft {

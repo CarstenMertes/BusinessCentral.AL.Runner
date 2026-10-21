@@ -196,8 +196,10 @@ impl Session {
     /// control, 20 times with an empty record, then once for each control over such a field with the current row; `Caption()`
     /// of the control reads that caption and runs nothing (record/lt-qd-captionclass-areas/QdCaptionClassAreas.al:422-481
     /// Page_ControlCaptions, a Card opened with OpenView: `open_calls = id0=240 ... rest=20@3;...`, `exprId = Id 3 call 245`
-    /// twice). An empty result and `3,` read as the empty text on a control (`exprEmpty`, `expr3`). Other page types and open
-    /// modes, and the fills after the open (a move to another row), mark the assumption page-open-caption-class-expressions.
+    /// twice; corpus bump 37 asserts only that empty-record calls happened, their number differs between BC runs). An empty
+    /// result and `3,` read as the empty text on a control (`exprEmpty`, `expr3`). The other rows of the open and a Next() run
+    /// nothing (`caption_expressions_pinned` names the pinned page shapes). Other page types and open modes, and the fills
+    /// after the open other than Next(), mark the assumption page-open-caption-class-expressions.
     fn fill_field_caption_expressions(&mut self, st: &St) -> Result<(), Signal> {
         if !self.has_source(st) {
             return Ok(());
@@ -221,7 +223,7 @@ impl Session {
         {
             return unsupported(why);
         }
-        let pinned = self.is_card(st) && st.borrow().mode == PageMode::View;
+        let pinned = self.caption_expressions_pinned(st);
         if !st.borrow().field_captions_opened {
             st.borrow_mut().field_captions_opened = true;
             if !pinned {
@@ -236,7 +238,16 @@ impl Session {
                 }
             }
         } else {
-            al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::PageOpenCaptionClassExpressions);
+            // The other rows the open reads and a Next() run no expression, and Caption() keeps the open's value
+            // (QdCaptionClassAreas.al:591-630 QF_List_OpenView `rest=20@3;23@3;24@3;`, `next_calls = id0>0=No fields0= rest=`,
+            // `next_exprId = Id 3` on row 5; QF_List_OpenEdit, QF_ListPart_OnCard, QF_Card_Next).
+            let quiet = !st.borrow().field_captions_settled || st.borrow().moving_next;
+            if !pinned || !quiet {
+                al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::PageOpenCaptionClassExpressions);
+            }
+            if quiet {
+                return Ok(());
+            }
         }
         let engine = self.engine();
         let page = page_of(&engine, st);
@@ -261,6 +272,27 @@ impl Session {
             s.field_captions.push((idx, caption));
         }
         Ok(())
+    }
+
+    /// The page shapes whose CaptionClass expression runs are pinned (record/lt-qd-captionclass-areas/QdCaptionClassAreas.al): a
+    /// Card opened with OpenView (Page_ControlCaptions, QF_Card_Next), a List opened with OpenView, OpenEdit or by Page.Run
+    /// (QF_List_OpenView, QF_List_OpenEdit, QF_List_PageRun) and a ListPart on a Card opened with OpenView (QF_ListPart_OnCard).
+    fn caption_expressions_pinned(&self, st: &St) -> bool {
+        use al_ir::PageType;
+        let facts = &self.engine.object_facts;
+        let page_type = |s: &St| facts[s.borrow().object as usize].page_type.as_ref();
+        let host = st.borrow().host.as_ref().and_then(|(h, _)| h.upgrade());
+        let mode = st.borrow().mode;
+        match (page_type(st), host) {
+            (Some(PageType::Card), None) => mode == PageMode::View,
+            (Some(PageType::List), None) => matches!(mode, PageMode::View | PageMode::Edit) && !st.borrow().modal,
+            (Some(PageType::Other(t)), Some(h)) if t == "listpart" => {
+                matches!(page_type(&h), Some(PageType::Card))
+                    && h.borrow().host.is_none()
+                    && h.borrow().mode == PageMode::View
+            }
+            _ => false,
+        }
     }
 
     /// The FlowFields the page shows are calculated when a row loads. A temporary source row
@@ -957,7 +989,9 @@ impl Session {
             }
         }
         let before = self.page_rec(st).borrow().fields.clone();
+        st.borrow_mut().moving_next = how == PageMethod::Next;
         let (r, origin) = self.traced(st, |s| s.page_move_inner(st, how));
+        st.borrow_mut().moving_next = false;
         if let (Err(Signal::Error(e)), Some(trigger @ ("onnextrecord" | "onfindrecord"))) = (&r, origin.as_deref()) {
             let raised = self.move_trigger_error(st, how, trigger, e, before);
             self.mark_closed(st);

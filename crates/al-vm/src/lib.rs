@@ -558,9 +558,6 @@ pub struct Session {
     /// Media objects a Modify or Delete removed from Tenant Media: `.0` since the last commit (a rollback puts them back),
     /// `.1` committed since the test runner's checkpoint (its restore puts them back). See `Session::release_media`.
     pub(crate) media_removed: (Vec<RemovedMedia>, Vec<RemovedMedia>),
-    /// Records a TransferFields from another table wrote into, with that row's version: the next Modify refuses when the stale
-    /// check would answer differently with it (records.rs `take_foreign_transfer`).
-    pub(crate) foreign_transfers: Vec<(std::rc::Weak<RefCell<RecordState>>, Value)>,
     /// A `ModifyAll(Field, Value, false)` of a table without modify events is running: every row is written, also one whose value
     /// does not change (recmeta.rs `modify_all`).
     pub(crate) bulk_modify: bool,
@@ -758,7 +755,6 @@ impl Session {
             adhoc_tables: Default::default(),
             media,
             media_removed: Default::default(),
-            foreign_transfers: Vec::new(),
             bulk_modify: false,
             get_table_from_variant: false,
             set_value_from_variant: false,
@@ -873,10 +869,19 @@ impl Session {
         self.media_removed.1.clear();
     }
 
+    /// Media a Modify or Delete removed come back into Tenant Media, with a value again.
+    fn restore_media(&mut self, removed: Vec<RemovedMedia>) {
+        let mut gone = self.media.removed.borrow_mut();
+        for (id, _) in &removed {
+            gone.remove(id);
+        }
+        self.media.objects.borrow_mut().extend(removed);
+    }
+
     /// The test runner went back to its checkpoint: the media removed since come back, as the rows that held them do.
     pub fn restore_media_checkpoint(&mut self) {
         let removed = std::mem::take(&mut self.media_removed.1);
-        self.media.objects.borrow_mut().extend(removed);
+        self.restore_media(removed);
     }
 
     /// The transaction a write call started has ended (record/TestProbeRecordRefContracts.al:WriteTransaction_State starts
@@ -912,7 +917,7 @@ impl Session {
         self.isolated_storage = self.isolated_committed.clone();
         // The Tenant Media rows a Modify or Delete of this transaction removed come back with the rows.
         let removed = std::mem::take(&mut self.media_removed.0);
-        self.media.objects.borrow_mut().extend(removed);
+        self.restore_media(removed);
         // The code coverage tables keep their rows through a rollback (codeunit/PWCodeCoverageRows.al:
         // Rollback_RowsReadBeforeAnAsserterror, Rollback_RowsFirstReadInsideFailingScope): what was
         // recorded is written into them again at the next read.
@@ -1330,22 +1335,21 @@ impl Session {
                 // record with the record's values over an empty table of its own (events/lt-cl-event-leads/ClEventLeads.al:70
                 // `ins.temporary temp=Yes count=0 id=103`, an OnAfterInsertEvent subscriber; record/lt-qd-temp-param/
                 // QdStoredToTempParam.al:90-119 for a plain procedure: `callee.count = 0`, `callee.current = 2=two`), without the
-                // caller's filters (`callee.filters` empty; the caller keeps `Id: 2..3`). What becomes of a current key other than
-                // the primary key and of marks is not pinned: refused.
+                // caller's filters (`callee.filters` empty; the caller keeps `Id: 2..3`). It has the primary key, ascending, no marks
+                // and MarkedOnly No, whatever the caller's key, sort order and marks (QdStoredToTempParam.al:149-240
+                // QF_StoredRecord_KeyAndOrder_ToTemporaryParameter `callee.view = VERSION(1) SORTING(Field1)`, `callee.order = 1,2,3,`;
+                // QF_StoredRecord_Marks_ToTemporaryParameter and _MarksNotMarkedOnly_: `callee.markedOnly = No`, `callee.marks =
+                // 1=No,2=No,3=No,`; corpus bump 37).
                 (Value::Record(rc), false)
                     if !rc.borrow().temporary && matches!(r.locals[i].ty, RtType::Record(_, true)) =>
                 {
                     let mut st = rc.borrow().clone();
-                    if st.key != 0 || st.adhoc.is_some() || !st.ascending || st.field_descending != 0 {
-                        return Err(Signal::Unsupported(
-                            "a stored record with a current key or sort order handed to a temporary parameter (whether the callee keeps it is not pinned)".into(),
-                        ));
-                    }
-                    if !st.marks.is_empty() || st.marked_only {
-                        return Err(Signal::Unsupported(
-                            "a stored record with marks handed to a temporary parameter (whether the callee keeps them is not pinned)".into(),
-                        ));
-                    }
+                    st.key = 0;
+                    st.adhoc = None;
+                    st.ascending = true;
+                    st.field_descending = 0;
+                    st.marks.clear();
+                    st.marked_only = false;
                     st.filters.clear();
                     st.filter_group = 0;
                     st.temporary = true;

@@ -241,12 +241,6 @@ registry! {
         tests: "Base Application's \"Workflow Instance\" query (column Record_ID), opened by Workflow Step Instance.SetTableRelationValues and Approvals Mgmt.; 142 Tests-Workflow tests.",
         probe: "A query with a column over a RecordId field of a table with rows: Open, Read, Format of the column, grouping and OrderBy on it, SetFilter on the column, SaveAsCsv. Asked in corpus #651.",
     },
-    ModifyAllBulkUnchangedRowVersion => {
-        id: "modifyall-bulk-unchanged-row-version",
-        assumed: "ModifyAll(Field, Value, false) on a table no OnBeforeModifyEvent or OnAfterModifyEvent subscriber is declared for (bound or not) and without a database trigger writes in bulk: a row that has the value already gets a new SystemModifiedAt (record/lt-record-write/RcBTriggers.al:682-722 ModifyAll_Equal_Value_Rows_BQ, `row1StampChangedFalse`) and, not pinned, also a new SystemRowVersion. With a declared subscriber, bound or not, such a row keeps both (record/lt-modify-without-change/ModifyWithoutChange.al:318-365, pinned).",
-        tests: "Corpus record/lt-record-write/RcBTriggers.al:ModifyAll_Equal_Value_Rows_BQ needs the bulk write (kept); Tests-Bank and Tests-ERM run ModifyAll(.., false) over rows that have the value already on tables without modify-event subscribers.",
-        probe: "ModifyAll(Amount, 10, false) over a row whose Amount is 10, on a table with no modify-event subscriber declared: SystemRowVersion of that row before and after; the same on a table with an OnModify trigger and on one without.",
-    },
     RecordRefGetTableOfRecordRef => {
         id: "recordref-gettable-of-recordref",
         assumed: "RecordRef.GetTable(OtherRecordRef) makes the ref a copy of the other ref's record: table, buffer, filters and current row, not shared afterwards.",
@@ -483,9 +477,9 @@ registry! {
     },
     PageOpenCaptionClassExpressions => {
         id: "page-open-caption-class-expressions",
-        assumed: "A page whose source table has fields with a CaptionClass expression runs every one of them 20 times with an empty record when it opens, then once for each control over such a field with each row it fills, and Caption() of the control reads what the fill gave. Pinned for a Card opened with OpenView (record/lt-qd-captionclass-areas/QdCaptionClassAreas.al:422-481 Page_ControlCaptions); assumed for other page types and open modes, and for the fills after the open.",
+        assumed: "A page whose source table has fields with a CaptionClass expression runs every one of them 20 times with an empty record when it opens, then once for each control over such a field with the first row; the other rows the open reads and a Next() run none, and Caption() of the control reads what the open gave. A fill after the open other than Next() (a part refilled after its host moved, a refresh, a SetValue) runs them once per control with that row again. Pinned (record/lt-qd-captionclass-areas/QdCaptionClassAreas.al Page_ControlCaptions, QF_List_OpenView, QF_List_OpenEdit, QF_List_PageRun, QF_ListPart_OnCard, QF_Card_Next) for a Card opened with OpenView, a List opened with OpenView, OpenEdit or Page.Run and a ListPart on such a Card, except the number of empty-record runs, which differs between BC runs; assumed for other page types and open modes, and for the fills after the open other than Next().",
         tests: "Microsoft tests that open sales and purchase documents and their subforms (Sales Line, Purchase Line \"No.\" and amount fields have CaptionClass = GetCaptionClass(..)), for example ERM Sales Order and ERM Purchase Order tests in Tests-ERM; they pass in Microsoft's CI.",
-        probe: "The QD card's log on a List opened with OpenView, OpenEdit and Page.Run, on a list part of a document, and after Next on a list: how many calls with an empty record, and how many with which row.",
+        probe: "The QD card's log on a Document page and its ListPart subform opened with OpenEdit and OpenNew, on a Card opened with OpenEdit, and after a SetValue, a CurrPage.Update and a host move that refills the part: whether the expressions run, and with which row.",
     },
     RunnerPermissionSetsGrantAll => {
         id: "runner-permission-sets-grant-all",

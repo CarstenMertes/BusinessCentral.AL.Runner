@@ -348,6 +348,10 @@ pub struct PageState {
     pub field_captions: Vec<(usize, String)>,
     /// The open ran the CaptionClass expressions of the source table's fields with an empty record (`field_captions`).
     pub field_captions_opened: bool,
+    /// The open has filled its first rows (`field_captions` no longer changes at the fills of the open itself).
+    pub field_captions_settled: bool,
+    /// A `Next()` of the page is filling its row.
+    pub moving_next: bool,
     /// Primary keys of the rows a repeater page has populated (its window).
     pub window: Vec<WindowRow>,
     /// The window holds the rows from the first row of the view on, with none missing: the page
@@ -554,6 +558,8 @@ impl PageState {
             control_captions: Vec::new(),
             field_captions: Vec::new(),
             field_captions_opened: false,
+            field_captions_settled: false,
+            moving_next: false,
             window: Vec::new(),
             window_from_start: false,
             window_eof: false,

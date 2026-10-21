@@ -534,26 +534,15 @@ impl Session {
                 .map_err(|e| Signal::Unsupported(format!("{e}")))?
                 .is_some())
         };
+        // Another row of the same table holding it in the same field keeps it (media/TestMediaPngImport.al:297-334
+        // Media_Replace_WhileAnotherRowSharesTheMedia). A row of another table, or another field of a row, does not: the
+        // media leaves Tenant Media, and that holder keeps the MediaId with HasValue false and ExportStream false, before
+        // and after Commit (TestMediaPngImport.al:441-674 QE_Media_*).
         if held(self, t, pos)? {
             return Ok(());
         }
-        let engine = self.engine.clone();
-        // The platform's own tables (ids from 2000000000, e.g. Media Resources) hold no row of AL code's.
-        let system = |o: u32| {
-            engine.program.objects[o as usize]
-                .id
-                .is_some_and(|id| id >= 2_000_000_000)
-        };
-        for other in engine.tables.iter().flatten().filter(|o| !system(o.object)) {
-            for i in (0..other.fields.len()).filter(|&i| is_media_field(other, i)) {
-                if (other.object, i) != (t.object, pos) && held(self, other, i)? {
-                    return Err(Signal::Unsupported(
-                        "a Media that a row of another table or field still holds, let go by a Modify or Delete (not pinned)".into(),
-                    ));
-                }
-            }
-        }
         if let Some(obj) = self.media.objects.borrow_mut().remove(&id) {
+            self.media.removed.borrow_mut().insert(id);
             self.media_removed.0.push((id, obj));
         }
         Ok(())
@@ -1377,15 +1366,6 @@ impl Session {
         }
     }
 
-    /// The row version a TransferFields from another table left aside for `rec` (see `foreign_transfers`), taken out.
-    fn take_foreign_transfer(&mut self, rec: &Rec) -> Option<Value> {
-        let i = self
-            .foreign_transfers
-            .iter()
-            .position(|(w, _)| w.upgrade().is_some_and(|r| Rc::ptr_eq(&r, rec)))?;
-        Some(self.foreign_transfers.swap_remove(i).1)
-    }
-
     /// The row to hand to the store: a database table keeps its own copy of every Blob.
     fn to_store(rec: &Rec, mut row: Vec<Value>) -> Vec<Value> {
         if rec.borrow().temp_id.is_none() {
@@ -2103,20 +2083,9 @@ impl Session {
                     // transaction was rolled back to the last Commit after the buffer's own Modify, as an asserterror
                     // does) is not stale (corpus record/lt-record-conversion-assumptions/StaleBuffer.al:
                     // P98_Stale_AfterAsserterror_SameBuffer, P98_Stale_CommitThenErrorThenModify_Rec).
-                    let foreign = self.take_foreign_transfer(rec);
                     let committed = self.tx.committed_row_version;
                     let stale =
                         |m: &Value| version(m) != 0 && version(m) < version(&theirs) && version(&theirs) <= committed;
-                    // After a TransferFields from another table, whether the buffer took that row's version is not pinned
-                    // (record/lt-cn-transferfields-modify/CnTransferFieldsModify.al:194-214 pins a buffer that is current
-                    // either way): a Modify whose outcome depends on it is refused.
-                    if let Some(other) = foreign {
-                        if !rec.borrow().temporary && stale(&mine) != stale(&other) {
-                            return unsupported(
-                                "a Modify after a TransferFields from another table, whose outcome depends on which row version the buffer took (not pinned)",
-                            );
-                        }
-                    }
                     if !rec.borrow().temporary && stale(&mine) {
                         let identification = self.identification(&t, &rec.borrow().fields)?;
                         return Err(Signal::Error(Box::new(AlError {
@@ -2216,8 +2185,8 @@ impl Session {
                 self.check_code_storage(&t, &rec.borrow().fields, true)?;
                 self.sql_timestamp_before(&t, rec, stored_row.as_deref())?;
                 // A bulk ModifyAll(.., false) without subscribers stamps SystemModifiedAt of a row that has the value already
-                // (RcBTriggers.al:ModifyAll_Equal_Value_Rows_BQ); that it also gives the row a new row version is not pinned and
-                // marks the assumption modifyall-bulk-unchanged-row-version.
+                // (RcBTriggers.al:ModifyAll_Equal_Value_Rows_BQ) and gives it a new row version, with or without an OnModify
+                // trigger (record/lt-modify-without-change/ModifyWithoutChange.al:375-448, `row1_version_changed = Yes`).
                 let unchanged = match stored_row.as_deref() {
                     Some(old) if !rec.borrow().temporary && Session::modify_changes_nothing(&t, old, rec) => Some(old),
                     _ => None,
@@ -2229,16 +2198,7 @@ impl Session {
                         }
                         None
                     }
-                    Some(_) => {
-                        let bumped = self.bump_row_version(&t, rec);
-                        if bumped.is_some() {
-                            al_builtins::assumptions::assume(
-                                al_builtins::assumptions::Assumption::ModifyAllBulkUnchangedRowVersion,
-                            );
-                        }
-                        bumped
-                    }
-                    None => self.bump_row_version(&t, rec),
+                    _ => self.bump_row_version(&t, rec),
                 };
                 self.sql_timestamp_after(&t, rec);
                 let stamped = self.stamp_modify(&t, rec, stored_row.as_deref());

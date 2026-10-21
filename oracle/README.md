@@ -8,16 +8,16 @@ pass rate is measured against: every `<testcase>` in it passed on real BC.
 | Field | Value |
 |---|---|
 | Corpus repo | StefanMaron/BusinessCentral.AL.Language.Tests, branch `master` (the default branch; until 2026-10-19 the side branch `al-runtime-rs`, whose commits are all on `master`) |
-| Corpus pin | `62268a97aa0318eba363a3058f1f7c26734e8590` (the `corpus` submodule, master merge of corpus PR 693; must equal `corpus_commit` in `oracle.toml`) |
+| Corpus pin | `4efb9d9211eeca30a9c3ed080ab01d369f0bd33f` (the `corpus` submodule, master merge of corpus PR 694; must equal `corpus_commit` in `oracle.toml`) |
 
 | Major | Oracle leg | Corpus commit of the run | Workflow run | Artifact | Artifact id | Cases |
 |---|---|---|---|---|---|---|
-| 27 | 27.5 | `62268a9` (the pin) | 39505560294 | `junit-test-results-27.5` | 12305582424 | 16876 |
-| 28 | 28.5 | `62268a9` (the pin) | 39505560294 | `junit-test-results-28.5` | 12305337048 | 16965 (+26 `OnRun`) |
-| 29 | 29.0 | `62268a9` (the pin) | 39505560294 | `junit-test-results-29.0` | 12304393351 | 17059 (+26 `OnRun`) |
+| 27 | 27.5 | `4efb9d9` (the pin) | 39511732351 | `junit-test-results-27.5` | 12308775684 | 16887 |
+| 28 | 28.5 | `4efb9d9` (the pin) | 39511732351 | `junit-test-results-28.5` | 12306959357 | 16976 (+26 `OnRun`) |
+| 29 | 29.0 | `4efb9d9` (the pin) | 39511732351 | `junit-test-results-29.0` | 12308137598 | 17070 (+26 `OnRun`) |
 
-The files come from the green pull request run of PR 693, whose head `55f2db6` has the same tree as the pin `62268a9`.
-The master push run of the pin (39511257589) was still running when the pin was set.
+The files come from the green pull request run of PR 694, whose head `97701d7` has the same tree as the pin `4efb9d9`.
+The master push run of the pin (39517763648) was still running when the pin was set.
 Every file has 0 failures. Each run published two artifacts with the same name; the
 oracle is the large one (the main suite, `junit-al-language.xml`). The small one is
 the OnPrem suite (`junit-al-language-onprem.xml`, 72 cases): it is the oracle of the

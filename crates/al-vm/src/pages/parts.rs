@@ -740,7 +740,9 @@ impl Session {
             s.pending = None;
         }
         let mode = child.borrow().mode;
-        self.load_first_row(child, mode, false)
+        let loaded = self.load_first_row(child, mode, false);
+        child.borrow_mut().field_captions_settled = true;
+        loaded
     }
 
     /// A field the host just changed is read by the link of some parts: they follow the new value

@@ -1629,6 +1629,15 @@ impl Session {
                 ));
             }
         }
+        // A write of General Ledger Setup by the test's own code: the captions of areas 1 and 101 read it (`refuse_setup_caption`).
+        if method.writes()
+            && !self.gl_setup_written
+            && !self.install_scope
+            && !rec.borrow().temporary
+            && self.engine.program.objects.get(t.object as usize).is_some_and(|o| o.id == Some(98))
+        {
+            self.gl_setup_written = true;
+        }
         // The next access of the table raises a deferred duplicate-key Insert, an Insert of another row not (the buffered inserts
         // stay buffered: misc/lt-protected-var-abs-query-views/P146TableExtProtected.al:P146_Triggers_BaseThenExtension, where
         // `R2.Insert(true)` succeeds and the next Modify raises it).

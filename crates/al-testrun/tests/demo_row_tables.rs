@@ -1,5 +1,6 @@
 //! Without test data the tests run against the corpus database's company, which holds demo rows of Accounting Period and
-//! Company Information that the runtime does not have (session/lt-company-information/CompanyInformationValues.al:45, :89;
+//! Company Information, and its General Ledger Setup row, that the runtime does not have (session/lt-company-information/
+//! CompanyInformationValues.al:45, :89; record/lt-qd-captionclass-areas/QdCaptionClassAreas.al:804 QF_GLSetup_CorpusRow;
 //! ADR-047 rejected). A Count or IsEmpty of one of those dependency tables before the test wrote to it is refused, also when
 //! install code wrote a row there; once the test wrote to it, it is answered, and other reads stay answered.
 
@@ -10,6 +11,7 @@ use al_testrun::{CaseId, Outcome};
 const BASE: &str = r#"
 table 50 "Accounting Period" { fields { field(1; "Starting Date"; Date) { } } keys { key(PK; "Starting Date") { } } }
 table 79 "Company Information" { fields { field(1; "Primary Key"; Code[10]) { } field(2; Name; Text[100]) { } } keys { key(PK; "Primary Key") { } } }
+table 98 "General Ledger Setup" { fields { field(1; "Primary Key"; Code[10]) { } } keys { key(PK; "Primary Key") { } } }
 codeunit 51 "Base Install"
 {
     Subtype = Install;
@@ -26,6 +28,9 @@ codeunit 50301 DemoTests
     [Test] procedure CountsCompanyInformation() var C: Record "Company Information"; begin if C.Count() <> 1 then Error('count %1', C.Count()); end;
     [Test] procedure ScansAccountingPeriods() var P: Record "Accounting Period"; begin if P.IsEmpty() then Error('empty'); end;
     [Test] procedure CountsTheRowItWrote() var C: Record "Company Information"; begin C.Get(); C.Name := 'mine'; C.Modify(); if C.Count() <> 1 then Error('count %1', C.Count()); end;
+    [Test] procedure CountsGeneralLedgerSetup() var G: Record "General Ledger Setup"; begin if G.Count() <> 1 then Error('count %1', G.Count()); end;
+    [Test] procedure WritesGeneralLedgerSetup() var G: Record "General Ledger Setup"; begin G.Insert(); G.Delete(); end;
+    [Test] procedure CountsGeneralLedgerSetupAfterAnEarlierTestWroteIt() var G: Record "General Ledger Setup"; begin if G.Count() <> 1 then Error('count %1', G.Count()); end;
     [Test] procedure ScansAnOtherTable() var R: Record "Own Row"; begin if not R.IsEmpty() then Error('rows'); end;
 }
 "#;
@@ -68,11 +73,19 @@ fn a_count_of_an_empty_corpus_demo_table_is_refused() {
         &RunOptions::default(),
     )
     .expect("runs");
-    for name in ["CountsCompanyInformation", "ScansAccountingPeriods"] {
+    // What an earlier test wrote does not count: the corpus misc/lt-qk-setup-rows/QkSetupRows.al writers put the demo values back,
+    // the runtime then holds the install-code row (record/lt-qd-captionclass-areas/QdCaptionClassAreas.al:798 QF_GLSetup_CorpusRow
+    // runs after Literals_FieldCaption wrote and restored the row).
+    for name in [
+        "CountsCompanyInformation",
+        "ScansAccountingPeriods",
+        "CountsGeneralLedgerSetup",
+        "CountsGeneralLedgerSetupAfterAnEarlierTestWroteIt",
+    ] {
         let o = outcome(&rt, name);
         assert!(matches!(o, Outcome::NotRun(_)), "{name}: {o:?}");
     }
-    for name in ["CountsTheRowItWrote", "GetsTheInstalledRow", "ScansAnOtherTable"] {
+    for name in ["CountsTheRowItWrote", "GetsTheInstalledRow", "ScansAnOtherTable", "WritesGeneralLedgerSetup"] {
         let o = outcome(&rt, name);
         assert!(matches!(o, Outcome::Pass), "{name}: {o:?}");
     }

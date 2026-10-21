@@ -13879,7 +13879,9 @@
 86504 Expression_ChangesRec
 86504 Expression_PerRead_CallCount
 86504 Expression_VatSwitch_SameRecord
+86504 Expressions_FieldCaption
 86504 Expressions_FieldRefCaption
+86504 Literals_FieldCaption
 86504 Page_ControlCaptions
 86504 QF_Card_Next
 86504 QF_ListPart_OnCard

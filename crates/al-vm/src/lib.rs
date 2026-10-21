@@ -462,8 +462,14 @@ pub struct Session {
     pub(crate) isolated_set_in_test: std::collections::HashSet<(String, String)>,
     /// An install codeunit is running.
     install_scope: bool,
-    /// The `Engine::demo_tables` this session's own code (not install code) wrote to.
+    /// The `Engine::demo_tables` the running test's own code (not install code) wrote to.
     demo_written: std::collections::HashSet<u32>,
+    /// The running test's own code (not install code) wrote General Ledger Setup (table 98), before any caption of areas 1 or 101
+    /// was resolved (`setup_caption_read_early`): such captions read the test's row (`refuse_setup_caption`).
+    pub(crate) gl_setup_written: bool,
+    /// A caption of areas 1 or 101 was resolved before the session's code wrote General Ledger Setup: Base Application's
+    /// SingleInstance resolvers then keep the row install code wrote.
+    pub(crate) setup_caption_read_early: bool,
     /// Registered table connections by (type member, lower-case name), and the default name per type.
     pub(crate) table_connections: std::collections::HashSet<(i32, String)>,
     pub(crate) default_table_connection: std::collections::HashMap<i32, String>,
@@ -743,6 +749,8 @@ impl Session {
             isolated_set_in_test: Default::default(),
             install_scope: false,
             demo_written: Default::default(),
+            gl_setup_written: false,
+            setup_caption_read_early: false,
             sequences,
             table_connections: Default::default(),
             default_table_connection: Default::default(),
@@ -848,10 +856,14 @@ impl Session {
     }
 
     /// What the AL test runner does before each test method: every application area on, and the
-    /// transaction type back at UpdateNoLocks.
+    /// transaction type back at UpdateNoLocks. What an earlier test wrote to a demo table does not count for this one: the corpus
+    /// tests that write setup rows put the demo values back afterwards (misc/lt-qk-setup-rows/QkSetupRows.al), which leaves the
+    /// runtime with the install-code row (record/lt-qd-captionclass-areas/QdCaptionClassAreas.al:798 QF_GLSetup_CorpusRow).
     pub fn start_test_method(&mut self) {
         self.application_areas.clear();
         self.isolated_set_in_test.clear();
+        self.demo_written.clear();
+        self.gl_setup_written = false;
         self.tx.transaction_type = 0;
         self.tx.tx_phase = crate::transactions::TX_FRESH;
     }

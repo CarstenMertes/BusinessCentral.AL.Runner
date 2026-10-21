@@ -182,6 +182,18 @@ impl Session {
         if name != PageMethod::Close || st.borrow().unpinned_close {
             self.refuse_unpinned_state(st)?;
         }
+        if method.recv() == PageRecv::TestPart {
+            self.first_part_access(st, name, false)?;
+        } else if st.borrow().new_host_part_rows
+            && st.borrow().host.is_none()
+            && !matches!(name, PageMethod::Close | PageMethod::New | PageMethod::OK)
+        {
+            // A new host whose part shows rows of the blank key: Close and New() are pinned (PartLineBeforeHostKey.al:1725
+            // QH_BlankRows_OpenNew_CloseOnly, :1909 QH_BlankRows_HostNew_ThenClose), nothing else.
+            return unsupported(format!(
+                "TestPage.{name} on a new, unsaved host whose part shows rows of the blank key (not pinned)"
+            ));
+        }
         // A card whose OnNewRecord inserted its new row: only Close of the unchanged row is pinned (corpus
         // pages/lt-cf-page-leads/CfPageLeads.al:241-289 Card_OnNewRecordInserts_OpenNewSetClose).
         if st.borrow().new_row_inserted_by_trigger

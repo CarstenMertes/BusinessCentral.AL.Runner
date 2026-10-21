@@ -449,6 +449,32 @@ impl Lowerer<'_> {
         }
     }
 
+    /// Whether `arg` is a Decimal table field whose AutoFormatExpression is an expression (not a text): `Format` of it in
+    /// code applies the field's AutoFormat, evaluated with the record when it runs (types/lt-auto-format-currency/
+    /// QiTableFieldAutoFormat.al:400-418 QI_TableFieldExpression_FormatInCode). Gives the place of the record and the
+    /// field's number.
+    pub(crate) fn auto_format_expression_field(&mut self, arg: &SyntaxNode) -> Option<(ir::Place, usize)> {
+        let Some(Res::Field { table, id: field }) = self.res(arg).cloned() else {
+            return None;
+        };
+        let f = self.members[table].fields.iter().find(|f| f.id == field)?;
+        if !matches!(f.ty, Ty::Decimal) {
+            return None;
+        }
+        let expr = f
+            .properties
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case("AutoFormatExpression"))
+            .map(|(_, v)| v.trim().to_string())?;
+        if expr.starts_with('\'') {
+            return None;
+        }
+        match self.place(arg).ok()? {
+            ir::Place::Field(base, _) => Some((*base, field as usize)),
+            _ => None,
+        }
+    }
+
     pub(crate) fn attributes_of(&self, r: &ast::Routine) -> Vec<ir::Attribute> {
         r.attributes()
             .map(|a| ir::Attribute {

@@ -712,6 +712,9 @@ impl Session {
             s.cursor = Cursor::Row;
         }
         self.set_xrec(st);
+        // The inserted row is the current row: the next OnAfterGetCurrRecord sees it as xRec (testpart/QiHostSaveParts.al:580
+        // `L.AGCR(D1/30000|typed x=D1/30000)` after the typed line was saved before the host SetValue).
+        st.borrow_mut().agcr_xrec = Some(rec.borrow().fields.clone());
         if let Some(host) = &host {
             let hrec = self.page_rec(host);
             if let Some(stored) = self.stored_row(&hrec)? {

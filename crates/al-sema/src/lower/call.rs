@@ -288,6 +288,11 @@ impl Lowerer<'_> {
                 } else {
                     None
                 };
+                let auto_format_field = if id == "System.Format#1" && decimal_field_places.is_none() {
+                    args.first().and_then(|a| self.auto_format_expression_field(a))
+                } else {
+                    None
+                };
                 let option_captions = if id == "System.Evaluate#1" {
                     if let Some(a) = args.first() {
                         self.refuse_evaluate_option_caption_ml(a)?;
@@ -351,6 +356,8 @@ impl Lowerer<'_> {
                     "TestField.SetValueVariant#1".to_string()
                 } else if id == "System.Format#1" && decimal_field_places.is_some() {
                     "System.FormatDecimalField#1".to_string()
+                } else if id == "System.Format#1" && auto_format_field.is_some() {
+                    "System.FormatAutoFormatField#1".to_string()
                 } else {
                     id.clone()
                 };
@@ -603,6 +610,14 @@ impl Lowerer<'_> {
                         }
                         out.push(ir::Arg::Value(ir::Expr::Const(ir::Const::Integer(n as i32))));
                     }
+                }
+                // The record and the field's position go along: the places come from the field's AutoFormatExpression when it runs.
+                if let (true, Some((record, pos))) = (emit_id == "System.FormatAutoFormatField#1", auto_format_field) {
+                    while out.len() < 3 {
+                        out.push(ir::Arg::Value(ir::Expr::Const(ir::Const::Integer(0))));
+                    }
+                    out.push(ir::Arg::Value(ir::Expr::Load(record)));
+                    out.push(ir::Arg::Value(ir::Expr::Const(ir::Const::Integer(pos as i32))));
                 }
                 if let (true, Some(places)) = (emit_id == "System.FormatDecimalField#1", decimal_field_places) {
                     while out.len() < 3 {

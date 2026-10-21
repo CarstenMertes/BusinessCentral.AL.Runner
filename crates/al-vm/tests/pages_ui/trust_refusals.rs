@@ -281,12 +281,11 @@ codeunit 69997 C
     assert_eq!(al_testkit::text(al_testkit::run_in(src, "C", "G")), "loud");
 }
 
-/// A list's repeater control over a page variable that OnAfterGetRecord computes: BC's client shows each row's own value;
-/// the runtime keeps one value (the last OnAfterGetRecord's), so a read on another row it ran for is refused
-/// (Tests-ERM 134760 Empl. Ledger Entries Preview AmountFCY after First()). A row it never ran for (a new row) reads the
-/// variable.
+/// A list's repeater control over a page variable that OnAfterGetRecord computes: BC's client shows each row's own value
+/// (pages/lt-qi-row-page-var/QiRowPageVar.al:223 QI_RV_List_Navigation; Tests-ERM 134760 Empl. Ledger Entries Preview AmountFCY
+/// after First()).
 #[test]
-fn a_page_variable_control_on_another_row_is_refused() {
+fn a_page_variable_control_on_another_row_shows_that_rows_value() {
     let src = r#"
 table 69998 "PV Row" { fields { field(1; Id; Integer) { } field(2; Amt; Decimal) { } } keys { key(PK; Id) { } } }
 page 69999 "PV List"
@@ -310,7 +309,7 @@ codeunit 69989 C
     end;
 }
 "#;
-    refused(al_testkit::run_in(src, "C", "F"), "per-row values not modelled");
+    assert_eq!(al_testkit::text(al_testkit::run_in(src, "C", "F")), "20.00");
 }
 
 /// pages/lt-qi-empty-error/QiEmptyErrorPages.al:253 QI_EE_EmptyValidate_NoAsserterror: an error with an empty text out of a card

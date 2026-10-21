@@ -161,6 +161,22 @@ codeunit 69981 C
         exit(s);
     end;
 
+    // record/lt-cn-transferfields-modify/CnTransferFieldsModify.al:543 QH_TF_Other_SourceInMemory_AuditFields.
+    procedure TransferAuditFromMemory(): Text
+    var R1: Record "SV Row"; R4: Record "SV Row"; O: Record "SV Other Row"; s: Text;
+    begin
+        R1.Id := 1; R1.Amount := 1; R1.Insert();
+        R1.Get(1);
+        O.Init(); O.Id := 1; O.Amount := 4;
+        R1.TransferFields(O);
+        s := Format(R1.SystemCreatedAt = 0DT) + Format(R1.SystemModifiedAt = 0DT) + Format(IsNullGuid(R1.SystemCreatedBy)) + Format(IsNullGuid(R1.SystemModifiedBy));
+        R1.Modify();
+        s += '|' + Format(R1.SystemCreatedAt = 0DT) + Format(R1.SystemModifiedAt = 0DT) + Format(IsNullGuid(R1.SystemCreatedBy)) + Format(R1.SystemModifiedBy = UserSecurityId());
+        R4.Get(1);
+        s += '|' + Format(R4.SystemCreatedAt = 0DT) + Format(R4.SystemCreatedBy = UserSecurityId()) + Format(R4.SystemModifiedBy = UserSecurityId());
+        exit(s);
+    end;
+
     procedure RecordLockTrueTrue()
     var Rec: Record "SV Row";
     begin
@@ -642,4 +658,14 @@ fn a_stale_buffer_stays_stale_after_another_tables_transferfields() {
     );
     // CnTransferFieldsModify.al:194-214: a current buffer modifies either way.
     assert_eq!(text(run("TransferFromOtherTableCurrent")), "3");
+}
+
+// CnTransferFieldsModify.al:543 QH_TF_Other_SourceInMemory_AuditFields: the buffer takes the in-memory source's blank At and null By
+// fields; Modify stamps the modified pair on the buffer and in the database; the database keeps its own created pair.
+#[test]
+fn transfer_fields_from_another_table_copies_the_four_audit_fields() {
+    assert_eq!(
+        text(run("TransferAuditFromMemory")),
+        "YesYesYesYes|YesNoYesYes|NoYesYes"
+    );
 }

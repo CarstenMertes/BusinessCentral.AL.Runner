@@ -313,6 +313,9 @@ pub enum ReadBackwards {
     AfterMove,
 }
 
+/// A row key and what the repeater's page-variable controls show for it: (control index, value) (`PageState::row_vars`).
+pub type RowVars = (Vec<Value>, Vec<(usize, Value)>);
+
 /// The test client's state for one page (ADR-012). Fields grow with the
 /// behaviours the corpus pins.
 pub struct PageState {
@@ -495,6 +498,29 @@ pub struct PageState {
     pub agr_row: Option<Vec<Value>>,
     /// The keys of every row OnAfterGetRecord ran with since the page opened.
     pub agr_rows: Vec<Vec<Value>>,
+    /// Per row of a repeater (its key): what the page variables its controls show held after the row's OnAfterGetRecord, and
+    /// for the current row after OnAfterGetCurrRecord: (control index, value) (pages/lt-qi-row-page-var/QiRowPageVar.al).
+    pub row_vars: Vec<RowVars>,
+    /// The row OnAfterGetRecord ran with last (its fields after the trigger): the next OnAfterGetRecord sees it as xRec;
+    /// `None` before the first fetch, when xRec is a blank row (testpart/QiHostSaveParts.al:361 `L.AGR(D1/10000|d1 l1 x=/0)`).
+    pub agr_xrec: Option<Vec<Value>>,
+    /// The row OnAfterGetCurrRecord ran with last: the next OnAfterGetCurrRecord sees it as xRec; `None` before the first,
+    /// when xRec is a blank row with the single-value key filters (the part link) on it (QiHostSaveParts.al:361
+    /// `L.AGCR(D1/10000|d1 l1 x=D1/0)`, `U.AGCR(D1/10000 x=/0)`).
+    pub agcr_xrec: Option<Vec<Value>>,
+    /// OnAfterGetCurrRecord ran last on a row that is not stored (a new row): the next one on a stored row sees the xRec the
+    /// page holds (misc/lt-probes-needed-7/PnGShowRow.al EmptyListInsertViaRec `List.AGCR(,);List.AGR(NEW1,Created);...;
+    /// List.AGCR(NEW1,NEW1)`).
+    pub agcr_after_new: bool,
+    /// A sibling part saved a row before a host SetValue and this unlinked part over the same table read it and shows it
+    /// (testpart/QiHostSaveParts.al:500 `U.AGR(D1/30000 ...);U.AGCR(D1/30000 x=/0)`): the fields of the row it stands on.
+    pub shows_sibling_save: Option<Vec<Value>>,
+    /// A part: a TestPart call or a call on one of its fields reached it since its host opened.
+    pub part_accessed: bool,
+    /// A host that is a new, unsaved record while a part linked by a field shows rows of the blank key: only Close, OK, New()
+    /// and a read of a host field are pinned for it, and a part field read or First that inserts it (pages/
+    /// lt-part-line-before-host-key/PartLineBeforeHostKey.al QH_BlankRows_*).
+    pub new_host_part_rows: bool,
     /// `P.Editable(false)` or `P.Editable := false` on a Page variable before it runs: the page
     /// opens non-editable (handlers/TestPageVariableEditableContracts.al).
     pub editable_preset: Option<bool>,
@@ -654,6 +680,13 @@ impl PageState {
             set_controls: Vec::new(),
             agr_row: None,
             agr_rows: Vec::new(),
+            row_vars: Vec::new(),
+            agr_xrec: None,
+            agcr_xrec: None,
+            agcr_after_new: false,
+            shows_sibling_save: None,
+            part_accessed: false,
+            new_host_part_rows: false,
             editable_preset: None,
             caption: None,
             parts: Vec::new(),

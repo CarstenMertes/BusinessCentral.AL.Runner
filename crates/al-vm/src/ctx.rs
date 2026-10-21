@@ -69,6 +69,9 @@ impl al_builtins::native::Ctx for Session {
     fn format_dotnet(&mut self, v: &Value) -> Option<Result<String, Signal>> {
         self.format_dotnet_value(v)
     }
+    fn auto_format_field_places(&mut self, record: &Value, field_no: usize) -> Result<String, Signal> {
+        self.auto_format_field_places_of(record, field_no)
+    }
     fn last_error(&self) -> AlError {
         self.last_error.clone()
     }

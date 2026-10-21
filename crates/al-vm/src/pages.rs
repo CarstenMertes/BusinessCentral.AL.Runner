@@ -293,9 +293,53 @@ impl Session {
         }
         let mut answer = None;
         let mut result = Ok(());
-        if page.triggers.iter().any(|(n, _)| n == name) || page.ext_triggers.iter().any(|(n, _, _)| n == name) {
+        let declared =
+            page.triggers.iter().any(|(n, _)| n == name) || page.ext_triggers.iter().any(|(n, _, _)| n == name);
+        if declared {
             st.borrow_mut().triggers_run += 1;
         }
+        // In OnAfterGetRecord xRec is the row the page fetched before (a blank row first); in OnAfterGetCurrRecord on a stored
+        // row it is the row OnAfterGetCurrRecord ran with before (a blank row with the part link first). Every other trigger
+        // keeps the xRec the page holds (testpart/QiHostSaveParts.al:361-362, :411-412, :580).
+        // On a new row OnAfterGetCurrRecord sees the xRec the page holds, the new row as it was set up (misc/lt-probes-needed-7/
+        // PnGNewRecord.al:94 HandedRecordNoFilters `List.OnNewRecord;List.AGCR(,)` after `List.AGCR(N1,)`; PnGShowRow.al
+        // ListLosesOnlyRowDeleteNoUpdate `List.OnNewRecord;List.AGCR(,)` after `List.AGR(U1,Upd 1)`), and so does the next one on a
+        // stored row (`agcr_after_new`).
+        let stored_row = {
+            let s = st.borrow();
+            !s.draft && s.cursor == Cursor::Row
+        };
+        let fetch =
+            (name == "onaftergetrecord" || (name == "onaftergetcurrrecord" && stored_row)) && self.has_source(st);
+        let after_new = if name == "onaftergetcurrrecord" && self.has_source(st) {
+            let mut s = st.borrow_mut();
+            let was = s.agcr_after_new;
+            s.agcr_after_new = !stored_row;
+            was
+        } else {
+            false
+        };
+        let held_xrec = if fetch && declared && !after_new {
+            let before = {
+                let s = st.borrow();
+                if name == "onaftergetrecord" {
+                    s.agr_xrec.clone()
+                } else {
+                    s.agcr_xrec.clone()
+                }
+            };
+            let before = match before {
+                Some(f) => f,
+                None => self.blank_fetch_xrec(st, name == "onaftergetcurrrecord")?,
+            };
+            let held = self.page_xrec_fields(st);
+            self.set_xrec_fields(st, before);
+            Some(held)
+        } else {
+            None
+        };
+        // OnAfterGetCurrRecord changes what the current row shows only for the variables it sets.
+        let vars_before = (declared && name == "onaftergetcurrrecord" && stored_row).then(|| self.row_var_values(st));
         if let Some(r) = page.triggers.iter().find(|(n, _)| n == name).map(|(_, r)| *r) {
             let inst = st.borrow().instance.clone().expect("open page");
             match self.call(object, r, inst, args.clone()) {
@@ -320,6 +364,18 @@ impl Session {
                 }
             }
         }
+        if fetch {
+            if let Some(held) = held_xrec {
+                self.set_xrec_fields(st, held);
+            }
+            let now = self.page_rec(st).borrow().fields.clone();
+            let mut s = st.borrow_mut();
+            if name == "onaftergetrecord" {
+                s.agr_xrec = Some(now);
+            } else {
+                s.agcr_xrec = Some(now);
+            }
+        }
         self.end_page_call(st);
         if name == "onaftergetrecord" && result.is_ok() && self.has_source(st) {
             let rec = self.page_rec(st);
@@ -330,7 +386,99 @@ impl Session {
             }
             s.agr_row = Some(key);
         }
+        // What the repeater's page-variable controls show for the row: what the variables hold after its OnAfterGetRecord, and for
+        // the current row after OnAfterGetCurrRecord (pages/lt-qi-row-page-var/QiRowPageVar.al:223 QI_RV_List_Navigation, :312
+        // QI_RV_Part_Navigation: every row shows its own `agr N | cur N` after every move).
+        if declared && result.is_ok() && (name == "onaftergetrecord" || (name == "onaftergetcurrrecord" && stored_row))
+        {
+            self.note_row_vars(
+                st,
+                if name == "onaftergetcurrrecord" {
+                    vars_before.as_deref()
+                } else {
+                    None
+                },
+            )?;
+        }
         result.map(|()| answer)
+    }
+
+    /// What the page variables bound to controls of the repeater hold now: (control index, value).
+    fn row_var_values(&self, st: &St) -> Vec<(usize, Value)> {
+        let engine = self.engine();
+        let page = page_of(&engine, st);
+        let mut values = Vec::new();
+        for (i, c) in page.controls.iter().enumerate() {
+            let b @ (ir::Binding::Var(_) | ir::Binding::BaseVar(_)) = &c.binding else {
+                continue;
+            };
+            if !self.in_repeater(st, i) {
+                continue;
+            }
+            let Some((slot, owner)) = b.var_slot(c.owner) else {
+                continue;
+            };
+            let inst = self.owner_instance(st, owner);
+            values.push((i, inst.borrow().globals[slot].clone()));
+        }
+        values
+    }
+
+    /// Notes what the page-variable controls of the repeater show for the row the page's record holds (see `row_vars`). After
+    /// OnAfterGetCurrRecord (`before` holds the values before it ran) only the variables it changed take their new value.
+    fn note_row_vars(&mut self, st: &St, before: Option<&[(usize, Value)]>) -> Result<(), Signal> {
+        if !self.has_source(st) || st.borrow().cursor != Cursor::Row || st.borrow().draft {
+            return Ok(());
+        }
+        let values = self.row_var_values(st);
+        if values.is_empty() {
+            return Ok(());
+        }
+        let rec = self.page_rec(st);
+        let key = self.row_key(&rec)?;
+        let mut s = st.borrow_mut();
+        match (s.row_vars.iter_mut().find(|(k, _)| Self::same_key(k, &key)), before) {
+            (Some((_, held)), Some(before)) => {
+                for ((i, now), (_, was)) in values.into_iter().zip(before) {
+                    if !Self::same_values(std::slice::from_ref(&now), std::slice::from_ref(was)) {
+                        match held.iter_mut().find(|(c, _)| *c == i) {
+                            Some((_, v)) => *v = now,
+                            None => held.push((i, now)),
+                        }
+                    }
+                }
+            }
+            (Some((_, held)), None) => *held = values,
+            (None, _) => s.row_vars.push((key, values)),
+        }
+        Ok(())
+    }
+
+    /// xRec of the first OnAfterGetRecord (a blank row) or OnAfterGetCurrRecord (a blank row with each primary-key field
+    /// whose filter is a single value on it: the part link) of an open page (testpart/QiHostSaveParts.al:361
+    /// `L.AGR(D1/10000|d1 l1 x=/0)`, `L.AGCR(D1/10000|d1 l1 x=D1/0)`, `U.AGCR(D1/10000 x=/0)`, `H.AGCR(D1 x=)`).
+    fn blank_fetch_xrec(&mut self, st: &St, with_filters: bool) -> Result<Vec<Value>, Signal> {
+        let rec = self.page_rec(st);
+        let table = self.table(&rec)?;
+        let mut fields = self.initial_fields(rec.borrow().table as usize);
+        if with_filters {
+            let r = rec.borrow();
+            for &pos in &table.keys[0] {
+                let mut single = r.filters.iter().filter(|f| f.field == pos).map(|f| match &f.expr {
+                    al_builtins::filter::FilterExpr::Eq(v) => Some(v.clone()),
+                    al_builtins::filter::FilterExpr::Range(Some(a), Some(b))
+                        if ops::compare(a, b).is_ok_and(|o| o.is_eq()) =>
+                    {
+                        Some(a.clone())
+                    }
+                    _ => None,
+                });
+                if let (Some(Some(v)), None) = (single.next(), single.next()) {
+                    fields[pos] = v;
+                }
+            }
+        }
+        Ok(fields)
     }
 
     /// The instance that runs the code of `owner`: the page itself, or one of its extensions.

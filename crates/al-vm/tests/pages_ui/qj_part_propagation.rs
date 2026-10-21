@@ -692,7 +692,7 @@ fn qj_both_part_modifies_host_then_host_save() {
         "stored-after-close=t=5 d=by action n=orig",
         "lines-after-close=10000:q=1,a=1",
     ];
-    assert_eq!(run("QJ_Both_PartModifiesHost_ThenHostSave")[1..], expected[1..]);
+    assert_eq!(run("QJ_Both_PartModifiesHost_ThenHostSave"), expected);
 }
 
 #[test]
@@ -710,7 +710,7 @@ fn qj_sub_part_part_modifies_host_then_host_save() {
         "stored-after-close=t=5 d=by action n=orig",
         "lines-after-close=10000:q=1,a=1",
     ];
-    assert_eq!(run("QJ_SubPart_PartModifiesHost_ThenHostSave")[1..], expected[1..]);
+    assert_eq!(run("QJ_SubPart_PartModifiesHost_ThenHostSave"), expected);
 }
 
 #[test]
@@ -728,7 +728,7 @@ fn qj_default_part_modifies_host_then_host_save() {
         "stored-after-close=t=5 d=by action n=orig",
         "lines-after-close=10000:q=1,a=1",
     ];
-    assert_eq!(run("QJ_Default_PartModifiesHost_ThenHostSave")[1..], expected[1..]);
+    assert_eq!(run("QJ_Default_PartModifiesHost_ThenHostSave"), expected);
 }
 
 #[test]
@@ -805,7 +805,7 @@ fn qj_subform_save_record_stored_row() {
         "log-close=",
         "lines-after-close=10000:q=1,a=7",
     ];
-    assert_eq!(run("QJ_SubformSaveRecord_StoredRow")[1..], expected[1..]);
+    assert_eq!(run("QJ_SubformSaveRecord_StoredRow"), expected);
 }
 
 #[test]
@@ -819,5 +819,7 @@ fn qj_subform_save_record_new_row() {
         "log-close=",
         "lines-after-close=10000:q=1,a=1 20000:q=0,a=7",
     ];
+    // Not built: the open-and-new log (Last on the part's only row reads nothing; New() runs OnNewRecord, OnAfterGetCurrRecord,
+    // goes back to the stored row and runs both again, QjPartPropagation.al:743); only the edits after it are checked.
     assert_eq!(run("QJ_SubformSaveRecord_NewRow")[1..], expected[1..]);
 }

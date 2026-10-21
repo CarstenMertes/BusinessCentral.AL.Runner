@@ -4,6 +4,7 @@
 
 use super::*;
 use al_builtins::filter::{FieldFilter, FilterExpr};
+use al_builtins::page_op::PageMethod;
 
 /// The filter group `SubPageLink` filters live in
 /// (corpus handlers/TestPagePartLinkFilterGroup.al: `FilterGroup(4)` answers the link).
@@ -375,6 +376,14 @@ impl Session {
         for pass in [false, true] {
             for (i, child) in &parts {
                 if has_provider(*i) == pass {
+                    // A GoToKey of a Document host onto the row it stands on reads the host again, not its parts (pages/
+                    // lt-qj-part-propagation/QjPartPropagation.al:485 QJ_Both_PartModifiesHost_ThenHostSave `log-open`, :714
+                    // QJ_SubformSaveRecord_StoredRow `log-open = S.AGCR(10000 r=1 x=0)`).
+                    let document_host = self.engine.object_facts[st.borrow().object as usize].page_type
+                        == Some(al_ir::PageType::Document);
+                    if how == Sync::Stayed && child.borrow().open && document_host {
+                        continue;
+                    }
                     if how == Sync::Stayed && child.borrow().open && self.filtered_find_list_without_row_triggers(child)
                     {
                         // The part asks its page nothing while the host stays (pagefindrecord/QcFindViewTests.al:540 DocPart_OpenEdit_LinesOfH2, `part_walk_log` empty).
@@ -401,12 +410,10 @@ impl Session {
         Ok(())
     }
 
-    /// A host control's OnValidate called `CurrPage.SaveRecord` (and no `CurrPage.Update`): the parts with a SubPageLink
-    /// read their rows again, as after a refresh of the host (testpart/TestPartTriggerOrderAndRefresh.al:
-    /// HostCurrPageUpdate_ReReadsThePart), without the host reading its own row. Not pinned: assumption
-    /// host-save-record-refreshes-linked-parts (pageupdate/TestPageUpdate.al:116-139 pins only that a SetValue without
-    /// SaveRecord or Update leaves an unlinked FactBox alone).
-    pub(super) fn refresh_linked_parts_after_save(&mut self, st: &St) -> Result<(), Signal> {
+    /// A host of another type than Document: the parts with a SubPageLink read their rows again from the first, as after a
+    /// refresh of the host (testpart/TestPartTriggerOrderAndRefresh.al: HostCurrPageUpdate_ReReadsThePart), without the host
+    /// reading its own row. Not pinned: assumption host-save-record-refreshes-linked-parts.
+    fn refresh_linked_parts_after_save(&mut self, st: &St) -> Result<(), Signal> {
         let engine = self.engine();
         let page = page_of(&engine, st);
         let parts: Vec<(usize, St)> = st
@@ -426,7 +433,6 @@ impl Session {
             return Ok(());
         }
         al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::HostSaveRecordRefreshesLinkedParts);
-        // As `sync_parts_with`: a part linked through a Provider reads the provider's row, so it goes after the others.
         let has_provider = |i: usize| {
             page.controls[i]
                 .part_link
@@ -440,6 +446,149 @@ impl Session {
                 }
             }
         }
+        Ok(())
+    }
+
+    /// A host control's OnValidate called `CurrPage.SaveRecord` (and no `CurrPage.Update`), whether the row changed or not:
+    /// every part of the host reads its rows again where it stands, the linked and the unlinked ones, and the host reads
+    /// nothing (testpart/QiHostSaveParts.al:362 QI_HostSaveRecord_ChangedValue, :386 _SameValue, :412 _PartMovedToSecondRow,
+    /// :580 QI_PartNewRow_ThenHostSaveRecord). Pinned for a Document host whose parts are ListParts of 2 to 4 rows standing
+    /// on a stored row; any other shape is refused.
+    pub(super) fn reread_parts_after_host_save_record(&mut self, st: &St) -> Result<(), Signal> {
+        let parts: Vec<(usize, St)> = st
+            .borrow()
+            .parts
+            .iter()
+            .filter(|(_, c)| c.borrow().open)
+            .cloned()
+            .collect();
+        if parts.is_empty() {
+            return Ok(());
+        }
+        let facts = &self.engine.object_facts;
+        let object = st.borrow().object as usize;
+        if facts[object].page_type != Some(al_ir::PageType::Document) {
+            // Kept, not pinned: a host of another type reads its linked parts again from their first rows, as before the
+            // Document host was pinned (baseline case 60412 testpart/... NewHostRowSavedByItsOwnTrigger_IsInsertedOnce).
+            return self.refresh_linked_parts_after_save(st);
+        }
+        if !st.borrow().hidden_parts.is_empty() {
+            // A host with a part hidden by a Visible expression is not pinned: its linked parts read again from their first
+            // rows as before, under assumption host-save-record-refreshes-linked-parts (Microsoft's Tests-ERM ERM Purchase
+            // Subform 134394 and Document Totals Pages: Purchase documents have such parts; 30 tests pass through it).
+            return self.refresh_linked_parts_after_save(st);
+        }
+        for (_, child) in &parts {
+            let o = child.borrow().object as usize;
+            let list_part =
+                matches!(&self.engine.object_facts[o].page_type, Some(al_ir::PageType::Other(t)) if t == "listpart");
+            let (cursor, draft, dirty) = {
+                let c = child.borrow();
+                (c.cursor, c.draft, c.dirty)
+            };
+            if !list_part
+                || !self.has_source(child)
+                || cursor != Cursor::Row
+                || draft
+                || dirty
+                || self.declares(child, "onfindrecord")
+                || self.declares(child, "onnextrecord")
+            {
+                return unsupported(
+                    "CurrPage.SaveRecord in a host control's OnValidate with a part that is not a ListPart standing on a stored row (the part reads are not pinned)",
+                );
+            }
+        }
+        for (_, child) in &parts {
+            self.reread_part_in_place(child)?;
+        }
+        Ok(())
+    }
+
+    /// A part reads its rows again where it stands: the current row, the rows after it to the end of the view, the rows before
+    /// it back to the start, the current row twice more, then OnAfterGetCurrRecord (testpart/QiHostSaveParts.al:362 on row
+    /// 10000 of 2 `L.AGR(10000);L.AGR(20000);L.AGR(10000);L.AGR(10000);L.AGCR(10000)`, :412 on row 20000 of 2 `20000;10000;
+    /// 20000;20000`, :580 on row 30000 of 3 `30000;20000;10000;30000;30000`; the unlinked part of 3 and 4 rows on its first).
+    /// A part that shows a row a sibling saved first reads the row it stands on (:580 `U.AGR(D1/10000 x=D1/30000)` before the
+    /// read from there). Views of 2 to 4 rows are pinned; others are refused.
+    fn reread_part_in_place(&mut self, child: &St) -> Result<(), Signal> {
+        let rec = self.page_rec(child);
+        let stale = child.borrow_mut().shows_sibling_save.take();
+        if let Some(at) = &stale {
+            rec.borrow_mut().fields = at.clone();
+            child.borrow_mut().unpinned_state = None;
+        }
+        let table = self.table(&rec)?;
+        let key = table.primary_key(&rec.borrow().fields);
+        let Some(current) = self.stored_row(&rec)? else {
+            return unsupported("a part re-read after a host SaveRecord whose current row is gone (not pinned)");
+        };
+        rec.borrow_mut().fields = current.clone();
+        let mut after = Vec::new();
+        while self.nav_next(child, 1)? {
+            after.push(rec.borrow().fields.clone());
+            if after.len() > 4 {
+                break;
+            }
+        }
+        rec.borrow_mut().fields = current.clone();
+        let mut before = Vec::new();
+        while self.nav_next(child, -1)? {
+            before.push(rec.borrow().fields.clone());
+            if before.len() > 4 {
+                break;
+            }
+        }
+        let rows = 1 + after.len() + before.len();
+        if !(2..=4).contains(&rows) {
+            return unsupported(format!(
+                "a part re-read after a host SaveRecord with {rows} rows in its view (only 2 to 4 are pinned)"
+            ));
+        }
+        if stale.is_some() {
+            rec.borrow_mut().fields = current.clone();
+            self.populate_current(child)?;
+            child.borrow_mut().agcr_xrec = Some(current.clone());
+        }
+        let mut order = vec![current.clone()];
+        order.extend(after.iter().cloned());
+        order.extend(before.iter().cloned());
+        order.push(current.clone());
+        order.push(current.clone());
+        let mut shown_current = current.clone();
+        for (i, row) in order.iter().enumerate() {
+            rec.borrow_mut().fields = row.clone();
+            self.populate_current(child)?;
+            if i + 1 == order.len() {
+                shown_current = rec.borrow().fields.clone();
+            }
+        }
+        let mut view: Vec<Vec<Value>> = before.into_iter().rev().collect();
+        view.push(current.clone());
+        view.extend(after);
+        let window = view
+            .into_iter()
+            .map(|stored| al_builtins::value::WindowRow {
+                key: table.primary_key(&stored),
+                shown: if Self::same_key(&table.primary_key(&stored), &key) {
+                    shown_current.clone()
+                } else {
+                    stored.clone()
+                },
+                stored,
+            })
+            .collect();
+        rec.borrow_mut().fields = shown_current;
+        self.set_xrec_fields(child, current);
+        {
+            let mut c = child.borrow_mut();
+            c.window = window;
+            c.window_from_start = true;
+            c.window_eof = true;
+            c.dirty = false;
+        }
+        self.page_trigger(child, "onaftergetcurrrecord", vec![])?;
+        self.page_event(child, "onaftergetcurrrecordevent", None, None)?;
         Ok(())
     }
 
@@ -1028,7 +1177,7 @@ impl Session {
     }
 
     /// A host control is about to take a value: the open parts that hold a typed row that is not saved save it first
-    /// (assumption part-row-saved-before-host-set-value).
+    /// (testpart/QiHostSaveParts.al:500, :554 on a Document host; other hosts: assumption part-row-saved-before-host-set-value).
     pub(super) fn save_parts_before_host_edit(&mut self, st: &St) -> Result<(), Signal> {
         let parts = st.borrow().parts.clone();
         for (_, child) in parts {
@@ -1037,11 +1186,238 @@ impl Session {
                 c.open && c.dirty
             };
             if pending {
-                al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::PartRowSavedBeforeHostSetValue);
+                let o = st.borrow().object as usize;
+                if self.engine.object_facts[o].page_type != Some(al_ir::PageType::Document) {
+                    al_builtins::assumptions::assume(
+                        al_builtins::assumptions::Assumption::PartRowSavedBeforeHostSetValue,
+                    );
+                    self.save_row(&child)?;
+                    continue;
+                }
+                let inserted = child.borrow().draft;
                 self.save_row(&child)?;
+                self.siblings_read_saved_row(st, &child, inserted)?;
             }
         }
         Ok(())
+    }
+
+    /// Part `child` saved a row just before a host SetValue: an unlinked ListPart of the host over the same table reads that
+    /// row, twice for an inserted row and once for a modified one, then runs OnAfterGetCurrRecord with a blank xRec
+    /// (testpart/QiHostSaveParts.al:500 QI_PartNewRow_ThenHostSetValue `U.AGR(D1/30000 x=D1/10000);U.AGR(D1/30000 x=D1/30000);
+    /// U.AGCR(D1/30000 x=/0)`, :554 QI_PartEditedRow_ThenHostSetValue `U.AGR(D1/10000 x=D1/10000);U.AGCR(D1/10000 x=/0)`, the row
+    /// the unlinked part stood on). Its cursor stays on its own row: the next refresh or the host's Close reads it again (:504,
+    /// :580). Any other sibling over that table is refused.
+    fn siblings_read_saved_row(&mut self, host: &St, child: &St, inserted: bool) -> Result<(), Signal> {
+        if !self.has_source(child) {
+            return Ok(());
+        }
+        let saved = self.page_rec(child).borrow().fields.clone();
+        let table = self.page_rec(child).borrow().table;
+        let engine = self.engine();
+        let page = page_of(&engine, host);
+        let siblings: Vec<(usize, St)> = {
+            let h = host.borrow();
+            h.parts
+                .iter()
+                .chain(h.hidden_parts.iter())
+                .filter(|(_, c)| !Rc::ptr_eq(c, child) && c.borrow().open)
+                .cloned()
+                .collect()
+        };
+        for (i, sib) in siblings {
+            if !self.has_source(&sib) || self.page_rec(&sib).borrow().table != table {
+                continue;
+            }
+            let o = sib.borrow().object as usize;
+            let list_part =
+                matches!(&self.engine.object_facts[o].page_type, Some(al_ir::PageType::Other(t)) if t == "listpart");
+            let linked = page.controls[i]
+                .part_link
+                .as_ref()
+                .is_some_and(|l| !l.entries.is_empty() || l.provider.is_some());
+            let (cursor, draft, dirty, stale, hidden) = {
+                let c = sib.borrow();
+                let hidden = host.borrow().hidden_parts.iter().any(|(h, _)| *h == i);
+                (c.cursor, c.draft, c.dirty, c.shows_sibling_save.is_some(), hidden)
+            };
+            if linked
+                || !list_part
+                || hidden
+                || cursor != Cursor::Row
+                || draft
+                || dirty
+                || stale
+                || self.declares(&sib, "onfindrecord")
+                || self.declares(&sib, "onnextrecord")
+            {
+                return unsupported(
+                    "a part row saved before a host SetValue while another part over the same table is not an unlinked ListPart on a stored row (its reads are not pinned)",
+                );
+            }
+            let srec = self.page_rec(&sib);
+            let tdef = self.table(&srec)?;
+            let at = srec.borrow().fields.clone();
+            let same_row = Self::same_key(&tdef.primary_key(&at), &tdef.primary_key(&saved));
+            if inserted == same_row {
+                return unsupported(
+                    "a part row saved before a host SetValue that is a modified row other than the one an unlinked sibling part stands on (not pinned)",
+                );
+            }
+            for _ in 0..if inserted { 2 } else { 1 } {
+                srec.borrow_mut().fields = saved.clone();
+                self.populate_current(&sib)?;
+            }
+            let blank = self.blank_fetch_xrec(&sib, true)?;
+            sib.borrow_mut().agcr_xrec = Some(blank);
+            self.page_trigger(&sib, "onaftergetcurrrecord", vec![])?;
+            self.page_event(&sib, "onaftergetcurrrecordevent", None, None)?;
+            if inserted {
+                let mut s = sib.borrow_mut();
+                s.shows_sibling_save = Some(at);
+                s.unpinned_state = Some(
+                    "a part that shows a row another part saved, other than the row it stands on (what it reads next is not pinned)".into(),
+                );
+            } else {
+                self.set_xrec(&sib);
+            }
+        }
+        Ok(())
+    }
+
+    /// The host closes after it saved its row: an unlinked part that shows a row a sibling saved reads the row it stands on
+    /// once (testpart/QiHostSaveParts.al:504 `H.MOD(D1);T.HeadModify(D1);U.AGR(D1/10000 x=D1/30000)`). A close that saves no
+    /// host row is refused.
+    pub(super) fn stale_parts_read_at_close(&mut self, host: &St, host_saved: bool) -> Result<(), Signal> {
+        let parts: Vec<St> = host.borrow().parts.iter().map(|(_, c)| c.clone()).collect();
+        for part in parts {
+            let Some(at) = part.borrow_mut().shows_sibling_save.take() else {
+                continue;
+            };
+            part.borrow_mut().unpinned_state = None;
+            if !host_saved {
+                return unsupported(
+                    "closing a host that saves nothing while a part shows a row another part saved (not pinned)",
+                );
+            }
+            self.page_rec(&part).borrow_mut().fields = at;
+            self.populate_current(&part)?;
+        }
+        Ok(())
+    }
+
+    /// A call reaches part `child` of a Document host that is a new, unsaved record: a read of a part field or the part's First
+    /// inserts the host (page OnInsertRecord and table OnInsert, nothing typed), and the parts link to it and read their rows
+    /// again, with or without rows of the blank key (pages/lt-part-line-before-host-key/PartLineBeforeHostKey.al:1748
+    /// QH_BlankRows_ReadPart_Stored, :2032 QH_NoRows_ReadPartControl, :2057 QH_OtherKeyRows_ReadPartControl, :2083
+    /// QH_BlankRows_PartFirst, :2142 QH_BlankRows_ReadPartControlTwice_TraceHost). Pinned for a field-linked part of a host
+    /// nothing was typed into, reached the first time; any other call on such a part while it shows rows of the blank key is
+    /// refused. `Ok(true)`: the call was handled here.
+    fn new_host_on_part_access(
+        &mut self,
+        host: &St,
+        child: &St,
+        m: PageMethod,
+        field_read: bool,
+        reached_before: bool,
+    ) -> Result<bool, Signal> {
+        let new_host = {
+            let h = host.borrow();
+            h.open && h.host.is_none() && h.draft && !h.draft_stored && h.cursor != Cursor::None
+        };
+        if !new_host || !self.has_source(host) {
+            return Ok(false);
+        }
+        let shows_rows = host.borrow().new_host_part_rows;
+        let o = host.borrow().object as usize;
+        let engine = self.engine();
+        let idx = child.borrow().host.as_ref().map(|(_, c)| *c);
+        let field_linked = idx.is_some_and(|i| {
+            page_of(&engine, host).controls[i]
+                .part_link
+                .as_ref()
+                .is_some_and(|l| l.entries.iter().any(|e| matches!(e, ir::LinkEntry::Field(..))))
+        });
+        let pinned_call = field_read || m == PageMethod::First;
+        if self.engine.object_facts[o].page_type != Some(al_ir::PageType::Document) || !field_linked {
+            if shows_rows {
+                return unsupported(format!(
+                    "{m} on a part while its new host shows rows of the blank key in another part (not pinned)"
+                ));
+            }
+            return Ok(false);
+        }
+        if !pinned_call || reached_before || host.borrow().dirty {
+            if shows_rows {
+                return unsupported(format!(
+                    "{m} on a part whose new, unsaved host shows rows of the blank key, other than a first field read or First of a host nothing was typed into (not pinned)"
+                ));
+            }
+            // Kept, not pinned: a call other than a field read or First on the part of a new host whose part shows no rows
+            // inserts nothing, as before (the write paths save the host themselves: `save_unsaved_host_first`).
+            return Ok(false);
+        }
+        let used = self.ret_used;
+        host.borrow_mut().dirty = true;
+        let r = self.save_row(host);
+        self.ret_used = used;
+        r?;
+        host.borrow_mut().new_host_part_rows = false;
+        Ok(true)
+    }
+
+    /// The first call that reaches part `child` since its host opened, while the Document host holds an unsaved edit of a
+    /// stored row: a read of a part field saves the host first, its OnModifyRecord and the table's OnModify, and nothing reads
+    /// again (testpart/QiHostSaveParts.al:441 QI_HostModify_ChangedValue and :469 QI_HostPlain_ChangedValue
+    /// `after-part-read=H.MOD(D1);T.HeadModify(D1);`). A part reached before saves nothing (:495 QI_PartNewRow_ThenHostSetValue
+    /// `after-part-read=` after Lines.Last, New and SetValue, the host saved at Close). A SetValue goes its own way
+    /// (`save_host_before_part_edit`); any other first call, a host of another type, and a first call while another part was
+    /// reached before are refused.
+    pub(super) fn first_part_access(&mut self, child: &St, m: PageMethod, field_read: bool) -> Result<(), Signal> {
+        let Some(host) = child.borrow().host.as_ref().and_then(|(h, _)| h.upgrade()) else {
+            return Ok(());
+        };
+        let reached_before = std::mem::replace(&mut child.borrow_mut().part_accessed, true);
+        if self.new_host_on_part_access(&host, child, m, field_read, reached_before)? {
+            return Ok(());
+        }
+        if reached_before {
+            return Ok(());
+        }
+        let edited = {
+            let h = host.borrow();
+            h.open && h.host.is_none() && h.dirty && !h.draft && h.cursor == Cursor::Row
+        };
+        if !edited || !self.has_source(&host) || m == PageMethod::SetValue {
+            return Ok(());
+        }
+        let hrec = self.page_rec(&host);
+        if hrec.borrow().temporary || self.stored_row(&hrec)?.is_none() {
+            return Ok(());
+        }
+        let o = host.borrow().object as usize;
+        let other_reached = host
+            .borrow()
+            .parts
+            .iter()
+            .chain(host.borrow().hidden_parts.iter())
+            .any(|(_, c)| !Rc::ptr_eq(c, child) && c.borrow().part_accessed);
+        if !field_read {
+            // Kept, not pinned: a first New, First, Last or GoToKey on a part while the stored host holds an edit saves
+            // nothing, as before the field read was pinned (baseline cases 60868 OpenNew_NumberAssignedOnInsert_
+            // FirstThenWriteCarriesTheNumber, _LinesInsertedInCode_LastThenWriteLandsOnTheLastLine; 71494, 71495 P182b_*;
+            // 78622 DocumentHost_HeaderEditAndPartEdit; 60412 HostEdit_SurvivesAPartSavingItsOwnRow).
+            return Ok(());
+        }
+        if self.engine.object_facts[o].page_type != Some(al_ir::PageType::Document) || other_reached {
+            return unsupported(
+                "a first field read on a part while its host holds an unsaved edit, other than on the only part reached of a Document page (whether the host saves first is not pinned)",
+            );
+        }
+        let used = self.ret_used;
+        let r = self.save_row(&host);
+        self.ret_used = used;
+        r
     }
 
     /// Saves what was typed into the rows the parts stand on.

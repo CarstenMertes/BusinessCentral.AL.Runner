@@ -25,6 +25,7 @@ mod errorcollect;
 mod events;
 mod exec;
 mod filtergroup_assign;
+mod format_auto_format_field;
 mod format_variant_number;
 mod impact_trace;
 mod in_precedence;

@@ -195,6 +195,13 @@ pub trait Ctx: FormatCtx {
     fn format_dotnet(&mut self, _v: &Value) -> Option<Result<String, Signal>> {
         None
     }
+    /// The places `min:max` the AutoFormat of the field numbered `field_no` of `record` gives (its AutoFormatExpression evaluated with the
+    /// record as Rec), for `Format` in code. Refused where the context has no session.
+    fn auto_format_field_places(&mut self, _record: &Value, _field_no: usize) -> Result<String, Signal> {
+        Err(Signal::Unsupported(
+            "Format of a field with an AutoFormatExpression outside a session".into(),
+        ))
+    }
     /// `CopyStream` where one side is a `DotNet` stream (ADR-024). `None` where the context has no
     /// .NET host.
     fn copy_stream_dotnet(&mut self, _out: &Value, _src: &Value, _count: Option<i64>) -> Option<Result<(), Signal>> {
@@ -384,6 +391,7 @@ const REGISTRY: &[(&str, NativeFn)] = &[
         out
     }),
     ("System.FormatDecimalField#1", format_decimal_field),
+    ("System.FormatAutoFormatField#1", format_auto_format_field),
     ("System.OptionCaptionML#1", option_caption_ml),
     ("System.Evaluate#1", crate::evaluate::evaluate),
     (
@@ -1090,6 +1098,29 @@ fn format_decimal_field(ctx: &mut dyn Ctx, r: Option<&mut Value>, args: &mut [Va
     }
     let n = args.len().min(3);
     format_1(ctx, r, &mut args[..n])
+}
+
+/// `Format(Rec.Field[, Length, FormatNumber])` of a Decimal table field whose AutoFormatExpression is an expression: the
+/// places come from the field's AutoFormat evaluated on the record (`Ctx::auto_format_field_places`), then as
+/// `format_decimal_field`. Arguments: the value, length, format number, the record, the field's number.
+fn format_auto_format_field(ctx: &mut dyn Ctx, r: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
+    let pos = match args.get(4) {
+        Some(Value::Integer(p)) => *p as usize,
+        _ => {
+            return Err(Signal::Unsupported(
+                "Format of an AutoFormat field without its number".into(),
+            ));
+        }
+    };
+    let record = args.get(3).cloned().unwrap_or(Value::Null);
+    let places = ctx.auto_format_field_places(&record, pos)?;
+    let mut rest = vec![
+        args[0].clone(),
+        args[1].clone(),
+        args[2].clone(),
+        Value::Text(places.into()),
+    ];
+    format_decimal_field(ctx, r, &mut rest)
 }
 
 fn format_1(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
@@ -2441,6 +2472,7 @@ pub(crate) mod tests {
             "RecordRef.GetTableVariant#1",
             "TestField.SetValueVariant#1",
             "System.FormatDecimalField#1",
+            "System.FormatAutoFormatField#1",
             "System.OptionCaptionML#1",
             "Dialog.ErrorNotLiteral#1",
             "TextBuilder.AppendFieldValue#1",

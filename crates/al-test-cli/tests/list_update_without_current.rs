@@ -127,3 +127,25 @@ fn goto_key_on_a_list_without_current_record_trigger_then_next_reads_nothing_mor
         end;"#,
     );
 }
+
+// pages/lt-ai-list-order/QgGoToKeyNextCall.al:223 Plain_GoToKey_ThenValueRead, :277 Plain_GoToKey_ThenClose, :1049 Nav_GoToKey_ThenClose:
+// a GoToKey that moved a list without OnAfterGetCurrRecord and read nothing (the key is among the rows the client holds): Close reads
+// the row once, also after field value reads.
+#[test]
+fn goto_key_that_read_nothing_then_close_reads_the_row_once() {
+    passes(
+        r#"[Test] procedure ThenClose() var L: Codeunit "LUW Log"; P: TestPage "LUW Plain"; begin
+            L.Seed(); P.OpenView(); L.Clear(); P.GoToKey('R1003'); if L.Dump() <> '' then Error('goto %1', L.Dump());
+            P.Close(); if L.Dump() <> 'R:R1003' then Error('close %1', L.Dump());
+        end;
+        [Test] procedure ThenValueThenClose() var L: Codeunit "LUW Log"; P: TestPage "LUW Plain"; begin
+            L.Seed(); P.OpenView(); P.GoToKey('R1003'); L.Clear();
+            if P.NoCtl.Value() <> 'R1003' then Error('no'); if L.Dump() <> '' then Error('value %1', L.Dump());
+            P.Close(); if L.Dump() <> 'R:R1003' then Error('close %1', L.Dump());
+        end;
+        [Test] procedure NavThenClose() var L: Codeunit "LUW Log"; P: TestPage "LUW Nav"; begin
+            L.Seed(); P.OpenView(); P.GoToKey('R1003'); L.Clear();
+            P.Close(); if L.Dump() <> 'R:R1003' then Error('close %1', L.Dump());
+        end;"#,
+    );
+}

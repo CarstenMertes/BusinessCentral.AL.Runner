@@ -293,6 +293,9 @@ impl Session {
         }
         let mut answer = None;
         let mut result = Ok(());
+        if page.triggers.iter().any(|(n, _)| n == name) || page.ext_triggers.iter().any(|(n, _, _)| n == name) {
+            st.borrow_mut().triggers_run += 1;
+        }
         if let Some(r) = page.triggers.iter().find(|(n, _)| n == name).map(|(_, r)| *r) {
             let inst = st.borrow().instance.clone().expect("open page");
             match self.call(object, r, inst, args.clone()) {

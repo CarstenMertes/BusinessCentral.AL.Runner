@@ -332,6 +332,8 @@ impl Session {
         } else {
             None
         };
+        // OnAfterGetCurrRecord changes what the current row shows only for the variables it sets.
+        let vars_before = (declared && name == "onaftergetcurrrecord" && stored_row).then(|| self.row_var_values(st));
         if let Some(r) = page.triggers.iter().find(|(n, _)| n == name).map(|(_, r)| *r) {
             let inst = st.borrow().instance.clone().expect("open page");
             match self.call(object, r, inst, args.clone()) {
@@ -378,7 +380,64 @@ impl Session {
             }
             s.agr_row = Some(key);
         }
+        // What the repeater's page-variable controls show for the row: what the variables hold after its OnAfterGetRecord, and for
+        // the current row after OnAfterGetCurrRecord (pages/lt-qi-row-page-var/QiRowPageVar.al:223 QI_RV_List_Navigation, :312
+        // QI_RV_Part_Navigation: every row shows its own `agr N | cur N` after every move).
+        if declared && result.is_ok() && (name == "onaftergetrecord" || (name == "onaftergetcurrrecord" && stored_row)) {
+            self.note_row_vars(st, if name == "onaftergetcurrrecord" { vars_before.as_deref() } else { None })?;
+        }
         result.map(|()| answer)
+    }
+
+    /// What the page variables bound to controls of the repeater hold now: (control index, value).
+    fn row_var_values(&self, st: &St) -> Vec<(usize, Value)> {
+        let engine = self.engine();
+        let page = page_of(&engine, st);
+        let mut values = Vec::new();
+        for (i, c) in page.controls.iter().enumerate() {
+            let b @ (ir::Binding::Var(_) | ir::Binding::BaseVar(_)) = &c.binding else {
+                continue;
+            };
+            if !self.in_repeater(st, i) {
+                continue;
+            }
+            let Some((slot, owner)) = b.var_slot(c.owner) else {
+                continue;
+            };
+            let inst = self.owner_instance(st, owner);
+            values.push((i, inst.borrow().globals[slot].clone()));
+        }
+        values
+    }
+
+    /// Notes what the page-variable controls of the repeater show for the row the page's record holds (see `row_vars`). After
+    /// OnAfterGetCurrRecord (`before` holds the values before it ran) only the variables it changed take their new value.
+    fn note_row_vars(&mut self, st: &St, before: Option<&[(usize, Value)]>) -> Result<(), Signal> {
+        if !self.has_source(st) || st.borrow().cursor != Cursor::Row || st.borrow().draft {
+            return Ok(());
+        }
+        let values = self.row_var_values(st);
+        if values.is_empty() {
+            return Ok(());
+        }
+        let rec = self.page_rec(st);
+        let key = self.row_key(&rec)?;
+        let mut s = st.borrow_mut();
+        match (s.row_vars.iter_mut().find(|(k, _)| Self::same_key(k, &key)), before) {
+            (Some((_, held)), Some(before)) => {
+                for ((i, now), (_, was)) in values.into_iter().zip(before) {
+                    if !Self::same_values(std::slice::from_ref(&now), std::slice::from_ref(was)) {
+                        match held.iter_mut().find(|(c, _)| *c == i) {
+                            Some((_, v)) => *v = now,
+                            None => held.push((i, now)),
+                        }
+                    }
+                }
+            }
+            (Some((_, held)), None) => *held = values,
+            (None, _) => s.row_vars.push((key, values)),
+        }
+        Ok(())
     }
 
     /// xRec of the first OnAfterGetRecord (a blank row) or OnAfterGetCurrRecord (a blank row with each primary-key field

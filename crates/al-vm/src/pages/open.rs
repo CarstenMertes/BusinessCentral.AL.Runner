@@ -225,6 +225,7 @@ impl Session {
             s.set_controls = Vec::new();
             s.agr_xrec = None;
             s.agcr_xrec = None;
+            s.row_vars = Vec::new();
             s.agcr_after_new = false;
             s.part_accessed = false;
             s.new_host_part_rows = false;

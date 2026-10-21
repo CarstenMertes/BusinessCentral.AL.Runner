@@ -38,10 +38,23 @@ impl Session {
                     let ran_for_it = s.agr_rows.iter().any(|k| Self::same_key(k, &key));
                     let last = s.agr_row.as_ref().is_some_and(|k| Self::same_key(k, &key));
                     drop(s);
+                    // A row other than the one OnAfterGetRecord ran with last shows what the variable held for it (pages/
+                    // lt-qi-row-page-var/QiRowPageVar.al:312 QI_RV_Part_Navigation `after-action = 2 | agr 2 | cur 2`); the row
+                    // OnAfterGetRecord ran with last shows the variable as it is, as before.
                     if ran_for_it && !last {
-                        return unsupported(
-                            "a page-variable control of a list row other than the one OnAfterGetRecord ran with last (per-row values not modelled)",
-                        );
+                        let s = st.borrow();
+                        let shown = s
+                            .row_vars
+                            .iter()
+                            .find(|(k, _)| Self::same_key(k, &key))
+                            .and_then(|(_, v)| v.iter().find(|(c, _)| *c == idx).map(|(_, v)| v.clone()));
+                        drop(s);
+                        return match shown {
+                            Some(v) => Ok(v),
+                            None => unsupported(
+                                "a page-variable control of a list row other than the one OnAfterGetRecord ran with last, with no value noted for that row (not pinned)",
+                            ),
+                        };
                     }
                 }
                 let inst = self.owner_instance(st, owner);

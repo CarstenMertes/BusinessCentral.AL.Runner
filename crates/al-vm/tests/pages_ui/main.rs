@@ -31,3 +31,4 @@ mod trigger_errors;
 mod trust_refusals;
 mod qi_host_save_parts;
 mod qh_new_host_part_access;
+mod qi_row_page_var;

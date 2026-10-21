@@ -495,6 +495,9 @@ pub struct PageState {
     pub agr_row: Option<Vec<Value>>,
     /// The keys of every row OnAfterGetRecord ran with since the page opened.
     pub agr_rows: Vec<Vec<Value>>,
+    /// Per row of a repeater (its key): what the page variables its controls show held after the row's OnAfterGetRecord, and
+    /// for the current row after OnAfterGetCurrRecord: (control index, value) (pages/lt-qi-row-page-var/QiRowPageVar.al).
+    pub row_vars: Vec<(Vec<Value>, Vec<(usize, Value)>)>,
     /// The row OnAfterGetRecord ran with last (its fields after the trigger): the next OnAfterGetRecord sees it as xRec;
     /// `None` before the first fetch, when xRec is a blank row (testpart/QiHostSaveParts.al:361 `L.AGR(D1/10000|d1 l1 x=/0)`).
     pub agr_xrec: Option<Vec<Value>>,
@@ -674,6 +677,7 @@ impl PageState {
             set_controls: Vec::new(),
             agr_row: None,
             agr_rows: Vec::new(),
+            row_vars: Vec::new(),
             agr_xrec: None,
             agcr_xrec: None,
             agcr_after_new: false,

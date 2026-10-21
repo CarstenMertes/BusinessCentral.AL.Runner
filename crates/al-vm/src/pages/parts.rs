@@ -376,6 +376,14 @@ impl Session {
         for pass in [false, true] {
             for (i, child) in &parts {
                 if has_provider(*i) == pass {
+                    // A GoToKey of a Document host onto the row it stands on reads the host again, not its parts (pages/
+                    // lt-qj-part-propagation/QjPartPropagation.al:485 QJ_Both_PartModifiesHost_ThenHostSave `log-open`, :714
+                    // QJ_SubformSaveRecord_StoredRow `log-open = S.AGCR(10000 r=1 x=0)`).
+                    let document_host =
+                        self.engine.object_facts[st.borrow().object as usize].page_type == Some(al_ir::PageType::Document);
+                    if how == Sync::Stayed && child.borrow().open && document_host {
+                        continue;
+                    }
                     if how == Sync::Stayed && child.borrow().open && self.filtered_find_list_without_row_triggers(child)
                     {
                         // The part asks its page nothing while the host stays (pagefindrecord/QcFindViewTests.al:540 DocPart_OpenEdit_LinesOfH2, `part_walk_log` empty).

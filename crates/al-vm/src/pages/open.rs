@@ -1660,7 +1660,7 @@ impl Session {
     /// CP.OnAfterGetCurrRecord:/0`, three times; :1381 OpenEdit, :1418 after the host key is typed, :1495 host Next; :1439 and
     /// :1455 a part that declares only OnAfterGetCurrRecord runs it three times). A host's New() runs only the host's
     /// OnNewRecord, never the part's (:827 PYB_OpenEdit_HostWithoutLines `host_new`, :879 PYB_OpenEdit_ThenHostNew, :861
-    /// PYB_OpenNew_ThenHostNew); its OnAfterGetCurrRecord then runs once under assumption part-host-new-after-get-curr-record-once.
+    /// PYB_OpenNew_ThenHostNew); whether its OnAfterGetCurrRecord runs then is not pinned, so a part that can observe it is refused.
     fn land_on_part_open_line(&mut self, st: &St) -> Result<(), Signal> {
         let rec = self.page_rec(st);
         let table = rec.borrow().table as usize;
@@ -1679,17 +1679,13 @@ impl Session {
         let observes_curr = self.declares(st, "onaftergetcurrrecord")
             || self.engine().events.is_subscribed(object, "onaftergetcurrrecordevent");
         if self.host_new_running {
-            // How often the part's OnAfterGetCurrRecord runs then is not pinned; Microsoft's Tests-ERM ERM Update Currency -
-            // Sales and - Purchase UpdateCurrencyCodeOn*Page (15 tests) need it to run once: assumption
-            // part-host-new-after-get-curr-record-once, marked when the part can observe it.
+            // Whether and how often the part's OnAfterGetCurrRecord runs then is not pinned (the PYB pages declare none).
             if observes_curr {
-                al_builtins::assumptions::assume(
-                    al_builtins::assumptions::Assumption::PartHostNewAfterGetCurrRecordOnce,
+                return unsupported(
+                    "OnAfterGetCurrRecord of an empty part while its host runs New() (whether and how often BC runs it is not pinned)",
                 );
             }
             self.set_xrec(st);
-            self.page_trigger(st, "onaftergetcurrrecord", vec![])?;
-            self.page_event(st, "onaftergetcurrrecordevent", None, None)?;
             return Ok(());
         }
         for validate in [true, false, true] {

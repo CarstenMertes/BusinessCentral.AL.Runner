@@ -1211,26 +1211,21 @@ fn an_empty_part_runs_on_after_get_curr_record_after_each_of_its_three_new_recor
     );
 }
 
-// PartLineBeforeHostKey.al:879 PYB_OpenEdit_ThenHostNew: a host's New() runs none of the part's OnNewRecord; the part's
-// OnAfterGetCurrRecord then runs once under assumption part-host-new-after-get-curr-record-once (not pinned).
+// PartLineBeforeHostKey.al:879 PYB_OpenEdit_ThenHostNew: a host's New() runs none of the part's OnNewRecord; whether the
+// part's OnAfterGetCurrRecord runs then is not pinned, so a part that declares it is refused.
 #[test]
-fn a_host_new_runs_the_empty_parts_on_after_get_curr_record_once_under_an_assumption() {
-    al_builtins::assumptions::clear_hits();
+fn a_host_new_over_an_empty_part_with_on_after_get_curr_record_is_refused() {
     let r = run(
-        "procedure F(): Text var D: Record \"PT Doc\"; E: TestPage \"PT Doc Card Cur\"; G: Codeunit \"PT Log\"; T: Text; begin
+        "procedure F(): Text var D: Record \"PT Doc\"; E: TestPage \"PT Doc Card Cur\"; begin
             D.\"No.\" := 'D1'; D.Insert();
             E.OpenEdit();
-            G.Take();
             E.New();
-            T := G.Take();
-            E.Close();
-            exit(T);
+            exit('ran');
         end;",
         "F",
     );
-    assert_eq!(text(r), "Cur:");
-    assert!(
-        al_builtins::assumptions::take_hits()
-            .contains(&al_builtins::assumptions::Assumption::PartHostNewAfterGetCurrRecordOnce)
-    );
+    match r {
+        Err(Signal::Unsupported(why)) => assert!(why.contains("while its host runs New()"), "{why}"),
+        other => panic!("expected a refusal, got {other:?}"),
+    }
 }

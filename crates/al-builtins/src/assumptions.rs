@@ -157,12 +157,6 @@ registry! {
         tests: "Tests-ERM ERM Budget (134922, 36 tests) and ERM Budget UI (134927, 11 tests): Initialize calls Budget.GLAccCategory.SetValue(0) on page 113 Budget, a control over GLAccCategoryFilter: Enum \"G/L Account Category\" (value 0 \" \", Caption ' ').",
         probe: "The BeEnumSetValueBlank cases (SetValue(0) on a blank-captioned Enum variable control) on a page without a source table and on a list page.",
     },
-    PartHostNewAfterGetCurrRecordOnce => {
-        id: "part-host-new-after-get-curr-record-once",
-        assumed: "When a host's New() starts a new record, the empty lines part runs no OnNewRecord (pinned, PartLineBeforeHostKey.al PYB_OpenEdit_ThenHostNew) and runs its OnAfterGetCurrRecord once (the PYB pages declare none, so this is not pinned).",
-        tests: "Tests-ERM ERM Update Currency - Sales and - Purchase: UpdateCurrencyCodeOn*Page (15 tests, New() on a sales or purchase document page whose lines subform declares OnAfterGetCurrRecord); they pass in Microsoft's CI.",
-        probe: "PYB_OpenEdit_ThenHostNew and PYB_OpenNew_ThenHostNew with a lines part that logs OnAfterGetCurrRecord (the QH_EmptyPart_*_CurrRecordOrder pages): whether and how often it runs after the host's New().",
-    },
     PartFieldUnderTruePartExpression => {
         id: "part-field-under-true-part-expression",
         assumed: "TestField.Editable()/Enabled() of a field of a part whose part control has an Editable or Enabled expression that comes out true answer as without the property. An expression that comes out false is refused; a literal Editable = false is pinned (PnGPartRows.al:117).",

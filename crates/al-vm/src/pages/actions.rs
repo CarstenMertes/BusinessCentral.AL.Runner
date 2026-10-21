@@ -692,6 +692,8 @@ impl Session {
             && page_of(&engine, st).controls[idx].trigger("onaction").is_some();
         let read_after_goto = std::mem::take(&mut st.borrow_mut().read_after_goto);
         let doubt = std::mem::take(&mut st.borrow_mut().read_after_goto_doubt);
+        st.borrow_mut().read_after_goto_quiet = false;
+        st.borrow_mut().read_after_goto_set = false;
         // Pinned only for an action that reads rows, right after the GoToKey (AiListOrderTests.al:39, :233). After a field call
         // between them it is refused. An action that reads no rows (a RunObject action) reads nothing more: not pinned, kept for
         // baseline case 67019 PrecompiledRunPageModeView_OpensTheTargetReadOnly.

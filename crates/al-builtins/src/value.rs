@@ -422,6 +422,14 @@ pub struct PageState {
     /// A field read or SetValue came between that GoToKey and the next call: whether the row is still read again before an
     /// action is not pinned (the action is refused).
     pub read_after_goto_doubt: bool,
+    /// That GoToKey ran no page trigger (the key is among the rows the client holds): Close then reads the row once
+    /// (pages/lt-ai-list-order/QgGoToKeyNextCall.al:223 Plain_GoToKey_ThenValueRead, :277 Plain_GoToKey_ThenClose `close_log`
+    /// `R:R1003`). A GoToKey that read rows leaves Close reading nothing (handlers/TestPageSystemPartListWindowContracts.al:219).
+    pub read_after_goto_quiet: bool,
+    /// A SetValue came between that GoToKey and the next call.
+    pub read_after_goto_set: bool,
+    /// Page triggers (the page's or an extension's) run on this page so far.
+    pub triggers_run: u64,
     /// The reads after an action on a list without OnAfterGetCurrRecord ended the refresh: `CurrPage.Update` reads nothing more
     /// (pages/lt-ai-list-order/AiListOrderTests.al:233 Keep_Plain).
     pub refresh_read_done: bool,
@@ -589,6 +597,9 @@ impl PageState {
             view_left: false,
             read_after_goto: false,
             read_after_goto_doubt: false,
+            read_after_goto_quiet: false,
+            read_after_goto_set: false,
+            triggers_run: 0,
             refresh_read_done: false,
             settled_first_row: false,
             caption_assigned_closed: false,
@@ -1105,8 +1116,6 @@ pub struct HttpContentState {
     pub copied: bool,
     /// The last `WriteFrom` took an `InStream`.
     pub from_stream: bool,
-    /// The stream the body was first handed out as has been read to its end (shared with that `InStream`).
-    pub stream_read_to_end: Option<std::rc::Rc<std::cell::Cell<bool>>>,
 }
 
 impl Default for HttpContentState {
@@ -1124,7 +1133,6 @@ impl Default for HttpContentState {
             written: false,
             copied: false,
             from_stream: false,
-            stream_read_to_end: None,
         }
     }
 }

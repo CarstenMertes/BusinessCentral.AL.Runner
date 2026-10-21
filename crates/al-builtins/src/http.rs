@@ -1485,7 +1485,7 @@ fn write_from_stream(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) ->
 ///
 /// A copy with the result used is refused. Probe wanted (docs/probes-needed.md).
 fn read_as(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
-    let (data, uninit, copied, charset, (taken, partly_read)) = with_content(r, |s| {
+    let (data, uninit, copied, charset, taken) = with_content(r, |s| {
         let charset = s
             .headers
             .borrow()
@@ -1518,9 +1518,8 @@ fn read_as(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
                 None => bag.items.push(("Content-Length".into(), len)),
             }
         }
-        let partly_read = s.stream_taken && !s.stream_read_to_end.as_ref().is_some_and(|m| m.get());
         let taken = s.stream_taken && (s.copied || s.from_stream);
-        (s.data.clone(), s.uninitialized, s.copied, charset, (taken, partly_read))
+        (s.data.clone(), s.uninitialized, s.copied, charset, taken)
     })?;
     if uninit {
         return match (copied, c.ret_used()) {
@@ -1534,15 +1533,11 @@ fn read_as(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
             ),
         };
     }
-    // Once the body was handed out as a stream (and read to its end): a copy of a content (network/lt-db-http-leads/
-    // DbHttpContentLeads.al:146) and a content written from a stream (:336) read an empty text; the response's own content
-    // (:113) and a variable written from a text (xml/lt-xml-attr-doc-http-members/P97ContentRead.al:89) still read the body.
-    // Every pin reads that stream to its end first; after a stream that was not, what the text reads is not pinned.
-    if partly_read {
-        return unsupported(
-            "HttpContent.ReadAs(Text) after the body was handed out as a stream not read to its end (not pinned)",
-        );
-    }
+    // Once the body was handed out as a stream, whether that stream was read to its end, in part or not at all: a copy of a
+    // content (network/lt-db-http-leads/DbHttpContentLeads.al:146, :430-480 QG_RespContentCopy_*) and a content written from a
+    // stream (:336, :552-600 QG_StreamContent_*) read an empty text; the response's own content (:113, :384-428 QG_RespContent_*)
+    // and a variable written from a text (xml/lt-xml-attr-doc-http-members/P97ContentRead.al:89, DbHttpContentLeads.al:506-550
+    // QG_TextContent_*) still read the body.
     if taken {
         a[0] = Value::Text(String::new().into());
         return Ok(Value::Boolean(true));
@@ -1575,24 +1570,16 @@ fn read_as(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
 /// `ReadAs(var InStream)` hands the body out once: a second read gets an empty stream
 /// (network/lt-http/HttpContent.al:ReadAsInStreamTwice).
 fn read_as_stream(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
-    let (data, uninit, marker) = with_content(r, |s| {
-        let first = !s.stream_taken;
-        let out = if first { s.data.clone() } else { Vec::new() };
+    let (data, uninit) = with_content(r, |s| {
+        let out = if s.stream_taken { Vec::new() } else { s.data.clone() };
         s.stream_taken = true;
-        // The first stream carries the marker `read_as` checks; an empty body is at its end from the start.
-        let marker = first.then(|| {
-            let m = std::rc::Rc::new(std::cell::Cell::new(out.is_empty()));
-            s.stream_read_to_end = Some(m.clone());
-            m
-        });
-        (out, s.uninitialized, marker)
+        (out, s.uninitialized)
     })?;
     // On the content of a request that has none, only ReadAs(Text) is pinned (see `read_as`). Probe wanted (docs/probes-needed.md).
     if uninit {
         return unsupported("HttpContent.ReadAs(InStream) on the content of a request that has none (not pinned)");
     }
-    let mut stream = crate::stream::InState::snapshot(data, crate::stream::Encoding::Utf8);
-    stream.end_marker = marker;
+    let stream = crate::stream::InState::snapshot(data, crate::stream::Encoding::Utf8);
     crate::stream::set_stream(&a[0], LibraryValue::InStream(stream))?;
     Ok(Value::Boolean(true))
 }
@@ -2177,7 +2164,6 @@ impl HttpContentState {
             written: self.written,
             copied: true,
             from_stream: self.from_stream,
-            stream_read_to_end: self.stream_read_to_end.clone(),
         }
     }
 
@@ -2196,7 +2182,6 @@ impl HttpContentState {
         self.stream_taken = false;
         self.written = false;
         self.from_stream = false;
-        self.stream_read_to_end = None;
     }
 
     /// `WriteFrom` of text or a stream: the body is replaced, the header collection stays the one every `HttpHeaders` handed out
@@ -2235,7 +2220,6 @@ impl HttpContentState {
         self.stream_taken = false;
         self.written = true;
         self.from_stream = false;
-        self.stream_read_to_end = None;
     }
 }
 

@@ -936,7 +936,11 @@ impl Session {
                     "TestField.{m} right after a GoToKey moved a list without OnAfterGetCurrRecord (whether the row is read again is not pinned)"
                 ));
             }
-            st.borrow_mut().read_after_goto_doubt = true;
+            let mut s = st.borrow_mut();
+            s.read_after_goto_doubt = true;
+            if m == PageMethod::SetValue {
+                s.read_after_goto_set = true;
+            }
         }
         // Only a field read may come between the refresh that settled a list and a First that reads nothing (AiListOrderTests.al:
         // 163-166, :336-338).

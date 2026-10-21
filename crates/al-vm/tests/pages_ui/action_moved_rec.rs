@@ -135,8 +135,7 @@ codeunit 51492 "MR Test"
 }
 "#;
 
-const READS: &str =
-    "AGR(A,orig A);AGR(B,changed B);AGR(B,orig B);AGR(C,orig C);AGR(B,orig B);AGR(A,orig A);AGR(B,orig B);AGR(B,orig B);AGCR(B,orig B x=A,orig A)";
+const READS: &str = "AGR(A,orig A);AGR(B,changed B);AGR(B,orig B);AGR(C,orig C);AGR(B,orig B);AGR(A,orig A);AGR(B,orig B);AGR(B,orig B);AGCR(B,orig B x=A,orig A)";
 const STORED: &str = "A:orig A B:orig B C:orig C ";
 
 #[test]
@@ -157,7 +156,10 @@ fn the_same_with_curr_page_update_in_the_action() {
 #[test]
 fn curr_page_close_in_that_action_puts_the_shown_row_back_into_rec() {
     let got = al_testkit::text(al_testkit::run_in(SRC, "MR Test", "MoveClose"));
-    assert_eq!(got, format!("AGR(A,orig A);AGR(A,orig A);ACT.end(A,orig A);AGR(A,orig A)|{STORED}"));
+    assert_eq!(
+        got,
+        format!("AGR(A,orig A);AGR(A,orig A);ACT.end(A,orig A);AGR(A,orig A)|{STORED}")
+    );
 }
 
 #[test]

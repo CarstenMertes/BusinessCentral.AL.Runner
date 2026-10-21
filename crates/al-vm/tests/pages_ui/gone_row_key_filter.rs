@@ -77,7 +77,10 @@ codeunit 51472 "GK Test"
 fn a_key_filtered_list_that_loses_its_only_row_shows_a_blank_line_with_the_filter_values() {
     let got = al_testkit::text(al_testkit::run_in(SRC, "GK Test", "Delete"));
     let step = "V(B1);NEW(B1 x=B1);AGCR(B1 x=B1)";
-    assert_eq!(got, format!("{step};{step};{step}|B1/0|INS(B1/10000,typed)|B1/10000:typed B2/10000: "));
+    assert_eq!(
+        got,
+        format!("{step};{step};{step}|B1/0|INS(B1/10000,typed)|B1/10000:typed B2/10000: ")
+    );
 }
 
 #[test]

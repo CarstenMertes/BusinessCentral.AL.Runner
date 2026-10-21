@@ -826,7 +826,11 @@ impl Session {
             // (events/lt-global-triggers-statements/P114PageActionEvents.al).
             let element = page_of(&engine, st).controls[idx].name.clone();
             let shown_outer = {
-                let shown = (self.is_list(st) && st.borrow().host.is_none()).then(|| before.clone()).flatten();
+                let shown = if self.is_list(st) && st.borrow().host.is_none() {
+                    before.clone()
+                } else {
+                    None
+                };
                 std::mem::replace(&mut st.borrow_mut().action_shown_row, shown)
             };
             let r = match self.page_action_event(st, "onbeforeactionevent", &element) {
@@ -1012,7 +1016,9 @@ impl Session {
             // The read again from the other row is pinned only through `read_list_again_from_row`; a list that read itself in
             // another way is refused.
             if std::mem::take(&mut st.borrow_mut().save_after_first_read) {
-                return unsupported("an action changed the shown row of a list that is not read again from that row (not pinned)");
+                return unsupported(
+                    "an action changed the shown row of a list that is not read again from that row (not pinned)",
+                );
             }
             if std::mem::take(&mut st.borrow_mut().rec_moved_other) {
                 return unsupported(
@@ -1042,7 +1048,8 @@ impl Session {
             // QL_RecAssign_OtherChanged_CloseInAction `P.AGR(A,orig A);P.AGR(A,orig A);ACT.end(A,orig A x=A,orig A);P.AGR(A,orig A)`).
             if std::mem::take(&mut st.borrow_mut().close_restored_row) {
                 self.populate_current(st)?;
-            } else if reads_rows && !st.borrow().open && !self.is_list(st) && !self.declares(st, "onaftergetcurrrecord") {
+            } else if reads_rows && !st.borrow().open && !self.is_list(st) && !self.declares(st, "onaftergetcurrrecord")
+            {
                 let rec = self.page_rec(st);
                 if self.stored_row(&rec)?.is_some() {
                     self.populate_current(st)?;
@@ -1804,7 +1811,9 @@ impl Session {
             && !self.declares(st, "onclosepage")
             && !self.declares(st, "onqueryclosepage");
         if !pinned {
-            return unsupported("CurrPage.Close() in an action that left another row in Rec, on this page (not pinned)");
+            return unsupported(
+                "CurrPage.Close() in an action that left another row in Rec, on this page (not pinned)",
+            );
         }
         self.ret_used = true;
         self.record_op(RecordOp::Get, &rec, &mut key)?;
@@ -1880,12 +1889,9 @@ impl Session {
                 rec.borrow_mut().fields = fresh.clone();
                 filtered = !Self::same_values(&stamped, &fresh);
                 let key_fields = self.table(&rec)?.keys[0].clone();
-                if stamped
-                    .iter()
-                    .zip(fresh.iter())
-                    .enumerate()
-                    .any(|(i, (a, b))| !Self::same_values(std::slice::from_ref(a), std::slice::from_ref(b)) && !key_fields.contains(&i))
-                {
+                if stamped.iter().zip(fresh.iter()).enumerate().any(|(i, (a, b))| {
+                    !Self::same_values(std::slice::from_ref(a), std::slice::from_ref(b)) && !key_fields.contains(&i)
+                }) {
                     return unsupported(
                         "a list filtered to one value of a field outside the key that lost its only row to an action (whether its blank line takes it is not pinned)",
                     );

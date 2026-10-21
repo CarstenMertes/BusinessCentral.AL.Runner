@@ -1530,9 +1530,7 @@ impl Session {
             // A list part that shows no row of a host opened for view runs its OnNewRecord once, the link value set without
             // validation, and then shows no row (pages/lt-part-line-before-host-key/PartLineBeforeHostKey.al:883
             // PYB_OpenView_ExistingHost `[LP.OnNewRecord:D6]`). What the part's fields read afterwards is kept as before (blank).
-            // Only a host that shows a stored row is pinned; a host over no row keeps running nothing (Tests-ERM Test Price
-            // Calc. Setup.T096_PriceCalcMethodVisibleOnStdItemJournalPage opens Standard Item Journal for view on no row, and
-            // the part's OnNewRecord would fail there).
+            // Only a host that shows a stored row is pinned.
             let host_on_row = st
                 .borrow()
                 .host
@@ -1546,6 +1544,25 @@ impl Session {
                     .controls
                     .iter()
                     .any(|c| c.kind == ir::ControlKind::Repeater);
+            // A host over no row is not pinned: a part with an OnNewRecord there is refused.
+            let view_part_no_host_row = self.has_source(st)
+                && !host_on_row
+                && st.borrow().host.is_some()
+                && st.borrow().mode == PageMode::View
+                && page_of(&self.engine(), st)
+                    .controls
+                    .iter()
+                    .any(|c| c.kind == ir::ControlKind::Repeater)
+                && (self.declares(st, "onnewrecord")
+                    || self
+                        .engine()
+                        .events
+                        .is_subscribed(st.borrow().object as usize, "onnewrecordevent"));
+            if view_part_no_host_row {
+                return unsupported(
+                    "OnNewRecord of a list part whose host was opened for view on no row (whether BC runs it is not pinned)",
+                );
+            }
             if view_part {
                 let rec = self.page_rec(st);
                 let table = rec.borrow().table as usize;
@@ -1609,8 +1626,8 @@ impl Session {
     /// (pages/lt-part-line-before-host-key/PartLineBeforeHostKey.al:672 PYB_OpenNew_Document_LogOnly `L.OnValidate(Document No.): |
     /// LP.OnNewRecord: | LP.OnNewRecord: | L.OnValidate(Document No.): | LP.OnNewRecord:`, :688 a host without OnNewRecord, :704
     /// an unlinked part (three runs, no validation), :738 without AutoSplitKey, :754 two linked parts one after the other, :770 a
-    /// Card host, :809 OpenEdit of a host without lines, :603 after the host key is typed). OnAfterGetCurrRecord runs once at the
-    /// end, as on any blank line (kept, not pinned for this sequence). A host's New() runs only the host's OnNewRecord, never
+    /// Card host, :809 OpenEdit of a host without lines, :603 after the host key is typed). OnAfterGetCurrRecord runs once
+    /// after them: assumption part-open-line-after-get-curr-record-once. A host's New() runs only the host's OnNewRecord, never
     /// the part's (:827 PYB_OpenEdit_HostWithoutLines `host_new`, :879 PYB_OpenEdit_ThenHostNew, :861 PYB_OpenNew_ThenHostNew).
     fn land_on_part_open_line(&mut self, st: &St) -> Result<(), Signal> {
         let rec = self.page_rec(st);
@@ -1647,6 +1664,15 @@ impl Session {
             }
             self.page_trigger(st, "onnewrecord", vec![Value::Boolean(true)])?;
             self.page_event(st, "onnewrecordevent", None, Some(true))?;
+        }
+        // How often OnAfterGetCurrRecord runs in this sequence is not pinned (the PYB pages declare none). Refusing it blocks
+        // about 540 Microsoft tests that pass on real BC (Tests-ERM document pages opened on an empty lines part), so it runs
+        // once at the end under assumption part-open-line-after-get-curr-record-once, marked when a part can observe it.
+        let object = st.borrow().object as usize;
+        if self.declares(st, "onaftergetcurrrecord")
+            || self.engine().events.is_subscribed(object, "onaftergetcurrrecordevent")
+        {
+            al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::PartOpenLineAfterGetCurrRecordOnce);
         }
         self.set_xrec(st);
         self.page_trigger(st, "onaftergetcurrrecord", vec![])?;

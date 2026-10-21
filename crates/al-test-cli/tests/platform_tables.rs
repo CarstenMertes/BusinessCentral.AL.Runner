@@ -1251,7 +1251,8 @@ fn the_session_row_is_a_web_client_session_logged_in_by_user_name_and_password()
 }
 
 /// Code Coverage Tests Run "Method ID" is one number for every test procedure, not below 1000: 469735107
-/// (codeunit/PWCodeCoverageRows.al:308; coverage/W6CodeCoverageIds.al:105-107, :139, :168).
+/// (codeunit/PWCodeCoverageRows.al:308; coverage/W6CodeCoverageIds.al:105-107, :139, :168). Only comparisons of it run; a read
+/// that shows it is refused (see a_tests_run_method_id_is_refused_where_its_number_would_show).
 #[test]
 fn code_coverage_tests_run_method_id_is_the_one_number_of_a_test_procedure() {
     let o = outcomes(
@@ -1267,7 +1268,7 @@ fn code_coverage_tests_run_method_id_is_the_one_number_of_a_test_procedure() {
     // Two tests in one recording share a Test ID, which the runtime's table cannot hold: one recording each.
     Initialize(); CodeCoverageLog(true, false); Two(); CodeCoverageLog(false, false);
     R.SetRange("Method Name", 'Two'); R.FindFirst();
-    if (A <> 469735107) or (R."Method ID" <> A) then Error('%1 %2', A, R."Method ID");
+    if (A <> 469735107) or (R."Method ID" <> A) then Error('the ids differ');
   end; }"#,
     );
     passes(&o, "Ids");
@@ -1603,10 +1604,34 @@ fn a_test_lookup_method_id_is_refused_where_its_number_would_show() {
   [Test] procedure ComparesIt() var L: Record "Code Coverage Test Lookup"; R: Record "Code Coverage Tests Run"; B: Boolean; begin if L.FindFirst() then B := L."Method ID" = R."Method ID"; end; }"#,
     );
     let why = not_run(&o, "ShowsIt");
-    assert!(why.contains("Test Lookup Method ID is not pinned"), "{why}");
+    assert!(why.contains("Method ID is not pinned"), "{why}");
     assert!(
         !matches!(
             o.iter().find(|(n, _)| n == "ComparesIt").map(|(_, o)| o),
+            Some(Outcome::NotRun(_))
+        ),
+        "{o:?}"
+    );
+}
+
+// codeunit/PWCodeCoverageRows.al:299,308 and coverage/PxCodeCoverageIds.al:186: BC's Tests Run "Method ID" is a number per test
+// whose rule is not known; the runtime's constant would show. A comparison, also through an Integer local that is only compared,
+// is kept (coverage/W6CodeCoverageIds.al:83-98, :129-139, :156-164).
+#[test]
+fn a_tests_run_method_id_is_refused_where_its_number_would_show() {
+    let o = outcomes(
+        r#"codeunit 50000 "T" { Subtype = Test;
+  [Test] procedure ShowsIt() var R: Record "Code Coverage Tests Run"; T: Text; begin if R.FindFirst() then T := StrSubstNo('%1', R."Method ID"); end;
+  [Test] procedure HoldsAndShowsIt() var R: Record "Code Coverage Tests Run"; Id: Integer; T: Text; begin if R.FindFirst() then Id := R."Method ID"; T := Format(Id); end;
+  [Test] procedure HoldsAndComparesIt() var R: Record "Code Coverage Tests Run"; Id: Integer; B: Boolean; begin if R.FindFirst() then Id := R."Method ID"; B := Id < 1000; B := R."Method ID" = Id; end; }"#,
+    );
+    for t in ["ShowsIt", "HoldsAndShowsIt"] {
+        let why = not_run(&o, t);
+        assert!(why.contains("Method ID is not pinned"), "{why}");
+    }
+    assert!(
+        !matches!(
+            o.iter().find(|(n, _)| n == "HoldsAndComparesIt").map(|(_, o)| o),
             Some(Outcome::NotRun(_))
         ),
         "{o:?}"

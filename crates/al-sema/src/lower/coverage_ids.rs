@@ -48,46 +48,63 @@ impl Lowerer<'_> {
         )))
     }
 
-    /// `n` reads the "Method ID" of a stored Code Coverage Test Lookup row (field 3 of 2000000288). BC's number is a
-    /// compiler-assigned id of the procedure (31658110 for `RecordedInner`, codeunit/PWCodeCoverageRows.al:309; per name and
-    /// signature, coverage/PxCodeCoverageIds.al:7-8) whose rule is not known; the runtime's own number would show. Kept: an
-    /// argument of `AreNotEqual`/`AreEqual` (codeunit/TestCodeCoveragePerTest.al:121, pinned: it differs from the Tests Run
-    /// id) and a comparison (coverage/W6CodeCoverageIds.al:133-134, kept, not pinned: no lookup row exists there, case
-    /// MethodId_TestsRunVersusTestLookup). Any other read is refused.
+    /// `n` reads the "Method ID" of a stored Code Coverage Test Lookup row (field 3 of 2000000288) or Tests Run row (field 3 of
+    /// 2000000289). BC's numbers are compiler-assigned ids (Test Lookup 31658110 for `RecordedInner`, Tests Run 469735107 for
+    /// `RecordedOuter`, codeunit/PWCodeCoverageRows.al:308-309; per name and signature and per test, coverage/
+    /// PxCodeCoverageIds.al:7-8, :186) whose rule is not known; the runtime's own numbers would show. Kept, because refusing them
+    /// loses baseline cases: an argument of `AreNotEqual`/`AreEqual` (codeunit/TestCodeCoveragePerTest.al:121,
+    /// TestLookup_TestStartedWhileRecording_HasTheMethodItRan, pinned: the two differ) and a comparison, directly or through an
+    /// Integer local that is only compared (coverage/W6CodeCoverageIds.al:83-98 MethodId_SameBody_DifferentNames_TestsRunRows,
+    /// :129-139 MethodId_TestsRunVersusTestLookup, :156-164 MethodId_SameProcedure_TwoRecordings). Any other read is refused.
     pub(crate) fn coverage_lookup_method_id_read(&self, n: &SyntaxNode, table: usize, id: u32) -> L<()> {
-        if id != 3 || self.ws.objects[table].id != Some(2_000_000_288) {
+        if id != 3 || !matches!(self.ws.objects[table].id, Some(2_000_000_288 | 2_000_000_289)) {
             return Ok(());
         }
         let (child, parent) = up(n);
         if let Some(p) = &parent {
-            match p.kind() {
-                SyntaxKind::AssignStmt if p.children().next().as_ref() == Some(&child) => return Ok(()),
-                SyntaxKind::BinExpr => {
-                    let op = sig_tokens(p).first().map(|t| t.text().to_string()).unwrap_or_default();
-                    if matches!(op.as_str(), "=" | "<>" | "<" | ">" | "<=" | ">=") {
-                        return Ok(());
-                    }
+            if p.kind() == SyntaxKind::AssignStmt && p.children().next().as_ref() == Some(&child) {
+                return Ok(());
+            }
+            if let Some(name) = self.holder_target(p, &child) {
+                let only_compared = self
+                    .local_refs(p, &name)
+                    .iter()
+                    .all(|r| Self::assigned_from(r).is_some() || Self::compared(r));
+                if only_compared {
+                    return Ok(());
                 }
-                SyntaxKind::ArgList => {
-                    let callee = p
-                        .parent()
-                        .filter(|c| c.kind() == SyntaxKind::CallExpr)
-                        .and_then(|c| c.children().next())
-                        .map(|f| f.text().to_string());
-                    if callee.is_some_and(|f| {
-                        let name = f.rsplit('.').next().unwrap_or("").trim().to_ascii_lowercase();
-                        name == "arenotequal" || name == "areequal"
-                    }) {
-                        return Ok(());
-                    }
-                }
-                _ => {}
+            } else if Self::compared(n) || Self::assert_argument(n) {
+                return Ok(());
             }
         }
         Err(format!(
-            "`{}`: the value of the Code Coverage Test Lookup Method ID is not pinned (a compiler-assigned id, codeunit/PWCodeCoverageRows.al:309)",
+            "`{}`: the value of the Code Coverage Method ID is not pinned (a compiler-assigned id, codeunit/PWCodeCoverageRows.al:308-309)",
             parent.as_ref().unwrap_or(n).text().to_string().trim()
         ))
+    }
+
+    /// `x` is an operand of a comparison.
+    fn compared(x: &SyntaxNode) -> bool {
+        let (_, Some(p)) = up(x) else { return false };
+        p.kind() == SyntaxKind::BinExpr
+            && matches!(
+                sig_tokens(&p).first().map(|t| t.text().to_string()).as_deref(),
+                Some("=" | "<>" | "<" | ">" | "<=" | ">=")
+            )
+    }
+
+    /// `x` is an argument of a call to a method named AreNotEqual or AreEqual.
+    fn assert_argument(x: &SyntaxNode) -> bool {
+        let (_, Some(p)) = up(x) else { return false };
+        p.kind() == SyntaxKind::ArgList
+            && p.parent()
+                .filter(|c| c.kind() == SyntaxKind::CallExpr)
+                .and_then(|c| c.children().next())
+                .is_some_and(|f| {
+                    let f = f.text().to_string();
+                    let name = f.rsplit('.').next().unwrap_or("").trim().to_ascii_lowercase();
+                    name == "arenotequal" || name == "areequal"
+                })
     }
 
     /// A builtin call on a coverage record that would show the Test ID's value: a filter or a key given as a number or a

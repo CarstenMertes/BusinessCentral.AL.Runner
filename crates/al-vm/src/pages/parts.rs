@@ -922,7 +922,7 @@ impl Session {
         for (_, child) in parts {
             let pending = {
                 let c = child.borrow();
-                c.open && (c.dirty || c.draft)
+                c.open && c.dirty
             };
             if pending {
                 al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::PartRowSavedBeforeHostSetValue);

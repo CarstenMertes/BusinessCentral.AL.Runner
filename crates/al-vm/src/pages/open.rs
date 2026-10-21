@@ -1530,8 +1530,17 @@ impl Session {
             // A list part that shows no row of a host opened for view runs its OnNewRecord once, the link value set without
             // validation, and then shows no row (pages/lt-part-line-before-host-key/PartLineBeforeHostKey.al:883
             // PYB_OpenView_ExistingHost `[LP.OnNewRecord:D6]`). What the part's fields read afterwards is kept as before (blank).
+            // Only a host that shows a stored row is pinned; a host over no row keeps running nothing (Tests-ERM Test Price
+            // Calc. Setup.T096_PriceCalcMethodVisibleOnStdItemJournalPage opens Standard Item Journal for view on no row, and
+            // the part's OnNewRecord would fail there).
+            let host_on_row = st
+                .borrow()
+                .host
+                .as_ref()
+                .and_then(|(h, _)| h.upgrade())
+                .is_some_and(|h| h.borrow().cursor == Cursor::Row && !h.borrow().draft);
             let view_part = self.has_source(st)
-                && st.borrow().host.is_some()
+                && host_on_row
                 && st.borrow().mode == PageMode::View
                 && page_of(&self.engine(), st)
                     .controls

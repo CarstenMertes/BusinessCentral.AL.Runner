@@ -635,6 +635,7 @@ fn walk_field<V: RefVisitor>(f: &mut Field, v: &mut V) {
         relation_arms,
         relation_meta,
         relation_runtime,
+        relation_texts: _,
         flow_filter: _,
         calc,
         calc_refusal: _,

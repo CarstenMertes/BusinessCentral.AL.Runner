@@ -125,6 +125,33 @@ impl Lowerer<'_> {
                 add(self, n, ty.clone(), &mut locals);
             }
         }
+        // An InStream handed back (the named return value or a `var` parameter) that the routine created on a local
+        // variable (a Temp Blob, a temporary record's Blob field) reads as empty once the local is out of scope
+        // (streams/lt-dc-stream-leads/DcInStreamScope.al:107-112, :125-126). The runtime keeps the bytes: refused.
+        let is_instream = |t: Option<al_syntax::ast::TypeRef>| {
+            t.is_some_and(|t| t.syntax().text().to_string().trim().eq_ignore_ascii_case("instream"))
+        };
+        let mut handed: Vec<String> = r
+            .params()
+            .filter(|p| p.is_var() && is_instream(p.type_ref()))
+            .map(|p| p.name().to_lowercase())
+            .collect();
+        if let Some(n) = r.return_name().filter(|_| is_instream(r.return_type())) {
+            handed.push(n.to_lowercase());
+        }
+        if !handed.is_empty() {
+            let local_names: Vec<String> = r
+                .local_var_decls()
+                .flat_map(|v| v.names())
+                .map(|n| n.to_lowercase())
+                .collect();
+            if let Some(why) = r
+                .body()
+                .and_then(|b| self.stream_of_a_local_handed_back(&b, &handed, &local_names))
+            {
+                self.reasons.push(why);
+            }
+        }
         // OnQueryClosePage with a Boolean return that ends without giving a value lets the page close. Not pinned (the corpus
         // triggers all `exit(true)` or `exit(false)`); Item Tracking Lines' ends with `Result` untouched when the availability
         // check finds nothing to warn about, and Microsoft's tests close it (Tests-SCM, about 1,100 tests; assumption
@@ -1622,4 +1649,56 @@ fn continue_else(n: &SyntaxNode) -> bool {
             SyntaxKind::Block => k.children().any(|c| c.kind() == SyntaxKind::ContinueStmt),
             _ => false,
         })
+}
+
+impl Lowerer<'_> {
+    /// The refusal for a routine whose body runs `<receiver>.CreateInStream(<name>, ...)` (a call in the syntax tree, so
+    /// comments and strings never match) with `<name>` resolving to one of `handed` (an InStream the caller gets back) and
+    /// the receiver's root name resolving to one of `locals` (a variable declared in the routine's own `var` section).
+    fn stream_of_a_local_handed_back(&self, body: &SyntaxNode, handed: &[String], locals: &[String]) -> Option<String> {
+        let local_named = |n: &SyntaxNode, names: &[String]| match self.res(n) {
+            Some(Res::Local(v)) => names.iter().any(|h| h.eq_ignore_ascii_case(v)),
+            _ => false,
+        };
+        for call in body.descendants().filter(|n| n.kind() == SyntaxKind::CallExpr) {
+            let mut kids = call.children();
+            let (Some(callee), Some(args)) = (kids.next(), kids.find(|k| k.kind() == SyntaxKind::ArgList)) else {
+                continue;
+            };
+            if callee.kind() != SyntaxKind::MemberExpr {
+                continue;
+            }
+            let mut parts = callee.children();
+            let (Some(recv), Some(member)) = (parts.next(), parts.next()) else {
+                continue;
+            };
+            if !member.text().to_string().trim().eq_ignore_ascii_case("CreateInStream") {
+                continue;
+            }
+            let Some(first) = args.children().next() else {
+                continue;
+            };
+            if first.kind() != SyntaxKind::NameRef || !local_named(&first, handed) {
+                continue;
+            }
+            let mut root = recv;
+            while matches!(
+                root.kind(),
+                SyntaxKind::MemberExpr | SyntaxKind::IndexExpr | SyntaxKind::CallExpr | SyntaxKind::ParenExpr
+            ) {
+                match root.children().next() {
+                    Some(c) => root = c,
+                    None => break,
+                }
+            }
+            if root.kind() == SyntaxKind::NameRef && local_named(&root, locals) {
+                return Some(format!(
+                    "an InStream handed back to the caller is created on the local variable `{}`: BC reads it as empty once \
+                     the local is out of scope, the runtime keeps the bytes",
+                    root.text().to_string().trim()
+                ));
+            }
+        }
+        None
+    }
 }

@@ -788,6 +788,49 @@ impl Session {
         self.refuse_unpinned_state(&c.page)?;
         let st = &c.page;
         let m = method.method();
+        // After a GoToKey that moved a list without OnAfterGetCurrRecord only an action is pinned to come next (it reads the row
+        // again first, AiListOrderTests.al:39, :233; see `pageops.rs`); whether another call reads it is not pinned.
+        // A field read (value or property) or SetValue reads nothing more itself (not pinned; kept for baseline cases 78862
+        // Paging_GoToKey_Nav, 68164 TestPage_Control_Texts_GuidDurationAndBlankNumbers and
+        // TestPage_SetValue_OfTheValueAlreadyHeld_StillRunsOnValidate), and
+        // an action after it is refused (`actions.rs`).
+        if m != PageMethod::Invoke && st.borrow().read_after_goto {
+            if !matches!(
+                m,
+                PageMethod::Value
+                    | PageMethod::AsBoolean
+                    | PageMethod::AsDate
+                    | PageMethod::AsDateTime
+                    | PageMethod::AsDecimal
+                    | PageMethod::AsInteger
+                    | PageMethod::AsTime
+                    | PageMethod::SetValue
+                    | PageMethod::ShowMandatory
+                    | PageMethod::Visible
+                    | PageMethod::Editable
+                    | PageMethod::Enabled
+                    | PageMethod::Caption
+            ) {
+                return unsupported(format!(
+                    "TestField.{m} right after a GoToKey moved a list without OnAfterGetCurrRecord (whether the row is read again is not pinned)"
+                ));
+            }
+            st.borrow_mut().read_after_goto_doubt = true;
+        }
+        // Only a field read may come between the refresh that settled a list and a First that reads nothing (AiListOrderTests.al:
+        // 163-166, :336-338).
+        if !matches!(
+            m,
+            PageMethod::Value
+                | PageMethod::AsBoolean
+                | PageMethod::AsDate
+                | PageMethod::AsDateTime
+                | PageMethod::AsDecimal
+                | PageMethod::AsInteger
+                | PageMethod::AsTime
+        ) {
+            st.borrow_mut().settled_first_row = false;
+        }
         // A card whose OnNewRecord inserted its new row: reading a control and writing a field outside the key are pinned
         // (corpus pages/lt-cf-page-leads/CfPageLeads.al:241-289 Card_OnNewRecordInserts_OpenNewSetClose); the rest is refused.
         if st.borrow().new_row_inserted_by_trigger {

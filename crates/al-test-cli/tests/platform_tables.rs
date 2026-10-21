@@ -709,6 +709,38 @@ codeunit 50000 "T" { Subtype = Test;
     passes(&o, "Rows");
 }
 
+/// A tableextension `modify(..) { TableRelation }` on a field whose base relation is unconditional: the Field row keeps
+/// the base's table when the extension adds an unconditional relation (tableextension/TestTableExtFieldTableRelation.al:266)
+/// or a conditional one with an else arm (:532). An extension relation without an else arm is not pinned: refused.
+/// A conditional base relation reads 0 (:368, :409, :450, :491).
+#[test]
+fn field_row_of_an_unconditional_base_relation_modified_by_an_extension() {
+    let o = outcomes(
+        r#"table 50001 "A" { fields { field(1; Code; Code[20]) { } } keys { key(PK; Code) { Clustered = true; } } }
+table 50002 "B" { fields { field(1; Code; Code[20]) { } } keys { key(PK; Code) { Clustered = true; } } }
+table 50003 "Base" { fields { field(1; Id; Integer) { } field(2; Kind; Option) { OptionMembers = X,Y,Z; }
+    field(3; Uncond; Code[20]) { TableRelation = A; } field(4; Else; Code[20]) { TableRelation = A; } field(5; NoElse; Code[20]) { TableRelation = A; }
+    field(6; CondBase; Code[20]) { TableRelation = if (Kind = const(X)) A; } }
+  keys { key(PK; Id) { Clustered = true; } } }
+tableextension 50004 "Ext" extends "Base" { fields { modify(Uncond) { TableRelation = B; }
+    modify(Else) { TableRelation = if (Kind = const(Y)) B else B; } modify(NoElse) { TableRelation = if (Kind = const(Y)) B; } modify(CondBase) { TableRelation = B; } } }
+codeunit 50000 "T" { Subtype = Test;
+  [Test] procedure Uncond() var F: Record "Field"; begin F.Get(50003, 3); if (F.RelationTableNo <> 50001) or (F.RelationFieldNo <> 1) then Error('uncond %1', F.RelationTableNo); end;
+  [Test] procedure ElseArm() var F: Record "Field"; begin F.Get(50003, 4); if F.RelationTableNo <> 50001 then Error('else %1', F.RelationTableNo); end;
+  [Test] procedure NoElse() var F: Record "Field"; begin F.Get(50003, 5); if F.RelationTableNo <> 50001 then Error('noelse %1', F.RelationTableNo); end;
+  [Test] procedure CondBase() var F: Record "Field"; begin F.Get(50003, 6); if (F.RelationTableNo <> 0) or (F.RelationFieldNo <> 0) then Error('condbase %1', F.RelationTableNo); end; }"#,
+    );
+    passes(&o, "Uncond");
+    passes(&o, "ElseArm");
+    assert!(
+        not_run(&o, "NoElse").contains("TableRelation"),
+        "{:?}",
+        not_run(&o, "NoElse")
+    );
+    // A conditional base relation reads 0 whatever the extension adds (:368, :409, :450, :491).
+    passes(&o, "CondBase");
+}
+
 /// The code coverage tables hold nothing until a recording starts; after one they hold what ran
 /// (codeunit/TestCodeCoverageTable.al, TestCodeCoveragePerTest.al). `Line No.` is a source line.
 #[test]
@@ -1535,4 +1567,27 @@ codeunit 50000 "T" { Subtype = Test;
         al_sema::check::Roots::default(),
     );
     passes(&o, "Ids");
+}
+
+/// ADR-046 decision 4a: in the default mode (one company), a read of the Company table that could list a company the
+/// runtime does not know is refused; a read filtered to one known name is answered. The corpus database holds a second
+/// company (install/lt-bf-install-probes/BfInstallTests.al:60-62), which this runtime does not have.
+#[test]
+fn company_table_reads_that_could_list_another_company_are_refused() {
+    let o = outcomes(
+        r#"codeunit 50000 "T" { Subtype = Test;
+  [Test] procedure FindSetAll() var C: Record Company; begin if C.FindSet() then; end;
+  [Test] procedure CountAll() var C: Record Company; begin if C.Count() = 0 then; end;
+  [Test] procedure FilteredToSession() var C: Record Company; begin C.SetRange(Name, CompanyName()); if not C.FindFirst() then Error('none'); if C.Count() <> 1 then Error('count'); end;
+  [Test] procedure GetSession() var C: Record Company; begin if not C.Get(CompanyName()) then Error('no row'); end; }"#,
+    );
+    // Count stays answered: refusing it loses the baseline case session/TestProbeSessionMiscContracts.al:Company_Names.
+    passes(&o, "CountAll");
+    assert!(
+        not_run(&o, "FindSetAll").contains("ADR-046"),
+        "FindSetAll: {}",
+        not_run(&o, "FindSetAll")
+    );
+    passes(&o, "FilteredToSession");
+    passes(&o, "GetSession");
 }

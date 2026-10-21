@@ -1153,6 +1153,17 @@ impl Session {
         if how == PageMethod::Next && at + 1 == window.len() && read_to_end {
             return Ok(Some(false));
         }
+        // First on the first row right after the refresh of CurrPage.Update settled the list there reads nothing: on a list with
+        // OnFindRecord and OnNextRecord (pages/lt-ai-list-order/AiListOrderTests.al:174 Same_Nav_OnOpenRow, :203
+        // Same_NavCurr_OnOpenRow `after_first` empty; pages/lt-f3-pages/F3ListTests.al:72 Nav_ActionChangesViewThenUpdate
+        // `after_walk` empty), and on a list whose action's filter left its row (AiListOrderTests.al:339
+        // DropCurrent_RowsAfter_Plain, :373 DropCurrent_RowsAfter_PlainCurr). Only a field read may come between (`settled_first_row`).
+        // In any other state First on the first row of a list with OnFindRecord and OnNextRecord is not pinned; it keeps reading
+        // the row as before, for baseline cases 86441 NextList_OpenAndWalk, NextList_NextLog and FreeList_OpenAndWalk (First after
+        // the open).
+        if how == PageMethod::First && at == 0 && std::mem::take(&mut st.borrow_mut().settled_first_row) {
+            return Ok(Some(true));
+        }
         let target = match how {
             PageMethod::First => 0,
             PageMethod::Last => window.len() - 1,
@@ -1184,6 +1195,11 @@ impl Session {
         }
         let before = self.xrec_before_move(st);
         self.read_block_past_the_window(st, find_page)?;
+        // Without OnAfterGetCurrRecord the move ends with the block: `=` is not asked and the row is not read again
+        // (pages/lt-ai-list-order/AiListOrderTests.al:958 Paging_Last_Nav `last_log` ends `R:R1025;N:1=0`).
+        if !self.declares(st, "onaftergetcurrrecord") {
+            return Ok(Some(true));
+        }
         if find_page {
             self.nav_find(st, "=")?;
         }

@@ -495,16 +495,21 @@ fn request_content(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> O
         let copy = copy_content(c)?;
         return with_request(r, |s| s.content = Some(copy)).map(|()| Value::Null);
     }
-    match with_request(r, |s| s.content.clone())? {
-        Some(c) => Ok(c),
-        None => Ok(lib(
-            "HttpContent",
-            LibraryValue::HttpContent(HttpContentState {
-                uninitialized: true,
-                ..HttpContentState::default()
-            }),
-        )),
-    }
+    // The uninitialized content is the request's own: a `Clear` on it gives the request a body and content headers that a
+    // later `Content` shows (network/lt-db-http-leads/DbHttpContentLeads.al:176-219).
+    with_request(r, |s| {
+        s.content
+            .get_or_insert_with(|| {
+                lib(
+                    "HttpContent",
+                    LibraryValue::HttpContent(HttpContentState {
+                        uninitialized: true,
+                        ..HttpContentState::default()
+                    }),
+                )
+            })
+            .clone()
+    })
 }
 
 /// An `HttpContent` value copied: its own data and its own headers.
@@ -1457,10 +1462,15 @@ fn write_from(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
     with_content(r, |s| s.write_body(t.into_bytes())).map(|()| Value::Null)
 }
 
-/// `WriteFrom(InStream)` takes the bytes the stream has left.
+/// `WriteFrom(InStream)` takes the bytes the stream has left. The source then is not at its end
+/// (network/lt-db-http-leads/DbHttpContentLeads.al:310); any other use of it is not pinned and refused (`stream::hand_to_content`).
 fn write_from_stream(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
-    let bytes = crate::stream::drain_in(&mut a[0])?;
-    with_content(r, |s| s.write_body(bytes)).map(|()| Value::Null)
+    let bytes = crate::stream::hand_to_content(&mut a[0])?;
+    with_content(r, |s| {
+        s.write_body(bytes);
+        s.from_stream = true;
+    })
+    .map(|()| Value::Null)
 }
 
 /// `ReadAs(var Text)` gives the body back, UTF-8 decoded; a content nobody wrote to reads as an empty text and
@@ -1475,7 +1485,7 @@ fn write_from_stream(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) ->
 ///
 /// A copy with the result used is refused. Probe wanted (docs/probes-needed.md).
 fn read_as(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
-    let (data, uninit, copied, charset) = with_content(r, |s| {
+    let (data, uninit, copied, charset, (taken, partly_read)) = with_content(r, |s| {
         let charset = s
             .headers
             .borrow()
@@ -1508,7 +1518,9 @@ fn read_as(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
                 None => bag.items.push(("Content-Length".into(), len)),
             }
         }
-        (s.data.clone(), s.uninitialized, s.copied, charset)
+        let partly_read = s.stream_taken && !s.stream_read_to_end.as_ref().is_some_and(|m| m.get());
+        let taken = s.stream_taken && (s.copied || s.from_stream);
+        (s.data.clone(), s.uninitialized, s.copied, charset, (taken, partly_read))
     })?;
     if uninit {
         return match (copied, c.ret_used()) {
@@ -1521,6 +1533,19 @@ fn read_as(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
                 "HttpContent.ReadAs with its result used, on a copy of the content of a request that has none (not pinned)",
             ),
         };
+    }
+    // Once the body was handed out as a stream (and read to its end): a copy of a content (network/lt-db-http-leads/
+    // DbHttpContentLeads.al:146) and a content written from a stream (:336) read an empty text; the response's own content
+    // (:113) and a variable written from a text (xml/lt-xml-attr-doc-http-members/P97ContentRead.al:89) still read the body.
+    // Every pin reads that stream to its end first; after a stream that was not, what the text reads is not pinned.
+    if partly_read {
+        return unsupported(
+            "HttpContent.ReadAs(Text) after the body was handed out as a stream not read to its end (not pinned)",
+        );
+    }
+    if taken {
+        a[0] = Value::Text(String::new().into());
+        return Ok(Value::Boolean(true));
     }
     // The body is read with the charset of the Content-Type header (lt-http-header-rules/P87ContentType.al:ReadAsIgnoresCharsetHeader,
     // whatever its name says: iso-8859-1 reads each byte as a character, utf-16 reads little-endian units, a lone last byte is U+FFFD;
@@ -1550,19 +1575,25 @@ fn read_as(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
 /// `ReadAs(var InStream)` hands the body out once: a second read gets an empty stream
 /// (network/lt-http/HttpContent.al:ReadAsInStreamTwice).
 fn read_as_stream(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
-    let (data, uninit) = with_content(r, |s| {
-        let out = if s.stream_taken { Vec::new() } else { s.data.clone() };
+    let (data, uninit, marker) = with_content(r, |s| {
+        let first = !s.stream_taken;
+        let out = if first { s.data.clone() } else { Vec::new() };
         s.stream_taken = true;
-        (out, s.uninitialized)
+        // The first stream carries the marker `read_as` checks; an empty body is at its end from the start.
+        let marker = first.then(|| {
+            let m = std::rc::Rc::new(std::cell::Cell::new(out.is_empty()));
+            s.stream_read_to_end = Some(m.clone());
+            m
+        });
+        (out, s.uninitialized, marker)
     })?;
     // On the content of a request that has none, only ReadAs(Text) is pinned (see `read_as`). Probe wanted (docs/probes-needed.md).
     if uninit {
         return unsupported("HttpContent.ReadAs(InStream) on the content of a request that has none (not pinned)");
     }
-    crate::stream::set_stream(
-        &a[0],
-        LibraryValue::InStream(crate::stream::InState::snapshot(data, crate::stream::Encoding::Utf8)),
-    )?;
+    let mut stream = crate::stream::InState::snapshot(data, crate::stream::Encoding::Utf8);
+    stream.end_marker = marker;
+    crate::stream::set_stream(&a[0], LibraryValue::InStream(stream))?;
     Ok(Value::Boolean(true))
 }
 
@@ -1674,6 +1705,9 @@ fn send(c: &mut dyn Ctx, method: &str, url: (String, bool), response: Option<&Va
         }
         return Ok(Value::Boolean(false));
     }
+    // A handler that set IsSuccessfulRequest to false makes the call answer false with the response it filled; as a statement
+    // the call raises nothing (al-language-onprem/network/LtDaHttpHandlerOdd.al:119-120, :145-146).
+    let success = state.success;
     *cell.borrow_mut() = LibraryValue::HttpResponse(HttpResponseState {
         status: state.status,
         reason: state.reason,
@@ -1682,7 +1716,7 @@ fn send(c: &mut dyn Ctx, method: &str, url: (String, bool), response: Option<&Va
         headers: state.headers,
         blocked: state.blocked,
     });
-    Ok(Value::Boolean(true))
+    Ok(Value::Boolean(success))
 }
 
 macro_rules! verb {
@@ -2142,6 +2176,8 @@ impl HttpContentState {
             stream_taken: self.stream_taken,
             written: self.written,
             copied: true,
+            from_stream: self.from_stream,
+            stream_read_to_end: self.stream_read_to_end.clone(),
         }
     }
 
@@ -2159,6 +2195,8 @@ impl HttpContentState {
         self.uninitialized = false;
         self.stream_taken = false;
         self.written = false;
+        self.from_stream = false;
+        self.stream_read_to_end = None;
     }
 
     /// `WriteFrom` of text or a stream: the body is replaced, the header collection stays the one every `HttpHeaders` handed out
@@ -2196,6 +2234,8 @@ impl HttpContentState {
         self.uninitialized = false;
         self.stream_taken = false;
         self.written = true;
+        self.from_stream = false;
+        self.stream_read_to_end = None;
     }
 }
 

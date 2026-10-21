@@ -999,6 +999,10 @@ pub struct Field {
     /// when a value is validated. Nothing but validation reads them.
     #[serde(default)]
     pub relation_runtime: Vec<RelationArm>,
+    /// The `TableRelation` texts of a field a tableextension's `modify(..)` extended: the base's first, then each
+    /// extension's. Empty when the field has at most one. Only the Field platform table reads them.
+    #[serde(default)]
+    pub relation_texts: Vec<String>,
     /// `FieldClass = FlowFilter`: holds the caller's filter, never a value.
     pub flow_filter: bool,
     /// A FlowField's `CalcFormula`, when lowered. A FlowField with neither

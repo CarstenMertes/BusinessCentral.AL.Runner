@@ -515,6 +515,7 @@ impl Lowerer<'_> {
                     relation_arms: arms,
                     relation_runtime: runtime_arms,
                     relation_meta: meta,
+                    relation_texts: Vec::new(),
                     on_validate: match (f.declared_in, f.on_validate) {
                         (Some(o), Some(off)) => routine_at.get(&(o, off)).map(|r| (o, r)),
                         _ => None,

@@ -651,3 +651,32 @@ dotnet { assembly("mscorlib") { type("System.Type"; LtT) { } } }"#
     let reasons = format!("{:?}", l.unsupported);
     assert!(reasons.contains("GetDotNetType of an Enum"), "{reasons}");
 }
+
+// al-language-onprem/network/LtDaHttpHandlerOdd.al:119-120, :145-146: a handler that sets IsSuccessfulRequest to false makes
+// the call answer false; the response is the one the handler filled, and as a statement the call raises nothing.
+#[test]
+fn a_handler_that_marks_the_request_unsuccessful_makes_the_call_answer_false() {
+    all_pass(
+        "TestHttpRequestPolicy = AllowOutboundFromHandler;",
+        &format!(
+            r#"{HANDLER}
+    [HttpClientHandler]
+    procedure Unsuccessful(Request: TestHttpRequestMessage; var Response: TestHttpResponseMessage): Boolean
+    begin
+        Response.IsSuccessfulRequest := false;
+        Response.Content.WriteFrom('unsuccessful body');
+        exit(false);
+    end;
+    [Test] [HandlerFunctions('Unsuccessful')] procedure Answer()
+    var Client: HttpClient; Resp: HttpResponseMessage; Resp2: HttpResponseMessage; Ok: Boolean; D: Text;
+    begin
+        Ok := Client.Get('https://example.invalid/u', Resp);
+        D := Describe(Ok, Resp);
+        if D <> 'ok=No status=200 reason=OK body=[unsuccessful body] success=Yes blocked=No header=[]' then Error('get %1', D);
+        Client.Get('https://example.invalid/u', Resp2);
+        D := Describe(true, Resp2);
+        if D <> 'ok=Yes status=200 reason=OK body=[unsuccessful body] success=Yes blocked=No header=[]' then Error('statement %1', D);
+    end;"#
+        ),
+    );
+}

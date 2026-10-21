@@ -257,6 +257,37 @@ impl Session {
         }
     }
 
+    /// ADR-046 decision 4a: in the default mode (one company) a read of the Company table that could list a company the
+    /// runtime does not know is refused. The corpus database holds a second company the runtime does not have
+    /// (install/lt-bf-install-probes/BfInstallTests.al:60-62). A read filtered to one known name (a single-value filter on
+    /// Name: the session company or a company row the run holds) is answered.
+    pub(crate) fn company_table_read(&self, rec: &Rec, what: &str) -> Result<(), Signal> {
+        let named = {
+            let r = rec.borrow();
+            r.filters
+                .iter()
+                .filter(|f| f.field == 0 && f.group != al_builtins::filter::OR_GROUP)
+                .find_map(|f| match &f.expr {
+                    al_builtins::filter::FilterExpr::Eq(v) | al_builtins::filter::FilterExpr::RangeSame(v) => {
+                        al_builtins::native::text_of(v).map(String::from)
+                    }
+                    al_builtins::filter::FilterExpr::Range(Some(a), Some(b)) => {
+                        let (a, b) = (al_builtins::native::text_of(a)?, al_builtins::native::text_of(b)?);
+                        (a == b).then(|| a.to_string())
+                    }
+                    _ => None,
+                })
+        };
+        if let Some(name) = named {
+            if self.find_company(&name)?.is_some() {
+                return Ok(());
+            }
+        }
+        unsupported(format!(
+            "{what} on the Company table: the database may hold companies this runtime does not know (ADR-046 decision 4a)"
+        ))
+    }
+
     pub(crate) fn unseeded_read(&self, t: &TableDef, temporary: bool, what: &str) -> Result<(), Signal> {
         if !temporary {
             if let Some(why) = self.install_unknown(t.object) {
@@ -1587,6 +1618,11 @@ impl Session {
             let temporary = rec.borrow().temporary;
             self.unseeded_read(&t, temporary, method.name())?;
             self.coverage_read(&t, temporary)?;
+            // `Count` stays answered (it counts only the companies the runtime knows): refusing it loses the baseline case
+            // session/TestProbeSessionMiscContracts.al:Company_Names (69815, `Count() >= 1`). Kept, not pinned.
+            if !temporary && self.is_company_table(&t) && method != RecordOp::Count {
+                self.company_table_read(rec, method.name())?;
+            }
         }
         if matches!(
             method,

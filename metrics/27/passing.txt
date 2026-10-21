@@ -3219,6 +3219,7 @@
 60827 PYD_ModifyTableRelation_TwoExtensions_Conditional_Z
 60827 TableExt_Assign_ContributedRelation_NoRelatedRow_IsNotChecked
 60827 TableExt_ModifyTableRelation_Conditional_ValidatePerCondition
+60827 TableExt_ModifyTableRelation_Unconditional_ValidateUsesWhichTable
 60827 TableExt_Validate_BaseTableRelation_NoRelatedRow_Throws
 60827 TableExt_Validate_BaseTableRelation_RelatedRowExists_AssignsTheValue
 60827 TableExt_Validate_ContributedRelation_NoRelatedRow_Throws
@@ -8114,6 +8115,7 @@
 70903 P140_DecimalToText
 70903 P140_IntegerFormat_Compare
 70905 P170_LoadFields_Statement_ThenReadAfterGet
+70906 P170_TimeMinusUndefinedTime
 70906 P170_TimePlusMinusDecimal_Literal
 70906 P170_TimePlusMinusDecimal_Whole
 70907 P170_TimePlusMinusBigInteger
@@ -11344,6 +11346,8 @@
 73802 Date_Comparisons
 73802 Date_Plus_Minus_Integer
 73802 Duration_Assignments
+73802 LT_BU_Time_DefaultAgainst0TAndMidnight
+73802 Time_Arithmetic
 73802 Time_Comparisons
 73802 Variant2Date_Time
 73803 CreateDateTime_Variants
@@ -11529,6 +11533,7 @@
 73934 LoadFields_FreshRecord_RowPresent
 73934 LoadFields_KeyAssigned
 73935 TimeComparisonsAndMilliseconds
+73935 TimeMinusTime
 73935 TimePlusMinusInteger
 73937 Find_BetweenRows
 73937 Find_NoRows
@@ -12841,8 +12846,18 @@
 78631 LittleEndian_NoBom_DeclaredUtf16
 78631 LittleEndian_WithBom
 78631 Utf8_Control
+78860 DropCurrent_NoRowsAfter_FindOnly
+78860 DropCurrent_NoRowsAfter_Plain
+78860 DropCurrent_RowsAfter_FindOnly
+78860 DropCurrent_RowsAfter_Plain
+78860 DropCurrent_RowsAfter_PlainCurr
+78860 Keep_Nav
 78860 Keep_NavCurr
+78860 Keep_Plain
+78860 Same_Nav
 78860 Same_NavCurr
+78860 Same_NavCurr_OnOpenRow
+78860 Same_Nav_OnOpenRow
 78860 Same_PlainCurr
 78861 GoToRecord_BeforeAnyNavigation_Nav
 78861 GoToRecord_BeforeAnyNavigation_NavCurr
@@ -12861,8 +12876,10 @@
 78862 Paging_GoToKeyThenWalk_Nav
 78862 Paging_GoToKey_Nav
 78862 Paging_LastThenFirst_Nav
+78862 Paging_Last_Nav
 78862 Paging_OpenThenNext_Nav
 78862 Paging_Open_Nav
+78862 Paging_UpdateOnRowTwentyOne_Plain
 79000 Evaluate_Decimal_Letter_Texts
 79000 JsonValue_String_Letters_AsDecimalAndInteger
 79011 XmlPort_RealTable_AutoSaveFalse_Import
@@ -13179,6 +13196,8 @@
 81164 CardDb_PageRun_TempRec
 81164 CardTempFind_PageRun_TempRec
 81164 CardTemp_PageRun_TempRec
+81260 CompanyOpen_FirstTest_WhatTheSubscribersSaw
+81260 CompanyOpen_SecondTest_NotRaisedAgain
 81450 A_TrapsAnError_LastErrorIsSetInsideTheTest
 81450 B_NextTest_LastErrorIsEmpty
 81450 C_TrapsAnErrorForTheNextCodeunit
@@ -13226,6 +13245,8 @@
 84110 Ca15_ListOkCancelIntoVariant
 84110 Ca16_DialogLocalAndGlobalInPageAction
 84111 Ca14_OptionalHandlers_SentAndRecalled
+84111 Ca14_OptionalRecallHandler_NothingRecalled
+84111 Ca14_OptionalSendHandler_NothingSent
 84168 Handler_OverloadedWithPlainProcedure_IsTheHandler
 84168 Handlers_AnswerEverySecondCall
 84168 Message_WhileDialogOpen_IsHandledAtOnce
@@ -13443,6 +13464,7 @@
 85060 Item32_DurationNegation
 85060 Item33_RoundFollowsAmountRoundingPrecision
 85060 Item34_DefaultTimeAgainst0TAndMidnight
+85060 Item35_ZeroTimeMinusZeroTime
 85060 Item36_ForLoopBoundsAndCounterAfterLoop
 85060 Item37_DecimalPlacesAndStoredValue
 85060 Item38_BigIntegerSumIntoIntegerFlowField
@@ -13565,11 +13587,16 @@
 85484 VariantVarParameter_HoldingRecord
 85546 CY_Sleep_Zero_ReturnsWithoutError
 85548 CY_TableCaption_LongerThan80_PerSource
+85721 RequestContent_ClearOnFreshRequest_ThenContentType
+85721 ResponseContent_ReadAsStreamTwice_Assigned
 85721 ResponseContent_ReadAsStreamTwice_Chained
 85721 ResponseContent_ReadAsTextTwice
 85721 WriteFromBlobStream_LinesFromWriteText
 85721 WriteFromBlobStream_MultipartBody
+85721 WriteFromStream_ReadAsStreamTwice
+85721 WriteFromStream_ReadAsTwice
 85722 ArrayAdd_ClearAndRefill_Loop
+85722 ArrayOfJsonObject_ElementsAreSeparate
 85722 Clear_ObjectAndArray_SharedVariable
 85722 DecimalRange_ReadFrom
 85722 NamedReturnJsonObject_NeverSet

@@ -32,6 +32,7 @@ mod lane_bump28;
 mod lane_captions;
 mod lane_format_numbers;
 mod lane_loops_syntax;
+mod lane_old_fails;
 mod lane_property_plumbing;
 mod lane_settled_31_32;
 mod lane_text_compare;

@@ -690,9 +690,24 @@ impl Session {
             && !st.borrow().draft
             && page_of(&engine, st).controls[idx].run_object.is_none()
             && page_of(&engine, st).controls[idx].trigger("onaction").is_some();
+        let read_after_goto = std::mem::take(&mut st.borrow_mut().read_after_goto);
+        let doubt = std::mem::take(&mut st.borrow_mut().read_after_goto_doubt);
+        // Pinned only for an action that reads rows, right after the GoToKey (AiListOrderTests.al:39, :233). After a field call
+        // between them it is refused. An action that reads no rows (a RunObject action) reads nothing more: not pinned, kept for
+        // baseline case 67019 PrecompiledRunPageModeView_OpensTheTargetReadOnly.
+        if read_after_goto && doubt {
+            return unsupported(
+                "an action after a GoToKey moved a list without OnAfterGetCurrRecord, with a field call between them (not pinned)",
+            );
+        }
         if reads_rows {
             let rec = self.page_rec(st);
             if self.stored_row(&rec)?.is_some() {
+                // A GoToKey that moved a list without OnAfterGetCurrRecord: the row is read once more first
+                // (pages/lt-ai-list-order/AiListOrderTests.al:39, :233, :301, :335 `R:R1002;R:R1002;A:...`).
+                if read_after_goto {
+                    self.populate_current(st)?;
+                }
                 self.populate_current(st)?;
             }
         }
@@ -907,6 +922,30 @@ impl Session {
         Ok(())
     }
 
+    /// The row a list settles on when the action's filter left the stored row it stood on outside the view: the next row of the
+    /// view, else the one before it (pages/lt-ai-list-order/AiListOrderTests.al:335 DropCurrent_RowsAfter_Plain and :301 _FindOnly
+    /// read R1003 first, :501 DropCurrent_NoRowsAfter_Plain and :467 _FindOnly read R1005 first). `None` when the row is in the
+    /// view; a view left with no row is refused.
+    fn row_after_view_left(&mut self, rec: &Rec) -> Result<Option<Vec<Value>>, Signal> {
+        let probe = Rc::new(RefCell::new(rec.borrow().clone()));
+        self.ret_used = true;
+        if matches!(
+            self.record_op(RecordOp::Find, &probe, &mut [Value::Text("=".into())])?,
+            Value::Boolean(true)
+        ) {
+            return Ok(None);
+        }
+        for step in [1, -1] {
+            let probe = Rc::new(RefCell::new(rec.borrow().clone()));
+            self.ret_used = true;
+            if matches!(self.record_op(RecordOp::Next, &probe, &mut [Value::Integer(step)])?, Value::Integer(n) if n != 0)
+            {
+                return Ok(Some(probe.borrow().fields.clone()));
+            }
+        }
+        unsupported("an action left the list's view without rows (not pinned)")
+    }
+
     /// The reads of an action on a list whose cursor is not on the first row: the row again, the rows from it on (up to 20),
     /// the row again when the view goes on past it, the rows back to the first one, and the row twice more before the refresh's
     /// own read. Pinned by misc/lt-probes-needed-6/PnF05ActionReads.al:Action_List_LaterRow (row 2 and 3 of 3 rows: 7 and 6
@@ -921,20 +960,40 @@ impl Session {
             return Ok(());
         }
         let find = self.declares(st, "onfindrecord");
+        let with_current = self.declares(st, "onaftergetcurrrecord");
         let mut pk = key.to_vec();
+        let view_left = match self.row_after_view_left(rec)? {
+            Some(fields) => {
+                rec.borrow_mut().fields = fields;
+                pk = self.row_key(rec)?;
+                true
+            }
+            None => false,
+        };
+        let mut rows = Vec::new();
         self.populate_current(st)?;
         if find {
             // The forward reads start with `=>` (pages/lt-update-on-find/UpdateOnFindRecord.al:P168_List_UpdateFalse).
             self.nav_find(st, "=>")?;
         }
-        self.populate_current(st)?;
+        let row = |this: &mut Self| -> Result<al_builtins::value::WindowRow, Signal> {
+            let key = this.row_key(rec)?;
+            let stored = rec.borrow().fields.clone();
+            this.populate_current(st)?;
+            Ok(al_builtins::value::WindowRow {
+                key,
+                stored,
+                shown: rec.borrow().fields.clone(),
+            })
+        };
+        rows.push(row(self)?);
         let mut moved = false;
         for _ in 1..Self::WINDOW {
             if !self.nav_next(st, 1)? {
                 break;
             }
             moved = true;
-            self.populate_current(st)?;
+            rows.push(row(self)?);
         }
         if moved {
             self.ret_used = true;
@@ -948,7 +1007,9 @@ impl Session {
         self.record_op(RecordOp::Get, rec, &mut pk)?;
         let mut more_rows = moved;
         if has_before {
-            more_rows = true;
+            // Without OnAfterGetCurrRecord the reads end with the way back: the row is not put back (AiListOrderTests.al:233
+            // Keep_Plain `...R:R1002;R:R1001`, :501 DropCurrent_NoRowsAfter_Plain `...R:R1002;R:R1001`).
+            more_rows = with_current;
             if moved {
                 // The client reads the row again when it steps back onto it from the rows past it; the first row
                 // has no step back (Action_List_FirstRow reads 6 times after the action, Action_List_LaterRow 7).
@@ -991,13 +1052,32 @@ impl Session {
         if more_rows {
             self.populate_current(st)?;
         }
+        // Without OnAfterGetCurrRecord the refresh reads nothing more (AiListOrderTests.al:233 Keep_Plain, :335
+        // DropCurrent_RowsAfter_Plain).
+        if !with_current {
+            st.borrow_mut().refresh_read_done = true;
+        }
+        // The client holds the rows of the new view from the row it settled on (AiListOrderTests.al:336-338, :370-372: the
+        // current row is R1003 and First stays on it).
+        if view_left && !has_before {
+            if rows.len() >= Self::WINDOW {
+                return unsupported(
+                    "an action left the list's view and the row it settles on has a full window after it (not pinned)",
+                );
+            }
+            rec.borrow_mut().fields = rows[0].stored.clone();
+            let mut s = st.borrow_mut();
+            s.window = rows;
+            s.window_from_start = true;
+            s.settled_first_row = true;
+        }
         Ok(())
     }
 
     /// `CurrPage.Update` on a list with OnFindRecord, OnNextRecord and OnAfterGetRecord (no OnAfterGetCurrRecord) whose action just
     /// changed the view so that the stored row the cursor stands on is outside it: the call itself reads the row (pages/lt-f3-pages/
-    /// F3ListTests.al:72 Nav_ActionChangesViewThenUpdate `after_update` begins `AGR(R1003) | AGR(R1003) | OnlyBig done`, the first read
-    /// being the one before every action). Remembers it for the refresh.
+    /// F3ListTests.al:72 Nav_ActionChangesViewThenUpdate `after_update` begins `AGR(R1003) | AGR(R1003) | OnlyBig done`, both reads
+    /// before the action: the one after the GoToKey and the one before every action). Remembers it for the refresh.
     pub(super) fn note_view_left(&mut self, st: &St) -> Result<(), Signal> {
         if !self.is_list(st)
             || st.borrow().host.is_some()
@@ -1022,8 +1102,10 @@ impl Session {
         ) {
             return Ok(());
         }
+        // The call reads nothing itself: the second read before `OnlyBig done` is the one after the GoToKey (no read between
+        // `A:filter` and `A:done` in pages/lt-ai-list-order/AiListOrderTests.al:403 DropCurrent_NoRowsAfter_Nav).
         st.borrow_mut().view_left = true;
-        self.populate_current(st)
+        Ok(())
     }
 
     /// The re-read `CurrPage.Update` asked for, once the call that made it has returned: the
@@ -1032,7 +1114,8 @@ impl Session {
     /// TestPageUpdateGoneRow.al StoredRow_OnValidateUpdateFalse_Trace). The row is read from the
     /// table unless the client holds edits of it that are not saved yet.
     pub(super) fn run_refresh(&mut self, st: &St) -> Result<(), Signal> {
-        if !std::mem::take(&mut st.borrow_mut().refresh) {
+        let read_done = std::mem::take(&mut st.borrow_mut().refresh_read_done);
+        if !std::mem::take(&mut st.borrow_mut().refresh) || read_done {
             return Ok(());
         }
         if !st.borrow().open || !self.has_source(st) || st.borrow().cursor != Cursor::Row || st.borrow().draft {
@@ -1141,6 +1224,13 @@ impl Session {
             }
             self.populate_current(st)?;
         } else {
+            // A list with OnFindRecord alone does not tell the view left the row (`note_view_left`): the client reads the row it
+            // settles on (AiListOrderTests.al:301 DropCurrent_RowsAfter_FindOnly `A:done;R:R1003;F:=>=Yes`).
+            if !self.declares(st, "onnextrecord") {
+                if let Some(fields) = self.row_after_view_left(&rec)? {
+                    rec.borrow_mut().fields = fields;
+                }
+            }
             self.page_trigger(st, "onaftergetrecord", vec![])?;
         }
         if !self.nav_find(st, "=>")? {
@@ -1196,10 +1286,28 @@ impl Session {
             st.borrow_mut().window_from_start = true;
             st.borrow_mut().window_eof = true;
             st.borrow_mut().refresh = false;
+            // F3ListTests.al:72 `after_walk` empty: a First right after this reads nothing (see `rows.rs`).
+            st.borrow_mut().settled_first_row = true;
             return self.sync_parts(st);
         }
         rec.borrow_mut().fields = first.stored.clone();
-        self.page_trigger(st, "onaftergetrecord", vec![])?;
+        if !with_current {
+            // Without OnAfterGetCurrRecord the refresh ends after the step back: no row is put back and `=` is not asked
+            // (pages/lt-ai-list-order/AiListOrderTests.al:39 Keep_Nav, :73 Same_Nav, :170 Same_Nav_OnOpenRow).
+            // AiListOrderTests.al:174 Same_Nav_OnOpenRow: a First right after this on the first row reads nothing (see `rows.rs`).
+            st.borrow_mut().settled_first_row = before.is_empty() && self.declares(st, "onnextrecord");
+            before.extend(forward);
+            st.borrow_mut().window = before;
+            st.borrow_mut().window_from_start = true;
+            st.borrow_mut().refresh = false;
+            return self.sync_parts(st);
+        }
+        // The client puts its row back only when the step back left it (AiListOrderTests.al:107 Keep_NavCurr
+        // `...R:R1001;N:-1=0;R:R1002;F:==Yes`); on the first row of the view it asks `=` at once (:199
+        // Same_NavCurr_OnOpenRow `...R:R1001;N:-1=0;F:==Yes;R:R1001;C:R1001`).
+        if !before.is_empty() {
+            self.page_trigger(st, "onaftergetrecord", vec![])?;
+        }
         if !self.nav_find(st, "=")? {
             return unsupported("OnFindRecord does not find the current row after CurrPage.Update (not pinned)");
         }
@@ -1209,6 +1317,8 @@ impl Session {
             self.page_event(st, "onaftergetcurrrecordevent", None, None)
         })();
         self.torn_down_on_error(st, r)?;
+        // AiListOrderTests.al:203 Same_NavCurr_OnOpenRow: a First right after this on the first row reads nothing (see `rows.rs`).
+        st.borrow_mut().settled_first_row = before.is_empty() && self.declares(st, "onnextrecord");
         before.extend(forward);
         st.borrow_mut().window = before;
         st.borrow_mut().window_from_start = true;

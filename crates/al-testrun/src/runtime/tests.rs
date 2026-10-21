@@ -2190,3 +2190,37 @@ fn a_failure_after_a_test_refused_before_it_started_for_a_construct_in_its_reach
         }
     }
 }
+
+// ADR-046 amendment 1, A4 item 10: the test session raises Company Triggers OnCompanyOpen then OnCompanyOpenCompleted to the
+// app's subscribers once, before the first test of the codeunit, and not again for the second test
+// (events/lt-bf-company-open/BfCompanyOpenTests.al:19-38, :40-50). A subscriber that writes the database refuses the codeunit:
+// what the runner does with those writes is not pinned.
+#[test]
+fn company_triggers_run_once_in_the_test_session_before_the_first_test() {
+    let o = outcomes(
+        "codeunit 60906 State { SingleInstance = true; var L: Text; procedure Add(T: Text) begin L += T + ';'; end; procedure Get(): Text begin exit(L); end; }
+            codeunit 60907 Subs {
+                [EventSubscriber(ObjectType::Codeunit, Codeunit::\"Company Triggers\", 'OnCompanyOpenCompleted', '', false, false)]
+                local procedure Completed() var S: Codeunit State; begin S.Add('Completed'); end;
+                [EventSubscriber(ObjectType::Codeunit, Codeunit::\"Company Triggers\", 'OnCompanyOpen', '', false, false)]
+                local procedure Open() var S: Codeunit State; begin S.Add('Open'); end; }
+            codeunit 60102 T { Subtype = Test;
+                [Test] procedure First() var S: Codeunit State; begin if S.Get() <> 'Open;Completed;' then Error('first %1', S.Get()); end;
+                [Test] procedure Second() var S: Codeunit State; begin if S.Get() <> 'Open;Completed;' then Error('second %1', S.Get()); end; }",
+    );
+    for (n, r) in &o {
+        assert_eq!(*r, Outcome::Pass, "{n}: {o:?}");
+    }
+    let o = outcomes(
+        "table 60901 Co { fields { field(1; K; Code[10]) { } } }
+            codeunit 60907 Subs {
+                [EventSubscriber(ObjectType::Codeunit, Codeunit::\"Company Triggers\", 'OnCompanyOpen', '', false, false)]
+                local procedure Open() var R: Record Co; begin R.K := 'X'; if R.Insert() then; end; }
+            codeunit 60102 T { Subtype = Test;
+                [Test] procedure First() begin end; }",
+    );
+    assert!(
+        matches!(&o[0].1, Outcome::NotRun(r) if r.contains("OnCompanyOpen")),
+        "{o:?}"
+    );
+}

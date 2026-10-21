@@ -1166,8 +1166,7 @@ impl Session {
     /// QjPartPropagation.al:1106 QL_Both_PartUpdate_HostRowUnchanged `log-part-edit = N.Amt.V(5 x=1) N.Amt.V.end H.AGR(t=1 x.t=1)
     /// H.AGCR(t=1 x.t=1) N.AGR(10000 a=1 x.a=1) N.AGR(10000 a=1 x.a=1) N.AGCR(10000 a=1 x.a=5)`, :1134 _SubPart_ and :1162
     /// _Default_ `N.Amt.V(5 x=1) N.Amt.V.end N.AGR(10000 a=1 x.a=1) N.AGR(10000 a=1 x.a=1) N.AGCR(10000 a=1 x.a=5)`, `lines-after-
-    /// close = 10000:q=1,a=1`). Another host type, a new part row and a host with an unsaved edit keep the earlier refresh of the
-    /// part alone (`Ok(false)`).
+    /// close = 10000:q=1,a=1`). Another host type, a new part row and a host with an unsaved edit are refused.
     fn part_update_host_unchanged(&mut self, st: &St, host: &St, c: usize, both: bool) -> Result<bool, Signal> {
         let o = host.borrow().object as usize;
         let prec = self.page_rec(st);
@@ -1177,7 +1176,9 @@ impl Session {
             || host.borrow().dirty
             || self.is_list(host)
         {
-            return Ok(false);
+            return unsupported(
+                "a part's CurrPage.Update when the host row did not change, other than on a stored part row of a Document host without an unsaved edit (not pinned)",
+            );
         }
         {
             let mut p = st.borrow_mut();
@@ -1566,6 +1567,22 @@ impl Session {
         Ok(())
     }
 
+    /// The part `LT QJ Save Lines` of QjPartPropagation.al pins the xRec of New(): AutoSplitKey and DelayedInsert, no
+    /// OnAfterGetRecord.
+    fn pinned_new_xrec_part(&self, st: &St) -> Result<bool, Signal> {
+        let engine = self.engine();
+        let object = st.borrow().object as usize;
+        let on = |name: &str| -> Result<bool, Signal> {
+            Ok(effective_prop(&engine, object, name)?.is_some_and(|v| v.trim().eq_ignore_ascii_case("true")))
+        };
+        Ok(on("AutoSplitKey")? && on("DelayedInsert")? && !self.declares(st, "onaftergetrecord"))
+    }
+
+    fn observes_new_record(&self, st: &St) -> bool {
+        let object = st.borrow().object as usize;
+        self.declares(st, "onnewrecord") || self.engine().events.is_subscribed(object, "onnewrecordevent")
+    }
+
     /// `Last()` and `First()` on a part whose whole view the client holds (`part_view_held`). `None` for any other call.
     ///
     /// - Last() from a stored row: the client runs the blank line below the last row once (OnNewRecord with the last row as
@@ -1589,6 +1606,11 @@ impl Session {
         };
         if cursor == Cursor::NewLine && draft && !dirty && empty && how == PageMethod::Last {
             let Some(x) = st.borrow().empty_part_xrec.clone() else {
+                if self.observes_new_record(st) {
+                    return unsupported(
+                        "Last() on a part that shows no row after a host move other than GoToKey (the xRec OnNewRecord sees is not pinned)",
+                    );
+                }
                 return Ok(None);
             };
             self.empty_part_new_line_pinned(st)?;
@@ -1608,12 +1630,22 @@ impl Session {
             return Ok(None);
         };
         if how == PageMethod::First {
-            if at == 0 && !self.declares(st, "onaftergetrecord") {
-                return Ok(Some(true));
+            if at != 0 {
+                return Ok(None);
             }
-            return Ok(None);
+            // Kept, not pinned: a part with OnAfterGetRecord reads the row again as before (refusing it loses baseline cases
+            // 70174 PartGetFieldById; 70180 DisabledPartControlEnabled, HiddenPartExpression; 70181 EditablePartNewAndNext,
+            // ReadOnlyPartSetValue, PendingPartRowSavedWhenHostMoves, SubPageViewOnTheLinkedField).
+            if self.declares(st, "onaftergetrecord") {
+                return Ok(None);
+            }
+            return Ok(Some(true));
         }
-        // Both pinned parts declare OnAfterGetCurrRecord; without it the reads of the move are not pinned (the earlier reads stay).
+        // Both pinned parts declare OnAfterGetCurrRecord. Kept, not pinned: without it Last() reads as before (refusing it loses
+        // baseline cases 68129 TestPage_New_AppendAfterASingleLine_NegativeZeroAndPositive, TestPage_New_DecimalKey_SplitsTheGap
+        // IncludingFractions; 60757 ModalHostPart_Last_LandsOnTheLastDataRow; 60346 TestPart_Last_LandsOnTheHighestKeyedRow,
+        // TestPart_Previous_WalksBackwardOneRowAtATime, TestPart_Next_StepsOntoTheTrailingNewRowLineAtTheEnd,
+        // TestPart_FindPreviousField_MovesBackToTheEarlierMatchingRow).
         if !self.declares(st, "onaftergetcurrrecord") {
             return Ok(None);
         }
@@ -1661,10 +1693,23 @@ impl Session {
         }
         let last = st.borrow().window.last().map(|w| w.stored.clone());
         if let Some(last) = last {
+            // Pinned for a part with AutoSplitKey and DelayedInsert and without OnAfterGetRecord (the `LT QJ Save Lines` part).
+            let current = self.page_rec(st).borrow().fields.clone();
+            // Kept, not pinned: such a part keeps the earlier xRec (refusing it loses baseline case 60358
+            // New_OnDraftLineReachedByNext_RunsOnNewRecordOnceMore).
+            if !self.pinned_new_xrec_part(st)? && !Self::same_values(&current, &last) {
+                return Ok(None);
+            }
             return Ok(Some(last));
         }
         // Only OnNewRecord's xRec comes from here; the link value is stamped and validated as for any New() (`start_draft`).
-        Ok(st.borrow().empty_part_xrec.clone().filter(|_| on_blank))
+        let x = st.borrow().empty_part_xrec.clone().filter(|_| on_blank);
+        if x.is_none() && on_blank && self.observes_new_record(st) {
+            return unsupported(
+                "New() on a part that shows no row after a host move other than GoToKey (the xRec OnNewRecord sees is not pinned)",
+            );
+        }
+        Ok(x)
     }
 
     /// Saves what was typed into the rows the parts stand on.

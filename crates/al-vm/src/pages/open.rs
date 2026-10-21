@@ -1756,11 +1756,18 @@ impl Session {
         // (pages/lt-qj-part-propagation/QjPartPropagation.al:1346 QL_PartLastNew_NoLines `log-open` after GoToKey onto a host row
         // without lines: `S.NEW(x=3 x.ln=30000) S.AGCR(0 r=0 x=0) S.NEW(x=0 x.ln=0) S.AGCR(0 r=0 x=0) S.NEW(x=3 x.ln=30000)`); the
         // part's Last() and New() see it again (`PageState::empty_part_xrec`).
+        // Pinned after a GoToKey of the host. After another host move the third run sees the blank xRec as before: not pinned,
+        // kept for baseline cases 60358 New_OnEmptyLinkedPart_RunsOnNewRecordOncePlusTheOpenCost, DraftLine_*, TwoRowsWritten*;
+        // 60868 OpenNew_*; 60996 EmptyLinkedPart_*; 67582 QH_EmptyPart_OpenEdit_HostNext (refusing it loses them).
         let held = self.page_xrec_fields(st);
-        st.borrow_mut().empty_part_xrec = Some(held.clone());
+        let blank = Self::same_values(&held, &self.initial_fields(table));
+        let keep_held = self.host_gotokey_running || blank;
+        st.borrow_mut().empty_part_xrec = keep_held.then(|| held.clone());
         for validate in [true, false, true] {
-            if validate {
+            if validate && keep_held {
                 self.set_xrec_fields(st, held.clone());
+            }
+            if validate {
                 self.stamp_from_filters(st, true)?;
             }
             self.page_trigger(st, "onnewrecord", vec![Value::Boolean(true)])?;

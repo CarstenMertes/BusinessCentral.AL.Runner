@@ -4581,8 +4581,6 @@
 67755 Header_Values_ReportWithCaption
 67755 Identity_DataItemGuid_IsTheSystemIdOfTheRow
 67755 Names_ColumnsWithSpacesPunctuationAndLetters
-67755 PW_DumpPlain_Lines01To18
-67755 PW_DumpPlain_Lines19To36
 67755 Rows_NoRowsAtAll
 67755 Rows_OnlyTheSiblingItemHasRows
 67755 Rows_ParentsWithChildRowsAndSiblingItem
@@ -7498,11 +7496,6 @@
 70535 Header_RawBytes
 70535 Names_SpacesAndParentheses
 70535 OtherFormats_NoLayout
-70535 PW_Dump_Lines001To016
-70535 PW_Dump_Lines017To032
-70535 PW_Dump_Lines081To096
-70535 PW_Dump_Lines097To112
-70535 PW_Dump_Lines113To128
 70535 Rows_BlockAfterHeader
 70535 Rows_ColumnBoundToVariable
 70535 Rows_SkipAndBreak

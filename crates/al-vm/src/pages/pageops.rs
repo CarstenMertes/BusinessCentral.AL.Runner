@@ -1049,6 +1049,7 @@ impl Session {
             }
             PageMethod::Close if method.recv() == PageRecv::Page => {
                 self.require_open(st)?;
+                self.restore_shown_row_on_close(st)?;
                 let a = self.close_action(st, "Close");
                 self.close_with(st, &a, false, false)
             }

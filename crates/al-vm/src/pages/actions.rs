@@ -825,10 +825,15 @@ impl Session {
             // page saves, because `before` was taken first), after it when it did not fail
             // (events/lt-global-triggers-statements/P114PageActionEvents.al).
             let element = page_of(&engine, st).controls[idx].name.clone();
+            let shown_outer = {
+                let shown = (self.is_list(st) && st.borrow().host.is_none()).then(|| before.clone()).flatten();
+                std::mem::replace(&mut st.borrow_mut().action_shown_row, shown)
+            };
             let r = match self.page_action_event(st, "onbeforeactionevent", &element) {
                 Ok(()) => self.control_routine(st, idx, r),
                 err => err.map(|()| Value::Null),
             };
+            st.borrow_mut().action_shown_row = shown_outer;
             let r = match r {
                 Ok(v) => self.page_action_event(st, "onafteractionevent", &element).map(|()| v),
                 err => err,
@@ -878,6 +883,31 @@ impl Session {
                     self.save_row(st)?;
                 }
             }
+            // An action that put another row (another primary key) into Rec on a list: the client saves nothing, now, on Next or
+            // on Close (no OnModifyRecord, no OnModify), reads the list again from that row with its stored values, and the next
+            // OnAfterGetCurrRecord sees the row shown before as xRec (misc/lt-probes-needed-7/PnGRefresh.al:387
+            // QL_RecAssign_OtherChanged_ThenClose, :416 _OtherChangedUpdate_ThenClose with CurrPage.Update(false), :445
+            // _TempChanged_ThenClose from a temporary record, :532 _OtherChanged_StaysOpen_Next, :570 _TempChanged_StaysOpen_Next).
+            // Pinned for a top-level list with OnAfterGetRecord and OnAfterGetCurrRecord and without OnFindRecord/OnNextRecord;
+            // another page keeps the refusal below.
+            let moved_other = match &before {
+                Some(before) if st.borrow().cursor == Cursor::Row && !st.borrow().draft && st.borrow().open => {
+                    let rec = self.page_rec(st);
+                    let table = self.table(&rec)?;
+                    !Self::same_key(&table.primary_key(&rec.borrow().fields), &table.primary_key(before))
+                }
+                _ => false,
+            };
+            let moved_pinned = moved_other
+                && self.is_list(st)
+                && st.borrow().host.is_none()
+                && self.declares(st, "onaftergetrecord")
+                && self.declares(st, "onaftergetcurrrecord")
+                && !self.declares(st, "onfindrecord")
+                && !self.declares(st, "onnextrecord");
+            if moved_pinned {
+                st.borrow_mut().rec_moved_other = true;
+            }
             // What the action left in Rec is saved when the client leaves the row (corpus
             // record/PWTableGlobals.al:408-431, PageModify_AfterActionChangedRec_NoValidation).
             if let Some(before) =
@@ -890,17 +920,34 @@ impl Session {
                     .stored_row(&rec)?
                     .is_some_and(|stored| Self::same_values(&rec.borrow().fields, &stored));
                 if !Self::same_values(&rec.borrow().fields, &before) && !saved_by_action {
-                    // The pinned actions change fields of the row the page shows. One that put another row into Rec
-                    // (`Rec := TempApplyingCustLedgEntry` in Apply Customer Entries' Post Application, Tests-ERM 134918) is not
-                    // pinned: whether the client saves that row, the one it showed, or nothing.
-                    let table = self.table(&rec)?;
-                    if !Self::same_key(&table.primary_key(&rec.borrow().fields), &table.primary_key(&before)) {
-                        return unsupported(
-                            "an action left another row (another primary key) in Rec with changes to save (not pinned)",
-                        );
+                    // Another row in Rec saves nothing on the pinned list (above; Tests-ERM 134918 Apply Customer Entries' Post
+                    // Application `Rec := TempApplyingCustLedgEntry`). On another page that is not pinned.
+                    if moved_other {
+                        if !moved_pinned {
+                            return unsupported(
+                                "an action left another row (another primary key) in Rec with changes to save (not pinned)",
+                            );
+                        }
+                    } else if reads_rows
+                        && self.is_list(st)
+                        && st.borrow().host.is_none()
+                        && st.borrow().window_from_start
+                        && !st.borrow().save_record_called
+                        && self.declares(st, "onaftergetrecord")
+                        && self.declares(st, "onaftergetcurrrecord")
+                        && !self.declares(st, "onfindrecord")
+                        && !self.declares(st, "onnextrecord")
+                    {
+                        // On such a list the client first reads the changed row as the action left it, then saves it, then reads
+                        // the list again; the next OnAfterGetCurrRecord sees the saved row as xRec (misc/lt-probes-needed-7/
+                        // PnGRefresh.al:503 QL_RecAssign_OwnRowChanged_ThenClose `ACT.end(A,own changed x=A,orig A);P.AGR(A,own
+                        // changed);P.MODR(...);T.MOD(...);P.AGR(A,own changed);...;P.AGCR(A,own changed x=A,own changed)`).
+                        st.borrow_mut().dirty = true;
+                        st.borrow_mut().save_after_first_read = true;
+                    } else {
+                        st.borrow_mut().dirty = true;
+                        self.save_row(st)?;
                     }
-                    st.borrow_mut().dirty = true;
-                    self.save_row(st)?;
                 }
             }
             let settle = stored_before || self.is_list(st) || {
@@ -962,6 +1009,16 @@ impl Session {
             if !find_pinned {
                 self.run_refresh(st)?;
             }
+            // The read again from the other row is pinned only through `read_list_again_from_row`; a list that read itself in
+            // another way is refused.
+            if std::mem::take(&mut st.borrow_mut().save_after_first_read) {
+                return unsupported("an action changed the shown row of a list that is not read again from that row (not pinned)");
+            }
+            if std::mem::take(&mut st.borrow_mut().rec_moved_other) {
+                return unsupported(
+                    "an action left another row (another primary key) in Rec on a list that is not read again from that row (not pinned)",
+                );
+            }
             // A card without a source table runs OnAfterGetCurrRecord once after each action, also after one that called
             // CurrPage.Update(false) (misc/lt-protected-var-abs-query-views/P146PageExprSetValue.al:351
             // P146_NoSourceTable_SetValue_And_Action `log after bump`, :420 QG_NoSource_OpenEdit_StepLog `qg action;qg agcr;`,
@@ -980,7 +1037,12 @@ impl Session {
             }
             // An action that closed the page: the client still reads the row once more (pages/lt-page-runtime/P82PageRun.al:
             // RunModal_CurrPageClose_Action `...;OnClosePage;OnAfterGetRecord(A)`).
-            if reads_rows && !st.borrow().open && !self.is_list(st) && !self.declares(st, "onaftergetcurrrecord") {
+            // A list whose action put another row into Rec and closed the page: CurrPage.Close() read the shown row back into Rec,
+            // and the client reads it once more after the action (misc/lt-probes-needed-7/PnGRefresh.al:608
+            // QL_RecAssign_OtherChanged_CloseInAction `P.AGR(A,orig A);P.AGR(A,orig A);ACT.end(A,orig A x=A,orig A);P.AGR(A,orig A)`).
+            if std::mem::take(&mut st.borrow_mut().close_restored_row) {
+                self.populate_current(st)?;
+            } else if reads_rows && !st.borrow().open && !self.is_list(st) && !self.declares(st, "onaftergetcurrrecord") {
                 let rec = self.page_rec(st);
                 if self.stored_row(&rec)?.is_some() {
                     self.populate_current(st)?;
@@ -1338,7 +1400,25 @@ impl Session {
             None => false,
         };
         let mut rows = Vec::new();
+        let save_after = std::mem::take(&mut st.borrow_mut().save_after_first_read);
+        let read_xrec = save_after.then(|| self.page_xrec_fields(st));
         self.populate_current(st)?;
+        if let Some(x) = read_xrec {
+            self.set_xrec_fields(st, x);
+            st.borrow_mut().dirty = true;
+            self.save_row(st)?;
+            self.set_xrec(st);
+            // The next OnAfterGetCurrRecord sees the saved row as xRec (PnGRefresh.al:503 `P.AGCR(A,own changed x=A,own changed)`).
+            let saved = self.page_rec(st).borrow().fields.clone();
+            st.borrow_mut().agcr_xrec = Some(saved);
+        }
+        // An action left another row in Rec: that first read sees Rec as the action left it, the rows after it are read from the
+        // table (misc/lt-probes-needed-7/PnGRefresh.al:387 `P.AGR(B,changed B);P.AGR(B,orig B)`).
+        if std::mem::take(&mut st.borrow_mut().rec_moved_other) {
+            let mut at = pk.clone();
+            self.ret_used = true;
+            self.record_op(RecordOp::Get, rec, &mut at)?;
+        }
         if find {
             // The forward reads start with `=>` (pages/lt-update-on-find/UpdateOnFindRecord.al:P168_List_UpdateFalse).
             self.nav_find(st, "=>")?;
@@ -1700,6 +1780,39 @@ impl Session {
         self.sync_parts(st)
     }
 
+    /// `CurrPage.Close()` in an action of a list that put another row (another primary key) into Rec: the row the list showed is
+    /// read back into Rec, with OnAfterGetRecord (misc/lt-probes-needed-7/PnGRefresh.al:608 QL_RecAssign_OtherChanged_CloseInAction
+    /// `P.AGR(A,orig A);ACT.end(A,orig A x=A,orig A)`: the action's code after the call sees the shown row). Rec still on the shown
+    /// row is left as it is.
+    pub(super) fn restore_shown_row_on_close(&mut self, st: &St) -> Result<(), Signal> {
+        let Some(shown) = st.borrow().action_shown_row.clone() else {
+            return Ok(());
+        };
+        if !st.borrow().open || st.borrow().cursor != Cursor::Row || st.borrow().draft {
+            return Ok(());
+        }
+        let rec = self.page_rec(st);
+        let table = self.table(&rec)?;
+        let mut key = table.primary_key(&shown);
+        if Self::same_key(&table.primary_key(&rec.borrow().fields), &key) {
+            return Ok(());
+        }
+        let pinned = self.declares(st, "onaftergetrecord")
+            && self.declares(st, "onaftergetcurrrecord")
+            && !self.declares(st, "onfindrecord")
+            && !self.declares(st, "onnextrecord")
+            && !self.declares(st, "onclosepage")
+            && !self.declares(st, "onqueryclosepage");
+        if !pinned {
+            return unsupported("CurrPage.Close() in an action that left another row in Rec, on this page (not pinned)");
+        }
+        self.ret_used = true;
+        self.record_op(RecordOp::Get, &rec, &mut key)?;
+        self.populate_current(st)?;
+        st.borrow_mut().close_restored_row = true;
+        Ok(())
+    }
+
     /// What the page does once an action returns: a page that showed no row may show the one the
     /// action inserted; a row the action deleted closes a card, and moves a list to the next row,
     /// else the previous one, else none (corpus pageupdate/TestPageUpdateGoneRow.al:1-30).
@@ -1755,16 +1868,26 @@ impl Session {
             let table = rec.borrow().table as usize;
             let fresh = self.initial_fields(table);
             rec.borrow_mut().fields = fresh.clone();
-            // The pinned lists have no filter on a key field. When one names a single value (a journal's template and batch in
-            // filter group 2), whether the blank line takes it is not pinned (Tests-ERM 134002 ApplyAndPostPaymentToInvoice:
-            // Gen. Journal Line SetUpNewLine reads the template): refused.
+            // A list filtered to one value of key fields (a journal's template and batch, in filter group 2 or 0): the blank line takes
+            // the filter values, validated, before OnNewRecord, and xRec holds them too, each of the three times (misc/
+            // lt-probes-needed-7/PnGRefresh.al:672 QL_Jnl_SheetFG2_DeleteNoUpdate_OnlyRow `T.Template.V(T1);T.Batch.V(B1);P.NEW(T1/B1/0
+            // x=T1/B1/0 below=Yes);P.AGCR(T1/B1/0 x=T1/B1/0)` three times, :702 with CurrPage.Update, :732 a List page, :762 filter
+            // group 0). A filter on a field outside the primary key is not pinned.
+            let mut filtered = false;
             if new_line {
                 self.stamp_from_filters(st, false)?;
-                let stamped = !Self::same_values(&rec.borrow().fields, &fresh);
-                rec.borrow_mut().fields = fresh;
-                if stamped {
+                let stamped = rec.borrow().fields.clone();
+                rec.borrow_mut().fields = fresh.clone();
+                filtered = !Self::same_values(&stamped, &fresh);
+                let key_fields = self.table(&rec)?.keys[0].clone();
+                if stamped
+                    .iter()
+                    .zip(fresh.iter())
+                    .enumerate()
+                    .any(|(i, (a, b))| !Self::same_values(std::slice::from_ref(a), std::slice::from_ref(b)) && !key_fields.contains(&i))
+                {
                     return unsupported(
-                        "a list filtered to one key value that lost its only row to an action (whether its blank line takes the filter values is not pinned)",
+                        "a list filtered to one value of a field outside the key that lost its only row to an action (whether its blank line takes it is not pinned)",
                     );
                 }
             }
@@ -1773,11 +1896,25 @@ impl Session {
                 for _ in 0..3 {
                     let fresh = self.initial_fields(table);
                     rec.borrow_mut().fields = fresh;
+                    self.stamp_from_filters(st, true)?;
                     self.set_xrec(st);
                     self.page_trigger(st, "onnewrecord", vec![Value::Boolean(true)])?;
                     self.page_event(st, "onnewrecordevent", None, Some(true))?;
                     self.page_trigger(st, "onaftergetcurrrecord", vec![])?;
                     self.page_event(st, "onaftergetcurrrecordevent", None, None)?;
+                }
+                // The filtered list then stands on its blank line: the fields read the filter values, a value typed there is
+                // inserted at Close with the first Line No. of AutoSplitKey (PnGRefresh.al:672 `shown-after-action` T1/B1/0:,
+                // `log-close` P.INSR(T1/B1/10000,typed);T.INS(T1/B1/10000,typed)).
+                if filtered {
+                    let mut s = st.borrow_mut();
+                    s.placeholder_line = true;
+                    s.split_burned = false;
+                    s.cursor = Cursor::NewLine;
+                    s.draft = true;
+                    s.typed_before_key = false;
+                    s.lower_key = None;
+                    s.split_starts_low = true;
                 }
             }
         }

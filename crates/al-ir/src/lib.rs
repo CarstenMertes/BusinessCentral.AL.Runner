@@ -985,6 +985,14 @@ pub struct Field {
     /// `CaptionClass` and one of them is an expression (which one BC reads is not pinned).
     #[serde(default)]
     pub caption_class_refusal: Option<String>,
+    /// (object, routine) of the routine that evaluates the field's `AutoFormatExpression` when it is an expression
+    /// (`pages::field_auto_format_routines`), as `caption_class`.
+    #[serde(default)]
+    pub auto_format_expression: Option<(usize, usize)>,
+    /// Why the field's `AutoFormatExpression` is refused: two or more of the table and its extensions set it and one
+    /// of them is an expression (which one BC reads is not pinned).
+    #[serde(default)]
+    pub auto_format_refusal: Option<String>,
     /// Every property of the field as written (`Caption`, `OptionCaption`, ...).
     pub properties: Vec<(String, String)>,
     /// The `TableRelation` arms in written order; empty when the field has none or its shape is

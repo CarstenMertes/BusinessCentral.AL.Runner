@@ -136,6 +136,12 @@ fn unquote(s: &str) -> String {
     }
 }
 
+/// Whether a property value as written is one Text literal (`'..'`, with `''` for a quote inside), not an expression.
+fn is_text_literal(s: &str) -> bool {
+    let t = s.trim();
+    t.len() >= 2 && t.starts_with('\'') && t.ends_with('\'') && !t[1..t.len() - 1].replace("''", "").contains('\'')
+}
+
 fn is_true(s: &str) -> bool {
     s.trim().eq_ignore_ascii_case("true")
 }
@@ -315,6 +321,15 @@ impl Session {
             }
         }
         self.end_page_call(st);
+        if name == "onaftergetrecord" && result.is_ok() && self.has_source(st) {
+            let rec = self.page_rec(st);
+            let key = self.row_key(&rec)?;
+            let mut s = st.borrow_mut();
+            if !s.agr_rows.iter().any(|k| Self::same_key(k, &key)) {
+                s.agr_rows.push(key.clone());
+            }
+            s.agr_row = Some(key);
+        }
         result.map(|()| answer)
     }
 

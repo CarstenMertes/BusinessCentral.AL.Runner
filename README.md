@@ -562,7 +562,7 @@ other `DotNet` call are not run, with the reason stated, and the exit code is 8.
 `al-runner` can run Microsoft's own Base Application test buckets. Most of these tests are
 still refused, not run. The full run of 2026-10-16 (main `fae0c8df`, BC 27.5, all buckets
 together) held 40300 tests: 16848 passed, 2508 failed and 20944 were not run. It took 298 s on a
-a 12-thread desktop CPU. `docs/alrunner-buckets.md` has the per-bucket numbers, the recipe and
+12-thread desktop CPU. `docs/alrunner-buckets.md` has the per-bucket numbers, the recipe and
 the failure analysis. Speed numbers of such a run cannot be compared with other runners until
 many more of these tests run.
 

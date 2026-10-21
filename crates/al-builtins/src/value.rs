@@ -478,6 +478,10 @@ pub struct PageState {
     /// The parts read their rows for a host row a GoToKey walked past (pages/lt-qj-part-propagation/QjPartPropagation.al:1183):
     /// on the target row they read again even when the host stayed on it.
     pub walk_synced_parts: bool,
+    /// xRec of a part that shows no row as it landed on its blank line: OnNewRecord sees it again on the part's Last() and New()
+    /// (pages/lt-qj-part-propagation/QjPartPropagation.al:1346 QL_PartLastNew_NoLines `x=3 x.ln=30000`, the row the part stood on
+    /// for the host row before).
+    pub empty_part_xrec: Option<Vec<Value>>,
     /// The client's rows were read again from the row a list settled on after an action's filter left its row, with no row before
     /// it: First stays on that row and reads nothing (pages/lt-ai-list-order/AiListOrderTests.al:339, :373 `after_first` empty).
     /// Also set by the refresh of CurrPage.Update on a list with OnFindRecord and OnNextRecord that ends on the first row (:174,
@@ -689,6 +693,7 @@ impl PageState {
             split_starts_low: false,
             save_after_first_read: false,
             walk_synced_parts: false,
+            empty_part_xrec: None,
             settled_first_row: false,
             caption_assigned_closed: false,
             draft_stored: false,

@@ -178,6 +178,15 @@ impl Session {
     }
 
     pub(super) fn test_page_op(&mut self, method: PageOp, st: &St, args: &mut [Value]) -> Result<Value, Signal> {
+        let gotokey = method.method() == PageMethod::GoToKey && st.borrow().host.is_none();
+        let was = self.host_gotokey_running;
+        self.host_gotokey_running = gotokey || was;
+        let r = self.test_page_op_body(method, st, args);
+        self.host_gotokey_running = was;
+        r
+    }
+
+    fn test_page_op_body(&mut self, method: PageOp, st: &St, args: &mut [Value]) -> Result<Value, Signal> {
         let name = method.method();
         if name != PageMethod::Close || st.borrow().unpinned_close {
             self.refuse_unpinned_state(st)?;

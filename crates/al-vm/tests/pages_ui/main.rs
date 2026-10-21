@@ -28,6 +28,7 @@ mod qh_new_host_part_access;
 mod qi_host_save_parts;
 mod qi_row_page_var;
 mod qj_part_propagation;
+mod ql_part_counts;
 mod row_window;
 mod run_record_group2;
 mod trap_reopen;

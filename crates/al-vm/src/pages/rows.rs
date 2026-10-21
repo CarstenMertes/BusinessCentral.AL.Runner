@@ -981,6 +981,12 @@ impl Session {
             );
             return Ok(Value::Boolean(false));
         }
+        // Last and First on a part whose whole view the client holds (`part_last_first`).
+        if st.borrow().after_new.is_none() {
+            if let Some(r) = self.part_last_first(st, how)? {
+                return Ok(Value::Boolean(r));
+            }
+        }
         // Leaving a row saves it.
         let anchor = st.borrow_mut().after_new.take();
         let writes = self.write_mark();

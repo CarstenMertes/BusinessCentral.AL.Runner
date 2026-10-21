@@ -411,6 +411,7 @@ impl Session {
             return unsupported("a new record on a page without a source table");
         }
         let rec = self.page_rec(st);
+        let part_xrec = if keep_focus { self.part_new_xrec(st)? } else { None };
         self.set_xrec(st);
         // A new line of a list starts below the last row the client holds: OnNewRecord sees that row as xRec, while the
         // insert sees the row the cursor was on (misc/W2BelowXRec.al:NewInTheMiddle_CursorOnFirstRow_KeyBetween,
@@ -493,7 +494,7 @@ impl Session {
         let existed = self.stored_row(&rec)?.is_some();
         st.borrow_mut().draft_stored = existed;
         st.borrow_mut().typed_before_key = false;
-        if let Some(last) = last_held {
+        if let Some(last) = last_held.or(part_xrec) {
             self.set_xrec_fields(st, last);
         }
         st.borrow_mut().new_row_inserted_by_trigger = false;

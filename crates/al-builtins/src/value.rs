@@ -416,11 +416,13 @@ pub struct PageState {
     pub save_record_called: bool,
     /// CurrPage.Update ran while the page's row was stored but outside the view the action had just set (list refresh).
     pub view_left: bool,
-    /// A TestPage GoToKey moved the cursor of a list without OnAfterGetCurrRecord: the client reads the new row once more before
-    /// the next action (pages/lt-ai-list-order/AiListOrderTests.al:39 Keep_Nav `update` = `R:R1002;R:R1002;A:filter...`).
+    /// A TestPage GoToKey moved the cursor of a list without OnAfterGetCurrRecord: the client reads the row once more before
+    /// every later action (pages/lt-ai-list-order/AiListOrderTests.al:39 Keep_Nav `update` = `R:R1002;R:R1002;A:filter...`;
+    /// QgGoToKeyNextCall.al:297 Plain_GoToKey_ThenActionWithoutUpdate_Twice `second_action_log`), until a move clears it.
     pub read_after_goto: bool,
-    /// A field read or SetValue came between that GoToKey and the next call: whether the row is still read again before an
-    /// action is not pinned (the action is refused).
+    /// A call that is not pinned (a property read, an `As*` read) came between that GoToKey and the next call: whether the row
+    /// is still read again before an action is not pinned (the action is refused). A Value read and SetValue are pinned
+    /// (QgGoToKeyNextCall.al:236, :317) and do not set it.
     pub read_after_goto_doubt: bool,
     /// That GoToKey ran no page trigger (the key is among the rows the client holds): Close then reads the row once
     /// (pages/lt-ai-list-order/QgGoToKeyNextCall.al:223 Plain_GoToKey_ThenValueRead, :277 Plain_GoToKey_ThenClose `close_log`
@@ -428,6 +430,18 @@ pub struct PageState {
     pub read_after_goto_quiet: bool,
     /// A SetValue came between that GoToKey and the next call.
     pub read_after_goto_set: bool,
+    /// A Previous came after that GoToKey and no action since: what Close then reads is not pinned (it is refused).
+    pub read_after_goto_prev: bool,
+    /// A list opened for edit over an empty view went back to its new-row line after an action stored one row through another
+    /// variable: First then reads that row as the list reads it on open (misc/lt-probes-needed-7/PnGShowRow.al:223).
+    pub empty_list_row_behind: bool,
+    /// An action put a list that showed stored rows on a row the client did not hold before it (an insert through Rec): what a
+    /// move reads next is not pinned (misc/lt-probes-needed-7/PnGShowRow.al:144 NonEmptyListInsertViaRec `first-after` reads
+    /// nothing, the Next after it reads the row it lands on twice); a move is refused.
+    pub action_landed_on_new_row: bool,
+    /// The page was run by the static `Page.RunModal` with its return value used (lookup mode set by the call, not by
+    /// `LookupMode(true)` on a page variable).
+    pub static_lookup: bool,
     /// Page triggers (the page's or an extension's) run on this page so far.
     pub triggers_run: u64,
     /// The reads after an action on a list without OnAfterGetCurrRecord ended the refresh: `CurrPage.Update` reads nothing more
@@ -604,6 +618,10 @@ impl PageState {
             read_after_goto_doubt: false,
             read_after_goto_quiet: false,
             read_after_goto_set: false,
+            read_after_goto_prev: false,
+            empty_list_row_behind: false,
+            action_landed_on_new_row: false,
+            static_lookup: false,
             triggers_run: 0,
             refresh_read_done: false,
             settled_first_row: false,

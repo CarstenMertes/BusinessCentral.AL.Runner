@@ -663,10 +663,23 @@ impl Session {
     pub(super) fn load_first_row(&mut self, st: &St, mode: PageMode, with_record: bool) -> Result<(), Signal> {
         let has_source = self.has_source(st);
         if !has_source {
-            // A page over no table shows its one implicit row: the expressions, then OnAfterGetRecord.
+            // A card over no table: OpenNew fails with DB:ClientInsertDenied after OnOpenPage, and no other trigger runs
+            // (misc/lt-protected-var-abs-query-views/P146PageExprSetValue.al:460 QG_NoSource_OpenNew_StepLog `qg open;`). Another
+            // page type is not pinned.
+            if mode == PageMode::New && !self.is_request_page(st) {
+                if !self.is_card(st) {
+                    return unsupported("OpenNew of a page without a source table other than a card (not pinned)");
+                }
+                return Err(self.no_source_open_new_denied(st)?);
+            }
+            // A page over no table shows its one implicit row: the expressions, then OnAfterGetCurrRecord. A card runs no
+            // OnAfterGetRecord (P146PageExprSetValue.al:420 QG_NoSource_OpenEdit_StepLog, :440 QG_NoSource_OpenView_StepLog
+            // `qg open;qg agcr;`); for another page type it is not pinned and stays as it was.
             st.borrow_mut().cursor = Cursor::Row;
             self.populate_expressions(st)?;
-            self.page_trigger(st, "onaftergetrecord", vec![])?;
+            if !self.is_card(st) || self.is_request_page(st) {
+                self.page_trigger(st, "onaftergetrecord", vec![])?;
+            }
             self.page_trigger(st, "onaftergetcurrrecord", vec![])?;
             self.page_event(st, "onaftergetcurrrecordevent", None, None)?;
             return Ok(());
@@ -1429,7 +1442,23 @@ impl Session {
             // A view that filters asks the same `=><` once, list, card and list part alike
             // (pagefindrecord/QcFindViewTests.al:78 ViewList_OpenView_FindStringAndRow, :361 ViewCard_OpenView_FindStringAndRow,
             // :505 DocPart_OpenEdit_LinesOfH1).
-            "=><"
+            // A list page variable run in lookup mode (LookupMode(true)) with no record is asked `=>` (pages/lt-ai-list-order/
+            // QgGoToKeyNextCall.al:629 Nav_LookupHandler_GoToKey_ThenOK `log` `F:=>=Yes;R:R1001;N:1=1;...`). The static RunModal
+            // in lookup mode is not pinned; a TableRelation lookup keeps `=><` as before.
+            let (lookup, lookup_set, static_lookup) = {
+                let s = st.borrow();
+                (s.lookup, s.lookup_set, s.static_lookup)
+            };
+            if lookup && static_lookup && self.is_list(st) {
+                return unsupported(
+                    "a list with OnFindRecord run in lookup mode by the static Page.RunModal without a record (which Find it is asked is not pinned)",
+                );
+            }
+            if lookup && lookup_set && self.is_list(st) {
+                "=>"
+            } else {
+                "=><"
+            }
         } else {
             "-"
         };

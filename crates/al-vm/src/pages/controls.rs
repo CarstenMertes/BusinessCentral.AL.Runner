@@ -920,37 +920,32 @@ impl Session {
         self.refuse_unpinned_state(&c.page)?;
         let st = &c.page;
         let m = method.method();
-        // After a GoToKey that moved a list without OnAfterGetCurrRecord only an action is pinned to come next (it reads the row
-        // again first, AiListOrderTests.al:39, :233; see `pageops.rs`); whether another call reads it is not pinned.
-        // A field read (value or property) or SetValue reads nothing more itself (not pinned; kept for baseline cases 78862
-        // Paging_GoToKey_Nav, 68164 TestPage_Control_Texts_GuidDurationAndBlankNumbers and
-        // TestPage_SetValue_OfTheValueAlreadyHeld_StillRunsOnValidate), and
-        // an action after it is refused (`actions.rs`).
+        // After a GoToKey that moved a list without OnAfterGetCurrRecord a Value read and SetValue read nothing, and the action
+        // after them reads the row twice (pages/lt-ai-list-order/QgGoToKeyNextCall.al:223 Plain_GoToKey_ThenValueRead `no_log`,
+        // `qty_log` empty; :236 Plain_GoToKey_ThenSetValue_ThenAction `setvalue_log` empty; :317 _ThenValueRead_ThenAction; the Nav_
+        // tests). The other field reads (properties, `As*`) read nothing more either (not pinned; kept for baseline cases 78862
+        // Paging_GoToKey_Nav and 68164 TestPage_Control_Texts_GuidDurationAndBlankNumbers), and an action after them is refused
+        // (`actions.rs`). Any other control call is refused.
         if m != PageMethod::Invoke && st.borrow().read_after_goto {
-            if !matches!(
-                m,
-                PageMethod::Value
-                    | PageMethod::AsBoolean
-                    | PageMethod::AsDate
-                    | PageMethod::AsDateTime
-                    | PageMethod::AsDecimal
-                    | PageMethod::AsInteger
-                    | PageMethod::AsTime
-                    | PageMethod::SetValue
-                    | PageMethod::ShowMandatory
-                    | PageMethod::Visible
-                    | PageMethod::Editable
-                    | PageMethod::Enabled
-                    | PageMethod::Caption
-            ) {
-                return unsupported(format!(
-                    "TestField.{m} right after a GoToKey moved a list without OnAfterGetCurrRecord (whether the row is read again is not pinned)"
-                ));
-            }
-            let mut s = st.borrow_mut();
-            s.read_after_goto_doubt = true;
-            if m == PageMethod::SetValue {
-                s.read_after_goto_set = true;
+            match m {
+                PageMethod::Value => {}
+                PageMethod::SetValue => st.borrow_mut().read_after_goto_set = true,
+                PageMethod::AsBoolean
+                | PageMethod::AsDate
+                | PageMethod::AsDateTime
+                | PageMethod::AsDecimal
+                | PageMethod::AsInteger
+                | PageMethod::AsTime
+                | PageMethod::ShowMandatory
+                | PageMethod::Visible
+                | PageMethod::Editable
+                | PageMethod::Enabled
+                | PageMethod::Caption => st.borrow_mut().read_after_goto_doubt = true,
+                _ => {
+                    return unsupported(format!(
+                        "TestField.{m} right after a GoToKey moved a list without OnAfterGetCurrRecord (whether the row is read again is not pinned)"
+                    ));
+                }
             }
         }
         // Only a field read may come between the refresh that settled a list and a First that reads nothing (AiListOrderTests.al:
@@ -1045,6 +1040,28 @@ impl Session {
                 return self.test_filter_op(m, st, args);
             }
             ControlTarget::BuiltIn(name) if m == PageMethod::Invoke => {
+                // OK of a lookup-mode page after a GoToKey that moved it (a list without OnAfterGetCurrRecord) reads the row once,
+                // also after a Value read between them (pages/lt-ai-list-order/QgGoToKeyNextCall.al:404
+                // Plain_LookupHandler_GoToKey_ThenOK `H:goto;R:R1003;H:ok`, :426 Plain_LookupHandler_GoToKey_ValueRead_ThenOK, :629 Nav_LookupHandler_GoToKey_ThenOK).
+                // Other built-in actions after it are not pinned.
+                if std::mem::take(&mut st.borrow_mut().read_after_goto) {
+                    let doubt = {
+                        let mut s = st.borrow_mut();
+                        s.read_after_goto_quiet = false;
+                        s.read_after_goto_set = false;
+                        s.read_after_goto_prev = false;
+                        std::mem::take(&mut s.read_after_goto_doubt)
+                    };
+                    if name != "OK" || !st.borrow().lookup || doubt {
+                        return unsupported(format!(
+                            "TestAction {name} after a GoToKey moved a list without OnAfterGetCurrRecord (whether the row is read again is not pinned)"
+                        ));
+                    }
+                    let rec = self.page_rec(st);
+                    if self.stored_row(&rec)?.is_some() {
+                        self.populate_current(st)?;
+                    }
+                }
                 // OK and Yes confirm, Cancel and No cancel; a refused save keeps the page open
                 // (corpus testpageclose/TestPageClosingActions.al).
                 // The client reads the row of a card before Cancel, as before any action (pages/lt-page-runtime/P82PageRun.al:

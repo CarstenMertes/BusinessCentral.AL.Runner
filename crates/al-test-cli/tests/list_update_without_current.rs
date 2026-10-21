@@ -101,20 +101,21 @@ fn first_on_the_first_row_of_a_find_and_next_list_reads_nothing_only_after_updat
     );
 }
 
-// AiListOrderTests.al:39, :233: after a GoToKey that moved a list without OnAfterGetCurrRecord, the extra read is pinned only for an
-// action that follows at once; Next, GoToKey, First and Last read only what they read (AiListOrderTests.al:1012-1021,
-// TestPageRuntimeContracts.al:342-357). Any other call next, and an action after a field read, are not pinned: refused.
+// AiListOrderTests.al:39, :233 and QgGoToKeyNextCall.al: after a GoToKey that moved a list without OnAfterGetCurrRecord, an action,
+// a Value read, SetValue, Previous and a RunObject action are pinned (al-vm tests/pages_ui/goto_next_call.rs); Next, GoToKey, First
+// and Last read only what they read (AiListOrderTests.al:1012-1021, TestPageRuntimeContracts.al:342-357). Any other call next, an
+// action after a property read, and Close right after such a Previous are not pinned: refused.
 #[test]
 fn goto_key_on_a_list_without_current_record_trigger_then_another_call_is_refused() {
     refused(
         r#"[Test] procedure ThenSetFilter() var L: Codeunit "LUW Log"; P: TestPage "LUW Plain"; begin
             L.Seed(); P.OpenView(); P.GoToKey('R1002'); P.Filter.SetFilter(Qty, '<5');
         end;
-        [Test] procedure ThenValue() var L: Codeunit "LUW Log"; P: TestPage "LUW Plain"; begin
-            L.Seed(); P.OpenView(); P.GoToKey('R1002'); if P.NoCtl.Value() = '' then; P.KeepFilter.Invoke();
+        [Test] procedure ThenVisible() var L: Codeunit "LUW Log"; P: TestPage "LUW Plain"; begin
+            L.Seed(); P.OpenView(); P.GoToKey('R1002'); if P.NoCtl.Visible() then; P.KeepFilter.Invoke();
         end;
-        [Test] procedure ThenPrevious() var L: Codeunit "LUW Log"; P: TestPage "LUW Plain"; begin
-            L.Seed(); P.OpenView(); P.GoToKey('R1002'); P.Previous();
+        [Test] procedure ThenPreviousThenClose() var L: Codeunit "LUW Log"; P: TestPage "LUW Plain"; begin
+            L.Seed(); P.OpenView(); P.GoToKey('R1002'); P.Previous(); P.Close();
         end;"#,
     );
 }

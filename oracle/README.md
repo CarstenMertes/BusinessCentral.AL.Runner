@@ -7,17 +7,17 @@ pass rate is measured against: every `<testcase>` in it passed on real BC.
 
 | Field | Value |
 |---|---|
-| Corpus repo | StefanMaron/BusinessCentral.AL.Language.Tests, branch `master` (the default branch; until 2026-10-19 the side branch `al-runtime-rs`, whose commits are all on `master`) |
-| Corpus pin | `0075e2f157a2d2bfc87b10b9b523952d7746a3c8` (the `corpus` submodule, master merge of corpus PR 697; must equal `corpus_commit` in `oracle.toml`) |
+| Corpus repo | aldevtools/BusinessCentral.AL.Language.Tests (until 2026-10-21 StefanMaron/BusinessCentral.AL.Language.Tests), branch `master` (the default branch; until 2026-10-19 the side branch `al-runtime-rs`, whose commits are all on `master`) |
+| Corpus pin | `c874a9568d481dd3fab228032680396b2d314230` (the `corpus` submodule, master merge of corpus PR 698; must equal `corpus_commit` in `oracle.toml`) |
 
 | Major | Oracle leg | Corpus commit of the run | Workflow run | Artifact | Artifact id | Cases |
 |---|---|---|---|---|---|---|
-| 27 | 27.5 | `0075e2f` (the pin) | 39540977651 | `junit-test-results-27.5` | 12320433983 | 17014 |
-| 28 | 28.5 | `0075e2f` (the pin) | 39540977651 | `junit-test-results-28.5` | 12321051931 | 17103 (+26 `OnRun`) |
-| 29 | 29.0 | `0075e2f` (the pin) | 39540977651 | `junit-test-results-29.0` | 12319914398 | 17197 (+26 `OnRun`) |
+| 27 | 27.5 | `c874a95` (the pin) | 39550736920 | `junit-test-results-27.5` | 12326046097 | 17022 |
+| 28 | 28.5 | `c874a95` (the pin) | 39550736920 | `junit-test-results-28.5` | 12324338281 | 17111 (+26 `OnRun`) |
+| 29 | 29.0 | `c874a95` (the pin) | 39550736920 | `junit-test-results-29.0` | 12325210534 | 17205 (+26 `OnRun`) |
 
-The files come from the green pull request run of PR 697, whose head `e4807c8` has the same tree as the pin `0075e2f`.
-The master push run of the pin (39545204077) was still running when the pin was set.
+The files come from the green pull request run of PR 698, whose head `d0d77cd` has the same tree as the pin `c874a95`.
+The master push run of the pin (39556438011) was still running when the pin was set.
 Every file has 0 failures. Each run published two artifacts with the same name; the
 oracle is the large one (the main suite, `junit-al-language.xml`). The small one is
 the OnPrem suite (`junit-al-language-onprem.xml`, 72 cases): it is the oracle of the

@@ -3,7 +3,7 @@ name: Release
 # A numbered alpha: push a tag v3.* on a commit of the `release` branch (docs/releasing.md).
 # The workflow checks the tag, runs the CI checks, builds and smoke tests the three targets and
 # creates a normal GitHub release (not a draft, not a pre-release) marked "latest", so that
-# `mise use github:StefanMaron/al-runtime-rs` and `mise up` find it (owner decision 2026-10-20).
+# `mise use github:aldevtools/BusinessCentral.AL.Runner` and `mise up` find it (owner decision 2026-10-20).
 # Assets: al-runner-<version>-<target>.tar.xz or .zip, SHA256SUMS, install.sh, install.ps1.
 # workflow_dispatch is a dry run: it builds and packages but creates no release.
 

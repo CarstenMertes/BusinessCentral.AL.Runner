@@ -29,6 +29,6 @@ copy, and al-runner --version lists them. ALRUNNER_NO_PATH_NOTE=1 turns
 this off.
 
 Report problems, especially wrong results:
-https://github.com/StefanMaron/al-runtime-rs/issues/new?template=alpha-feedback.md
+https://github.com/aldevtools/BusinessCentral.AL.Runner/issues/new?template=alpha-feedback.md
 
 License: MIT (see LICENSE).

@@ -49,7 +49,7 @@ from the Actions tab (workflow_dispatch), or push `release` by hand:
    prints the tag's version. Then it publishes the release with the archives
    (`al-runner-<version>-<target>.tar.xz` or `.zip`), `SHA256SUMS`, `install.sh`
    and `install.ps1`. The notes are a short fixed text plus the commit list.
-7. Check: `mise ls-remote github:StefanMaron/al-runtime-rs` lists the version.
+7. Check: `mise ls-remote github:aldevtools/BusinessCentral.AL.Runner` lists the version.
 
 ## 3. A hotfix that cannot come from main
 

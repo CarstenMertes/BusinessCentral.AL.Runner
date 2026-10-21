@@ -27,11 +27,13 @@ codeunit 50393 T
     end;
 
     procedure NoSubscriber(): Text
-    var R: Record MN;
+    var R: Record MN; V1: BigInteger;
     begin
         R.Id := 1; R.Qty := 5; R.Insert();
+        R.Get(1); V1 := R.SystemRowVersion;
+        R.Reset();
         R.ModifyAll(Qty, 5, false);
-        exit('ran');
+        R.Get(1); exit(Format(R.SystemRowVersion <> V1));
     end;
 }
 "#;
@@ -46,14 +48,13 @@ fn modify_all_keeps_an_unchanged_row_when_a_manual_subscriber_is_declared_but_no
     assert_eq!(al_builtins::assumptions::take_hits(), vec![]);
 }
 
-/// Without any declared modify-event subscriber ModifyAll writes in bulk and stamps the unchanged row's SystemModifiedAt
-/// (RcBTriggers.al:720 `row1StampChangedFalse = Yes`); its new SystemRowVersion is not pinned and marks an assumption.
+/// Without any declared modify-event subscriber ModifyAll writes in bulk: the row that has the value already gets a new
+/// SystemModifiedAt (RcBTriggers.al:720 `row1StampChangedFalse = Yes`) and a new SystemRowVersion, with or without an OnModify
+/// trigger, and no trigger runs (ModifyWithoutChange.al:375-448 QF_ModifyAll_SameValue_NoSubscriberDeclared_NoTrigger and
+/// _OnModifyTrigger, `row1_version_changed = Yes`, corpus bump 37). Pinned, so no assumption is marked.
 #[test]
-fn bulk_modify_all_over_an_unchanged_row_marks_its_row_version_assumption() {
+fn bulk_modify_all_gives_an_unchanged_row_a_new_row_version() {
     al_builtins::assumptions::clear_hits();
-    assert_eq!(text(al_testkit::run_in(SRC, "T", "NoSubscriber")), "ran");
-    assert_eq!(
-        al_builtins::assumptions::take_hits(),
-        vec![al_builtins::assumptions::Assumption::ModifyAllBulkUnchangedRowVersion]
-    );
+    assert_eq!(text(al_testkit::run_in(SRC, "T", "NoSubscriber")), "Yes");
+    assert_eq!(al_builtins::assumptions::take_hits(), vec![]);
 }

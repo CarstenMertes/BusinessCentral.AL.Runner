@@ -71,7 +71,38 @@ page 50403 CapCard
         }
     }
 }
+page 50404 CapList
+{
+    PageType = List;
+    SourceTable = CapRow;
+    layout { area(Content) { repeater(Rows) { field(Id; Rec.Id) { } field(ExprVat; Rec.ExprVat) { } field(ExprId; Rec.ExprId) { } } } }
+}
+page 50405 CapPart
+{
+    PageType = ListPart;
+    SourceTable = CapRow;
+    layout { area(Content) { repeater(Rows) { field(Id; Rec.Id) { } field(ExprId; Rec.ExprId) { } } } }
+}
+table 50406 CapHostRow { fields { field(1; Id; Integer) { } } keys { key(PK; Id) { } } }
+page 50407 CapHost
+{
+    PageType = Card;
+    SourceTable = CapHostRow;
+    layout { area(Content) { field(Id; Rec.Id) { } part(Lines; CapPart) { } } }
+}
 "#;
+
+/// The calls a page fill logged, with the empty-record calls (`@0;`) left out: whether there were any, then the rest.
+const SUMMARIZE: &str = r#"
+    local procedure Summarize(Calls: Text): Text
+    var Empty: Boolean;
+    begin
+        while Calls.Contains('@0;') do begin
+            Empty := true;
+            Calls := Calls.Remove(Calls.IndexOf('@0;') - 2, 5);
+        end;
+        exit(Format(Empty) + ':' + Calls);
+    end;"#;
 
 fn run(body: &str) -> String {
     let src = format!("{OBJECTS}\ncodeunit 50409 T\n{{\n{body}\n}}\n");
@@ -157,5 +188,81 @@ fn a_card_open_runs_the_expressions_and_caption_reads_what_it_filled() {
         got,
         "100|20@3;21@3;24@3;|Inv. Discount Amount Excl. VAT|Amount Excl. VAT||Id 3 call 103|Id 3 call 103|"
     );
+    assert_eq!(al_builtins::assumptions::take_hits(), vec![]);
+}
+
+/// QdCaptionClassAreas.al:591-630 QF_List_OpenView and :632-668 QF_List_OpenEdit (corpus bump 37): a List runs the expressions
+/// with an empty record, then once per control with the FIRST row only (`rest=20@3;23@3;24@3;`, not the other rows it reads);
+/// Next runs nothing and Caption() still reads the open's value (`next_exprId = Id 3` on row 5); Close runs nothing.
+#[test]
+fn a_list_runs_the_expressions_for_its_first_row_only_and_next_and_close_run_nothing() {
+    for open in ["OpenView", "OpenEdit"] {
+        al_builtins::assumptions::clear_hits();
+        let got = run(&format!(
+            r#"{SUMMARIZE}
+    procedure F(): Text
+    var R: Record CapRow; C: Codeunit Calls; P: TestPage CapList; S: Text; Open: Text;
+    begin
+        R.Id := 3; R.Insert(); R.Id := 5; R.Insert();
+        C.Take();
+        P.{open}();
+        S := Summarize(C.Take()) + '|' + P.Id.Value() + '|';
+        Open := P.ExprId.Caption();
+        S += Format(P.Next()) + '|' + Summarize(C.Take()) + '|' + P.Id.Value() + '|' + Format(P.ExprId.Caption() = Open) + '|';
+        S += P.ExprVat.Caption() + '|';
+        P.Close();
+        exit(S + Summarize(C.Take()));
+    end;"#
+        ));
+        assert_eq!(got, "Yes:20@3;24@3;|3|Yes|No:|5|Yes|Amount Excl. VAT|No:", "{open}");
+        assert_eq!(al_builtins::assumptions::take_hits(), vec![], "{open}");
+    }
+}
+
+/// QdCaptionClassAreas.al QF_Card_Next (corpus bump 37): Next on a card opened with OpenView runs nothing and Caption() keeps
+/// the open's value.
+#[test]
+fn next_on_a_card_runs_no_expression_and_keeps_the_caption() {
+    al_builtins::assumptions::clear_hits();
+    let got = run(&format!(
+        r#"{SUMMARIZE}
+    procedure F(): Text
+    var R: Record CapRow; C: Codeunit Calls; P: TestPage CapCard; S: Text; Open: Text;
+    begin
+        R.Id := 3; R.Insert(); R.Id := 5; R.Insert();
+        C.Take();
+        P.OpenView();
+        S := Summarize(C.Take()) + '|';
+        Open := P.ExprId.Caption();
+        S += Format(P.Next()) + '|' + Summarize(C.Take()) + '|' + P.Id.Value() + '|' + Format(P.ExprId.Caption() = Open);
+        P.Close();
+        exit(S + '|' + Summarize(C.Take()));
+    end;"#
+    ));
+    assert_eq!(got, "Yes:20@3;21@3;24@3;|Yes|No:|5|Yes|No:");
+    assert_eq!(al_builtins::assumptions::take_hits(), vec![]);
+}
+
+/// QdCaptionClassAreas.al QF_ListPart_OnCard (corpus bump 37): a ListPart on a card opened with OpenView runs the expressions
+/// for its first row; Next on the part runs nothing and Caption() keeps the open's value.
+#[test]
+fn a_list_part_on_a_card_runs_the_expressions_for_its_first_row_and_next_runs_nothing() {
+    al_builtins::assumptions::clear_hits();
+    let got = run(&format!(
+        r#"{SUMMARIZE}
+    procedure F(): Text
+    var R: Record CapRow; H: Record CapHostRow; C: Codeunit Calls; P: TestPage CapHost; S: Text; Open: Text;
+    begin
+        R.Id := 3; R.Insert(); R.Id := 5; R.Insert(); H.Id := 1; H.Insert();
+        C.Take();
+        P.OpenView();
+        S := Summarize(C.Take()) + '|' + P.Lines.Id.Value() + '|';
+        Open := P.Lines.ExprId.Caption();
+        S += Format(P.Lines.Next()) + '|' + Summarize(C.Take()) + '|' + P.Lines.Id.Value() + '|' + Format(P.Lines.ExprId.Caption() = Open);
+        P.Close();
+        exit(S + '|' + Summarize(C.Take()));
+    end;"#
+    ));
+    assert_eq!(got, "Yes:24@3;|3|Yes|No:|5|Yes|No:");
     assert_eq!(al_builtins::assumptions::take_hits(), vec![]);
 }

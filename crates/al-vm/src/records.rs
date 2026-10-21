@@ -2216,8 +2216,8 @@ impl Session {
                 self.check_code_storage(&t, &rec.borrow().fields, true)?;
                 self.sql_timestamp_before(&t, rec, stored_row.as_deref())?;
                 // A bulk ModifyAll(.., false) without subscribers stamps SystemModifiedAt of a row that has the value already
-                // (RcBTriggers.al:ModifyAll_Equal_Value_Rows_BQ); that it also gives the row a new row version is not pinned and
-                // marks the assumption modifyall-bulk-unchanged-row-version.
+                // (RcBTriggers.al:ModifyAll_Equal_Value_Rows_BQ) and gives it a new row version, with or without an OnModify
+                // trigger (record/lt-modify-without-change/ModifyWithoutChange.al:375-448, `row1_version_changed = Yes`).
                 let unchanged = match stored_row.as_deref() {
                     Some(old) if !rec.borrow().temporary && Session::modify_changes_nothing(&t, old, rec) => Some(old),
                     _ => None,
@@ -2229,16 +2229,7 @@ impl Session {
                         }
                         None
                     }
-                    Some(_) => {
-                        let bumped = self.bump_row_version(&t, rec);
-                        if bumped.is_some() {
-                            al_builtins::assumptions::assume(
-                                al_builtins::assumptions::Assumption::ModifyAllBulkUnchangedRowVersion,
-                            );
-                        }
-                        bumped
-                    }
-                    None => self.bump_row_version(&t, rec),
+                    _ => self.bump_row_version(&t, rec),
                 };
                 self.sql_timestamp_after(&t, rec);
                 let stamped = self.stamp_modify(&t, rec, stored_row.as_deref());

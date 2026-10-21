@@ -1222,7 +1222,12 @@ fn derive_relations(
     provided: &(dyn Fn(usize) -> bool + Sync),
     workers: usize,
 ) {
-    type Relations = Vec<(Vec<ir::RelationArm>, Vec<ir::RelationArm>, Vec<ir::MetaRelationArm>)>;
+    type Relations = Vec<(
+        Vec<ir::RelationArm>,
+        Vec<ir::RelationArm>,
+        Vec<ir::MetaRelationArm>,
+        Vec<String>,
+    )>;
     let ws = shared.ws;
     let tables: Vec<usize> = (0..program.objects.len())
         .filter(|&oi| !provided(oi) && !program.objects[oi].uncompiled && program.objects[oi].table.is_some())
@@ -1238,7 +1243,16 @@ fn derive_relations(
                 let relations = shared.members[oi]
                     .fields
                     .iter()
-                    .map(|f| lw.field_relations(oi, f))
+                    .map(|f| {
+                        let texts: Vec<String> = f
+                            .properties
+                            .iter()
+                            .filter(|(k, _)| k.eq_ignore_ascii_case("TableRelation"))
+                            .map(|(_, v)| v.clone())
+                            .collect();
+                        let (arms, runtime, meta) = lw.field_relations(oi, f);
+                        (arms, runtime, meta, if texts.len() > 1 { texts } else { Vec::new() })
+                    })
                     .collect();
                 (oi, relations)
             })
@@ -1251,10 +1265,11 @@ fn derive_relations(
         let Some(table) = program.objects[oi].table.as_mut() else {
             continue;
         };
-        for (f, (arms, runtime, meta)) in table.fields.iter_mut().zip(relations) {
+        for (f, (arms, runtime, meta, texts)) in table.fields.iter_mut().zip(relations) {
             f.relation_arms = arms;
             f.relation_runtime = runtime;
             f.relation_meta = meta;
+            f.relation_texts = texts;
         }
     }
 }

@@ -465,6 +465,63 @@ fn company_open(lowered: &Lowered, session: &mut Session, app: usize) -> Result<
     Ok(())
 }
 
+/// The test session raises Company Triggers OnCompanyOpen, then OnCompanyOpenCompleted, once, before the first test of a
+/// codeunit, and not again for later tests (ADR-046 amendment 1, A4 item 10; events/lt-bf-company-open/BfCompanyOpenTests.al:19-38,
+/// :40-50; events/lt-platform-events-v/PeVTests.al:297). Here the subscribers of the apps under test run; a subscriber that
+/// writes the database refuses the codeunit (what the runner does with those writes is not pinned). The subscribers of
+/// dependency apps do not run here, as in the install session (A4 item 4).
+pub(crate) fn test_session_company_open(lowered: &Lowered, session: &mut Session) -> Result<(), String> {
+    let engine = session.engine.clone();
+    let objs = &lowered.program.objects;
+    let mut subs = Vec::new();
+    for event in ["oncompanyopen", "oncompanyopencompleted"] {
+        let mut of_event: Vec<(usize, usize)> = engine
+            .events
+            .subscribers
+            .get(&(al_vm::events::COMPANY_TRIGGERS, event.to_string()))
+            .into_iter()
+            .flatten()
+            .filter(|s| !s.manual && !lowered.dependency[s.object])
+            .map(|s| (s.object, s.routine))
+            .collect();
+        of_event.sort_by_key(|&(o, _)| objs[o].id.unwrap_or(0));
+        subs.extend(of_event);
+    }
+    for (o, r) in subs {
+        let who = label(lowered, o, r);
+        if !closure(lowered, o, r).written.is_empty() {
+            return Err(format!(
+                "Company Triggers OnCompanyOpen(Completed) subscriber {who} writes the database in the test session before the first test: what the test runner does with it is not pinned (ADR-046 amendment 1, A4 item 10)"
+            ));
+        }
+        if let Some(reason) = crate::runtime::blocked_reason(lowered, o, r) {
+            return Err(format!(
+                "Company Triggers OnCompanyOpen(Completed) subscriber {who} before the first test: {reason}"
+            ));
+        }
+        match session.call_parameterless_subscriber(o, r) {
+            Ok(()) => {}
+            Err(Signal::Unsupported(why)) => {
+                return Err(format!(
+                    "Company Triggers OnCompanyOpen(Completed) subscriber {who} before the first test: {why}"
+                ));
+            }
+            Err(Signal::Error(e)) => {
+                return Err(format!(
+                    "Company Triggers OnCompanyOpen(Completed) subscriber {who} failed before the first test (behaviour not pinned): {}",
+                    e.message
+                ));
+            }
+            Err(_) => {
+                return Err(format!(
+                    "Company Triggers OnCompanyOpen(Completed) subscriber {who} stopped before the first test (not pinned)"
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Runs one install routine; why it did not run to its end, if it did not.
 fn run_routine(lowered: &Lowered, session: &mut Session, oi: usize, ri: usize) -> Option<String> {
     if let Some(reason) = crate::runtime::blocked_reason(lowered, oi, ri) {

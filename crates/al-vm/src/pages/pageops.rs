@@ -209,6 +209,57 @@ impl Session {
         } else {
             Vec::new()
         };
+        // Only an action right after the GoToKey is pinned to read the row once more (AiListOrderTests.al:39, :233): whether any
+        // other call reads it is not pinned, so that call is refused.
+        // A move after it reads only what the move reads: Next (AiListOrderTests.al:1012-1021 Paging_GoToKeyThenWalk_Nav, every
+        // `at` log empty), GoToKey, Last and First (handlers/TestPageRuntimeContracts.al:342-357 on a list with OnAfterGetRecord
+        // alone). Close drops it too: not pinned, kept for baseline cases 68335 List_Window_AfterGoToKeyOutsideTheRowsRead and
+        // List_Window_SmallTable and 67095 Nav_TwelveRows_OpenLastPreviousFirstNext.
+        let read_after_goto = std::mem::take(&mut st.borrow_mut().read_after_goto);
+        let doubt = std::mem::take(&mut st.borrow_mut().read_after_goto_doubt);
+        if read_after_goto {
+            match name {
+                PageMethod::Invoke => {
+                    let mut s = st.borrow_mut();
+                    s.read_after_goto = true;
+                    s.read_after_goto_doubt = doubt;
+                }
+                PageMethod::Next | PageMethod::GoToKey | PageMethod::Last | PageMethod::First | PageMethod::Close => {}
+                // A read of the page itself is a field call as in `controls.rs` (kept for baseline case 68164
+                // TestPage_Control_Texts_GuidDurationAndBlankNumbers, IsExpanded): an action after it is refused.
+                PageMethod::IsExpanded
+                | PageMethod::Caption
+                | PageMethod::Editable
+                | PageMethod::ValidationErrorCount
+                | PageMethod::GetValidationError => {
+                    let mut s = st.borrow_mut();
+                    s.read_after_goto = true;
+                    s.read_after_goto_doubt = true;
+                }
+                _ => {
+                    return unsupported(format!(
+                        "TestPage.{} right after a GoToKey moved a list without OnAfterGetCurrRecord (whether the row is read again is not pinned)",
+                        name.name()
+                    ));
+                }
+            }
+        }
+        // First reads nothing only right after the refresh that settled the list (a field read between them is pinned:
+        // AiListOrderTests.al:163-166, :336-338); any other call ends that.
+        let field_read = matches!(
+            name,
+            PageMethod::Value
+                | PageMethod::AsBoolean
+                | PageMethod::AsDate
+                | PageMethod::AsDateTime
+                | PageMethod::AsDecimal
+                | PageMethod::AsInteger
+                | PageMethod::AsTime
+                | PageMethod::GetField
+        );
+        if name != PageMethod::First && !field_read {
+            st.borrow_mut().settled_first_row = false;
+        }
         let r = match self.test_page_op_inner(method, st, args) {
             // `CurrPage` and a `Page` variable are the page's own code, not a TestPage the test closed: BC does not raise
             // "The TestPage is not open." for them. What a method of a page that is not open (any more) does is not pinned, so
@@ -248,6 +299,18 @@ impl Session {
             // whether they read their rows again is docs/probes-needed.md.
             _ => false,
         };
+        // pages/lt-ai-list-order/AiListOrderTests.al:38-39 (Keep_Nav), :232-233 (Keep_Plain), :300-301, :334-335: after a
+        // GoToKey that moved a list without OnAfterGetCurrRecord nothing is read (`goto_log` empty), and the next action
+        // reads the row twice before its trigger.
+        if name == PageMethod::GoToKey
+            && moved
+            && st.borrow().open
+            && self.is_list(st)
+            && self.declares(st, "onaftergetrecord")
+            && !self.declares(st, "onaftergetcurrrecord")
+        {
+            st.borrow_mut().read_after_goto = true;
+        }
         if moved && st.borrow().open {
             if st.borrow().host.is_some() {
                 self.sync_dependents(st)?;

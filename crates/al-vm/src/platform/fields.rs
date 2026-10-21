@@ -371,8 +371,32 @@ fn field_row(
     // RelationTableNo and RelationFieldNo (TestFieldDataClassificationVirtualTable.al:50-72).
     // The one related table of a relation: from the arms the runtime understands, or, for a relation
     // with a `filter(...)` condition, from the tables and fields the compile kept (`relation_meta`).
+    // A relation a tableextension's `modify(..) { TableRelation }` extended (one property per object, the base's
+    // first): a conditional base relation reads 0 whatever the extension adds (tableextension/
+    // TestTableExtFieldTableRelation.al:368, :409, :450, :491). An unconditional base relation keeps its table when
+    // the extension's relation ends in an unconditional arm (an unconditional relation :266, an else arm :532); an
+    // extension relation that ends in a condition is not pinned.
+    let relations: Vec<&str> = f.relation_texts.iter().map(String::as_str).collect();
+    if relations.len() > 1 {
+        if relation_starts_with_if(relations[0]) {
+            return Ok(());
+        }
+        if !relations[1..].iter().all(|t| relation_ends_unconditional(t)) {
+            return Err(format!(
+                "{}: the TableRelation a tableextension adds ends in a condition; the Field row of such a relation is not pinned",
+                what()
+            ));
+        }
+    }
     let single: Option<(Option<usize>, Option<usize>, String)> =
         match (f.relation_arms.as_slice(), f.relation_meta.as_slice()) {
+            (arms, _) if relations.len() > 1 && !arms.is_empty() => {
+                Some((arms[0].table, arms[0].field, arms[0].table_name.clone()))
+            }
+            (_, metas) if relations.len() > 1 && !metas.is_empty() => {
+                let m = &metas[0];
+                Some((Some(m.table), m.field, c.objects[m.table].name.clone()))
+            }
             ([], []) if f.relation => return Err(format!("{}: the TableRelation is not understood", what())),
             ([], []) => None,
             // A relation whose only arm has an `if` condition is conditional too: 0 and 0
@@ -500,4 +524,49 @@ pub(super) fn key_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
         out.push(Entry::ok(r));
     }
     out
+}
+
+/// Whether a `TableRelation` text starts with an `if` condition.
+fn relation_starts_with_if(text: &str) -> bool {
+    let t = text.trim_start();
+    t.get(..2).is_some_and(|s| s.eq_ignore_ascii_case("if"))
+        && !t[2..].starts_with(|c: char| c.is_alphanumeric() || c == '_' || c == '"')
+}
+
+/// Whether a `TableRelation` text's last arm has no condition: it has no `if`, or its last `else` is not an
+/// `else if`. Words inside quotes or `where(..)` texts are not told apart; a name with the word `else` in it
+/// reads as an else arm only when quoted, so quoted parts are skipped.
+fn relation_ends_unconditional(text: &str) -> bool {
+    if !relation_starts_with_if(text) {
+        return true;
+    }
+    let mut words = Vec::new();
+    let mut cur = String::new();
+    let mut quote: Option<char> = None;
+    for c in text.chars() {
+        match quote {
+            Some(q) if c == q => quote = None,
+            Some(_) => {}
+            None if c == '"' || c == '\'' => {
+                quote = Some(c);
+                if !cur.is_empty() {
+                    words.push(std::mem::take(&mut cur));
+                }
+                words.push(String::from("\u{0}"));
+            }
+            None if c.is_alphanumeric() || c == '_' => cur.push(c.to_ascii_lowercase()),
+            None => {
+                if !cur.is_empty() {
+                    words.push(std::mem::take(&mut cur));
+                }
+            }
+        }
+    }
+    if !cur.is_empty() {
+        words.push(cur);
+    }
+    match words.iter().rposition(|w| w == "else") {
+        Some(i) => words.get(i + 1).is_some_and(|w| w != "if"),
+        None => false,
+    }
 }

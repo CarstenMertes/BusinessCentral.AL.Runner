@@ -723,7 +723,7 @@ it only declares the lowest server it can run on.
   (must-not-compile 0576, 0620, 0364, ...); it replaces the runtime's own AR1005. Lowering refuses the routine.
 - Below the runtime floor (16.0) the catalog's tags decide nothing. The real AL compiler decides instead
   (owner-approved lane, 2026-10-21): `tools/alc-runtimes/alc_runtimes.py` writes one probe per catalog overload and
-  argument count, compiles them with the latest AL compiler at every runtime it accepts (1.0 to 18.0), and records
+  argument count, compiles them with the latest AL compiler at every runtime it accepts, and records
   where each call compiles and alc's AL0666 text elsewhere in the generated `catalog/alc-runtimes.txt` (it replaces
   the docs-based `catalog/docs-runtimes.txt`, whose "available or changed" runtime could not decide a call below it).
   A call the table says compiles at the app's runtime runs. One that does not is AL0666 with the compiler's text:
@@ -735,3 +735,8 @@ it only declares the lowest server it can run on.
   every later runtime, also at and above the floor (must-not-compile 0561, 0562).
 - Not covered: language features, properties and object types newer than the app's runtime. They are as ungated as
   before, at every runtime.
+- The compiler is the one the corpus uses (owner rule: always the latest, prerelease included): the `al_tool_version`
+  of `corpus/.github/workflows/ci.yml`, NuGet `Microsoft.Dynamics.BusinessCentral.Development.Tools` 30.0.42.60748-beta
+  since 2026-10-22 (the first table was measured with the stable 18.1.43.24897). AL 30.0.42.60748 accepts 59 runtimes:
+  1.0 to 18.0 and then 30.0; it rejects 19.0 with AL1043. Every row is the same as with 18.1: no call changes at
+  30.0, and the runtimes 1.0 to 18.0 give the same verdicts and texts. The file header names the compiler and package.

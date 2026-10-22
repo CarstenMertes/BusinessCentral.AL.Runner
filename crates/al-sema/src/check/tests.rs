@@ -339,7 +339,7 @@ fn an_app_declaring_an_older_runtime_than_the_target_gets_al0666_for_its_own_run
 
 #[test]
 fn below_the_runtime_floor_the_al_compilers_table_decides() {
-    // al-runner issue 5573: AL compiler 18.1 rejects NavApp.GetResourceAsText(Text, TextEncoding) below runtime 14.0
+    // al-runner issue 5573: the AL compiler (30.0.42.60748) rejects NavApp.GetResourceAsText(Text, TextEncoding) below runtime 14.0
     // (catalog/alc-runtimes.txt). The sentence is the one must-not-compile 0620 pins; the versions part is alc's.
     let src =
         cu("procedure P() var T: Text; begin T := NavApp.GetResourceAsText('value.txt', TextEncoding::UTF8); end;");
@@ -369,7 +369,8 @@ fn below_the_runtime_floor_a_call_without_an_al0666_answer_is_refused_with_ar100
     let src = cu("procedure P() var B: Boolean; begin B := File.Exists('x'); end;");
     let got = diags_declared("28", "3.0", &[&src]);
     assert!(
-        got.len() == 1 && got[0].starts_with("AR1007 `Exists` does not compile at runtime 3.0 with AL compiler 18."),
+        got.len() == 1
+            && got[0].starts_with("AR1007 `Exists` does not compile at runtime 3.0 with AL compiler 30.0.42.60748,"),
         "{got:?}"
     );
     assert_eq!(diags_declared("28", "4.0", &[&src]), Vec::<String>::new());
@@ -377,7 +378,7 @@ fn below_the_runtime_floor_a_call_without_an_al0666_answer_is_refused_with_ar100
 
 #[test]
 fn a_method_removed_in_an_older_runtime_is_al0666_at_every_later_runtime() {
-    // must-not-compile 0561-testpage-prev.al:1: `'Prev' is not available in runtime version '`; alc 18.1:
+    // must-not-compile 0561-testpage-prev.al:1: `'Prev' is not available in runtime version '`; alc 30.0.42.60748:
     // "The supported runtime versions are: '3.0' until, but not including '13.0'."
     let src = "codeunit 50100 T { Subtype = Test; procedure P() var Pg: TestPage \"ALT Page\"; begin Pg.Prev(); end; }";
     let page = "page 50101 \"ALT Page\" { }";

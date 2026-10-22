@@ -611,7 +611,7 @@ mod tests {
             None
         );
         assert!(
-            alc_runtimes_compiler().starts_with("18."),
+            alc_runtimes_compiler().starts_with("30."),
             "{}",
             alc_runtimes_compiler()
         );

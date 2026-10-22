@@ -337,10 +337,13 @@ impl Compiled {
     }
 }
 
+/// The resource files of an app: name relative to its resource folder, content.
+pub type Resources = [(String, Vec<u8>)];
+
 impl Compiled {
     /// Gives the apps the resource files `resources[i]` (for the app the caller numbered `i`) where they differ from
     /// those the program has. The program is copied only when something else still holds it.
-    pub(crate) fn set_resources(&mut self, resources: &[&[(String, Vec<u8>)]]) {
+    pub(crate) fn set_resources(&mut self, resources: &[&Resources]) {
         let changed: Vec<(usize, usize)> = self
             .order
             .iter()
@@ -426,7 +429,7 @@ impl Warm {
         &mut self,
         key: &str,
         files: &[FileChange<'_>],
-        resources: Option<&[&[(String, Vec<u8>)]]>,
+        resources: Option<&[&Resources]>,
         build: impl FnOnce() -> (Vec<al_sema::workspace::AppSource>, Vec<al_sema::AppKind>, Vec<Manifest>),
         symbols: &BTreeSet<String>,
         target: Option<&al_version::Target>,

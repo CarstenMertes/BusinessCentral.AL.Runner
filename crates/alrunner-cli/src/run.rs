@@ -559,13 +559,13 @@ fn warm_key(
         for (path, _) in &i.source.files {
             path.hash(&mut h);
         }
-        // What the app's manifest gives the program beside its code: a change to a resource file, a layout file or
-        // `app.json` is a new key, as the warm compile takes in only source text (issue 5604).
+        // What the app's manifest gives the program beside its code: a change to a layout file or `app.json` is a new
+        // key, as the warm compile takes in only source text (issue 5604). The resource files are not: they are
+        // run-time data, which each request hands to the program as they are then (issue 5635).
         let m = &i.manifest;
         (
             &m.publisher,
             &m.version,
-            &m.resources,
             m.include_source,
             &m.target,
             &m.symbols,
@@ -1237,9 +1237,12 @@ fn test_inner(
                         .map(move |(path, text)| al_testrun::runtime::FileChange { app, path, text })
                 })
                 .collect();
-            let (rt, used) = w.runtime.run(
+            // Resources are read per request, so a changed resource file reuses the compile (issue 5635).
+            let resources: Vec<&[(String, Vec<u8>)]> = inputs.iter().map(|i| i.manifest.resources.as_slice()).collect();
+            let (rt, used) = w.runtime.run_with_resources(
                 &key,
                 &files,
+                Some(&resources),
                 build_apps,
                 &symbols,
                 Some(&chosen.target),

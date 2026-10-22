@@ -337,6 +337,29 @@ impl Compiled {
     }
 }
 
+impl Compiled {
+    /// Gives the apps the resource files `resources[i]` (for the app the caller numbered `i`) where they differ from
+    /// those the program has. The program is copied only when something else still holds it.
+    pub(crate) fn set_resources(&mut self, resources: &[&[(String, Vec<u8>)]]) {
+        let changed: Vec<(usize, usize)> = self
+            .order
+            .iter()
+            .enumerate()
+            .filter_map(|(p, &caller)| {
+                let new = resources.get(caller)?;
+                (self.lowered.program.apps.get(p)?.resources.as_slice() != *new).then_some((p, caller))
+            })
+            .collect();
+        if changed.is_empty() {
+            return;
+        }
+        let program = std::sync::Arc::make_mut(&mut self.lowered.program);
+        for (p, caller) in changed {
+            program.apps[p].resources = resources[caller].to_vec();
+        }
+    }
+}
+
 /// What a warm server keeps between requests (ADR-028): the last compile, and which test codeunits it was compiled for.
 #[derive(Default)]
 pub struct Warm {
@@ -384,6 +407,26 @@ impl Warm {
         &mut self,
         key: &str,
         files: &[FileChange<'_>],
+        build: impl FnOnce() -> (Vec<al_sema::workspace::AppSource>, Vec<al_sema::AppKind>, Vec<Manifest>),
+        symbols: &BTreeSet<String>,
+        target: Option<&al_version::Target>,
+        dotnet: al_vm::dotnet::DotNetConfig,
+        suites: &[SuiteRun],
+        opts: &RunOptions,
+    ) -> Result<(CorpusRuntime, WarmUse), String> {
+        self.run_with_resources(key, files, None, build, symbols, target, dotnet, suites, opts)
+    }
+
+    /// [`Warm::run`], with the resource files of the apps as they are now: `resources[i]` for the app the caller
+    /// numbered `i` (issue 5635). Resources are run-time data (`NavApp.GetResourceAsText` reads them from the program,
+    /// `al-vm` `ctx.rs`), not code, so `key` leaves them out and a change of them reuses the compile. `None` keeps
+    /// those of the compile.
+    #[allow(clippy::too_many_arguments)]
+    pub fn run_with_resources(
+        &mut self,
+        key: &str,
+        files: &[FileChange<'_>],
+        resources: Option<&[&[(String, Vec<u8>)]]>,
         build: impl FnOnce() -> (Vec<al_sema::workspace::AppSource>, Vec<al_sema::AppKind>, Vec<Manifest>),
         symbols: &BTreeSet<String>,
         target: Option<&al_version::Target>,
@@ -494,7 +537,10 @@ impl Warm {
                 compiled,
             });
         }
-        let slot = self.slot.as_ref().expect("a compile is kept");
+        let slot = self.slot.as_mut().expect("a compile is kept");
+        if let Some(resources) = resources {
+            slot.compiled.set_resources(resources);
+        }
         let rt = CorpusRuntime::run_compiled(&slot.compiled, target, dotnet, opts);
         Ok((rt, used))
     }

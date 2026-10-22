@@ -554,6 +554,7 @@ SERVE
                          one at a time: the compile of the last request is kept, so a request with
                          the same sources and test codeunits reuses it (`cached`), and one that only
                          changes routine code compiles just those objects again (`incremental`).
+                         Resource files are read per request: a change to them reuses the compile.
                          Every request starts from the same database. runTests writes one `test` line
                          per test as it finishes, then a `summary`; execute runs one OnRun trigger per
                          app, or inline `code`, and answers with one line. cancel is answered at once

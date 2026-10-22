@@ -1333,7 +1333,6 @@ fn baseline_key(
     dotnet: &al_vm::dotnet::DotNetConfig,
     opts: &RunOptions,
 ) -> Option<String> {
-    let _ = lowered;
     let report = report?;
     opts.compile_cache.as_ref()?;
     if opts.trace
@@ -1373,6 +1372,18 @@ fn baseline_key(
             let symbols: Vec<&str> = ws.symbols_of(i).iter().map(String::as_str).collect();
             key.text("app_symbols", &symbols.join(","));
             key.bytes("source", &crate::compile_cache::source_hash(app));
+            // The install code can read the app's resource files, and a warm server hands it new ones without a new
+            // compile (issue 5635).
+            for (name, content) in lowered
+                .program
+                .apps
+                .get(i)
+                .map(|a| a.resources.as_slice())
+                .unwrap_or_default()
+            {
+                key.text("resource", name);
+                key.bytes("resource_content", content);
+            }
         }
     }
     let only: Vec<String> = only.unwrap_or(&[]).iter().map(|(a, id)| format!("{a}/{id}")).collect();

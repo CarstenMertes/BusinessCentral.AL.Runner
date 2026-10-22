@@ -1117,7 +1117,8 @@ fn a_stub_field_is_declared_on_each_request_and_the_real_field_ends_it() {
     s.line();
 }
 
-/// Issue 5604: a changed resource file is seen by the next request, which does not reuse the earlier compile.
+/// Issue 5604: a changed resource file is seen by the next request. Issue 5635: resources are run-time data, so the
+/// request reuses the earlier compile (`cached`).
 #[test]
 fn a_changed_resource_file_is_seen_by_the_next_request() {
     let d = tempfile::tempdir().unwrap();
@@ -1144,5 +1145,43 @@ fn a_changed_resource_file_is_seen_by_the_next_request() {
     write(&a, "ProbeResources/active.txt", "M0002");
     let lines = run(&mut s);
     assert!(lines[0]["message"].as_str().unwrap().contains("res=M0002"), "{lines:?}");
-    assert_eq!(lines.last().unwrap()["cached"], false, "{lines:?}");
+    assert_eq!(lines.last().unwrap()["cached"], true, "{lines:?}");
+}
+
+/// Issue 5635: the install code of a request that reuses the compile reads the resource files as they are now.
+#[test]
+fn install_code_reads_the_changed_resource_file_of_a_reused_compile() {
+    let d = tempfile::tempdir().unwrap();
+    let a = d.path().join("res");
+    write(
+        &a,
+        "app.json",
+        r#"{"id":"11111111-0000-0000-0000-000000005635","name":"ResInstall","publisher":"Test","version":"1.0.0.0","dependencies":[],"resourceFolders":["ProbeResources"]}"#,
+    );
+    write(&a, "ProbeResources/active.txt", "M0001");
+    write(
+        &a,
+        "src/T.al",
+        "table 50651 \"Res Row\" { fields { field(1; PK; Code[10]) { } field(2; Val; Text[30]) { } } keys { key(PK; PK) { } } }
+codeunit 50652 \"Res Install\" { Subtype = Install; trigger OnInstallAppPerCompany() var R: Record \"Res Row\"; begin R.PK := 'A'; R.Val := NavApp.GetResourceAsText('active.txt'); R.Insert(); end; }
+codeunit 50653 \"Res Install Tests\" { Subtype = Test; [Test] procedure InstalledIs() var R: Record \"Res Row\"; begin R.Get('A'); Error('inst=%1', R.Val); end; }",
+    );
+    let mut s = Server::start(&["--no-download", "--no-test-data"]);
+    s.line();
+    let run = |s: &mut Server| {
+        s.send(json!({"command": "runTests", "sourcePaths": [a], "test": "Codeunit50653.InstalledIs"}));
+        s.until_summary()
+    };
+    let lines = run(&mut s);
+    assert!(
+        lines[0]["message"].as_str().unwrap().contains("inst=M0001"),
+        "{lines:?}"
+    );
+    write(&a, "ProbeResources/active.txt", "M0002");
+    let lines = run(&mut s);
+    assert!(
+        lines[0]["message"].as_str().unwrap().contains("inst=M0002"),
+        "{lines:?}"
+    );
+    assert_eq!(lines.last().unwrap()["cached"], true, "{lines:?}");
 }

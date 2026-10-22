@@ -195,7 +195,10 @@ Differences a client must adapt to:
    that selects another codeunit compiles again and has `cached: false`). A changed source always shows. When only the
    code of routines of codeunits, tables or table extensions changed, just those objects are compiled again and the
    summary has `incremental: true` (ADR-029; a request takes 0.4 s on the corpus app and 2.2 s on Tests-ERM, of which
-   1.8 s is the tests); any other change compiles the workspace again. Every request starts from the same post-install
+   1.8 s is the tests); any other change compiles the workspace again. Resource files (`resourceFolders`) are not
+   compiled: each request reads them as they are then, so a changed resource file is seen by the next request and that
+   request still reuses the compile (`cached: true`, al-runner issue 5635). `cached` says only that the compile was
+   reused. Every request starts from the same post-install
    database, so nothing leaks between requests. The first request after a new build of `al-runner` builds the
    dependency cache (a minute with Microsoft's apps, then 3 GB resident); with the cache on disk it takes as long as a
    one-shot run. Repeats take 0.2 to 2 s.

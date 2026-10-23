@@ -12,6 +12,15 @@ use std::path::Path;
 
 const BASE: &str = r#"
 table 50100 "Demo Log" { fields { field(1; No; Integer) { } field(2; What; Text[50]) { } } keys { key(PK; No) { } } }
+codeunit 50131 "Contoso Tool"
+{
+    procedure CreateSetup() var L: Record "Demo Log"; begin L.No := 1; L.What := 'demo'; L.Insert(); end;
+    procedure CreateAll() var L: Record "Demo Log"; begin L.No := 1; L.What := 'demo'; L.Insert(); end;
+}
+codeunit 50132 "Tenant Data"
+{
+    trigger OnRun() var L: Record "Demo Log"; begin if GuiAllowed() then begin L.No := 3; L.What := 'client'; L.Insert(); end; end;
+}
 codeunit 50130 "Build Company"
 {
     trigger OnRun() var L: Record "Demo Log"; begin L.No := 1; L.What := 'demo'; L.Insert(); OnBuilt(); end;
@@ -54,7 +63,28 @@ fn manifest(p: &str) -> Manifest {
     }
 }
 
+/// The company of Microsoft's Legacy lane, as the fixture builds it.
+fn legacy() -> CompanyData {
+    CompanyData {
+        codeunit: 50130,
+        name: "Build Company".into(),
+        resources: None,
+        identity: "test".into(),
+        environment: None,
+        // Microsoft's Legacy lane installs its test apps before the company is built, as it does the base apps.
+        installed_first: Some(["base", "a", "b", "s", "x"].map(String::from).to_vec()),
+        method: None,
+        more_steps: Vec::new(),
+        no_client: false,
+        evaluation_company: false,
+    }
+}
+
 fn run(main_id: &str, main: String, cache: &Path, no_reuse: bool) -> CorpusRuntime {
+    run_company(main_id, main, cache, no_reuse, legacy())
+}
+
+fn run_company(main_id: &str, main: String, cache: &Path, no_reuse: bool, company: CompanyData) -> CorpusRuntime {
     CorpusRuntime::try_run_suites_with(
         vec![app(main_id, &["base"], main), app("base", &[], BASE.to_string())],
         vec![al_sema::AppKind::Workspace, al_sema::AppKind::Dependency],
@@ -70,15 +100,7 @@ fn run(main_id: &str, main: String, cache: &Path, no_reuse: bool) -> CorpusRunti
                 rebuild: false,
                 country: String::new(),
             }),
-            company_data: Some(CompanyData {
-                codeunit: 50130,
-                name: "Build Company".into(),
-                resources: None,
-                identity: "test".into(),
-                environment: None,
-                // Microsoft's Legacy lane installs its test apps before the company is built, as it does the base apps.
-                installed_first: Some(vec!["base".into(), main_id.into()]),
-            }),
+            company_data: Some(company),
             no_company_reuse: no_reuse,
             ..Default::default()
         },
@@ -180,5 +202,47 @@ fn a_test_app_that_takes_part_in_building_the_company_gets_one_built_with_it() {
     ] {
         let rt = run("x", test_app("x", extra), dir.path(), false);
         assert!(company(&rt).contains(why), "{}", company(&rt));
+    }
+}
+
+// The Contoso companies of the IntegrationTest and Uncategorized lanes (PR 5770: steps, without a client, an evaluation
+// company) are shared the same way, and the two lanes' companies never stand in for each other.
+#[test]
+fn a_company_built_in_steps_is_shared_per_lane_and_never_across_lanes() {
+    let dir = tempfile::tempdir().unwrap();
+    let contoso = |all: bool| CompanyData {
+        codeunit: 50131,
+        name: "Contoso Tool".into(),
+        resources: None,
+        identity: format!("contoso {} test", if all { "all" } else { "setup" }),
+        environment: None,
+        installed_first: None,
+        method: Some(if all { "CreateAll" } else { "CreateSetup" }.into()),
+        more_steps: vec![al_testrun::company_data::CompanyStep {
+            codeunit: 50132,
+            name: "Tenant Data".into(),
+            method: None,
+        }],
+        no_client: true,
+        evaluation_company: all,
+    };
+    for all in [false, true] {
+        let first = run_company("a", test_app("a", ""), dir.path(), false, contoso(all));
+        assert!(
+            company(&first).starts_with("built for the dependency apps alone, and kept"),
+            "{all}: {}",
+            company(&first)
+        );
+        // Without a client the tenant data step wrote nothing: the log is `demo;` only.
+        assert_eq!(outcomes(&first), vec![("Log".to_string(), Outcome::Pass)], "{all}");
+        let second = run_company("b", test_app("b", ""), dir.path(), false, contoso(all));
+        assert!(
+            company(&second).starts_with("read from the company"),
+            "{all}: {}",
+            company(&second)
+        );
+        assert_eq!(outcomes(&second), outcomes(&first), "{all}");
+        let fresh = run_company("b", test_app("b", ""), dir.path(), true, contoso(all));
+        assert_eq!(outcomes(&fresh), outcomes(&second), "{all}");
     }
 }

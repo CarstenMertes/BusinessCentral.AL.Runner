@@ -1728,11 +1728,29 @@ pub(crate) fn world_key(
         },
     );
     key.bytes("runtime_build", &crate::compile_cache::runtime_build());
-    // The codeunit that builds the company, and what its files and its app's source are.
+    // The steps that build the company, how they run, and what their files and their apps' source are. The identity
+    // tells the companies apart (`demotool ...`, `contoso setup ...`, `contoso all ...`); the steps, the session
+    // flags and the apps installed first are in the key as well, so two companies that run differently never share.
     match &opts.company_data {
-        Some(c) => key.text("company_data", &format!("{} {} {}", c.codeunit, c.name, c.identity)),
-        None => key.text("company_data", ""),
-    };
+        Some(c) => {
+            key.text("company_data", &format!("{} {} {}", c.codeunit, c.name, c.identity));
+            let steps: Vec<String> = c
+                .steps()
+                .iter()
+                .map(|s| format!("{} {}", s.codeunit, s.label()))
+                .collect();
+            key.text("company_steps", &steps.join(";"));
+            key.text("company_no_client", if c.no_client { "yes" } else { "no" });
+            key.text("company_evaluation", if c.evaluation_company { "yes" } else { "no" });
+            match &c.installed_first {
+                Some(first) => key.text("company_installed_first", &first.join(";")),
+                None => key.text("company_installed_first", "<every app>"),
+            };
+        }
+        None => {
+            key.text("company_data", "");
+        }
+    }
     key.text("dependencies", &report.file.file_name()?.to_string_lossy());
     match target {
         Some(t) => key.text("target", &format!("{}/{}", t.bc, t.runtime)),

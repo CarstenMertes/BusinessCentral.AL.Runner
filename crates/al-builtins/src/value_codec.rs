@@ -1,6 +1,7 @@
 //! Plain values as bytes, for the install baseline's snapshot on disk and between threads
-//! (`al_vm::Baseline::to_bytes`). Only [`Value::is_plain`] values have a form: a handle (`Rc`)
-//! cannot leave its thread (a RecordId, held in an `Rc` but a value, is plain). Little-endian, a tag byte per value, lengths as `u32`.
+//! (`al_vm::Baseline::to_bytes`). The [`Value::is_plain`] values have a form, and so does a RecordId: it is a value
+//! that an `Rc` carries, written out and read back as a new one. Other handles (`Rc`) have none. A RecordId is still
+//! not plain: its `Rc` cannot be shared between threads (`is_plain` decides what al-vm's `SharedMat` may share). Little-endian, a tag byte per value, lengths as `u32`.
 
 use crate::value::Value;
 use rust_decimal::Decimal;
@@ -401,7 +402,7 @@ mod tests {
     }
 
     #[test]
-    fn a_value_has_a_form_exactly_when_it_is_plain() {
+    fn a_value_has_a_form_exactly_when_it_is_plain_or_a_record_id() {
         let handles = vec![
             Value::List(std::rc::Rc::default()),
             Value::Dictionary(std::rc::Rc::new(std::cell::RefCell::new(Vec::new()))),
@@ -419,7 +420,15 @@ mod tests {
             ),
         ];
         for v in plain_samples().into_iter().chain(handles) {
-            assert_eq!(encode(&v, &mut Vec::new()), v.is_plain(), "{v:?}");
+            let record_id = match &v {
+                Value::Library(crate::library_kind::LibraryKind::RecordId, l) => match &*l.borrow() {
+                    crate::value::LibraryValue::Empty => true,
+                    crate::value::LibraryValue::RecordId { key, .. } => key.iter().all(Value::is_plain),
+                    _ => false,
+                },
+                _ => false,
+            };
+            assert_eq!(encode(&v, &mut Vec::new()), v.is_plain() || record_id, "{v:?}");
         }
     }
 

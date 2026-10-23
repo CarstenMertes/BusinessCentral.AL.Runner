@@ -1653,14 +1653,6 @@ impl Value {
     /// are `Arc`s), so
     /// that rows made of such values can be read from several threads.
     pub fn is_plain(&self) -> bool {
-        // A RecordId is a value that an `Rc` carries (`value_codec`), unless its key holds a handle.
-        if let Value::Library(crate::library_kind::LibraryKind::RecordId, l) = self {
-            return match &*l.borrow() {
-                LibraryValue::Empty => true,
-                LibraryValue::RecordId { key, .. } => key.iter().all(Value::is_plain),
-                _ => false,
-            };
-        }
         matches!(
             self,
             Value::Null
@@ -1906,6 +1898,9 @@ mod tests {
         assert!(plain.iter().all(Value::is_plain));
         assert!(!Value::List(Default::default()).is_plain());
         assert!(!Value::Library("X".into(), Default::default()).is_plain());
+        // A RecordId has a form in the baseline snapshot (`value_codec`), but its `Rc` cannot be shared between threads: a
+        // listing that holds one is no `SharedMat` (al-vm platform/mat.rs).
+        assert!(!Value::Library(crate::library_kind::LibraryKind::RecordId, Default::default()).is_plain());
     }
 }
 

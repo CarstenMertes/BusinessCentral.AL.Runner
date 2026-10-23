@@ -521,6 +521,7 @@ impl Providers {
             Virtual::FeatureKey => host_tables::feature_key_rows(t, self.engine().target.as_ref()),
             Virtual::LanguageSelection => host_tables::language_selection_rows(t, self.engine().target.as_ref()),
             Virtual::Key => fields::key_rows(self, t),
+            Virtual::IntelligentCloud => Vec::new(),
             Virtual::Integer | Virtual::Date | Virtual::WindowsLanguage | Virtual::LicensePermission => {
                 unreachable!("generated, never listed")
             }

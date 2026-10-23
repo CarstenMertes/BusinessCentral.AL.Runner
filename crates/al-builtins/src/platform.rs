@@ -46,6 +46,8 @@ pub enum Virtual {
     PublishedApplication,
     /// Known to exist, not pinned: lowers, and every read is refused.
     ApiWebhookEntity,
+    /// No rows: an OnPrem tenant is not set up for the cloud (al-language-onprem/platform/PtOnPremTables.al:248).
+    IntelligentCloud,
     /// Media live in the session's media store (ADR-017); the table is not a view of it yet.
     TenantMedia,
     MetadataPermissionSet,
@@ -257,6 +259,14 @@ pub const REGISTRY: &[(u32, &str, Provider)] = &[
     // Empty on a fresh tenant and ordinary to Insert, Modify and Delete, with several rows and a blank App ID (platform/lt-platform-tables/
     // PtServicesAppSetting.al: NavAppSetting_Content `count` 0, NavAppSetting_InsertModifyDelete, NavAppSetting_SeveralRowsAndBlankGuid).
     (2_000_000_201, "NAV App Setting", Provider::Stored),
+    // Read from an OnPrem app: IsEmpty Yes, Count 0, Get and FindFirst No, inside a TryFunction too without an error
+    // (al-language-onprem/platform/PtOnPremTables.al:248, QZ_IntelligentCloud_Read). Writes are not pinned: a virtual
+    // table refuses them.
+    (
+        2_000_000_146,
+        "Intelligent Cloud",
+        Provider::Virtual(Virtual::IntelligentCloud),
+    ),
     // Ordinary tables that a fresh tenant fills with pinned rows (al-vm `platform/seed.rs`): Insert(true) of an existing key
     // answers false and Modify(true) true (platform/lt-platform-tables/PtCloudTables.al:378-432 and :435-492).
     (2_000_000_233, "Tenant Report Layout Selection", Provider::Stored),

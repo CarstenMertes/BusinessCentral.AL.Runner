@@ -1,6 +1,6 @@
 //! Plain values as bytes, for the install baseline's snapshot on disk and between threads
 //! (`al_vm::Baseline::to_bytes`). Only [`Value::is_plain`] values have a form: a handle (`Rc`)
-//! cannot leave its thread. Little-endian, a tag byte per value, lengths as `u32`.
+//! cannot leave its thread (a RecordId, held in an `Rc` but a value, is plain). Little-endian, a tag byte per value, lengths as `u32`.
 
 use crate::value::Value;
 use rust_decimal::Decimal;
@@ -174,6 +174,29 @@ fn encode_in(v: &Value, out: &mut Vec<u8>) -> bool {
             put_u8(out, 18);
             put_str(out, why);
         }
+        // A RecordId is a value, not a handle: the `Rc` only carries it (a table column of type RecordId, such as
+        // "Assisted Setup Log"."Entery No." of the DemoTool's company). Empty, or table, number, name and key values.
+        Value::Library(crate::library_kind::LibraryKind::RecordId, l) => match &*l.borrow() {
+            crate::value::LibraryValue::Empty => put_u8(out, 19),
+            crate::value::LibraryValue::RecordId {
+                table,
+                table_no,
+                name,
+                key,
+            } => {
+                put_u8(out, 20);
+                put_u32(out, *table);
+                put_u32(out, *table_no);
+                put_str(out, name);
+                put_u32(out, key.len() as u32);
+                for v in key {
+                    if !encode_in(v, out) {
+                        return false;
+                    }
+                }
+            }
+            _ => return false,
+        },
         // Handles (`Rc`) have no form: they cannot leave their thread. Every variant is named, so a new one is a
         // compile error here and has to be placed (plain, with a tag, or in this list), never a silent fallback.
         // A counter value is tied to the session whose reads it compares with (`sqlcount`).
@@ -214,6 +237,26 @@ pub fn decode(r: &mut Reader) -> Option<Value> {
         13 => Value::Guid(r.take(16)?.try_into().ok()?),
         14 => Value::DateFormula(r.str()?),
         18 => Value::Unknown(r.str()?.into()),
+        19 => Value::Library(crate::library_kind::LibraryKind::RecordId, Default::default()),
+        20 => {
+            let table = r.u32()?;
+            let table_no = r.u32()?;
+            let name = r.str()?;
+            let n = r.u32()? as usize;
+            let mut key = Vec::with_capacity(n.min(64));
+            for _ in 0..n {
+                key.push(decode(r)?);
+            }
+            Value::Library(
+                crate::library_kind::LibraryKind::RecordId,
+                std::rc::Rc::new(std::cell::RefCell::new(crate::value::LibraryValue::RecordId {
+                    table,
+                    table_no,
+                    name,
+                    key,
+                })),
+            )
+        }
         15 => {
             let ord = i32::from_le_bytes(r.take(4)?.try_into().ok()?);
             let n = r.u32()? as usize;
@@ -307,6 +350,17 @@ mod tests {
             Value::DateFormula("1M+CM".into()),
             Value::Option(2, std::sync::Arc::from(vec!["A".to_string(), "B".into(), "C".into()])),
             Value::Enum(50100, -3),
+            // A RecordId column (the DemoTool's company holds them, table 1649 "Assisted Setup Log"), empty and set.
+            Value::Library(crate::library_kind::LibraryKind::RecordId, Default::default()),
+            Value::Library(
+                crate::library_kind::LibraryKind::RecordId,
+                std::rc::Rc::new(std::cell::RefCell::new(crate::value::LibraryValue::RecordId {
+                    table: 280,
+                    table_no: 18,
+                    name: "Customer".into(),
+                    key: vec![Value::Code("C-1".into())],
+                })),
+            ),
             Value::Blob(blob),
         ]
     }
@@ -352,6 +406,17 @@ mod tests {
             Value::List(std::rc::Rc::default()),
             Value::Dictionary(std::rc::Rc::new(std::cell::RefCell::new(Vec::new()))),
             Value::Array(std::rc::Rc::new(std::cell::RefCell::new(Vec::new()))),
+            // Another library type, and a RecordId whose key holds a handle.
+            Value::Library(crate::library_kind::LibraryKind::TextBuilder, Default::default()),
+            Value::Library(
+                crate::library_kind::LibraryKind::RecordId,
+                std::rc::Rc::new(std::cell::RefCell::new(crate::value::LibraryValue::RecordId {
+                    table: 1,
+                    table_no: 2,
+                    name: "T".into(),
+                    key: vec![Value::List(std::rc::Rc::default())],
+                })),
+            ),
         ];
         for v in plain_samples().into_iter().chain(handles) {
             assert_eq!(encode(&v, &mut Vec::new()), v.is_plain(), "{v:?}");

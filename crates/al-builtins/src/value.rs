@@ -1653,6 +1653,14 @@ impl Value {
     /// are `Arc`s), so
     /// that rows made of such values can be read from several threads.
     pub fn is_plain(&self) -> bool {
+        // A RecordId is a value that an `Rc` carries (`value_codec`), unless its key holds a handle.
+        if let Value::Library(crate::library_kind::LibraryKind::RecordId, l) = self {
+            return match &*l.borrow() {
+                LibraryValue::Empty => true,
+                LibraryValue::RecordId { key, .. } => key.iter().all(Value::is_plain),
+                _ => false,
+            };
+        }
         matches!(
             self,
             Value::Null

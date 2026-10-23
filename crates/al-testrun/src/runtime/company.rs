@@ -144,7 +144,7 @@ fn identity(program: &al_ir::Program, o: &al_ir::Object) -> (String, String, Str
             .get(o.app as usize)
             .map(|a| a.id.clone())
             .unwrap_or_default(),
-        format!("{:?}", o.kind),
+        o.kind.label().to_string(),
         o.name.to_lowercase(),
     )
 }
@@ -288,7 +288,11 @@ pub(crate) fn company_key(
 /// The two baselines hold the same data and say the same about the install roots; else the first difference.
 pub(crate) fn same(a: &BaselineRun, b: &BaselineRun) -> Result<(), String> {
     if a.notes != b.notes {
-        return Err(format!("the notes differ: {:?} / {:?}", a.notes, b.notes));
+        let first = a.notes.iter().zip(&b.notes).find(|(x, y)| x != y);
+        return Err(match first {
+            Some((x, y)) => format!("the notes differ: '{x}' / '{y}'"),
+            None => format!("{} notes / {} notes", a.notes.len(), b.notes.len()),
+        });
     }
     if (a.ran, a.total, a.filled) != (b.ran, b.total, b.filled) {
         return Err(format!(
@@ -307,7 +311,14 @@ pub(crate) fn same(a: &BaselineRun, b: &BaselineRun) -> Result<(), String> {
             b.exported_tables()
                 .unwrap_or_default()
                 .into_iter()
-                .map(|t| ((t.company, t.object), format!("{:?}", t.rows)))
+                .map(|t| {
+                    let mut bytes = Vec::new();
+                    for (k, r) in &t.rows {
+                        al_builtins::value_codec::encode_row(k, &mut bytes);
+                        al_builtins::value_codec::encode_row(r, &mut bytes);
+                    }
+                    ((t.company, t.object), bytes)
+                })
                 .collect::<std::collections::BTreeMap<_, _>>()
         };
         let (ta, tb) = (tables(&a.baseline), tables(&b.baseline));

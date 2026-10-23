@@ -2627,7 +2627,7 @@ codeunit 50131 \"Tenant Step\" {{
     assert_eq!(outcome("Order"), Outcome::Pass);
     assert_eq!(outcome("TestsHaveAClient"), Outcome::Pass);
     assert_eq!(outcome("Evaluation"), Outcome::Pass);
-    // The build relied on the session without a client: every test of the company is a flagged pass.
+    // The build relied on the session without a client: the run lists the assumption with the baseline.
     assert!(
         rt.phases
             .baseline_assumptions

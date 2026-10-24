@@ -100,6 +100,8 @@
 61297 NoHandler_UnderAllowOutboundFromHandler
 61298 Handler_UnderBlockOutboundRequests_StillAnswers
 61298 NoHandler_UnderBlockOutboundRequests
+61298 RS_MockHandler_ReturnsFalse_GivesTheMock
+61298 RS_PassOnHandler_ReturnsTrue_UnderBlockOutboundRequests
 98200 RH_AgentUtilities_OutsideAgentSession
 98200 RH_FeatureAccess_Environment
 98251 AtContainsFilterMatchesCaseInsensitively
@@ -128,7 +130,6 @@
 98550 PY_HandlerTrue_StrMenuAllowOnce
 98550 PY_HandlerTrue_StrMenuBlockOnce
 98550 PY_HandlerTrue_StrMenuCancel
-98550 PY_ReasonPhrase_1
 98550 PY_ReasonPhrase_2
 98550 PY_ReasonPhrase_3
 98550 PY_UnusedResult_AllowOnceRefused

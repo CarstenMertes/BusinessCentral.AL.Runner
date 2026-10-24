@@ -2731,8 +2731,8 @@ impl Session {
 
     /// [`run_page_ui`](Self::run_page_ui); `field`: the call had a field argument (`Page.RunModal(Id, Rec, Rec.Field)`).
     /// With no handler for the page the field changes nothing: the unhandled-UI error is the same as without it
-    /// (corpus errors/lt-last-error-and-events/P70_06RunModalField.al). What a handler sees and what the field
-    /// takes when it answers OK is not pinned, so that is refused.
+    /// (corpus errors/lt-last-error-and-events/P70_06RunModalField.al), and with a TestPage handler neither (P106RunStatic.al).
+    /// With a Page-typed handler a LookupOK answer is refused ([`Self::field_argument_answer`]).
     pub(crate) fn run_page_ui_with(
         &mut self,
         st: &St,
@@ -2821,7 +2821,11 @@ impl Session {
             return Ok(Value::Null);
         };
         let answer = self.answer_page(&st, handler, modal)?;
-        let answer = self.field_argument_answer(field, answer)?;
+        // With a TestPage handler the field argument changes nothing: what the handler sees, the action and the record after
+        // the call are those of the call without it, for a field number, a field value, a FieldRef and an Integer of another
+        // table, on a list and a card, with OK, Cancel, a Close action, a pick and a FilterGroup 2 filter
+        // (pages/lt-page-run-overloads-testpart/P106RunStatic.al:141-700 P106_RunModal_NumRecField*, P106_Run_NumRecField*,
+        // P106_BP_*; :761-866 RP_RunModal_FieldArg_*, RP_Run_FieldArg_FilterGroup2_GoToRecord; al-runner issue 5753).
         self.hand_back_selection(&st, &handed, &answer);
         // After a LookupOK the page variable holds the row the page closed on, and the next run of the variable opens on it;
         // after OK it does not (pages/lt-page-run-overloads-testpart/P106RunInstance.al:P106_Inst_RunModal_LookupMode,
@@ -2841,9 +2845,9 @@ impl Session {
         Ok(answer)
     }
 
-    /// What `Page.RunModal(Id, Rec, Field)` does with the field when a handler answered. Only an answer other than LookupOK is
-    /// accepted, and then the field keeps its value (documented: the field takes the page's value on LookupOK; the corpus pins no
-    /// handler with a field argument, P70_06RunModalField.al has none bound). Microsoft's tests need it: Segment Line.RunCreateInteraction
+    /// What `Page.RunModal(Id, Rec, Field)` does with the field when a Page-typed handler answered. Only an answer other than
+    /// LookupOK is accepted, and then the field keeps its value (the corpus pins the field argument with TestPage handlers only,
+    /// P106RunStatic.al). Microsoft's tests need it: Segment Line.RunCreateInteraction
     /// runs `PAGE.RunModal(PAGE::"Create Interaction", Rec, "Interaction Template Code")` and Tests-Marketing answer it with a
     /// Page-typed handler that leaves Response alone (33 tests). A LookupOK answer stays refused.
     fn field_argument_answer(&self, field: bool, answer: Value) -> Result<Value, Signal> {
@@ -2964,6 +2968,41 @@ impl Session {
         Ok(())
     }
 
+    /// A ModalPageHandler that raised an error left its page open: the platform still asks the close, the parts first with
+    /// None, then the page with its own action, and RunModal raises the handler's error (pages/lt-modal-query-close-veto/
+    /// PageModalQueryCloseVeto.al:478 RP_ListWithFactBox_HandlerCancel_HostVetoes, where the page refuses the close). Pinned only
+    /// for a refusal by a page with open parts; a page without parts, or one where no close trigger is declared, closes as before
+    /// without asking; a close the trigger allows, or one with an unsaved row, is refused.
+    fn close_modal_after_handler_error(&mut self, st: &St) -> Result<(), Signal> {
+        let parts: Vec<St> = st
+            .borrow()
+            .parts
+            .iter()
+            .map(|(_, c)| c.clone())
+            .filter(|c| c.borrow().open)
+            .collect();
+        // Kept, not pinned: a page without open parts closes without its close triggers, as before (handlers/
+        // TestPageModalQueryClose_Tests.al PlainModal_HasNoBuiltInCancelAction, codeunit 60338's dialog cases,
+        // TestPageQueryCloseError_Tests.al ErrorInQueryClosePage_*, P106RunInstance.al P106_Inst_RunModal_List pass through it).
+        let asks = self.declares(st, "onqueryclosepage") || parts.iter().any(|p| self.declares(p, "onqueryclosepage"));
+        if !asks || parts.is_empty() {
+            return Ok(());
+        }
+        if st.borrow().dirty || st.borrow().draft || !st.borrow().hidden_parts.is_empty() {
+            return unsupported(
+                "a page left open by a ModalPageHandler that raised an error, with an unsaved row or a hidden part (not pinned)",
+            );
+        }
+        let a = self.unattended_action(st);
+        match self.close_with(st, a, false, false) {
+            Ok(_) if st.borrow().open && st.borrow().close_vetoed => self.refuse_unpinned_modal_veto(st),
+            Err(Signal::Error(_)) | Ok(_) => unsupported(
+                "a page left open by a ModalPageHandler that raised an error, whose close is allowed (not pinned)",
+            ),
+            Err(e) => Err(e),
+        }
+    }
+
     /// Hands the open page `st` to its handler, closes it if the handler left it open, and for a
     /// modal page reports how it closed.
     pub(super) fn answer_page(&mut self, st: &St, handler: Handler, modal: bool) -> Result<Value, Signal> {
@@ -2974,6 +3013,9 @@ impl Session {
         let handled = self.call(hobject, hroutine, hinst, vec![Value::TestPage(st.clone())]);
         self.ui_state.page_handler_depth -= 1;
         if let Err(e) = handled {
+            if modal && matches!(e, Signal::Error(_)) && st.borrow().open {
+                self.close_modal_after_handler_error(&st)?;
+            }
             self.mark_closed(&st);
             return Err(e);
         }

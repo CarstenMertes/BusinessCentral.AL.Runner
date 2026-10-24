@@ -2022,3 +2022,63 @@ codeunit 50000 "T" { Subtype = Test;
     assert_eq!(demand, eager, "the demand-driven compile differs from the complete one");
     passes(&demand, "ReadsTheColumns");
 }
+
+/// "Page Metadata".SourceTableView for a view with sorting, order and several conditions, as BC formats it (corpus
+/// misc/W2PageMetadata.al:384 SourceTableView_Shapes, :461 RP_LookupPageSortedBySecondaryKey_CardPageId; al-runner issue
+/// 5758). `order(ascending)` and a const on a Code field are not pinned and stay refused.
+#[test]
+fn a_source_table_view_with_sorting_order_and_conditions_reads_as_bc_formats_it() {
+    let list = |id: u32, view: &str| {
+        format!(
+            "page {id} \"MW {id}\" {{ PageType = List; SourceTable = \"MW Src\"; SourceTableView = {view}; layout {{ area(Content) {{ repeater(R) {{ field(F1; Rec.F1) {{ }} }} }} }} }}\n"
+        )
+    };
+    let mut src = String::from(
+        "table 50001 \"MW Src\" { fields { field(1; F1; Integer) { } field(2; F2; Integer) { } field(3; F3; Text[10]) { } field(4; \"Code\"; Code[10]) { } } keys { key(PK; F1) { } key(K3; F3) { } key(K2; F2, F1) { } } }\n",
+    );
+    for (id, view) in [
+        (50011, "sorting(F1) order(descending) where(F2 = const(1))"),
+        (50012, "where(F2 = const(1), F3 = const('x'))"),
+        (50013, "sorting(F3)"),
+        (50014, "order(descending)"),
+        (50015, "where(F2 = filter(1 .. 5))"),
+        (50016, "sorting(F3) where(F3 = const('a b'))"),
+        (50017, "sorting(F2, F1) order(descending)"),
+        (50018, "order(ascending)"),
+        (50019, "where(\"Code\" = const('x'))"),
+    ] {
+        src.push_str(&list(id, view));
+    }
+    src.push_str(
+        r#"codeunit 50000 "T" { Subtype = Test;
+  local procedure V(Id: Integer): Text var M: Record "Page Metadata"; begin M.Get(Id); exit(M.SourceTableView); end;
+  [Test] procedure Pinned() var S: Text; begin
+    S := V(50011) + '|' + V(50012) + '|' + V(50013) + '|' + V(50014) + '|' + V(50015) + '|' + V(50016) + '|' + V(50017);
+    if S <> 'SORTING(Field1) ORDER(1) WHERE(Field2=CONST(1))|WHERE(Field2=CONST(1),Field3=CONST(x))|SORTING(Field3) |ORDER(1) |WHERE(Field2=FILTER(1..5))|SORTING(Field3) WHERE(Field3=CONST(a b))|SORTING(Field2,Field1) ORDER(1) ' then
+      Error('%1', S); end;
+  [Test] procedure Ascending() begin V(50018); end;
+  [Test] procedure CodeConst() begin V(50019); end; }"#,
+    );
+    let o = outcomes(&src);
+    passes(&o, "Pinned");
+    for test in ["Ascending", "CodeConst"] {
+        let got = o.iter().find(|(n, _)| n == test).map(|(_, o)| o);
+        assert!(matches!(got, Some(Outcome::NotRun(_))), "{test}: {got:?}");
+    }
+}
+
+/// "Page Metadata".Editable is the page's declared Editable, Yes when it declares none (misc/W2PageMetadata.al:461
+/// RP_LookupPageSortedBySecondaryKey_CardPageId: `one_editable` No for a List with Editable = false, `card_editable` Yes).
+#[test]
+fn a_pages_editable_column_is_its_declared_editable() {
+    let o = outcomes(
+        r#"table 50001 "Thing" { fields { field(1; "No."; Integer) { } } keys { key(PK; "No.") { Clustered = true; } } }
+page 50002 "Card" { PageType = Card; SourceTable = Thing; layout { area(Content) { field(No; Rec."No.") { } } } }
+page 50003 "List" { PageType = List; SourceTable = Thing; Editable = false; layout { area(Content) { repeater(R) { field(No; Rec."No.") { } } } } }
+codeunit 50000 "T" { Subtype = Test;
+  [Test] procedure Editable() var M: Record "Page Metadata"; begin
+    M.Get(50002); if not M.Editable then Error('card');
+    M.Get(50003); if M.Editable then Error('list'); end; }"#,
+    );
+    passes(&o, "Editable");
+}

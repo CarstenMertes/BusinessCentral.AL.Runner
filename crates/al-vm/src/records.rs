@@ -700,6 +700,38 @@ impl Session {
 
     fn delete_row(&mut self, t: &TableDef, rec: &Rec, run: bool) -> Result<Value, Signal> {
         let cx = self.cx_for(rec, t)?;
+        // A Delete through a stale buffer follows the rule of a Modify (record/TestRecordStaleBufferWrite.al:662, :676); with
+        // triggers or events, where the check falls among them is not pinned.
+        if !rec.borrow().temporary && t.fields.iter().any(|f| f.id == 2_000_000_005) {
+            let pk = Self::sql_key(rec, t, &rec.borrow().fields.clone());
+            let stored = self
+                .store_for(rec)
+                .get(&cx, t, &pk)
+                .map_err(|e| Signal::Unsupported(format!("{e}")))?;
+            let i = t.fields.iter().position(|f| f.id == 2_000_000_005).expect("checked");
+            if let Some(Value::BigInteger(theirs)) = stored.as_ref().map(|r| r[i].clone()) {
+                let verdict = self.stale_verdict(t, rec, &cx, &pk, theirs)?;
+                if verdict != StaleVerdict::Fresh {
+                    let mut hooks = run && self.table_trigger(t, "OnDelete").is_some();
+                    for n in ["OnBeforeDelete", "OnDelete", "OnAfterDelete"] {
+                        hooks |= run && !self.ext_triggers(t, n).is_empty();
+                    }
+                    if hooks
+                        || self.listened(t, "onbeforedeleteevent", None)?
+                        || self.listened(t, "onafterdeleteevent", None)?
+                        || self.global_enabled(t, GlobalOp::Delete)?
+                    {
+                        return unsupported(format!(
+                            "a Delete through a stale {} buffer, with triggers or events: not pinned",
+                            t.name
+                        ));
+                    }
+                }
+                if verdict == StaleVerdict::Refused {
+                    return Err(self.record_changed(t, rec)?);
+                }
+            }
+        }
         self.table_event(t, "onbeforedeleteevent", rec, None, run, None)?;
         if run {
             let x = Self::xrec_handle(rec, rec.borrow().fields.clone());
@@ -1111,6 +1143,107 @@ impl Session {
     /// Every write gets a new, increasing SystemRowVersion.
     /// Returns the previous value, so a refused write can give it back
     /// (record/TestRefusedWriteRowVersion.al).
+    /// The error of a write through a stale buffer (record/TestRecordStaleBufferWrite.al).
+    fn record_changed(&self, t: &TableDef, rec: &Rec) -> Result<Signal, Signal> {
+        let identification = self.identification(t, &rec.borrow().fields)?;
+        Ok(Signal::Error(Box::new(AlError {
+            message: format!(
+                "The changes to the {} record cannot be saved because some information on the page is not up-to-date. Close the page, reopen it, and try again.{BR}{BR}Identification fields and values:{BR}{BR}{}",
+                self.caption(t),
+                identification
+            ),
+            code: "DB:RecordChanged".into(),
+            call_stack: String::new(),
+            ..Default::default()
+        })))
+    }
+
+    /// Whether a Modify or Delete through `rec` of the stored row `pk` (whose row version is now `theirs`) may write.
+    ///
+    /// The buffer is stale when the last Commit left the row newer than the buffer. A buffer newer than the row (a rollback to
+    /// the last Commit after the buffer's own Modify, as an asserterror does) is not stale (corpus
+    /// record/lt-record-conversion-assumptions/StaleBuffer.al: P98_Stale_AfterAsserterror_SameBuffer,
+    /// P98_Stale_CommitThenErrorThenModify_Rec). A stale buffer is refused (record/TestRecordStaleBufferWrite.al), with one
+    /// exception (TestRecordStaleBufferWrite.al:395-690, AL Runner issue 5805): a buffer from the variable's own Insert in the
+    /// transaction the last Commit closed is written, the stale buffer winning, once the new transaction Modified the row
+    /// (changed or not, through any variable: :495, :513, :567, Delete :676) or read it by Get after a LockTable (:533). It is
+    /// refused with nothing in between (:481, Delete :662), after a plain Get (:551), and after a further Commit (:586). A
+    /// buffer read by Get is refused whatever the new transaction did (:604, :623, :642). Not pinned, refused: other contact
+    /// with the table in the new transaction (another write, another lock, a rollback), an Insert buffer older than one
+    /// Commit that the new transaction touched. A stale buffer of another origin whose row the new transaction wrote is written
+    /// under the assumption stale-buffer-other-origin-written.
+    fn stale_verdict(
+        &mut self,
+        t: &TableDef,
+        rec: &Rec,
+        cx: &al_data::AccessContext,
+        pk: &[Value],
+        theirs: i64,
+    ) -> Result<StaleVerdict, Signal> {
+        let Some(i) = t.fields.iter().position(|f| f.id == 2_000_000_005) else {
+            return Ok(StaleVerdict::Fresh);
+        };
+        let (mine, origin, temporary, company) = {
+            let r = rec.borrow();
+            let v = if let Value::BigInteger(n) = &r.fields[i] { *n } else { 0 };
+            (v, r.row_origin, r.temporary, r.company.clone())
+        };
+        if temporary || mine == 0 {
+            return Ok(StaleVerdict::Fresh);
+        }
+        let committed = self
+            .store_for(rec)
+            .committed_get(cx, t, pk)
+            .and_then(|row| match row.get(i) {
+                Some(Value::BigInteger(n)) => Some(*n),
+                _ => None,
+            });
+        // Stale: the row changed since the buffer was read, and the last Commit already held a newer row than the buffer.
+        if mine >= theirs || !committed.is_some_and(|c| mine < c) {
+            return Ok(StaleVerdict::Fresh);
+        }
+        let written_now = theirs > self.tx.committed_row_version;
+        let touched = self.tx.rows_touched.iter().any(|(o, c, k)| {
+            *o == t.object
+                && *c == company
+                && k.len() == pk.len()
+                && k.iter()
+                    .zip(pk)
+                    .all(|(a, b)| al_builtins::ops::compare(a, b).is_ok_and(|o| o == std::cmp::Ordering::Equal))
+        });
+        let contact = touched
+            || self.tx.rolled_back
+            || self.tx.lock_tx
+            || self.tx.lock_unpinned.is_some()
+            || self.store_for(rec).written_since_commit(cx, t);
+        match origin.filter(|o| o.version == mine) {
+            Some(o) if o.insert && o.commits + 1 == self.commits => {
+                if touched && !self.tx.rolled_back {
+                    return Ok(StaleVerdict::Written);
+                }
+                if contact {
+                    return unsupported(format!(
+                        "a stale {} buffer from its own Insert, written after the new transaction touched the table in a way no test pins",
+                        t.name
+                    ));
+                }
+                Ok(StaleVerdict::Refused)
+            }
+            Some(o) if o.insert && contact => unsupported(format!(
+                "a stale {} buffer from an Insert older than the last Commit but one, written after the new transaction touched the table",
+                t.name
+            )),
+            Some(_) => Ok(StaleVerdict::Refused),
+            // Not pinned; Microsoft's tests need it (assumption stale-buffer-other-origin-written): the last writer wins, as
+            // before any of this was probed.
+            None if written_now => {
+                al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::StaleBufferOtherOriginWritten);
+                Ok(StaleVerdict::Written)
+            }
+            None => Ok(StaleVerdict::Refused),
+        }
+    }
+
     fn bump_row_version(&mut self, t: &TableDef, rec: &Rec) -> Option<(usize, Value)> {
         let i = t.fields.iter().position(|f| f.id == 2_000_000_005)?;
         if self.temp_never_stamps(t, rec) {
@@ -1510,10 +1643,24 @@ impl Session {
         // (record/TestFindSetSortKeyModify.al:OwnFilter_ModifiedOutOfIt_FindStillFindsTheRow against misc/lt-probes-needed-3/
         // PnC02Filters.al:FindEqual_OutsideFilter and record/lt-record-read/RcAMisc.al:MarkedOnly_With_Find_Get_And_Order).
         let passes = self.row_passes(rec, &t, &row)?;
+        let origin = match t.fields.iter().position(|f| f.id == 2_000_000_005).map(|i| &row[i]) {
+            Some(Value::BigInteger(v)) if via_get => Some(al_builtins::value::RowOrigin {
+                insert: false,
+                version: *v,
+                commits: self.commits,
+            }),
+            _ => None,
+        };
+        let temporary = rec.borrow().temporary;
+        if via_get && !temporary && self.tx.locked_tables.contains(&t.object) {
+            let company = rec.borrow().company.clone();
+            self.tx.rows_touched.push((t.object, company, pk.clone()));
+        }
         {
             let mut r = rec.borrow_mut();
             r.position = passes.then_some(pk);
             r.fields = row;
+            r.row_origin = origin;
         }
         self.auto_calculate(rec)
     }
@@ -1652,7 +1799,16 @@ impl Session {
     /// "Agent Task Impl.".TaskExists, whose only read of the table is IsEmpty after two SetRange calls and ReadIsolation).
     /// Every other read or write of it stays refused by its provider ("has no provider").
     fn agent_task_check(&self, t: &TableDef, rec: &Rec, method: RecordOp) -> Result<(), Signal> {
-        if method != RecordOp::IsEmpty || rec.borrow().temporary {
+        if rec.borrow().temporary {
+            return Ok(());
+        }
+        // IsEmpty on Agent Task (RhAgentSession.al:74-88) and Get on Agent ("Agent Impl.".GetAgent, RhAgentSession.al:101-145,
+        // AL Runner issue 5787), for a new and a null id.
+        let id = self.engine.program.objects[t.object as usize].id;
+        if !matches!(
+            (method, id),
+            (RecordOp::IsEmpty, Some(2000000262)) | (RecordOp::Get, Some(2000000260))
+        ) {
             return Ok(());
         }
         let object = &self.engine.program.objects[t.object as usize];
@@ -1668,7 +1824,7 @@ impl Session {
                 .get(app)
                 .is_some_and(|a| a.publisher == "Microsoft")
         });
-        if !platform || object.id != Some(2000000262) || !microsoft {
+        if !platform || !microsoft {
             return Ok(());
         }
         Err(crate::transactions::al_error_code(
@@ -2389,7 +2545,28 @@ impl Session {
                     self.run_ext_trigger(&t, "OnInsert", rec, insert_xrec.as_ref())?;
                 }
                 // The SystemId the OnBeforeInsertEvent subscribers and the insert triggers left in the buffer.
-                let set_by_code = id_slot.map(|i| rec.borrow().fields[i].clone());
+                let mut set_by_code = id_slot.map(|i| rec.borrow().fields[i].clone());
+                // A SystemId that Init() or Clear(SystemId) in the table's OnInsert, or Init() in an OnBeforeInsertEvent subscriber,
+                // made the null Guid: the row is stored with a new id, neither the one the trigger saw nor a preset one, with or
+                // without InsertWithSystemId, and the variable holds the stored id (record/lt-qr-systemid-insert-events/
+                // QrSystemIdTests.al:393-530, AL Runner issue 5803). A table extension's insert triggers, the database trigger and the
+                // User trigger running then are not pinned.
+                if let (Some(i), Some(Value::Guid(g))) = (id_slot, &set_by_code)
+                    && *g == [0; 16]
+                    && !rec.borrow().temporary
+                {
+                    let ext = run
+                        && (!self.ext_triggers(&t, "OnBeforeInsert").is_empty()
+                            || !self.ext_triggers(&t, "OnInsert").is_empty());
+                    if ext || self.global_enabled(&t, GlobalOp::Insert)? || self.is_user_row(&t, false) {
+                        return unsupported(
+                            "a SystemId an Insert event or trigger cleared, with table extension insert triggers, the database trigger or the User trigger: not pinned",
+                        );
+                    }
+                    let id = Value::Guid(self.fresh_system_id());
+                    rec.borrow_mut().fields[i] = id.clone();
+                    set_by_code = Some(id);
+                }
                 // The database event follows the table's triggers and precedes the write
                 // (record/TestTriggerDispatchOrder.al:TriggerOrder_Insert_RecordPipeline_IsStable).
                 self.global_trigger(&t, GlobalOp::Insert, rec, None)?;
@@ -2499,6 +2676,19 @@ impl Session {
                     InsertOutcome::Inserted => {
                         Self::clear_blob_written(rec);
                         rec.borrow_mut().inserted = true;
+                        let version = t
+                            .fields
+                            .iter()
+                            .position(|f| f.id == 2_000_000_005)
+                            .map(|i| rec.borrow().fields[i].clone());
+                        if let Some(Value::BigInteger(v)) = version {
+                            let commits = self.commits;
+                            rec.borrow_mut().row_origin = Some(al_builtins::value::RowOrigin {
+                                insert: true,
+                                version: v,
+                                commits,
+                            });
+                        }
                         // The Blob content an Insert of a temporary record stored is persisted, as one a Modify stored (see Rename).
                         if rec.borrow().temp_id.is_some() {
                             for v in &rec.borrow().fields {
@@ -2520,6 +2710,21 @@ impl Session {
                         Ok(Value::Boolean(true))
                     }
                     InsertOutcome::AlreadyExists => {
+                        // A duplicate key in Active Session: Insert with a return value answers false and leaves an error whose
+                        // text is not pinned (platform/lt-outside-platform/RvActiveSessionWrites.al:136-171, "Error code:
+                        // 85132273" on Linux, a suspect). Its statement form is not pinned.
+                        if self.store_for(rec).takes_inserts(&t) {
+                            Self::restore_row_version(rec, old_version);
+                            Self::unstamp(rec, stamped);
+                            if self.ret_used {
+                                self.last_error = al_builtins::native::unpinned_error();
+                                return Ok(Value::Boolean(false));
+                            }
+                            return unsupported(format!(
+                                "a duplicate-key Insert into {} in its statement form: not pinned",
+                                t.name
+                            ));
+                        }
                         // A key that only the column's rounding makes a duplicate: what Insert answers and the error it
                         // names are not pinned (P130DateFilters.al:576-589 pins only a key the column holds as it is).
                         if !rec.borrow().temporary && crate::sqltime::key_rounds(&t.primary_key(&row)) {
@@ -2590,25 +2795,8 @@ impl Session {
                 if let (Some(row), Some(i)) = (&stored, t.fields.iter().position(|f| f.id == 2_000_000_005)) {
                     let (mine, theirs) = (rec.borrow().fields[i].clone(), row[i].clone());
                     let version = |v: &Value| if let Value::BigInteger(n) = v { *n } else { 0 };
-                    // Stale means the stored row is NEWER than the buffer. A buffer that is newer than the row (the
-                    // transaction was rolled back to the last Commit after the buffer's own Modify, as an asserterror
-                    // does) is not stale (corpus record/lt-record-conversion-assumptions/StaleBuffer.al:
-                    // P98_Stale_AfterAsserterror_SameBuffer, P98_Stale_CommitThenErrorThenModify_Rec).
-                    let committed = self.tx.committed_row_version;
-                    let stale =
-                        |m: &Value| version(m) != 0 && version(m) < version(&theirs) && version(&theirs) <= committed;
-                    if !rec.borrow().temporary && stale(&mine) {
-                        let identification = self.identification(&t, &rec.borrow().fields)?;
-                        return Err(Signal::Error(Box::new(AlError {
-                            message: format!(
-                                "The changes to the {} record cannot be saved because some information on the page is not up-to-date. Close the page, reopen it, and try again.{BR}{BR}Identification fields and values:{BR}{BR}{}",
-                                self.caption(&t),
-                                identification
-                            ),
-                            code: "DB:RecordChanged".into(),
-                            call_stack: String::new(),
-                            ..Default::default()
-                        })));
+                    if self.stale_verdict(&t, rec, &cx, &pk, version(&theirs))? == StaleVerdict::Refused {
+                        return Err(self.record_changed(&t, rec)?);
                     }
                     // The buffer still holds what its own last Modify wrote and a rollback undid that write: the Modify answers
                     // true and writes nothing, so the row keeps what the rollback restored (StaleBuffer.al:76-86); a buffer
@@ -2758,6 +2946,8 @@ impl Session {
                         if !rec.borrow().temporary {
                             let image = rec.borrow().fields.clone();
                             rec.borrow_mut().last_modify = Some(image);
+                            let company = rec.borrow().company.clone();
+                            self.tx.rows_touched.push((t.object, company, pk.clone()));
                         }
                         // The Modify that stores a Media field's new media removes the Tenant Media row of the one it held
                         // (record/lt-ar-records/ArRecordProbes.al:141-143). Only a media replaced by another is pinned; a
@@ -3952,4 +4142,15 @@ fn is_media_field(t: &TableDef, i: usize) -> bool {
             t.fields[i].ty,
             RtType::Library(al_builtins::library_kind::LibraryKind::Media)
         )
+}
+
+/// What [`Session::stale_verdict`] decided for a write through a buffer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StaleVerdict {
+    /// The buffer is not stale.
+    Fresh,
+    /// Stale, and written all the same.
+    Written,
+    /// Stale: the write fails with DB:RecordChanged.
+    Refused,
 }

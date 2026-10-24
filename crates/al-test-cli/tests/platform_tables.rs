@@ -2115,10 +2115,10 @@ fn feature_key_rows_follow_the_measured_minors() {
     assert!(not_run(&o, "Concurrent").contains("Feature Key"), "{o:?}");
 }
 
-// al-runner issue 5786: a control with `Editable = Rec."Allow Edit"`: its row and its Visible column are served; a read of
-// the Editable column is refused (what BC reports there is not pinned, docs/probes-needed.md).
+// al-runner issue 5786: a control with `Editable = Rec."Allow Edit"`: its row and its Visible column are served, and the
+// Editable column reads `"Allow Edit"` (errors/lt-ms-refusals-132/P132PageControlVisible.al:232-264).
 #[test]
-fn page_control_field_refuses_only_the_column_that_holds_an_expression() {
+fn page_control_field_serves_the_row_of_a_control_with_an_editable_expression() {
     let o = outcomes(
         r#"table 50105 "Repro Cost Line 50105"
 {
@@ -2151,6 +2151,152 @@ codeunit 50000 "T" { Subtype = Test;
         o.iter().any(|(n, o)| n == "VisibleFalse" && *o == Outcome::Pass),
         "{o:?}"
     );
-    let why = not_run(&o, "EditableRead");
-    assert!(why.contains("editable is an expression"), "{why}");
+    passes(&o, "EditableRead");
+}
+
+/// Active Session takes an Insert: the row is stored next to the session's own, Get, Count, Modify and Delete see it, a
+/// rollback removes it, and the Session table does not list it (platform/lt-outside-platform/RvActiveSessionWrites.al:42-240,
+/// AL Runner issue 5807). A duplicate key answers false with an error whose text is not pinned (:136); its statement form
+/// and a write to the session's own row are not pinned.
+#[test]
+fn an_active_session_insert_is_stored_and_read_back() {
+    let o = outcomes(
+        r#"codeunit 50000 "T" { Subtype = Test;
+  local procedure Copy(var A: Record "Active Session"; Id: Integer; U: Text) begin A.Get(ServiceInstanceId(), SessionId()); A.Validate("Session ID", Id); A.Validate("Session Unique ID", CreateGuid()); A.Validate("User ID", U); end;
+  [Test] procedure InsertGet() var A: Record "Active Session"; B: Record "Active Session"; N: Integer; begin N := A.Count(); Copy(A, -1000001, 'OTHER');
+    if not A.Insert(false) then Error('insert'); if not B.Get(ServiceInstanceId(), -1000001) then Error('get'); if B."User ID" <> 'OTHER' then Error('user');
+    if A.Count() - N <> 1 then Error('count'); B.SetRange("Session ID", -1000001); if B.Count() <> 1 then Error('filtered'); end;
+  [Test] procedure InitRow() var A: Record "Active Session"; B: Record "Active Session"; begin A.Init(); A."Server Instance ID" := ServiceInstanceId(); A."Session ID" := -1000003; A."User ID" := 'INIT';
+    if not A.Insert() then Error('insert'); B.Get(ServiceInstanceId(), -1000003); if not IsNullGuid(B."Session Unique ID") then Error('uid');
+    if Format(B."Client Type") <> 'Windows Client' then Error('%1', B."Client Type"); if B."Database Name" <> '' then Error('db'); end;
+  [Test] procedure Duplicate() var A: Record "Active Session"; begin A.Get(ServiceInstanceId(), SessionId()); if A.Insert(false) then Error('own'); end;
+  [Test] procedure ModifyDelete() var A: Record "Active Session"; B: Record "Active Session"; begin Copy(A, -1000004, 'BEFORE'); A.Insert(false); A."User ID" := 'AFTER';
+    if not A.Modify(false) then Error('modify'); B.Get(ServiceInstanceId(), -1000004); if B."User ID" <> 'AFTER' then Error('after');
+    if not A.Delete(false) then Error('delete'); if B.Get(ServiceInstanceId(), -1000004) then Error('found'); if not B.Get(ServiceInstanceId(), SessionId()) then Error('own'); end;
+  [Test] procedure Rollback() var B: Record "Active Session"; H: Codeunit H; begin asserterror H.InsertFail(); if B.Get(ServiceInstanceId(), -1000005) then Error('kept'); end;
+  [Test] procedure NotInSession() var A: Record "Active Session"; S: Record Session; begin Copy(A, -1000006, 'V'); A.Insert(false); S.SetRange("Connection ID", -1000006); if S.Count() <> 0 then Error('session'); end;
+  [Test] procedure DuplicateStatement() var A: Record "Active Session"; begin A.Get(ServiceInstanceId(), SessionId()); A.Insert(false); end;
+  [Test] procedure ModifyOwn() var A: Record "Active Session"; begin A.Get(ServiceInstanceId(), SessionId()); A."User ID" := 'X'; A.Modify(false); end; }
+codeunit 50001 H { procedure InsertFail() var A: Record "Active Session"; begin A.Get(ServiceInstanceId(), SessionId()); A."Session ID" := -1000005; A.Insert(false); Error('fail'); end; }"#,
+    );
+    for t in [
+        "InsertGet",
+        "InitRow",
+        "Duplicate",
+        "ModifyDelete",
+        "Rollback",
+        "NotInSession",
+    ] {
+        passes(&o, t);
+    }
+    not_run(&o, "DuplicateStatement");
+    not_run(&o, "ModifyOwn");
+    let o = outcomes(
+        r#"codeunit 50000 "T" { Subtype = Test;
+  [Test] procedure DuplicateText() var A: Record "Active Session"; begin A.Get(ServiceInstanceId(), SessionId()); if not A.Insert(false) then if GetLastErrorText() = '' then Error('empty'); end; }"#,
+    );
+    not_run(&o, "DuplicateText");
+}
+
+// Agent.GetDisplayName, GetUserName and IsActive (System Application, through "Agent Impl.".GetAgent): Get on the platform table
+// Agent fails with the agent service's error, code DB:Ok, for a new and for a null id, also inside a TryFunction
+// (platform/lt-rh-agent-session/RhAgentSession.al:101-145, AL Runner issue 5787). The same read from a partner app and any
+// other operation on the table are not pinned: refused.
+#[test]
+fn agent_get_from_microsoft_code_reports_agents_unavailable() {
+    let src = r#"codeunit 50000 "T" { Subtype = Test;
+  [Test] procedure GetAgent() var Exists: Boolean; N: Guid; begin
+      ClearLastError();
+      if TryGet(CreateGuid()) then Error('no error');
+      if GetLastErrorText() <> 'Agents are temporarily unavailable. Please try again later. You can check the Business Central Admin Center and Microsoft 365 Service Health dashboard for updates.' then Error(GetLastErrorText());
+      if GetLastErrorCode() <> 'DB:Ok' then Error(GetLastErrorCode());
+      if TryGet(N) then Error('null id');
+  end;
+  [TryFunction] local procedure TryGet(Id: Guid) var Agent: Record Agent; begin
+      if not Agent.Get(Id) then Error('not found');
+  end;
+  [Test] procedure AgentCount() var Agent: Record Agent; begin if Agent.Count() = 0 then; end; }"#;
+    let o = outcomes_app("ms-sysapp", src, al_sema::check::Roots::default());
+    assert_eq!(
+        o.iter().find(|(n, _)| n == "GetAgent").map(|(_, o)| o),
+        Some(&Outcome::Pass),
+        "{o:?}"
+    );
+    assert!(not_run(&o, "AgentCount").contains("has no provider"));
+    let partner = outcomes(src);
+    assert!(not_run(&partner, "GetAgent").contains("has no provider"));
+}
+
+// NavUserAccountHelper.IsPermissionSetAssigned(user, company, role, app id, scope), which "User Permissions".
+// HasUserPermissionSetAssigned asks when no Access Control row of company '' or the given company matches: false for a set not
+// held, a row for another company and a row with another app id (platform/lt-outside-platform/RvPermissionSetAssigned.al:74-200,
+// AL Runner issue 5796). A row that would match is found by "User Permissions" first: what the member answers then is not pinned.
+#[test]
+fn is_permission_set_assigned_answers_false_where_no_row_assigns_the_set() {
+    let head = r#"dotnet { assembly("Microsoft.Dynamics.Nav.NavUserAccount") { Culture = 'neutral'; PublicKeyToken = '31bf3856ad364e35';
+    type("Microsoft.Dynamics.Nav.NavUserAccount.NavUserAccountHelper"; "NavUserAccountHelper") { } } }
+codeunit 50001 "H" {
+  procedure Has(Company: Text; AppId: Guid): Boolean var H: DotNet NavUserAccountHelper; A: Record "Access Control"; begin
+      exit(H.IsPermissionSetAssigned(UserSecurityId(), Company, 'LTSET', AppId, A.Scope::System)); end;
+  procedure Assign(Company: Text; AppId: Guid) var A: Record "Access Control"; begin
+      A."User Security ID" := UserSecurityId(); A."Role ID" := 'LTSET'; A."Company Name" := Company; A.Scope := A.Scope::System; A."App ID" := AppId; A.Insert(); end; }
+codeunit 50000 "T" { Subtype = Test; var H: Codeunit "H"; N: Guid;
+"#;
+    let run = |body: &str| outcomes(&format!("{head}  [Test] procedure P() begin {body} end; }}"));
+    passes(
+        &run("if H.Has(CompanyName(), N) or H.Has('', N) then Error('held');"),
+        "P",
+    );
+    passes(
+        &run(
+            "H.Assign('Other', N); if H.Has('', N) or H.Has(CompanyName(), N) then Error('elsewhere'); if H.Has('Other', CreateGuid()) then Error('app id');",
+        ),
+        "P",
+    );
+    for body in [
+        "H.Assign('Other', N); if H.Has('Other', N) then;",
+        "H.Assign('', N); if H.Has('Other', N) then;",
+        "H.Assign('Other', N); if H.Has('OTHER', N) then;",
+    ] {
+        not_run(&run(body), "P");
+    }
+}
+
+// Page Control Field reports a Visible, Enabled or Editable expression as text: a page variable as p<id>p<id><Name>, a source
+// table field as its name (quoted only when it needs quotes), with `not`, `and` and a comparison with a number written out
+// (errors/lt-ms-refusals-132/P132PageControlVisible.al:134-264, AL Runner issue 5786). Other expression shapes are not pinned.
+#[test]
+fn page_control_field_reports_expressions_as_bc_writes_them() {
+    let src = r#"table 50001 "Line" { fields { field(1; "No."; Integer) { } field(2; "Allow Edit"; Boolean) { } field(3; Flag; Boolean) { } field(4; Quantity; Decimal) { } } keys { key(PK; "No.") { } } }
+page 50002 "Lines" { PageType = List; SourceTable = "Line"; layout { area(Content) { repeater(R) {
+    field(A; Rec.Quantity) { Editable = Rec."Allow Edit"; Visible = false; }
+    field(B; Rec.Quantity) { Editable = not Rec."Allow Edit"; }
+    field(C; Rec.Quantity) { Editable = Rec.Quantity > 0; Enabled = Rec.Flag; }
+    field(D; Rec.Quantity) { Editable = Rec.Flag and EditAllowed; Visible = not ShowIt; }
+    field(E; Rec.Quantity) { Visible = ShowIt and Rec.Flag; }
+    field(F; Rec.Quantity) { Editable = Rec.Flag or ShowIt; } } } }
+  var EditAllowed: Boolean; ShowIt: Boolean; }
+codeunit 50000 "T" { Subtype = Test;
+  local procedure Row(Name: Text; var P: Record "Page Control Field") begin P.SetRange(PageNo, 50002); P.SetRange(ControlName, Name); P.FindFirst(); end;
+  [Test] procedure Pinned() var P: Record "Page Control Field"; begin
+    Row('A', P); if (P.Editable <> '"Allow Edit"') or (P.Visible <> 'false') or (P.Enabled <> 'true') then Error('A %1 %2 %3', P.Editable, P.Visible, P.Enabled);
+    Row('B', P); if P.Editable <> 'not "Allow Edit"' then Error('B %1', P.Editable);
+    Row('C', P); if (P.Editable <> 'Quantity > 0') or (P.Enabled <> 'Flag') then Error('C %1 %2', P.Editable, P.Enabled);
+    Row('D', P); if (P.Editable <> 'Flag and p50002p50002EditAllowed') or (P.Visible <> 'not p50002p50002ShowIt') then Error('D %1 %2', P.Editable, P.Visible);
+    Row('E', P); if P.Visible <> 'p50002p50002ShowIt and Flag' then Error('E %1', P.Visible); end;
+  [Test] procedure NotPinned() var P: Record "Page Control Field"; begin Row('F', P); if P.Editable = '' then; end;
+  [Test] procedure WalkInKeyOrder() var P: Record "Page Control Field"; N: Integer; begin P.SetRange(PageNo, 50002); P.FindSet(); repeat N += 1; until P.Next() = 0; if N <> 6 then Error('%1', N); end;
+  [Test] procedure WalkInKeyOrderReadsExpression() var P: Record "Page Control Field"; begin P.SetRange(PageNo, 50002); P.FindSet(); repeat if P.Editable = '' then; until P.Next() = 0; end;
+  [Test] procedure WalkBySequence() var P: Record "Page Control Field"; N: Integer; begin P.SetRange(PageNo, 50002); P.SetCurrentKey(Sequence); P.FindSet();
+    repeat N += 1; until P.Next() = 0; if N <> 6 then Error('%1', N); end; }"#;
+    let o = outcomes(src);
+    passes(&o, "Pinned");
+    not_run(&o, "NotPinned");
+    // The rows of one page come in ControlId order, an id the compiler derives (record/TestPageControlFieldPageExtension.al:148):
+    // a walk in key order over two controls of a page is not pinned and stays as it was before (a baseline case walks so), but
+    // the expression columns of its rows are refused; one in Sequence order is pinned
+    // (record/TestTableRelationsSequenceMetadataContracts.al:107-122).
+    passes(&o, "WalkInKeyOrder");
+    assert!(not_run(&o, "WalkInKeyOrderReadsExpression").contains("ControlId"));
+    passes(&o, "WalkBySequence");
 }

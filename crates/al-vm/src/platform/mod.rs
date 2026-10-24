@@ -399,6 +399,18 @@ impl Providers {
     }
 
     /// The Feature Key rows: the served ones, with the rows a Modify stored (`Enabled`) over them.
+    /// The session's own Active Session row and the rows an Insert added: a Get, Count and Count with a filter find them
+    /// (RvActiveSessionWrites.al:42-70, :90-130, :173-204).
+    fn active_session_listing(&self, store: &MemStore, cx: &AccessContext, t: &TableDef) -> Result<Listed, StoreError> {
+        let stored = store.stored_rows(cx, t);
+        if stored.is_empty() {
+            return self.listed(t, Virtual::ActiveSession);
+        }
+        let mut entries = self.list_rows(t, Virtual::ActiveSession);
+        entries.extend(stored.into_iter().map(mat::Entry::ok));
+        Ok(Listed::Own(Rc::new(mat::Mat::new(t, entries))))
+    }
+
     fn feature_key_listing(&self, store: &MemStore, cx: &AccessContext, t: &TableDef) -> Result<Listed, StoreError> {
         let stored = store.stored_rows(cx, t);
         if stored.is_empty() {
@@ -627,6 +639,14 @@ pub(crate) fn refused(why: impl Into<String>) -> StoreError {
     StoreError::Refused(why.into())
 }
 
+/// The position of field `id` in table `t`.
+fn pos_of(t: &TableDef, id: u32) -> usize {
+    t.fields
+        .iter()
+        .position(|f| f.id == id)
+        .expect("a column of the platform table")
+}
+
 impl VirtualTables for Providers {
     fn serves(&self, t: &TableDef) -> bool {
         self.served.get(t.object as usize).is_some_and(Option::is_some)
@@ -641,6 +661,11 @@ impl VirtualTables for Providers {
         } else {
             &[]
         }
+    }
+
+    /// Active Session keeps the rows an Insert adds (platform/lt-outside-platform/RvActiveSessionWrites.al, AL Runner issue 5807).
+    fn takes_inserts(&self, t: &TableDef) -> bool {
+        self.served.get(t.object as usize) == Some(&Some(Virtual::ActiveSession))
     }
 
     fn write_refusal(&self, t: &TableDef) -> Option<String> {
@@ -682,6 +707,7 @@ impl VirtualTables for Providers {
                 Ok(self.with_event_stats(t, self.listed(t, Virtual::EventSubscription)?.get(t, pk)?))
             }
             Virtual::FeatureKey => self.feature_key_listing(store, cx, t)?.get(t, pk),
+            Virtual::ActiveSession => self.active_session_listing(store, cx, t)?.get(t, pk),
             Virtual::Field => Ok(self
                 .listed(t, Virtual::Field)?
                 .get(t, pk)?
@@ -712,6 +738,47 @@ impl VirtualTables for Providers {
                 Ok(self.with_event_stats(t, self.listed(t, Virtual::EventSubscription)?.next(t, scan)?))
             }
             Virtual::FeatureKey => self.feature_key_listing(store, cx, t)?.next(t, scan),
+            Virtual::ActiveSession => self.active_session_listing(store, cx, t)?.next(t, scan),
+            // The rows of one page come in ControlId order, an id the compiler derives, which the runtime's ids do not follow
+            // (record/TestPageControlFieldPageExtension.al:148): what a read in key order that chooses between two controls of a
+            // page gives is not pinned. It is kept as it was before the expression texts were pinned, because a baseline case
+            // walks a page's controls that way without depending on their order (TestPageControlFieldPageExtension.al:58-85):
+            // the rows it reaches serve an expression column as unknown, as they did then. One read by Sequence is pinned
+            // (record/TestTableRelationsSequenceMetadataContracts.al:107-122) and is served in full.
+            Virtual::PageControlField if scan.key == 0 => {
+                let listed = self.listed(t, Virtual::PageControlField)?;
+                let mut found = listed.next(t, scan)?;
+                if let Some(row) = &mut found {
+                    let at = al_data::position(t, 0, row);
+                    let mut chose = false;
+                    for ascending in [true, false] {
+                        let around = Scan {
+                            key: 0,
+                            filters: scan.filters,
+                            ascending,
+                            after: Some(&at),
+                        };
+                        chose |= listed.next(t, &around)?.is_some_and(|other| {
+                            al_builtins::ops::compare(&other[pos_of(t, 1)], &row[pos_of(t, 1)])
+                                .is_ok_and(|o| o == std::cmp::Ordering::Equal)
+                        });
+                    }
+                    if chose {
+                        for id in [6, 7, 8] {
+                            let i = pos_of(t, id);
+                            let literal =
+                                matches!(&row[i], Value::Text(v) if ["true", "false", "True"].contains(&v.as_str()));
+                            if matches!(row[i], Value::Text(_)) && !literal {
+                                row[i] = Value::Unknown(
+                                    "Page Control Field: an expression column of a row read in key order over several controls of a page (the rows come in ControlId order, an id the compiler derives; not pinned)"
+                                        .into(),
+                                );
+                            }
+                        }
+                    }
+                }
+                Ok(found)
+            }
             k => self.listed(t, k)?.next(t, scan),
         }
     }
@@ -743,6 +810,7 @@ impl VirtualTables for Providers {
                 self.listed(t, Virtual::EventSubscription)?.count(t, filters)
             }
             Virtual::FeatureKey => self.feature_key_listing(store, cx, t)?.count(t, filters),
+            Virtual::ActiveSession => self.active_session_listing(store, cx, t)?.count(t, filters),
             k => self.listed(t, k)?.count(t, filters),
         }
     }

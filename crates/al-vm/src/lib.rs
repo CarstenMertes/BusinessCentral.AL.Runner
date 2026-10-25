@@ -62,6 +62,7 @@ mod reports;
 mod sessionops;
 mod sqlcount;
 mod sqltime;
+mod tasks;
 mod testdata;
 mod transactions;
 mod translations;
@@ -493,6 +494,8 @@ pub struct Session {
     pub(crate) isolated_committed: std::collections::HashMap<(String, String), (String, bool, bool)>,
     /// The isolated storage keys the running test method set (a page background task reads them differently, sessionops.rs Get).
     pub(crate) isolated_set_in_test: std::collections::HashSet<(String, String)>,
+    /// The TaskScheduler tasks this session created (`tasks.rs`).
+    pub(crate) tasks: tasks::Tasks,
     /// An install codeunit is running.
     install_scope: bool,
     /// The company data codeunit (Microsoft's DemoTool) builds the company (`set_company_build`).
@@ -817,6 +820,7 @@ impl Session {
             isolated_storage: Default::default(),
             isolated_committed: Default::default(),
             isolated_set_in_test: Default::default(),
+            tasks: Default::default(),
             install_scope: false,
             company_build: false,
             no_client: false,
@@ -982,6 +986,7 @@ impl Session {
         // A transaction a lock opened counts as one that wrote: MinimumActiveRowVersion after it is not pinned.
         self.tx.last_commit_wrote = self.tx.tx_phase == crate::transactions::TX_WRITE || self.tx.lock_tx;
         self.isolated_committed = self.isolated_storage.clone();
+        self.tasks.commit();
         let removed = std::mem::take(&mut self.media_removed.0);
         self.media_removed.1.extend(removed);
         self.end_write_phase();
@@ -1045,6 +1050,7 @@ impl Session {
         self.tx.locked_tables.clear();
         self.tx.rolled_back = true;
         self.isolated_storage = self.isolated_committed.clone();
+        self.tasks.rollback();
         // The Tenant Media rows a Modify or Delete of this transaction removed come back with the rows.
         let removed = std::mem::take(&mut self.media_removed.0);
         self.restore_media(removed);

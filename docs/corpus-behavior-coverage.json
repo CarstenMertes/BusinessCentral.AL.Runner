@@ -15988,6 +15988,15 @@
         "template": "The 'Name'='' part of the cookie is invalid."
       },
       {
+        "code": "InvalidOperation",
+        "file": "crates/al-builtins/src/json.rs",
+        "generic": false,
+        "line": 2336,
+        "pinned": true,
+        "site": "json/JsonObjectBasics.al:377",
+        "template": "The requested operation cannot be performed in this context."
+      },
+      {
         "code": "InvalidValue",
         "file": "crates/al-builtins/src/mathfns.rs",
         "generic": false,
@@ -16006,10 +16015,19 @@
         "template": "Value was either too large or too small for a Decimal."
       },
       {
+        "code": "ArgumentOutOfRange",
+        "file": "crates/al-builtins/src/media.rs",
+        "generic": false,
+        "line": 375,
+        "pinned": true,
+        "site": "streams/StTMedia.al:302",
+        "template": "Argument was out of range: index."
+      },
+      {
         "code": "InvalidPath",
         "file": "crates/al-builtins/src/media.rs",
         "generic": false,
-        "line": 416,
+        "line": 438,
         "pinned": true,
         "site": "media/MediaFiles.al:207",
         "template": "The specified path is invalid."
@@ -16018,7 +16036,7 @@
         "code": "InvalidPath",
         "file": "crates/al-builtins/src/media.rs",
         "generic": false,
-        "line": 420,
+        "line": 442,
         "pinned": true,
         "site": "media/MediaFiles.al:209",
         "template": "Could not find a part of the path '%'."
@@ -16171,7 +16189,7 @@
         "code": "InvalidStreamData",
         "file": "crates/al-builtins/src/stream.rs",
         "generic": false,
-        "line": 905,
+        "line": 911,
         "pinned": true,
         "site": "lt-file-type/FileReadSeek.al:114",
         "template": "Invalid data encountered in stream, unable to read text."
@@ -16180,7 +16198,7 @@
         "code": "InvalidStreamData",
         "file": "crates/al-builtins/src/stream.rs",
         "generic": false,
-        "line": 1092,
+        "line": 1098,
         "pinned": true,
         "site": "lt-file-type/FileReadSeek.al:114",
         "template": "Invalid data encountered in stream, unable to read text."
@@ -16189,7 +16207,7 @@
         "code": "InvalidStreamData",
         "file": "crates/al-builtins/src/stream.rs",
         "generic": false,
-        "line": 1257,
+        "line": 1288,
         "pinned": true,
         "site": "lt-file-type/FileReadSeek.al:114",
         "template": "Invalid data encountered in stream, unable to read text."
@@ -16198,10 +16216,28 @@
         "code": "DateInvalid",
         "file": "crates/al-builtins/src/stream.rs",
         "generic": false,
-        "line": 1289,
+        "line": 1320,
         "pinned": true,
         "site": "errors/lt-ms-refusals-131/P131EvalScalars.al:376",
         "template": "The date is not valid."
+      },
+      {
+        "code": "InvalidStreamMode",
+        "file": "crates/al-builtins/src/stream.rs",
+        "generic": false,
+        "line": 1550,
+        "pinned": true,
+        "site": "streams/lt-stream-length/StreamLengthOthers.al:573",
+        "template": "ALStream.ALWrite, invalid stream mode: Stream"
+      },
+      {
+        "code": "InvalidStreamLength",
+        "file": "crates/al-builtins/src/stream.rs",
+        "generic": false,
+        "line": 1686,
+        "pinned": true,
+        "site": "misc/lt-probes-needed-1/PnAStreamReadMisc.al:223",
+        "template": "An invalid length % was specified in stream function. % was expected."
       },
       {
         "code": "ALSystemString",
@@ -16351,7 +16387,7 @@
         "code": "IndexOutOfBounds",
         "file": "crates/al-vm/src/interp.rs",
         "generic": false,
-        "line": 1501,
+        "line": 1502,
         "pinned": true,
         "site": "collections/lt-array-rows/ArrayRows.al:185",
         "template": "Index out of bounds."
@@ -16360,7 +16396,7 @@
         "code": "IndexOutOfBounds",
         "file": "crates/al-vm/src/interp.rs",
         "generic": false,
-        "line": 1578,
+        "line": 1579,
         "pinned": true,
         "site": "collections/lt-array-rows/ArrayRows.al:185",
         "template": "Index out of bounds."
@@ -16369,7 +16405,7 @@
         "code": "IndexOutOfBounds",
         "file": "crates/al-vm/src/interp.rs",
         "generic": false,
-        "line": 1588,
+        "line": 1589,
         "pinned": true,
         "site": "collections/lt-array-rows/ArrayRows.al:185",
         "template": "Index out of bounds."
@@ -16609,8 +16645,8 @@
         "template": "Invalid expression of type: table view.%%"
       }
     ],
-    "pinned": 81,
-    "sites": 83
+    "pinned": 85,
+    "sites": 87
   },
   "language": {
     "bc": "27-29",

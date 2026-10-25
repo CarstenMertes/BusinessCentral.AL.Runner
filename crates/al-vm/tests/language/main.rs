@@ -46,6 +46,7 @@ mod json_remove_statement;
 mod json_select_tokens;
 mod json_text_as_decimal;
 mod json_time_milliseconds;
+mod json_typed_reads;
 mod keyword_variable_names;
 mod lane_bump28;
 mod lane_captions;

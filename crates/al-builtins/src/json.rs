@@ -822,6 +822,10 @@ fn as_integer(s: &Scalar) -> Result<Value, Signal> {
             Err(_) => return Err(conversion(NAV_JSON_VALUE, "System.Int32")),
         }
     }
+    // A Char is a number in JSON: its code (json/lt-json-typed-readback/JsonTypedCharRead.al:48 `int` 65, :52 0, :55 65535).
+    if let Scalar::Val(Value::Char(n)) = s {
+        return Ok(Value::Integer(i32::from(*n)));
+    }
     i32::try_from(as_i64(s)?)
         .map(Value::Integer)
         .or_else(|_| unsupported("number out of Integer range"))
@@ -882,6 +886,8 @@ fn as_decimal(s: &Scalar) -> Result<Value, Signal> {
         Scalar::Val(Value::Integer(n)) => Ok(Value::Decimal(Decimal::from(*n))),
         Scalar::Val(Value::BigInteger(n)) => Ok(Value::Decimal(Decimal::from(*n))),
         Scalar::Val(Value::Byte(n)) => Ok(Value::Decimal(Decimal::from(*n))),
+        // JsonTypedCharRead.al:49 `dec` 65.
+        Scalar::Val(Value::Char(n)) => Ok(Value::Decimal(Decimal::from(*n))),
         Scalar::Raw(t) if t.parse::<Decimal>().is_ok() && t.bytes().all(|b| b.is_ascii_digit() || b == b'-') => {
             Ok(Value::Decimal(t.parse::<Decimal>().expect("checked")))
         }
@@ -929,6 +935,24 @@ fn as_text(s: &Scalar) -> Result<Value, Signal> {
         Scalar::Val(Value::Decimal(d)) => Ok(Value::Text(d.to_string().into())),
         Scalar::Val(Value::Boolean(b)) => Ok(Value::Text(if *b { "True" } else { "False" }.into())),
         Scalar::Raw(t) => Ok(Value::Text(t.clone().into())),
+        // A Byte, an Option, a Duration, a Date, a Time and a DateTime read as the text they are written as, without the quotes
+        // (json/lt-json-typed-overloads/P101ValueSetValue.al: P101_SetValue_Byte :120-125, _Option :268-271, _Date :299-304,
+        // _Time :332-337, _DateTime :360-363, _Duration :391-396). A Time or DateTime with milliseconds is not pinned.
+        Scalar::Val(
+            v @ (Value::Byte(_)
+            | Value::Option(..)
+            | Value::Duration(_)
+            | Value::Date(..)
+            | Value::Time(_)
+            | Value::DateTime(_)),
+        ) if !matches!(v, Value::Time(t) if *t > 0 && (*t - 1) % 1000 != 0)
+            && !matches!(v, Value::DateTime(t) if *t > 0 && (*t - 1) % 1000 != 0) =>
+        {
+            let mut out = String::new();
+            write(&new_handle(JsonNode::Scalar(Scalar::Val(v.clone()))), &mut out)?;
+            let text = out.strip_prefix('"').and_then(|t| t.strip_suffix('"')).unwrap_or(&out);
+            Ok(Value::Text(text.to_string().into()))
+        }
         other => unsupported(format!(
             "reading {} as Text (conversion not pinned yet)",
             other.describe()
@@ -950,9 +974,18 @@ fn as_char(s: &Scalar) -> Result<Value, Signal> {
             let u: Vec<u16> = t.encode_utf16().collect();
             match u.as_slice() {
                 [c] => Ok(Value::Char(*c)),
+                // A text of three or four characters does not convert (json/lt-json-typed-overloads/P101PathValues.al:164
+                // `text_as_char` 'xyz', :203 'text').
+                _ if matches!(u.len(), 3 | 4) => Err(conversion(NAV_JSON_VALUE, "System.Char")),
                 _ => unsupported(format!("reading text of length {} as Char", u.len())),
             }
         }
+        // A whole number is the character of that code (P101PathValues.al:162 `int_as_char` 8364 is €, :170 0, :202 5;
+        // json/lt-json-overloads/P88ObjectGetCharValues.al:28 7). Codes from the surrogates up are not pinned.
+        Scalar::Val(Value::Integer(n)) if (0..0xD800).contains(n) => Ok(Value::Char(*n as u16)),
+        Scalar::Val(Value::BigInteger(n)) if (0..0xD800).contains(n) => Ok(Value::Char(*n as u16)),
+        // P101PathValues.al:167 `bool_as_char`.
+        Scalar::Val(Value::Boolean(_)) => Err(conversion(NAV_JSON_VALUE, "System.Char")),
         other => unsupported(format!(
             "reading {} as Char (conversion not pinned yet)",
             other.describe()
@@ -1101,6 +1134,43 @@ fn object_keys(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Resul
         _ => unsupported("JsonObject.Keys on a JSON value that is not an object"),
     })?;
     Ok(Value::List(Rc::new(std::cell::RefCell::new(keys.into()))))
+}
+
+/// `Values()`: the values as tokens, in order, as the object was at the call (json/lt-json-typed-overloads/P101PathValues.al:
+/// P101_Values `count` 6 and `count_after_add_snapshot`; json/lt-json-overloads/P88ObjectGetCharValues.al:50-58).
+fn object_values(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
+    let h = recv(r)?;
+    let values = with_node(&h, |n| match n {
+        JsonNode::Object(kids) => Ok(kids
+            .iter()
+            .map(|(_, c)| tagged("JsonToken", c.clone()))
+            .collect::<Vec<_>>()),
+        _ => unsupported("JsonObject.Values on a JSON value that is not an object"),
+    })?;
+    Ok(Value::List(Rc::new(std::cell::RefCell::new(values.into()))))
+}
+
+/// `RemoveAt(Index)`: the element goes, the rest moves up (json/JsonArrayBasics.al:182-193 `text` [1,3,2]; json/lt-json-overloads/
+/// P88ArrayIndex.al:126 answers true). An index outside the array raises "Index out of bounds." (JsonArrayBasics.al:186-195),
+/// pinned in statement form only.
+fn array_remove_at(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Result<Value, Signal> {
+    let h = recv(r)?;
+    let i = array_index(&a[0])?;
+    let removed = with_node(&h, |n| match n {
+        JsonNode::Array(kids) => Ok(usize::try_from(i)
+            .ok()
+            .filter(|i| *i < kids.len())
+            .map(|i| kids.remove(i))),
+        _ => unsupported("JsonArray.RemoveAt on a JSON value that is not an array"),
+    })?;
+    match removed {
+        Some(child) => {
+            set_parent(&child, None);
+            Ok(Value::Boolean(true))
+        }
+        None if c.ret_used() => unsupported("JsonArray.RemoveAt outside the array with the result used (not pinned)"),
+        None => Err(index_out_of_bounds()),
+    }
 }
 
 fn object_contains(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Result<Value, Signal> {
@@ -1433,7 +1503,33 @@ fn array_index_of(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Re
                     } else if std::mem::discriminant(v) == std::mem::discriminant(needle) {
                         Some(crate::ops::compare(v, needle).is_ok_and(|o| o == std::cmp::Ordering::Equal))
                     } else {
-                        None
+                        // json/lt-json-typed-readback/JsonTypedIndexOfCross.al: a stored Integer or Byte matches an Integer,
+                        // Byte or BigInteger of the same number (:37-38 `byte_7`, `big_7`; :98-100 `int_255`, `byte_0`); an Integer
+                        // never matches a Decimal or a Text (:36 `dec_7`, :39 `text_7`), nor a Decimal an Integer, Byte or
+                        // BigInteger (:67-69). Other pairs are not pinned.
+                        let whole = |x: &Value| match x {
+                            Value::Integer(n) => Some(i64::from(*n)),
+                            Value::Byte(n) => Some(i64::from(*n)),
+                            Value::BigInteger(n) => Some(*n),
+                            Value::Char(n) => Some(i64::from(*n)),
+                            _ => None,
+                        };
+                        match (&*v, needle) {
+                            // A stored Char and an Integer compare as numbers (json/lt-json-typed-readback/JsonTypedCharRead.al:
+                            // 132 `idx_int_70` 0, :134 `idx_missing` passes the Integer 2 for Char 72).
+                            (Value::Char(_), Value::Integer(_)) | (Value::Integer(_), Value::Char(_)) => {
+                                Some(whole(v) == whole(needle))
+                            }
+                            (
+                                Value::Integer(_) | Value::Byte(_),
+                                Value::Integer(_) | Value::Byte(_) | Value::BigInteger(_),
+                            ) => Some(whole(v) == whole(needle)),
+                            (Value::Integer(_), Value::Decimal(_) | Value::Text(_))
+                            | (Value::Decimal(_), Value::Integer(_) | Value::Byte(_) | Value::BigInteger(_)) => {
+                                Some(false)
+                            }
+                            _ => None,
+                        }
                     }
                 }
                 _ => Some(false),
@@ -2275,6 +2371,8 @@ pub fn native_for(sig: &Signature) -> Option<NativeFn> {
         ("JsonObject.Contains", [_]) => object_contains,
         ("JsonObject.Replace", [_, _]) => object_replace,
         ("JsonObject.Keys", []) => object_keys,
+        ("JsonObject.Values", []) => object_values,
+        ("JsonArray.RemoveAt", [_]) => array_remove_at,
         ("JsonObject.Get", [_, _]) => object_get,
         ("JsonObject.Remove", [_]) => object_remove,
         ("JsonObject.GetBoolean", _) => obj_boolean,

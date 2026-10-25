@@ -618,6 +618,11 @@ pub fn format_value(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) 
                         {
                             n.to_string()
                         }
+                        crate::json::JsonNode::Scalar(crate::json::Scalar::Val(Value::BigInteger(n)))
+                            if name == "JsonToken" && standard == 0 =>
+                        {
+                            n.to_string()
+                        }
                         _ => {
                             return Err(format!(
                                 "Format of {name} with content (standard format {standard}) is not pinned yet"

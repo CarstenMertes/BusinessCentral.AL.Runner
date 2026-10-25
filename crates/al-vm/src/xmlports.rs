@@ -1007,7 +1007,15 @@ impl Session {
     /// (xmlport/TestXmlPortAdvanced.al:XmlPort_TextVariableTriggers_ImportMutatesAssignedValues).
     fn xp_assign_variable(&mut self, inst: &Inst, schema: &Schema, node: usize, text: String) -> Result<(), Signal> {
         let slot = schema.node(node).slot.expect("text nodes have a slot");
-        inst.borrow_mut().globals[slot] = Value::Text(text.into());
+        // A BigText element gets the whole text, past 2048 characters (xmlport/lt-xmlport-bigtext/XmlPortBigText.al:218).
+        inst.borrow_mut().globals[slot] = if schema.node(node).big_text {
+            Value::Library(
+                al_builtins::library_kind::LibraryKind::BigText,
+                std::rc::Rc::new(std::cell::RefCell::new(al_builtins::value::LibraryValue::Text(text))),
+            )
+        } else {
+            Value::Text(text.into())
+        };
         self.xp_run_trigger(inst, schema, node, "onafterassignvariable")
     }
 
@@ -2316,6 +2324,12 @@ impl Session {
         let slot = schema.node(node).slot.expect("text nodes have a slot");
         match &inst.borrow().globals[slot] {
             Value::Text(s) | Value::Code(s) => Ok(s.to_string()),
+            // A BigText element writes its whole text (xmlport/lt-xmlport-bigtext/XmlPortBigText.al:178, :198).
+            Value::Library(al_builtins::library_kind::LibraryKind::BigText, h) => match &*h.borrow() {
+                al_builtins::value::LibraryValue::Empty => Ok(String::new()),
+                al_builtins::value::LibraryValue::Text(s) => Ok(s.clone()),
+                _ => unsupported("XmlPort export of a BigText variable of this kind"),
+            },
             other => unsupported(format!("XmlPort export of the variable {}", other.describe())),
         }
     }

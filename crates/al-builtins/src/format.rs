@@ -518,6 +518,14 @@ pub fn format_value(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) 
             // session/TestProbeSessionMiscContracts.al:Version_Forms.
             return Err(no_such_format(9, "Version"));
         }
+        // A BigText formats as the text it holds, all of it (streams/StTBigText.al:248 ConvertTextAndBack `direct`;
+        // streams/lt-dd-stream-leads/DdStreamLeads.al:595, two AddText calls; xmlport/lt-xmlport-bigtext/XmlPortBigText.al:
+        // 218, 0 to 50000 characters). Only the plain Format(BigText) is pinned.
+        Value::Library(crate::library_kind::LibraryKind::BigText, l) if standard == 0 && length == 0 => match &*l.borrow() {
+            crate::value::LibraryValue::Empty => String::new(),
+            crate::value::LibraryValue::Text(s) => s.clone(),
+            _ => return Err("Format of a BigText of this kind is not pinned".to_string().into()),
+        },
         Value::Library(crate::library_kind::LibraryKind::Version, l) => match &*l.borrow() {
             crate::value::LibraryValue::Version(v) => format!("{}.{}.{}.{}", v[0], v[1], v[2], v[3]),
             _ => return Err("Format of a Version nobody set".to_string().into()),

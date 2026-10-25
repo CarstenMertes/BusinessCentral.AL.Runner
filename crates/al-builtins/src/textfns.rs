@@ -975,17 +975,24 @@ fn bt_get_sub_text(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> N
     let h = string_of(r)?;
     let u = with_string(&h, |s| u16s(s));
     let pos = int(a, 1)?;
-    let len = if a.len() > 2 {
-        int(a, 2)?
-    } else {
-        u.len() as i64 - pos + 1
-    };
-    if pos < 1 || len < 0 || (pos as usize - 1) + len as usize > u.len() {
-        return unsupported("BigText.GetSubText outside the text (error text not pinned)");
+    // A position below 1 and a negative length raise CopyStr's range errors (streams/StTBigText.al:157 GetSubTextErrors).
+    if pos < 1 {
+        return Err(permitted("COPYSTR", 2, pos, "1", INT_MAX));
+    }
+    let given = if a.len() > 2 { Some(int(a, 2)?) } else { None };
+    if let Some(len) = given.filter(|l| *l < 0) {
+        return Err(permitted("COPYSTR", 3, len, "0", INT_MAX));
+    }
+    // A length past the end gives the rest of the text and its length (StTBigText.al:134 `8, 100` gives `789` and 3; a start
+    // one past the end gives the empty text: xmlport/lt-xmlport-bigtext/XmlPortBigText.al:198 `1, 12` on an empty BigText,
+    // StTBigText.al:167 no error). What a start further out gives is not pinned (StTBigText.al:169 pins only no error).
+    if pos as usize > u.len() + 1 {
+        return unsupported("BigText.GetSubText from a position past the end of the text plus one (the result is not pinned)");
     }
     let from = pos as usize - 1;
-    a[0] = Value::Text(from_u16(&u[from..from + len as usize]).into());
-    Ok(Value::Integer(len as i32))
+    let to = given.map_or(u.len(), |len| (from + len as usize).min(u.len()));
+    a[0] = Value::Text(from_u16(&u[from..to]).into());
+    Ok(Value::Integer((to - from) as i32))
 }
 
 // --------------------------------------------------------------- dispatch

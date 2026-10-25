@@ -99,6 +99,14 @@ fn allowed_triggers(kind: ir::XmlNodeKind) -> &'static [&'static str] {
     }
 }
 
+/// Whether node `i` is a text element with `TextType = BigText` (checked in `visit`).
+fn is_big_text(layout: &Layout, i: usize) -> bool {
+    layout.nodes[i].kind == ir::XmlNodeKind::Text
+        && layout
+            .property(i, "TextType")
+            .is_some_and(|v| v.trim().eq_ignore_ascii_case("bigtext"))
+}
+
 fn allowed_properties(kind: ir::XmlNodeKind) -> &'static [&'static str] {
     match kind {
         ir::XmlNodeKind::Table => &[
@@ -136,7 +144,8 @@ fn allowed_properties(kind: ir::XmlNodeKind) -> &'static [&'static str] {
         ],
         // `occurrence` is checked in `visit`: Required or Optional on a text attribute of a text or table element.
         ir::XmlNodeKind::TextAttr => &["xmlname", "namespaceprefix", "width", "unbound", "occurrence"],
-        ir::XmlNodeKind::Text => &["xmlname", "minoccurs", "maxoccurs"],
+        // `texttype` is checked in `visit`: BigText or Text on a text element without children.
+        ir::XmlNodeKind::Text => &["xmlname", "minoccurs", "maxoccurs", "texttype"],
     }
 }
 
@@ -415,6 +424,15 @@ fn visit(section: &ast::Section, parent: Option<usize>, out: &mut Layout) {
                 ));
             } else if pn == "xmlname" {
                 xml_name = crate::scan::unquote_xmlport(&p.value_text());
+            } else if pn == "texttype" {
+                // xmlport/lt-xmlport-bigtext/XmlPortBigText.al:178-266: BigText on a text element without children, on export
+                // and import. Text is the default. A BigText element with children, or another value, is not pinned.
+                let value = p.value_text().trim().to_ascii_lowercase();
+                if s.sections().next().is_some() || !matches!(value.as_str(), "bigtext" | "text") {
+                    out.run_reasons.push(format!(
+                        "property texttype = {value} of {section_name} {name} is not supported (not pinned)"
+                    ));
+                }
             } else if pn == "occurrence" {
                 // Pinned for a text attribute of the root, of a container text element and of a table element below it
                 // (xmlport/lt-qr-xmlport-container-occurs/QrXpContainerOccurs.al:441-560, QS_TextAttr_*; earlier on a table
@@ -643,6 +661,7 @@ pub fn build(cx: &Context, mut reasons: Vec<String>) -> ir::XmlPort {
                 .flatten()
                 .map(|v| v.trim().eq_ignore_ascii_case("required")),
             field_validate: layout.property(i, "FieldValidate").and_then(|v| bool_prop(&v)),
+            big_text: is_big_text(layout, i),
             triggers,
         };
         match kind {

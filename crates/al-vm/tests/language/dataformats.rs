@@ -942,6 +942,31 @@ fn big_text() {
     assert!(unsupported("B: BigText;", "B.AddText('x', 1); exit('');"));
 }
 
+// streams/StTBigText.al:120 GetSubTextForms and :157 GetSubTextErrors: a length past the end gives the rest; a start one past
+// the end gives nothing; a start below 1 or a negative length raise CopyStr's range errors. A start further out is refused.
+// streams/StTBigText.al:240 ConvertTextAndBack: Format gives the whole text.
+#[test]
+fn big_text_get_sub_text_clips_at_the_end() {
+    let v = "B: BigText; S: Text; N: Integer;";
+    let t = text_of(v, "B.AddText('0123456789'); N := B.GetSubText(S, 8, 100); exit(S + '/' + Format(N));");
+    assert_eq!(t, "789/3");
+    let t = text_of(v, "B.AddText('0123456789'); N := B.GetSubText(S, 11, 1); exit(S + '/' + Format(N));");
+    assert_eq!(t, "/0");
+    let t = text_of(v, "B.AddText('dir'); B.AddText('ect'); exit(Format(B));");
+    assert_eq!(t, "direct");
+    let (m, c) = raised(v, "B.AddText('0123456789'); N := B.GetSubText(S, 0, 1); exit('');");
+    assert_eq!(
+        (m.as_str(), c.as_str()),
+        (
+            "The value of COPYSTR parameter 2 is outside of the permitted range. The current value is: 0. The permitted range is: from 1 to 2,147,483,647.",
+            "OutsidePermittedRange"
+        )
+    );
+    let (m, _) = raised(v, "B.AddText('0123456789'); N := B.GetSubText(S, 1, -1); exit('');");
+    assert!(m.starts_with("The value of COPYSTR parameter 3 is outside of the permitted range. The current value is: -1. The permitted range is: from 0"), "{m}");
+    assert!(unsupported(v, "B.AddText('0123456789'); N := B.GetSubText(S, 20); exit(S);"));
+}
+
 #[test]
 fn max_str_len_reads_the_declared_length() {
     // text/TestTextExtended.al MaxStrLen_*; also record fields (handlers/OngCard.Page.al).

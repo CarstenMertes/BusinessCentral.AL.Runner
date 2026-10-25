@@ -103,17 +103,32 @@ pub fn serialize_roots(roots: &[Elem], encoding: &str) -> String {
 /// An element on one line with no indentation: `<Item><Id>1</Id></Item>`. `None` when an element has no text (how an
 /// empty value is written without indentation is not pinned) or holds attributes.
 pub fn compact(e: &Elem) -> Option<String> {
+    // Attributes in order and an element without content as `<Name />` (xmlport/lt-bd-xmlport/BdXmlPort.al:473
+    // BdInlineSchema_Attributes, :436 BdInlineSchema_FieldTypesEmptyValues: `<Row Id="1" ... Note="">`, `<Name />`). An
+    // element with attributes and no content is not pinned.
     fn go(e: &Elem, out: &mut String) -> Option<()> {
-        if !e.attrs.is_empty() || e.children.is_empty() {
+        let empty = e.children.iter().all(|c| matches!(c, Node::Text(t) if t.is_empty()));
+        if empty && !e.attrs.is_empty() {
             return None;
         }
         out.push('<');
         out.push_str(&e.name);
+        if empty {
+            out.push_str(" />");
+            return Some(());
+        }
+        for (n, v) in &e.attrs {
+            out.push(' ');
+            out.push_str(n);
+            out.push_str("=\"");
+            crate::xml::escape_attr(v, out);
+            out.push('"');
+        }
         out.push('>');
         for c in &e.children {
             match c {
                 Node::Elem(c) => go(c, out)?,
-                Node::Text(t) if t.is_empty() => return None,
+                Node::Text(t) if t.is_empty() => {}
                 Node::Text(t) => crate::xml::escape_text(t, out),
             }
         }

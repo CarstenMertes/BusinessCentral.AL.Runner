@@ -2168,24 +2168,67 @@ impl Session {
         {
             return unsupported(shape());
         }
-        let rec = self.xp_record(inst, schema.node(table))?;
+        let tn = schema.node(table);
+        if tn.max_unbounded.is_some() {
+            return unsupported(shape());
+        }
+        let rec = self.xp_record(inst, tn)?;
         let t = self.table(&rec)?;
-        let mut fields = String::new();
+        // The schema of the table element: its elements in a sequence, then its attributes, in schema order
+        // (xmlport/lt-bd-xmlport/BdXmlPort.al:425 BdInlineSchema_FieldTypes, :473 BdInlineSchema_Attributes). An Integer
+        // element is `xs:int` and a BigInteger one `xs:long`, both with `default="0"`; every other pinned type is `xs:string`.
+        // A field attribute is `xs:string` whatever its type, `use="required"` unless Occurrence = Optional; a text attribute
+        // is required; a text element with MinOccurs = Zero is `minOccurs="0" maxOccurs="unbounded"`.
+        let (mut fields, mut attrs) = (String::new(), String::new());
         for f in schema.children(table) {
             let n = schema.node(f);
+            if !n.triggers.is_empty() || n.max_unbounded.is_some() || n.ns_prefix.is_some() {
+                return unsupported(shape());
+            }
             let ty = n.field.map(|p| &t.fields[p].ty);
-            let line = match (n.kind, ty) {
-                (ir::XmlNodeKind::Field, Some(RtType::Integer)) if !n.min_zero && n.triggers.is_empty() => format!(
-                    "      <xs:element minOccurs=\"1\" maxOccurs=\"1\" default=\"0\" name=\"{}\" type=\"xs:int\" />\r\n",
+            let element = |min: &str, max: &str, default: bool, xs: &str| {
+                format!(
+                    "      <xs:element minOccurs=\"{min}\" maxOccurs=\"{max}\"{} name=\"{}\" type=\"xs:{xs}\" />\r\n",
+                    if default { " default=\"0\"" } else { "" },
                     n.xml_name
-                ),
-                (ir::XmlNodeKind::Field, Some(RtType::Text(_))) if !n.min_zero && n.triggers.is_empty() => format!(
-                    "      <xs:element minOccurs=\"1\" maxOccurs=\"1\" name=\"{}\" type=\"xs:string\" />\r\n",
-                    n.xml_name
-                ),
-                _ => return unsupported(shape()),
+                )
             };
-            fields.push_str(&line);
+            match (n.kind, ty) {
+                (ir::XmlNodeKind::Field, Some(ty)) if !n.min_zero => {
+                    let line = match ty {
+                        RtType::Integer => element("1", "1", true, "int"),
+                        RtType::BigInteger => element("1", "1", true, "long"),
+                        RtType::Text(_)
+                        | RtType::Code(_)
+                        | RtType::Decimal
+                        | RtType::Date
+                        | RtType::Boolean
+                        | RtType::Option(_)
+                        | RtType::DateTime
+                        | RtType::Time
+                        | RtType::Duration
+                        | RtType::Guid => element("1", "1", false, "string"),
+                        _ => return unsupported(shape()),
+                    };
+                    fields.push_str(&line);
+                }
+                (ir::XmlNodeKind::Text, _) if n.min_zero && schema.children(f).is_empty() && !n.big_text => {
+                    fields.push_str(&element("0", "unbounded", false, "string"));
+                }
+                (ir::XmlNodeKind::FieldAttr, Some(RtType::Integer | RtType::Decimal | RtType::Boolean))
+                | (ir::XmlNodeKind::TextAttr, _) => {
+                    let used = match (n.kind, n.required) {
+                        (_, None) => "required",
+                        (ir::XmlNodeKind::FieldAttr, Some(false)) => "optional",
+                        _ => return unsupported(shape()),
+                    };
+                    attrs.push_str(&format!(
+                        "    <xs:attribute name=\"{}\" type=\"xs:string\" use=\"{used}\" />\r\n",
+                        n.xml_name
+                    ));
+                }
+                _ => return unsupported(shape()),
+            }
         }
         if fields.is_empty() {
             return unsupported(shape());
@@ -2205,12 +2248,15 @@ impl Session {
                 }
             }
         }
-        if rows.is_empty() {
+        // An optional table element without rows writes none (BdXmlPort.al:460 BdInlineSchema_NoRowsAttributes); one that is
+        // not optional writes the record as it stands (:447 BdInlineSchema_NoRows), as `xp_export_table` does.
+        if rows.is_empty() && !tn.min_zero {
             return unsupported("XmlPort export with InlineSchema and no rows (not pinned)");
         }
-        let (root_name, table_name) = (&schema.node(top).xml_name, &schema.node(table).xml_name);
+        let (root_name, table_name) = (&schema.node(top).xml_name, &tn.xml_name);
+        let table_min = if tn.min_zero { "0" } else { "1" };
         Ok(format!(
-            "<?xml version=\"1.0\" encoding=\"UTF-16\" standalone=\"no\"?>\r\n<{root_name}>\r\n<xs:schema xmlns:xs=\"http://www.w3.org/2001/XMLSchema\">\r\n  <xs:complexType name=\"{table_name}\">\r\n    <xs:sequence>\r\n{fields}    </xs:sequence>\r\n  </xs:complexType>\r\n  <xs:complexType name=\"{root_name}\" mixed=\"true\">\r\n    <xs:sequence>\r\n      <xs:element minOccurs=\"1\" maxOccurs=\"unbounded\" name=\"{table_name}\" type=\"{table_name}\" />\r\n    </xs:sequence>\r\n  </xs:complexType>\r\n  <xs:element name=\"{root_name}\" type=\"{root_name}\" />\r\n</xs:schema>{rows}</{root_name}>"
+            "<?xml version=\"1.0\" encoding=\"UTF-16\" standalone=\"no\"?>\r\n<{root_name}>\r\n<xs:schema xmlns:xs=\"http://www.w3.org/2001/XMLSchema\">\r\n  <xs:complexType name=\"{table_name}\">\r\n    <xs:sequence>\r\n{fields}    </xs:sequence>\r\n{attrs}  </xs:complexType>\r\n  <xs:complexType name=\"{root_name}\" mixed=\"true\">\r\n    <xs:sequence>\r\n      <xs:element minOccurs=\"{table_min}\" maxOccurs=\"unbounded\" name=\"{table_name}\" type=\"{table_name}\" />\r\n    </xs:sequence>\r\n  </xs:complexType>\r\n  <xs:element name=\"{root_name}\" type=\"{root_name}\" />\r\n</xs:schema>{rows}</{root_name}>"
         ))
     }
 
@@ -2395,6 +2441,11 @@ impl Session {
         }
         match &v {
             Value::Integer(i) => Ok(i.to_string()),
+            // A BigInteger without digit grouping and a Guid in braces (xmlport/lt-bd-xmlport/BdXmlPort.al:425
+            // BdInlineSchema_FieldTypes: `9876543210`, `{5A2F6C9E-...}`; :436 `0`, `{00000000-...}`). A negative BigInteger
+            // is not pinned.
+            Value::BigInteger(i) if *i >= 0 => Ok(i.to_string()),
+            Value::Guid(g) => Ok(al_builtins::format::format_guid(g)),
             Value::Text(s) | Value::Code(s) => Ok(s.to_string()),
             Value::Decimal(_) => al_builtins::xmlport::field_text(&v)
                 .or_else(|why| unsupported(format!("XmlPort export of {why} (the text form is not pinned)"))),

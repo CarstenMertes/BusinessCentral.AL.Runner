@@ -2227,17 +2227,14 @@ codeunit 60161 T
 }"#;
 
 // A filter set after the last row and the Read that raises are pinned (errors/lt-ms-refusals-131/
-// P131QuerySetRangeAfterRead.al:154-170); only the Open after the last row rests on query-closed-after-last-row.
+// P131QuerySetRangeAfterRead.al:154-170), and so is the Open after the last row (query/lt-query-read-to-end/QueryReadToEnd.al:88-200):
+// neither test is flagged.
 #[test]
-fn only_an_open_after_the_last_row_is_flagged() {
+fn an_open_after_the_last_row_is_not_flagged() {
     let hits = assumptions_of(QUERY_AFTER_LAST_ROW);
     let of = |n: &str| hits.iter().find(|(t, _)| t == n).map(|(_, h)| h.clone());
     assert_eq!(of("FilterAfterTheEndThenRead"), None, "{hits:?}");
-    assert_eq!(
-        of("FilterAfterTheEndThenOpen"),
-        Some(vec!["query-closed-after-last-row"]),
-        "{hits:?}"
-    );
+    assert_eq!(of("FilterAfterTheEndThenOpen"), None, "{hits:?}");
 }
 
 // The lowering can mark a statement as resting on an assumption (`Lowerer::assume`, `Stmt::Assume`): the test is flagged only when the

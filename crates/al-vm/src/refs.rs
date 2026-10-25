@@ -698,13 +698,19 @@ impl Session {
                         return Ok(Value::Null);
                     }
                     Some(Value::Record(src)) => src.clone(),
-                    // A RecordRef as the source (Microsoft's Gen. Jnl.-Post Preview): the same copy of its record.
-                    Some(Value::Library(_, other)) => match &*other.borrow() {
-                        LibraryValue::RecordRef(r) => {
-                            al_builtins::assumptions::assume(
-                                al_builtins::assumptions::Assumption::RecordRefGetTableOfRecordRef,
-                            );
-                            r.clone()
+                    // A RecordRef as the source (only through a Variant: B.GetTable(A) does not compile, must-not-compile
+                    // case 1140): a copy of its table, buffer, filters and current row, not shared afterwards
+                    // (record/lt-as-records/AsRecRefGetTable.al:35-106). A ref that is not open is a Conversion error and
+                    // leaves the target unopened (AsRecRefGetTable.al:110 FromNotOpen).
+                    Some(Value::Library(name, other)) => match &*other.borrow() {
+                        LibraryValue::RecordRef(r) => r.clone(),
+                        LibraryValue::Empty if name.eq_ignore_ascii_case("RecordRef") && from_variant => {
+                            return Err(Signal::Error(Box::new(AlError {
+                                message: "Unable to convert from Microsoft.Dynamics.Nav.Runtime.NavRecordRef to Microsoft.Dynamics.Nav.Runtime.INavRecordHandle.".into(),
+                                code: "Conversion".into(),
+                                call_stack: String::new(),
+                                ..Default::default()
+                            })));
                         }
                         _ => return unsupported("RecordRef.GetTable of a RecordRef that is not open"),
                     },
@@ -1298,9 +1304,8 @@ impl Session {
             // error for a field that is not a FlowField (record/TestCalcFieldsFieldClass.Codeunit.al);
             // whether FieldRef.CalcField says the same is not pinned, so it is refused.
             "CalcField" => {
-                // A Blob is accepted by Record.CalcFields (record/TestCalcFieldsFieldClass.Codeunit.al), and Temp Blob Impl.FromFieldRef
-                // calls CalcField on every Blob it reads; FieldRef.CalcField of a Blob goes the same way (assumption
-                // fieldref-calcfield-of-a-blob).
+                // FieldRef.CalcField of a Blob of a row read without CalcFields loads the blob, as Record.CalcFields
+                // does (record/lt-as-records/AsFieldRefCalcField.al:41 Blob_ReadWithoutCalcFields_ThenCalcField).
                 let blob = self.engine.program.objects[t.object as usize]
                     .table
                     .as_ref()
@@ -1310,9 +1315,6 @@ impl Session {
                             RtType::Library(al_builtins::library_kind::LibraryKind::Blob)
                         )
                     });
-                if blob {
-                    al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::FieldRefCalcFieldOfABlob);
-                }
                 let stored = !blob
                     && self.engine.program.objects[t.object as usize]
                         .table

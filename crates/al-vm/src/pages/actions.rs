@@ -1671,6 +1671,19 @@ impl Session {
             })
         };
         rows.push(row(self)?);
+        // A list that reads each row once more in its key (`reads_once_more_in_its_key`) reads the row it starts from once more
+        // here, and once more before the refresh's own read (pages/lt-sg-list-key-moves/SgListKeyMovesTests.al SG_Key_FourRows_Moves
+        // `update` `R:C;U;R:C;R:C;R:C;R:B;R:A;R:C;R:D;R:C;R:C;R:C;C:C;` against SG_Pk_FourRows_Moves, and the same in
+        // SG_Key_OneRow_Open and SG_Key_ThirtyRows_Moves; corpus bump PR 738).
+        let once_more = self.still_reads_once_more(st);
+        if once_more && !read_first {
+            return unsupported(
+                "the reads of a refresh after a control's OnValidate on a list in a key other than the primary key (not pinned)",
+            );
+        }
+        if once_more {
+            self.populate_current(st)?;
+        }
         let mut moved = false;
         for _ in 1..Self::WINDOW {
             if !self.nav_next(st, 1)? {
@@ -1734,6 +1747,9 @@ impl Session {
         self.record_op(RecordOp::Get, rec, &mut pk)?;
         // A view of one row has no step back onto it (a list of one row opens with RRC, not RRRC; Action_List_FewRows).
         if more_rows {
+            self.populate_current(st)?;
+        }
+        if once_more {
             self.populate_current(st)?;
         }
         // Without OnAfterGetCurrRecord the refresh reads nothing more (AiListOrderTests.al:233 Keep_Plain, :335

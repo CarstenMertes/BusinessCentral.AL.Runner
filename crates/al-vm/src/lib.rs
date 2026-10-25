@@ -1413,6 +1413,50 @@ impl Session {
         }))
     }
 
+    /// A RecordRef (held by a Variant) handed by value to a Record parameter of table `table`: of the same table, the Record
+    /// `ops::record_ref_into_record` makes (record/lt-ar-records/ArRecordProbes.al:366 VariantRecordRef_PassedToRecordParameter).
+    /// Of another table it raises ObjectDefinitionChanged, naming the first field of the ref's table: pinned for that field a Code
+    /// where the parameter's table has an Integer (ArRecordProbes.al SG_VariantRecordRef_OtherTable_AssignAndParameter `param`,
+    /// corpus bump PR 738); other pairs of types, and a ref that is not open, raise an error whose text is not pinned.
+    pub(crate) fn record_ref_into_record_param(
+        &mut self,
+        h: &Rc<RefCell<al_builtins::value::LibraryValue>>,
+        table: u32,
+    ) -> Result<Value, Signal> {
+        let other = match &*h.borrow() {
+            al_builtins::value::LibraryValue::RecordRef(rec) if rec.borrow().table == table => {
+                return al_builtins::ops::record_ref_into_record(&rec.borrow());
+            }
+            al_builtins::value::LibraryValue::RecordRef(rec) => rec.borrow().table,
+            al_builtins::value::LibraryValue::Empty => {
+                return Err(Signal::Error(Box::new(al_builtins::native::unpinned_error())));
+            }
+            _ => {
+                return Err(Signal::Unsupported(
+                    "a RecordRef value that is no record into a Record parameter".into(),
+                ));
+            }
+        };
+        let first = |t: u32| {
+            self.engine.program.objects[t as usize]
+                .table
+                .as_ref()
+                .and_then(|s| s.fields.first())
+                .map(|f| (f.name.clone(), f.ty.clone()))
+        };
+        if let (Some((_, RtType::Integer)), Some((name, RtType::Code(_)))) = (first(table), first(other)) {
+            return Err(Signal::Error(Box::new(al_builtins::native::AlError {
+                message: format!(
+                    "The definition of the {name} field has changed; old type: Integer, new type: Code. Start your activity again."
+                ),
+                code: "ObjectDefinitionChanged".into(),
+                call_stack: String::new(),
+                ..Default::default()
+            })));
+        }
+        Err(Signal::Error(Box::new(al_builtins::native::unpinned_error())))
+    }
+
     /// A record passed by value is a copy (ADR-010). A temporary record's copy
     /// gets an independent, empty table of its own (corpus
     /// record/TestTempTableContracts.al:TempVar_PassedByValue_CallerNotAffected).
@@ -1594,6 +1638,15 @@ impl Session {
                     Value::Record(Rc::new(RefCell::new(st)))
                 }
                 (Value::Record(rc), false) => self.record_by_value(&rc),
+                // A Variant holding a RecordRef handed by value to a Record parameter: see `record_ref_into_record_param`.
+                (Value::Library(name, h), false)
+                    if name.eq_ignore_ascii_case("RecordRef") && matches!(r.locals[i].ty, RtType::Record(..)) =>
+                {
+                    let RtType::Record(table, _) = &r.locals[i].ty else {
+                        unreachable!()
+                    };
+                    self.record_ref_into_record_param(&h, *table)?
+                }
                 // An array passed by value is a copy: the callee's writes and Clear do not reach the caller
                 // (misc/W5Clear.al:Clear_ArrayPassedByValue).
                 (Value::Array(a), false) => {

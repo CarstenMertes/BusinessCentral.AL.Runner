@@ -79,7 +79,7 @@ before any test. The errors are on stderr and in `compilationErrors` of
 A note on stderr says another `al-runner` is on your `PATH`, for example the .NET
 tool next to the standalone binary. `al-runner --version` lists all copies. If one
 of them is an old 2.x .NET tool, it runs the version 2 engine: update it with
-`dotnet tool update -g MSDyn365BC.AL.Runner`, or remove it. Set
+`dotnet tool update -g MSDyn365BC.AL.Runner --prerelease`, or remove it. Set
 `ALRUNNER_NO_PATH_NOTE=1` to silence the note.
 
 ## The binary is blocked

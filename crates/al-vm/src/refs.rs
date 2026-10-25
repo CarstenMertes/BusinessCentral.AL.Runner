@@ -346,6 +346,10 @@ impl Session {
                             | "FieldExist"
                             // recordref/lt-recordref-fieldref-members/P92Counts.al:189-199 (Truncate_Unopened).
                             | "Truncate"
+                            // P92SetTable.al:84-101 (never opened and closed), record/lt-loadfields-pagesource-validate/
+                            // P81RecordRefTables.al:137-150 SetTable_ClosedRecordRef_Error; P92Locking.al:38-49.
+                            | "SetTable"
+                            | "RecordLevelLocking"
                     )
                 }) =>
             {
@@ -605,6 +609,21 @@ impl Session {
                     .get(&cx, t, &pk)
                     .map_err(|e| Signal::Unsupported(format!("{e}")))?;
                 match stored {
+                    // A row stored again since the record read it: BC compares with what the record read, not with the stored
+                    // row (record/lt-as-records/AsGetTableIsDirty.al:87-107 StoredRowChangedAfterRead `dirty_unchanged` No), and
+                    // the runtime does not keep that; refused.
+                    Some(row)
+                        if t.fields
+                            .iter()
+                            .position(|f| f.id == SYSTEM_ROW_VERSION_ID)
+                            .is_some_and(|i| {
+                                matches!(fields[i], Value::BigInteger(n) if n != 0) && !fields[i].identical(&row[i])
+                            }) =>
+                    {
+                        return unsupported(
+                            "RecordRef.IsDirty after GetTable of a record whose row was stored again since it was read (not pinned)",
+                        );
+                    }
                     Some(row) => row,
                     None => self.initial_fields(t.object as usize),
                 }
@@ -630,6 +649,18 @@ impl Session {
                     return Ok(Value::Boolean(true));
                 }
                 if !have.contains(i) {
+                    continue;
+                }
+            }
+            // A Blob field nothing wrote to on either side is not a change (record/lt-as-records/AsGetTableIsDirty.al: ReadUnchanged,
+            // ReadChangedAndSetBack, StoredRowChangedAfterRead, NeverRead; recordref/lt-recordref-fieldref-members/P92DirtyRef.al:
+            // IsDirty_FieldChanges, with a Blob field the tests never touch). A Blob with content on either side is not pinned.
+            if let (Value::Blob(a), Value::Blob(b)) = (&fields[i], &base[i]) {
+                let blank = |x: &al_builtins::stream::BlobRef| {
+                    let x = x.borrow();
+                    x.bytes.is_empty() && !x.written
+                };
+                if blank(a) && blank(b) {
                     continue;
                 }
             }
@@ -1093,8 +1124,14 @@ impl Session {
                     return unsupported(format!("RecordRef.SetTable of {}", args.first().describe()));
                 };
                 let same_table = rec.borrow().table == dst.borrow().table;
+                // Into a record of another table: the error, and the record keeps its buffer
+                // (record/lt-loadfields-pagesource-validate/P81RecordRefTables.al:86-167, SetTable_OtherTable_Error,
+                // SetTable_OpenedOtherTable_Error, :430-450 GetTable_Variant_OfOtherTable_ThenSetTable).
                 if !same_table {
-                    return unsupported("RecordRef.SetTable into a record of another table");
+                    return Err(crate::transactions::al_error_code(
+                        "The table IDs do not match.",
+                        "TableIdMismatch",
+                    ));
                 }
                 // The record variable keeps its own rows and its own kind: a temporary RecordRef set into a permanent record leaves it
                 // permanent on the table's rows, a permanent one set into a temporary record leaves it temporary and empty of them; only the

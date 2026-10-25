@@ -1499,6 +1499,13 @@ fn evaluate_with_max(
             let by_name = members.iter().position(|m| m.eq_ignore_ascii_case(t));
             match (t.parse::<usize>().ok().filter(|n| *n < members.len()), by_name) {
                 (Some(n), _) | (None, Some(n)) => Parsed::Value(Value::Option(n as i32, members.clone())),
+                // TableConnectionType has no OptionCaption: 5 to 10, past its five members, answer false
+                // (misc/W5TableConnections.al:117-136, TableConnectionType_Members). Larger numbers are not pinned.
+                _ if crate::sysenum::is_table_connection_type(members)
+                    && t.parse::<usize>().is_ok_and(|n| (members.len()..=10).contains(&n)) =>
+                {
+                    Parsed::Rejected
+                }
                 // An OptionCaption may name it (fieldref/TestPrecompiledFieldOptionCaption.al:Evaluate_Caption_SelectsThatMember);
                 // the value does not carry the captions.
                 _ => {

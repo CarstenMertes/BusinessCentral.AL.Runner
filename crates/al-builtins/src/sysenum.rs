@@ -185,6 +185,12 @@ pub fn is_client_type(members: &[String]) -> bool {
     members.len() == known.len() && members.iter().zip(known).all(|(a, b)| a == b)
 }
 
+/// Whether `members` is the `TableConnectionType` option.
+pub fn is_table_connection_type(members: &[String]) -> bool {
+    let known = members_static("tableconnectiontype");
+    members.len() == known.len() && members.iter().zip(known).all(|(a, b)| a == b)
+}
+
 /// Whether `members` are those of the Field table's `Type` option, whose ordinals are not its positions.
 pub fn is_field_table_type(members: &[String]) -> bool {
     const MEMBERS: [&str; 21] = [

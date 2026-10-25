@@ -31,6 +31,7 @@ mod erm_defects;
 mod errorcollect;
 mod errorcollect_internal;
 mod event_var_nested;
+mod evaluate_table_connection_type;
 mod events;
 mod exec;
 mod filtergroup_assign;

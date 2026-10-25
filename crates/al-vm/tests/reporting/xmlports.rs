@@ -1592,7 +1592,9 @@ fn format_evaluate_decides_the_text_an_export_writes() {
 }
 
 // :157-197: an import reads only its own form; the Xml port refuses the display date (the start of BC's text
-// is pinned) and the Legacy port the XML date ("The date is not valid."); neither stores a row.
+// is pinned). The Legacy port reads a Date in the form yyyy-mm-dd and `true` (xmlport/lt-xmlport-query-datatransfer/
+// XpTImportOptions.al:344 Import_FormatEvaluateLegacy_XmlValues); its "The date is not valid." in :192-194 comes from
+// the DateTime, which this table does not have.
 #[test]
 fn format_evaluate_decides_the_form_an_import_reads() {
     let imp = |port: u32, row: &str| {
@@ -1614,7 +1616,7 @@ fn format_evaluate_decides_the_form_an_import_reads() {
     );
     assert!(r.ends_with("|0|0"), "{r}");
     assert_eq!(imp(60061, display_row), "Yes||1|2024-03-051234.5");
-    assert_eq!(imp(60061, xml_row), "No|The date is not valid.|0|0");
+    assert_eq!(imp(60061, xml_row), "Yes||1|2024-03-051234.5");
 }
 
 // xmlport/lt-xmlport-query-datatransfer/XpTImportBasic.al:Import_DuplicateKeyExisting

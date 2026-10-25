@@ -3466,8 +3466,11 @@ impl Session {
                         {
                             // The flag leaves the text as it is, from BC 28 (error-handling/lt-last-error-text-forms/
                             // FindEmptyTableExcludeFlag.al:99-121: FindFirst, FindLast, FindSet, FindSet(true), Find('-'),
-                            // Find('+'); guarded with BC28PLUS).
-                            let origin = if !rec.borrow().temporary && self.has(al_version::Gate::EmptyTableFindExcludeFlagFrom28) {
+                            // Find('+'); guarded with BC28PLUS). On every version for FindFirst and FindLast
+                            // (types/lt-evaluate-format-lasterror-setview/P86LastError.al:339-353, not guarded).
+                            let pinned = self.has(al_version::Gate::EmptyTableFindExcludeFlagFrom28)
+                                || matches!(method, RecordOp::FindFirst | RecordOp::FindLast);
+                            let origin = if !rec.borrow().temporary && pinned {
                                 al_builtins::native::ErrorOrigin::SameText
                             } else {
                                 al_builtins::native::ErrorOrigin::Unknown

@@ -2206,7 +2206,10 @@ mod tests {
         assert!(
             matches!((&braced, &plain), (Value::Guid(a), Value::Guid(b)) if a == b && a[0] == 0x11 && a[15] == 0x55)
         );
-        assert!(matches!(g("not a guid"), Err(Signal::Unsupported(_))));
+        // platform/lt-platform-members/PlTGuid.al:190-203: a text with a character no guid has raises; a malformed text of
+        // guid characters is not pinned.
+        assert!(matches!(g("not a guid"), Err(Signal::Error(e)) if e.code == "InvalidGuidFormat"));
+        assert!(matches!(g("1234-ABCD"), Err(Signal::Unsupported(_))));
         assert!(matches!(
             convert(
                 Value::Code("11111111-1111-1111-1111-111111111111".into()),

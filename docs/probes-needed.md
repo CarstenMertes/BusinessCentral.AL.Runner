@@ -1344,3 +1344,18 @@ language (issue 5772, real BC 28.1: `Vrijgegeven`, `Hallo wereld` under 2067). T
 | A read in a language other than 1033 of a text a translation file of the app could change: a Label (not `Locked`), `Format`/`Evaluate` of a captioned enum value, `Format`/`Evaluate` of an Option field with OptionCaption or OptionCaptionML, TableCaption, RecordRef.Caption, Format of a RecordId, FieldCaption, FieldRef.Caption, FieldRef.OptionCaption and the other FieldRef enum/option members, a TestField message naming an enum value, a TestPage caption and a control caption (the page's app or the source field's table), an error text naming the table caption (unpinned-error mark) | REFUSED when the object's app, or an extension of it, ships any translation file, whatever its language (which file applies is not pinned). An app without a translation file keeps the source text in every language, as the corpus pins under 1031 (the stricter "refuse whenever the language is not 1033" loses 18 such baseline cases). | ADR-053 section 6.2, P1 to P15 (P1: the issue's three tests; P2: an `en-US` file under 1033; P3: fallback between cultures; P11: Evaluate of the source text under 2067). |
 | A translatable text in language 1033 of an app that ships an `en-US` file | Source text, not refused (ADR-053 P2: whether BC applies the `en-US` file under 1033 is not pinned; refusing it would refuse every US run of Base Application). | P2. |
 | Error texts the platform builds around a field caption (`TestField`, primary key identification `No.='A'`), request page captions (a report SaveAs with labels or IncludeCaption is refused in any language but 1033 and 1031 already), action captions, `InstructionalText`, `ToolTip`, `AllObjWithCaption` and the metadata tables, under another language in an app that ships a translation file | Source text, not refused yet. | P14, P15. |
+
+## Compile errors from outside issues (al-runner issues 5854, 5852, 5845, 5853, 2026-10-25)
+
+Code: `al-sema/src/alcodes.rs` (`duplicate_ids`, `long_object_names`), `check/object.rs` (AL0139 at `ExitStmt`),
+`check/infer.rs` (`al_too_few_arguments`). Each code is reported only for the shapes the must-not-compile cases pin.
+
+| Shape | Status | Probe wanted |
+|---|---|---|
+| AL0305 for an object name of 31 to 36 characters | Compiles (only 37 characters, case 0055, is pinned). Issue 5845 shows alc rejecting 31 and accepting 30; writer SC adds the boundary case next to 0055. | 30 compiles, 31 is AL0305; then lower `AL0305_PINNED_LENGTH` to 31. |
+| AL0305 for an object type other than a codeunit | Compiles. | A table, a page and an enum with a 31-character name. |
+| AL0264 for two objects of a type other than codeunit and table with one id in one app, or two apps with one id | Not reported; the program still lowers (the later declaration gets a key of its own). | A page, report, enum and query pair; two apps. |
+| AL0264 text | Ends after "by the extension": the rest names the app with its publisher and version, which the workspace does not carry. | None (text known). |
+| AL0139 for exit(value) in a routine of a table, page, report or other non-codeunit object | Not reported. | A table procedure and a field trigger with `exit(1)`, for the name alc puts in the text. |
+| AL0135 for a call on a variable (`Logic.Add(1)`), of a procedure of a table or page, or of a name with overloads | Not reported (the overload choice keeps refusing the call). | The same calls in each shape. |
+| AL0135 text for parameter types other than Integer and Text | Ends after "of": the signature form of Record, Code[n], Text[n], Option and other types is not pinned. | A procedure with a Record, a Code[20] and an Option parameter called with too few arguments. |

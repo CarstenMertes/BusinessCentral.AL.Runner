@@ -86,3 +86,58 @@ fn a_processing_instruction_target_is_checked_and_its_end_marker_is_split() {
     );
     assert_eq!(r, "Argument|Argument|Xml:Xml|<?t ? >?>");
 }
+
+const STREAM: &str = r#"
+table 50311 B { fields { field(1; Id; Integer) { } field(2; Data; Blob) { } } keys { key(PK; Id) { } } }
+
+codeunit 50312 Z
+{
+    procedure AttributeOnce(): Integer
+    var R: Record B; OutS: OutStream; A: XmlAttribute;
+    begin
+        R.Data.CreateOutStream(OutS); A := XmlAttribute.Create('a', 'plain'); A.WriteTo(OutS);
+        R.CalcFields(Data); exit(R.Data.Length);
+    end;
+
+    procedure AttributeTwice(): Integer
+    var R: Record B; OutS: OutStream; A: XmlAttribute;
+    begin
+        R.Data.CreateOutStream(OutS); A := XmlAttribute.Create('a', 'plain'); A.WriteTo(OutS); A.WriteTo(OutS);
+        exit(R.Data.Length);
+    end;
+
+    procedure DocTypeTwice(): Integer
+    var R: Record B; OutS: OutStream; Dt: XmlDocumentType;
+    begin
+        R.Data.CreateOutStream(OutS); Dt := XmlDocumentType.Create('r'); Dt.WriteTo(OutS); Dt.WriteTo(OutS);
+        exit(R.Data.Length);
+    end;
+
+    procedure AttributeAfterText(): Integer
+    var R: Record B; OutS: OutStream; A: XmlAttribute;
+    begin
+        R.Data.CreateOutStream(OutS); OutS.WriteText('x'); A := XmlAttribute.Create('a', 'plain'); A.WriteTo(OutS);
+        exit(R.Data.Length);
+    end;
+}
+"#;
+
+#[test]
+fn an_attribute_written_into_a_fresh_stream_is_its_markup() {
+    // P97AttrWrite.al:150 WriteTo_OutStream: `a="plain"` is 9 bytes.
+    let r = al_testkit::run_in(STREAM, "Z", "AttributeOnce");
+    assert!(matches!(r, Ok(al_builtins::value::Value::Integer(9))), "{r:?}");
+}
+
+#[test]
+fn a_second_write_of_an_attribute_or_document_type_into_the_same_stream_is_refused() {
+    // Only a stream nothing was written to is pinned for these kinds (P97AttrWrite.al:150, P104WriteDocType.al:199):
+    // whether a second WriteTo writes over the first or appends is not.
+    for routine in ["AttributeTwice", "DocTypeTwice", "AttributeAfterText"] {
+        let r = al_testkit::run_in(STREAM, "Z", routine);
+        assert!(
+            matches!(&r, Err(al_builtins::native::Signal::Unsupported(_))),
+            "{routine}: {r:?}"
+        );
+    }
+}

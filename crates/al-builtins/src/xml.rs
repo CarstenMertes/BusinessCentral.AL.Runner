@@ -3546,6 +3546,7 @@ fn add_first(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult
 ///   ReplaceWith(42)). Only 0..=999 runs: whether a larger number is written with digit grouping (Format) or without
 ///   (.NET) is not pinned, nor is the sign of a negative;
 /// - an empty text adds nothing (P104TreeAComment.al:208, :319 `c15`; P104TreeBComment.al:331 `c15`).
+///
 /// For other receivers neither is pinned: an Integer is refused by content_nodes and an empty text here.
 fn sibling_content_nodes(h: &Handle, args: &[Value]) -> Result<Vec<Handle>, Signal> {
     let pinned = with(h, |d| {
@@ -4307,11 +4308,11 @@ fn write_to_text_options(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]
 
 /// `XmlAttribute.WriteTo(OutStream)`: the attribute's text in UTF-8, without a byte order mark
 /// (xml/lt-xml-attr-doc-http-members/P97AttrWrite.al:150 WriteTo_OutStream `k1`..`k6`: `a="plain"` is 9 bytes, the first
-/// character `a`). Pinned for a stream nothing else was written to.
+/// character `a`). Pinned only for a stream nothing was written to: a stream that holds bytes is refused.
 fn attribute_write_to_outstream(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
     let h = recv(r)?;
     let text = serialize(&h)?;
-    crate::stream::write_raw_bytes_rewinding(&mut a[0], text.as_bytes())?;
+    crate::stream::write_raw_bytes_fresh(&mut a[0], text.as_bytes())?;
     Ok(Value::Boolean(true))
 }
 
@@ -4380,7 +4381,11 @@ fn write_to_outstream(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -
     // A text, CDATA, comment or processing instruction leaves the stream where it was, as JSON does: a second WriteTo writes over the
     // first one's bytes (xml/lt-xml-cdata-comment-pi-text/P90CDataRead.al:WriteTo_OutStream_TwiceIntoSameStream and its three siblings:
     // one copy, 16 bytes). Pinned for a stream nothing else was written to. A document and an element keep appending.
-    if with(&h, |d| !matches!(d, XData::Document { .. } | XData::Element { .. })) {
+    // A document type is pinned only for a stream nothing was written to (P104WriteDocType.al:199): a second WriteTo
+    // into the same stream, or one after other bytes, is refused.
+    if with(&h, |d| matches!(d, XData::DocType { .. })) {
+        crate::stream::write_raw_bytes_fresh(&mut a[stream], &bytes)?;
+    } else if with(&h, |d| !matches!(d, XData::Document { .. } | XData::Element { .. })) {
         crate::stream::write_raw_bytes_rewinding(&mut a[stream], &bytes)?;
     } else {
         crate::stream::write_raw_bytes(&mut a[stream], &bytes)?;

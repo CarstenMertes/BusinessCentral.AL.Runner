@@ -132,20 +132,36 @@ impl Session {
         let page = page_of(&engine, st);
         let ctl = &page.controls[idx];
         let current = self.control_value(st, idx)?;
-        let Some(ty) = self.control_type(st, idx, &current) else {
-            // A control bound to an expression on a page with no source table is pinned for the write itself
-            // (misc/lt-probes-needed-7/PnGTempControl.al, pages/W1Controls.al:TempRecordControl_SetValue) but the page also
-            // refreshes after an action there (AGCR), which is not modelled: refused.
-            if matches!(ctl.binding, ir::Binding::Expr(_))
-                && ctl.trigger("__sourceset").is_some()
-                && !self.is_request_page(st)
-            {
+        // A control bound to an expression that can be written, on a page with no source table: the write itself is pinned
+        // (misc/lt-probes-needed-7/PnGTempControl.al, pages/W1Controls.al:424 TempRecordControl_SetValue `set_log`, `c_after`;
+        // pages/lt-page-array-path/PageArrayPathSetValue.al:91-200 ArrayElementField_*), with the type of the value it gives now
+        // (as `control_type` on a page with a source table; a Decimal or a Text). The page also refreshes after a later action there (AGCR,
+        // W1Controls.al:453 `buf_log`), which is not modelled: `action_invoke` refuses an action after such a write.
+        let no_source_expr = matches!(ctl.binding, ir::Binding::Expr(_))
+            && ctl.trigger("__sourceset").is_some()
+            && !self.has_source(st)
+            && !self.is_request_page(st);
+        let ty = self.control_type(st, idx, &current).or_else(|| {
+            no_source_expr
+                // Only a Decimal (the array element) and a Text (the temporary record's field) are pinned.
+                .then(|| match &current {
+                    Value::Decimal(_) => Some(RtType::Decimal),
+                    Value::Text(_) => Some(RtType::Text(None)),
+                    _ => None,
+                })
+                .flatten()
+        });
+        let Some(ty) = ty else {
+            if no_source_expr {
                 return unsupported(
-                    "SetValue on a control bound to an expression of a page with no source table (the refresh after an action is not modelled)",
+                    "SetValue on a control bound to an expression of a page with no source table, whose value is of another kind (not pinned)",
                 );
             }
             return unsupported("SetValue on a control whose type is not known");
         };
+        if no_source_expr {
+            st.borrow_mut().expr_set_no_source = true;
+        }
         let rec_bound = matches!(ctl.binding, ir::Binding::Field(_));
         // A SetValue on a host control while one of its parts holds a typed row that is not saved: the part saves that row
         // first, as it does when the host moves (misc/lt-probes-needed-7/PnGPartRows.al:130-163
@@ -598,6 +614,21 @@ impl Session {
         let parsed = match parsed {
             Ok(v) => v,
             Err(al_builtins::pagefmt::ParseError::Invalid) => {
+                // A control bound to a writable expression of a page with no source table says it too
+                // (pages/lt-page-array-path/PageArrayPathSetValue.al:148 ArrayElementField_SetValueUnconvertible_IsRefused).
+                let no_source_expr = {
+                    let engine = self.engine();
+                    let ctl = &page_of(&engine, st).controls[idx];
+                    matches!(ctl.binding, ir::Binding::Expr(_))
+                        && ctl.trigger("__sourceset").is_some()
+                        && !self.has_source(st)
+                        && !self.is_request_page(st)
+                };
+                if no_source_expr && !matches!(ty, RtType::Decimal) {
+                    return unsupported(
+                        "a refused entry on a control bound to an expression of a page with no source table, of a type other than Decimal (the text is not pinned)",
+                    );
+                }
                 // The message names an entry of up to 19 characters whole (pages/lt-page-run-overloads-testpart/
                 // P106TestFieldAsDateTime.al:61, controls/W2ValueControls.al:456); an Enum entry of 25 keeps its first and last 8 around `...`
                 // (misc/lt-cv-odd-leads/CvEnumCaptionComma.al:151, `Diamond ...th bonus`). Other lengths are not pinned.
@@ -634,7 +665,7 @@ impl Session {
                 }
                 // A Decimal says what was wrong (misc/lt-probes-needed-3/PnC07TestPage.al:ValueAssign_Number_FromText_And_Decimal, a list;
                 // pages/lt-ah-pages/AhPageTests.al:133 and P82TestField.al:302, a card).
-                if rec_bound && !no_row && matches!(ty, RtType::Decimal) {
+                if ((rec_bound && !no_row) || no_source_expr) && matches!(ty, RtType::Decimal) {
                     msg.push_str(&format!(" '{text}' is not a part of a valid decimal expression."));
                 }
                 // The number conversion of a table field on a card is a TestValidation error (AhPageTests.al:113, :134).

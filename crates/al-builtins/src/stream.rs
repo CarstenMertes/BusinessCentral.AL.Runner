@@ -1369,6 +1369,18 @@ pub fn write_raw_bytes_rewinding(stream: &mut Value, bytes: &[u8]) -> Result<(),
     Ok(())
 }
 
+/// As [`write_raw_bytes_rewinding`], for a kind whose bytes are pinned only for a stream nothing was written to yet
+/// (an attribute or a document type: whether a second write goes over the first or after it is not pinned).
+pub fn write_raw_bytes_fresh(stream: &mut Value, bytes: &[u8]) -> Result<(), Signal> {
+    let (b, _) = out_buf(Some(stream))?;
+    if !b.borrow().bytes.is_empty() {
+        return unsupported(
+            "WriteTo(OutStream) of an attribute or document type into a stream that holds bytes (not pinned)",
+        );
+    }
+    write_raw_bytes_rewinding(stream, bytes)
+}
+
 /// Writes bytes to an `OutStream` argument whatever its encoding (the caller pins the bytes).
 pub fn write_raw_bytes(stream: &mut Value, bytes: &[u8]) -> Result<(), Signal> {
     let (b, _) = out_buf(Some(stream))?;

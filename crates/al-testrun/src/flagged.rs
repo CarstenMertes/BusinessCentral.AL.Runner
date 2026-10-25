@@ -141,7 +141,10 @@ mod tests {
 
     #[test]
     fn rank_counts_flagged_passes_and_other_tests_and_orders_by_flagged() {
-        let a = [Assumption::QueryClosedAfterLastRow, Assumption::CodeCoverageSnapshotWhileLogging];
+        let a = [
+            Assumption::QueryClosedAfterLastRow,
+            Assumption::CodeCoverageSnapshotWhileLogging,
+        ];
         let b = [Assumption::CodeCoverageSnapshotWhileLogging];
         let c: [Assumption; 0] = [];
         let rows = rank([(true, &a[..]), (true, &b[..]), (false, &b[..]), (true, &c[..])]);
@@ -166,7 +169,10 @@ mod tests {
     #[test]
     fn id_list_joins_the_ids() {
         assert_eq!(
-            id_list(&[Assumption::QueryClosedAfterLastRow, Assumption::CodeCoverageSnapshotWhileLogging]),
+            id_list(&[
+                Assumption::QueryClosedAfterLastRow,
+                Assumption::CodeCoverageSnapshotWhileLogging
+            ]),
             "query-closed-after-last-row,code-coverage-snapshot-while-logging"
         );
     }
@@ -187,7 +193,10 @@ mod tests {
             text.contains("query-closed-after-last-row  (3 flagged passes, 1 other tests)"),
             "{text}"
         );
-        assert!(text.contains("code-coverage-snapshot-while-logging  (not hit in the last run)"), "{text}");
+        assert!(
+            text.contains("code-coverage-snapshot-while-logging  (not hit in the last run)"),
+            "{text}"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

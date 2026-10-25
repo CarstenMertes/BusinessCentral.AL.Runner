@@ -58,15 +58,19 @@ fn a_partly_landed_pin_is_a_warning() {
     let extra = format!("code-coverage-snapshot-while-logging;5806;2026-10-20;{PRESENT},{MISSING}");
     let (code, out, err) = cli(&["--awaiting-assumptions"], Some(&extra));
     assert_eq!(code, 0, "{out}{err}");
-    assert!(err.contains("warning: assumption `code-coverage-snapshot-while-logging`"), "{out}{err}");
+    assert!(
+        err.contains("warning: assumption `code-coverage-snapshot-while-logging`"),
+        "{out}{err}"
+    );
     assert!(err.contains(&format!("still missing: {MISSING}")), "{out}{err}");
 }
 
 #[test]
 fn the_summary_is_one_line_oldest_first() {
     // Dates older than any real entry, so that real entries do not come between them.
-    let extra =
-        format!("code-coverage-snapshot-while-logging;5806;2020-01-02;{MISSING}|query-closed-after-last-row;5807;2020-01-01;{PRESENT}");
+    let extra = format!(
+        "code-coverage-snapshot-while-logging;5806;2020-01-02;{MISSING}|query-closed-after-last-row;5807;2020-01-01;{PRESENT}"
+    );
     let (code, out, err) = cli(&["--awaiting-assumptions", "--summary"], Some(&extra));
     assert_eq!(code, 0, "{out}{err}");
     let line = out

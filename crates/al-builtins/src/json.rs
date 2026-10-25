@@ -1228,11 +1228,16 @@ fn in_language(language: i32, result: Result<Value, Signal>) -> Result<Value, Si
             let date = format!("Unable to convert from {NAV_JSON_VALUE} to Microsoft.Dynamics.Nav.Runtime.NavDate.");
             if language == 1031 && e.message == date {
                 return Err(error(
-                    format!("Die Konvertierung von {NAV_JSON_VALUE} in Microsoft.Dynamics.Nav.Runtime.NavDate ist nicht m\u{f6}glich."),
+                    format!(
+                        "Die Konvertierung von {NAV_JSON_VALUE} in Microsoft.Dynamics.Nav.Runtime.NavDate ist nicht m\u{f6}glich."
+                    ),
                     "Conversion",
                 ));
             }
-            unsupported(format!("the text of the JSON conversion error `{}` in the language {language} (not pinned)", e.message))
+            unsupported(format!(
+                "the text of the JSON conversion error `{}` in the language {language} (not pinned)",
+                e.message
+            ))
         }
         other => other,
     }

@@ -505,11 +505,15 @@ fn byte_or_char(target: &Value, text: &str) -> Result<Parsed, Signal> {
         return match target {
             Value::Byte(_) => match u8::try_from(u32::from(ch)) {
                 Ok(b) if ch.is_ascii() => Ok(Parsed::Value(Value::Byte(b))),
-                _ => unsupported(format!("Evaluate of `{text}` into a Byte (only an ASCII character is pinned)")),
+                _ => unsupported(format!(
+                    "Evaluate of `{text}` into a Byte (only an ASCII character is pinned)"
+                )),
             },
             _ => match u16::try_from(u32::from(ch)) {
                 Ok(c) if ch.is_ascii() => Ok(Parsed::Value(Value::Char(c))),
-                _ => unsupported(format!("Evaluate of `{text}` into a Char (only an ASCII character is pinned)")),
+                _ => unsupported(format!(
+                    "Evaluate of `{text}` into a Char (only an ASCII character is pinned)"
+                )),
             },
         };
     }
@@ -520,7 +524,10 @@ fn byte_or_char(target: &Value, text: &str) -> Result<Parsed, Signal> {
     if text.is_empty() && matches!(target, Value::Char(_)) {
         return Ok(Parsed::Rejected);
     }
-    unsupported(format!("Evaluate of `{text}` into a {} (not pinned)", target.describe()))
+    unsupported(format!(
+        "Evaluate of `{text}` into a {} (not pinned)",
+        target.describe()
+    ))
 }
 
 /// `Evaluate` into a Duration, as far as measured (types/lt-datetime/Evaluate.al:379-447, Duration_Evaluate; types/
@@ -537,7 +544,11 @@ fn byte_or_char(target: &Value, text: &str) -> Result<Parsed, Signal> {
 ///
 /// Every other text, unit, number or language is not pinned and is refused.
 fn duration(text: &str, number: i64, language: i32) -> Result<Parsed, Signal> {
-    let refuse = || unsupported(format!("Evaluate of `{text}` into a Duration with format number {number} (not pinned)"));
+    let refuse = || {
+        unsupported(format!(
+            "Evaluate of `{text}` into a Duration with format number {number} (not pinned)"
+        ))
+    };
     if language != 1033 {
         return refuse();
     }
@@ -575,7 +586,10 @@ fn duration(text: &str, number: i64, language: i32) -> Result<Parsed, Signal> {
                 return None;
             }
             let f: i64 = format!("{frac:0<3}").parse().ok()?;
-            let total = d.parse::<i64>().ok()?.checked_mul(86_400_000)?
+            let total = d
+                .parse::<i64>()
+                .ok()?
+                .checked_mul(86_400_000)?
                 .checked_add(h.parse::<i64>().ok()?.checked_mul(HOUR)?)?
                 .checked_add(m.parse::<i64>().ok()?.checked_mul(60_000)?)?
                 .checked_add(sec.parse::<i64>().ok()?.checked_mul(1000)?)?

@@ -18,11 +18,20 @@ fn a_date_plus_or_minus_a_fraction_raises_a_conversion_error() {
          Show(TryMinus(D, -2.5, R), R) + '#' + Show(TryPlus(D, 2.0, R), R); exit(T); end; }}"
     );
     let cast = |v: &str| {
-        format!("Overflow under conversion of Microsoft.Dynamics.Nav.Runtime.Decimal18 value {v} to System.Int32.|ConversionCast")
+        format!(
+            "Overflow under conversion of Microsoft.Dynamics.Nav.Runtime.Decimal18 value {v} to System.Int32.|ConversionCast"
+        )
     };
     assert_eq!(
         run(&src),
-        [cast("2.5"), cast("2.4"), cast("-0.4"), cast("2.5"), "2024-03-12".to_string()].join("#")
+        [
+            cast("2.5"),
+            cast("2.4"),
+            cast("-0.4"),
+            cast("2.5"),
+            "2024-03-12".to_string()
+        ]
+        .join("#")
     );
 }
 

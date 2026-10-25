@@ -723,7 +723,10 @@ const REGISTRY: &[(&str, NativeFn)] = &[
             "BigInteger.ToText of {n} in language {}: whether the text has a thousands separator is not pinned",
             c.language()
         ))),
-        other => Err(Signal::Unsupported(format!("BigInteger.ToText on {}", other.describe()))),
+        other => Err(Signal::Unsupported(format!(
+            "BigInteger.ToText on {}",
+            other.describe()
+        ))),
     }),
     // `Date.ToText()` and `Boolean.ToText()` (Base Application's Customer Mgt. CalcLastPaymentInfo puts them in a Dictionary
     // of [Text, Text]): Format(value) with the default format, pinned by types/lt-conversions-hidden-parts-doctype/
@@ -2184,7 +2187,9 @@ fn textconst_text(language: i32, args: &[Value]) -> Result<Value, Signal> {
     }
     match texts.as_slice() {
         [(_, t)] => Ok(Value::Text(t.clone())),
-        [(first, t), rest @ ..] if first == "DEU" && rest.iter().all(|(c, _)| c.as_str() > "DEU") => Ok(Value::Text(t.clone())),
+        [(first, t), rest @ ..] if first == "DEU" && rest.iter().all(|(c, _)| c.as_str() > "DEU") => {
+            Ok(Value::Text(t.clone()))
+        }
         _ => unsupported(
             "a TextConst with no text in the language in force and no ENU text, whose first language is not DEU: which of its texts BC reads is not pinned (docs/probes-needed.md)",
         ),

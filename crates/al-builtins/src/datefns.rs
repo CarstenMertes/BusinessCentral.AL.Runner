@@ -1159,10 +1159,15 @@ mod tests {
             e.message
                 .ends_with("The current value is: 4. The permitted range is: from 1 to 3.")
         );
-        // Date2DMY of the undefined date is not pinned (Date2DWY's is).
+        // Date2DMY of the undefined date raises for part 1 (misc/lt-probes-needed-2/PnBDateFormat.al, undefinedDmy); the
+        // other parts are not pinned.
+        let Err(Signal::Error(e)) = call("System.Date2DMY#1", vec![Value::Date(0, false), Value::Integer(1)]) else {
+            panic!("0D must raise");
+        };
+        assert_eq!(e.code, "DateInvalid");
         refused(call(
             "System.Date2DMY#1",
-            vec![Value::Date(0, false), Value::Integer(1)],
+            vec![Value::Date(0, false), Value::Integer(2)],
         ));
     }
 

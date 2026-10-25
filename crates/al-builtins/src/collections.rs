@@ -286,13 +286,15 @@ pub const REGISTRY: &[(&str, NativeFn)] = &[
     ("Dictionary.Set#2", |c, r, a| {
         refuse_result(c.ret_used(), "Dictionary.Set(Key, Value, var OldValue)")?;
         let old = with_dict(r, |d| {
-            Ok(match d.iter_mut().find(|(k, _)| !matches!(k, Value::Null) && eq(k, &a[0])) {
-                Some((_, v)) => Some(std::mem::replace(v, a[1].clone())),
-                None => {
-                    dict_insert(d, a[0].clone(), a[1].clone());
-                    None
-                }
-            })
+            Ok(
+                match d.iter_mut().find(|(k, _)| !matches!(k, Value::Null) && eq(k, &a[0])) {
+                    Some((_, v)) => Some(std::mem::replace(v, a[1].clone())),
+                    None => {
+                        dict_insert(d, a[0].clone(), a[1].clone());
+                        None
+                    }
+                },
+            )
         })?;
         if let Some(old) = old {
             a[2] = old;

@@ -181,7 +181,10 @@ mod tests {
     fn a_flagged_pass_is_still_a_pass_in_junit_and_lists_its_ids() {
         let marks = |c: &CaseId| {
             if c.name == "a" {
-                vec![Assumption::QueryClosedAfterLastRow, Assumption::CodeCoverageSnapshotWhileLogging]
+                vec![
+                    Assumption::QueryClosedAfterLastRow,
+                    Assumption::CodeCoverageSnapshotWhileLogging,
+                ]
             } else {
                 Vec::new()
             }

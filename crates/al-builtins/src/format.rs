@@ -1117,7 +1117,9 @@ fn format_duration(ms: i64, standard: i32, lang: i32) -> Result<String, FormatFa
         });
     }
     if ms.unsigned_abs() > 18_000_000_000_000_000 {
-        return Err(FormatFail::Unsupported(format!("Format of a Duration of {ms} ms (not pinned)")));
+        return Err(FormatFail::Unsupported(format!(
+            "Format of a Duration of {ms} ms (not pinned)"
+        )));
     }
     match standard {
         0 | 1 => duration_format(ms, false, lang),

@@ -1503,7 +1503,9 @@ fn guid_of_text(t: &str) -> Result<[u8; 16], Signal> {
             return Ok(g);
         }
     }
-    unsupported(format!("a Guid compared with the text `{t}` (only the braced and the plain 36 character forms are pinned)"))
+    unsupported(format!(
+        "a Guid compared with the text `{t}` (only the braced and the plain 36 character forms are pinned)"
+    ))
 }
 
 /// Whether two primary keys are the same value for value.

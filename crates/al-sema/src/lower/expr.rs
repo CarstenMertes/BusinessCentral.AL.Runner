@@ -93,7 +93,9 @@ impl Lowerer<'_> {
         let slot = crate::base_access::slot_of(&ast, items, name)
             .ok_or_else(|| format!("`{name}` has no slot in the {noun} it extends"))?;
         if decl.type_ref().as_ref().and_then(textconst_languages).is_some() {
-            return Err(format!("`{name}`: a TextConst of the {noun} it extends with texts in several languages (not lowered)"));
+            return Err(format!(
+                "`{name}`: a TextConst of the {noun} it extends with texts in several languages (not lowered)"
+            ));
         }
         let label = decl.type_ref().as_ref().and_then(label_text);
         Ok((slot, ty, label))

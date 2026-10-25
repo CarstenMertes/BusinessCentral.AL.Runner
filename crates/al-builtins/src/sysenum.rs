@@ -188,10 +188,12 @@ pub fn is_client_type(members: &[String]) -> bool {
 /// For the platform options whose `Evaluate` of a number past the members is measured to answer false, the largest number
 /// measured: `TableConnectionType` 10, `ExecutionMode` 12 (see `evaluate.rs`).
 pub fn rejected_number_past_members(members: &[String]) -> Option<usize> {
-    [("tableconnectiontype", 10), ("executionmode", 12)].into_iter().find_map(|(name, last)| {
-        let known = members_static(name);
-        (members.len() == known.len() && members.iter().zip(known).all(|(a, b)| a == b)).then_some(last)
-    })
+    [("tableconnectiontype", 10), ("executionmode", 12)]
+        .into_iter()
+        .find_map(|(name, last)| {
+            let known = members_static(name);
+            (members.len() == known.len() && members.iter().zip(known).all(|(a, b)| a == b)).then_some(last)
+        })
 }
 
 /// Whether `members` are those of the Field table's `Type` option, whose ordinals are not its positions.

@@ -754,7 +754,10 @@ mod tests {
         assume(Assumption::CodeCoverageSnapshotWhileLogging);
         assert_eq!(
             take_hits(),
-            vec![Assumption::QueryClosedAfterLastRow, Assumption::CodeCoverageSnapshotWhileLogging]
+            vec![
+                Assumption::QueryClosedAfterLastRow,
+                Assumption::CodeCoverageSnapshotWhileLogging
+            ]
         );
         assert!(take_hits().is_empty());
         assume(Assumption::QueryClosedAfterLastRow);

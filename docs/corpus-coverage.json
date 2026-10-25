@@ -2,7 +2,7 @@
   "corpus_commit": "80711c1b1ee4c1ea25ac3cbaff7faf729ddeca4b",
   "language": {
     "bc": "27-29",
-    "implemented": 1511,
+    "implemented": 1516,
     "methods": [
       {
         "bc": [
@@ -7123,7 +7123,7 @@
         "scope": "",
         "sig": "(Integer)",
         "site": "json/JsonArrayBasics.al:182",
-        "state": "refused",
+        "state": "implemented",
         "type": "JsonArray"
       },
       {
@@ -7154,7 +7154,7 @@
         "scope": "",
         "sig": "(Text, var List of [JsonToken])",
         "site": null,
-        "state": "refused",
+        "state": "implemented",
         "type": "JsonArray"
       },
       {
@@ -8385,7 +8385,7 @@
         "scope": "",
         "sig": "(Text, var List of [JsonToken])",
         "site": null,
-        "state": "refused",
+        "state": "implemented",
         "type": "JsonObject"
       },
       {
@@ -8401,7 +8401,7 @@
         "scope": "",
         "sig": "()",
         "site": "json/lt-json-overloads/P88ObjectGetCharValues.al:50",
-        "state": "refused",
+        "state": "implemented",
         "type": "JsonObject"
       },
       {
@@ -8688,7 +8688,7 @@
         "scope": "",
         "sig": "(Text, var List of [JsonToken])",
         "site": null,
-        "state": "refused",
+        "state": "implemented",
         "type": "JsonToken"
       },
       {
@@ -27947,7 +27947,7 @@
     ],
     "overloads": 1750,
     "pinned": 1706,
-    "refused": 211,
+    "refused": 206,
     "runtime_only": [
       "ErrorInfo.Create#3",
       "FieldRef.FieldError#2",

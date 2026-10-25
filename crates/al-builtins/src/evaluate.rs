@@ -1499,10 +1499,11 @@ fn evaluate_with_max(
             let by_name = members.iter().position(|m| m.eq_ignore_ascii_case(t));
             match (t.parse::<usize>().ok().filter(|n| *n < members.len()), by_name) {
                 (Some(n), _) | (None, Some(n)) => Parsed::Value(Value::Option(n as i32, members.clone())),
-                // TableConnectionType has no OptionCaption: 5 to 10, past its five members, answer false
-                // (misc/W5TableConnections.al:117-136, TableConnectionType_Members). Larger numbers are not pinned.
-                _ if crate::sysenum::is_table_connection_type(members)
-                    && t.parse::<usize>().is_ok_and(|n| (members.len()..=10).contains(&n)) =>
+                // A platform option without an OptionCaption rejects a number past its members, as far as measured:
+                // TableConnectionType 5 to 10 (misc/W5TableConnections.al:117-136, TableConnectionType_Members), ExecutionMode
+                // 2 to 12 (misc/lt-probes-needed-3/PnC11SystemEnums.al:13-52, ExecutionMode_Members). Larger numbers are not pinned.
+                _ if crate::sysenum::rejected_number_past_members(members)
+                    .is_some_and(|last| t.parse::<usize>().is_ok_and(|n| (members.len()..=last).contains(&n))) =>
                 {
                     Parsed::Rejected
                 }

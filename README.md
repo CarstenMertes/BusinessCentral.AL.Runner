@@ -379,7 +379,6 @@ numbers. The corpus also has a smaller OnPrem test app (121 of 342 on 27.5, 125 
 On BC 27.5 the corpus compiles Microsoft's apps from the corpus's own `.alpackages`. The
 other versions take them from the artifact of the matching build.
 
-Time: the command above, for all three versions, took 38 s of wall time on the main machine.
 `al-test-cli` compiles Base Application, System Application and the others from source on every
 run, only what the tests reach. `al-runner test` keeps their complete compile in a compile cache
 (ADR-022, `<cache dir>/compile/`) and loads it on later runs. `--no-compile-cache` turns it off,
@@ -636,8 +635,8 @@ and `--define`, as a single run does.
 
 `al-runner` can run Microsoft's own Base Application test buckets. Most of these tests are
 still refused, not run. The full run of 2026-10-16 (main `fae0c8df`, BC 27.5, all buckets
-together) held 40300 tests: 16848 passed, 2508 failed and 20944 were not run. It took 298 s on a
-12-thread desktop CPU. `docs/alrunner-buckets.md` has the per-bucket numbers, the recipe and
+together) held 40300 tests: 16848 passed, 2508 failed and 20944 were not run.
+`docs/alrunner-buckets.md` has the per-bucket numbers, the recipe and
 the failure analysis. Speed numbers of such a run cannot be compared with other runners until
 many more of these tests run.
 
@@ -652,13 +651,11 @@ many more of these tests run.
 - `docs/alrunner-buckets.md`: how to run Microsoft's test buckets, and the measurements.
 - `docs/bcdb.md`: the `.bak` and `.bacpac` reader.
 - `docs/al-runner-v2-parity.md`: which features of AL Runner v2 exist in the current version.
-- `docs/owner-review.md`: decisions made without the owner, waiting for review.
 - `docs/dotnet-examples.md` and `docs/dotnet-generic.md`: how Microsoft's AL uses `DotNet`, and the options.
 - `docs/probes-needed.md`: behavior taken from documentation only, waiting for a probe on real BC.
 - `docs/corpus-inventory.md`: what the corpus contains.
 - `CLAUDE.md`: the rules every contributor and agent follows.
 - `docs/agents/brief.md`: the working method for implementation agents (worktree, TDD, gates, memory caps, report).
-- `docs/agents/remote-worker.md`: setup and task loop for a session on another machine that takes GitHub issues.
 - `oracle/`: the real-BC results the pass rate is measured against.
 - `metrics/<major>/passing.txt`: the cases that must keep passing, per BC major.
 - `docs/history/`: the original spike brief and report.

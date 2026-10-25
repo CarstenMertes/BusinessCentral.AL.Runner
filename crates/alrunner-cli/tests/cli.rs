@@ -2354,3 +2354,75 @@ fn a_test_codeunit_whose_on_run_raises_has_no_rows_on_bc_27() {
         "{v}"
     );
 }
+
+/// The compile errors of al-runner issues 5854, 5852 and 5853 stop the run with exit 3 like any other: two codeunits
+/// with one id (AL0264; before, the link step panicked with exit 2), exit(value) in a procedure without a return value
+/// (AL0139; before, the test passed) and a call with too few arguments on the path the test calls (AL0135; before,
+/// exit 7 with the test not run).
+#[test]
+fn duplicate_ids_exit_values_and_missing_arguments_stop_the_run() {
+    let d = tempfile::tempdir().unwrap();
+    let app = d.path().join("app");
+    write(
+        &app,
+        "app.json",
+        &app_json("11111111-0000-0000-0000-000000005854", "Logic", &[]),
+    );
+    let tests = d.path().join("tests");
+    write(
+        &tests,
+        "app.json",
+        &app_json(
+            "11111111-0000-0000-0000-000000005855",
+            "Logic Tests",
+            &[("11111111-0000-0000-0000-000000005854", "Logic")],
+        ),
+    );
+    write(
+        &tests,
+        "src/Tests.al",
+        "codeunit 50650 \"Probe Tests\" { Subtype = Test; [Test] procedure Passes() var L: Codeunit \"Probe Logic\"; begin if L.Add(2, 3) <> 5 then Error('bad'); end; }",
+    );
+    let logic = "codeunit 50600 \"Probe Logic\" {\n    procedure Add(A: Integer; B: Integer): Integer begin exit(A + B); end;\n}\n";
+    let run = || {
+        alrunner(&[
+            "test",
+            app.to_str().unwrap(),
+            tests.to_str().unwrap(),
+            "--no-download",
+            "--codeunit",
+            "50650",
+        ])
+    };
+    for (extra, want) in [
+        (
+            "codeunit 50600 \"Probe Dup\" { }",
+            "error AL0264: An application object of type 'Codeunit' with ID '50600' is already declared by the extension",
+        ),
+        (
+            "codeunit 50601 \"Probe Bump\" { procedure Bump() begin exit(5); end; }",
+            "error AL0139: Since 'Bump' doesn't have a return value, EXIT cannot be called with a value",
+        ),
+    ] {
+        write(&app, "src/Logic.al", logic);
+        write(&app, "src/Extra.al", extra);
+        let o = run();
+        assert_eq!(code(&o), 3, "{}", text(&o));
+        assert!(text(&o).contains(want), "{}", text(&o));
+    }
+    std::fs::remove_file(app.join("src/Extra.al")).unwrap();
+    write(
+        &app,
+        "src/Logic.al",
+        "codeunit 50600 \"Probe Logic\" {\n    procedure Add(A: Integer; B: Integer): Integer begin exit(Twice(A) - A + B); end;\n    procedure Twice(A: Integer): Integer begin exit(Add(A)); end;\n}\n",
+    );
+    let o = run();
+    assert_eq!(code(&o), 3, "{}", text(&o));
+    assert!(
+        text(&o).contains(
+            "error AL0135: There is no argument given that corresponds to the required formal parameter 'B' of 'Add(Integer, Integer)'"
+        ),
+        "{}",
+        text(&o)
+    );
+}

@@ -686,7 +686,7 @@ registry! {
         id: "drilldown-marked-only-update-refresh",
         assumed: "A field's OnDrillDown that turns MarkedOnly on for Rec (after setting marks) on a list without OnFindRecord and OnNextRecord: with `CurrPage.Update(false)` the page shows only the marked rows, also when it declares OnAfterGetRecord or OnAfterGetCurrRecord (First/Next walk the marked rows, GoToRecord of an unmarked row answers false); without the Update a page without those triggers still shows every row of the view (First/Next list both rows, GoToRecord of the unmarked row answers true) until it closes; another TestPage call before that is refused. Measured on the three supported majors by the corpus writer's probe (corpus branch al-runtime-rs-staging-pub-sc @2150ff97, cu 89016), from al-runner issue 5844.",
         tests: "No Microsoft test: al-runner issue 5844 (1 test of a partner app).",
-        probe: "Written (pages/lt-sc-outside-pages/ScDrillDownMarkedOnly.al on al-runtime-rs-staging-pub-sc); remove this entry when the corpus bump brings it. Not in it: no Update on a page with the row triggers, other TestPage calls before Close.",
+        probe: "Written (pages/lt-sc-outside-pages/ScDrillDownMarkedOnly.al on al-runtime-rs-staging-pub-sc); remove this entry when the corpus bump brings it. Not in it, so refused: no Update on a page with the row triggers (every TestPage call but Close), other TestPage calls before Close.",
         awaiting: Awaiting {
             issues: &[5844],
             files: &["tests/al-language/pages/lt-sc-outside-pages/ScDrillDownMarkedOnly.al"],

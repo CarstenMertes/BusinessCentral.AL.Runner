@@ -502,6 +502,10 @@ pub struct PageState {
     /// An OnDrillDown turned MarkedOnly on for Rec without `CurrPage.Update`: the client still shows the rows of the view
     /// without MarkedOnly (assumption drilldown-marked-only-update-refresh).
     pub marked_only_unshown: bool,
+    /// The same OnDrillDown on a list WITH OnAfterGetRecord or OnAfterGetCurrRecord: what the page shows then is not pinned
+    /// (corpus pages/lt-sc-outside-pages/ScDrillDownMarkedOnly.al:422 covers only a page without them); every TestPage call
+    /// but Close is refused until Close.
+    pub marked_only_unpinned: bool,
     /// A TestPage GoToKey moved the cursor of a list without OnAfterGetCurrRecord: the client reads the row once more before
     /// every later action (pages/lt-ai-list-order/AiListOrderTests.al:39 Keep_Nav `update` = `R:R1002;R:R1002;A:filter...`;
     /// QgGoToKeyNextCall.al:297 Plain_GoToKey_ThenActionWithoutUpdate_Twice `second_action_log`), until a move clears it.
@@ -801,6 +805,7 @@ impl PageState {
             xrec_after_validate: None,
             view_left: false,
             marked_only_unshown: false,
+            marked_only_unpinned: false,
             read_after_goto: false,
             read_after_goto_doubt: false,
             read_after_goto_quiet: false,

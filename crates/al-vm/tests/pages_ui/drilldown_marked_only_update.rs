@@ -7,6 +7,10 @@ use al_builtins::assumptions::{Assumption, clear_hits, take_hits};
 use al_testkit::{Built, boolean, text};
 
 fn page(id: u32, triggers: &str) -> String {
+    page_with(id, triggers, "CurrPage.Update(false);")
+}
+
+fn page_with(id: u32, triggers: &str, update: &str) -> String {
     format!(
         r#"
 page {id} "Repro Operations {id}"
@@ -31,7 +35,7 @@ page {id} "Repro Operations {id}"
                         if Rec.Get('10') then
                             Rec.Mark(true);
                         Rec.MarkedOnly(true);
-                        CurrPage.Update(false);
+                        {update}
                     end;
                 }}
             }}
@@ -63,6 +67,7 @@ table 50130 "Repro Operation 50130"
     s += &page(50131, both);
     s += &page(50133, "");
     s += &page(50134, "trigger OnAfterGetRecord() begin end;");
+    s += &page_with(50136, both, "");
     s += r#"
 codeunit 50135 T
 {
@@ -117,6 +122,28 @@ codeunit 50135 T
         exit(Listed);
     end;
 
+    procedure List50136(): Text
+    var Operations: TestPage "Repro Operations 50136"; Listed: Text;
+    begin
+        Setup();
+        Operations.OpenEdit();
+        Operations.MarkedCount.Drilldown();
+        if Operations.First() then
+            repeat
+                Listed += ' ' + Operations."Operation No.".Value();
+            until not Operations.Next();
+        exit(Listed);
+    end;
+
+    procedure Close50136()
+    var Operations: TestPage "Repro Operations 50136";
+    begin
+        Setup();
+        Operations.OpenEdit();
+        Operations.MarkedCount.Drilldown();
+        Operations.Close();
+    end;
+
     procedure List50134(): Text
     var Operations: TestPage "Repro Operations 50134"; Listed: Text;
     begin
@@ -156,4 +183,17 @@ fn a_page_with_on_after_get_record_lists_only_the_marked_row_after_the_drilldown
 fn a_page_without_get_record_triggers_lists_only_the_marked_row_after_the_drilldown() {
     let mut b = Built::from_source(&src());
     assert_eq!(text(b.run_in("T", "List50133")), " 10");
+}
+
+// Without CurrPage.Update on a page WITH OnAfterGetRecord and OnAfterGetCurrRecord: what the page lists is not pinned
+// (corpus pages/lt-sc-outside-pages/ScDrillDownMarkedOnly.al:422 DrilldownWithoutUpdateListAndGoTo pins only a page without
+// those triggers), so the next TestPage call is refused. Close is still allowed.
+#[test]
+fn a_page_with_get_record_triggers_refuses_reads_after_a_drilldown_without_update() {
+    let mut b = Built::from_source(&src());
+    match b.run_in("T", "List50136") {
+        Err(al_builtins::native::Signal::Unsupported(why)) => assert!(why.contains("without CurrPage.Update"), "{why}"),
+        other => panic!("expected a refusal, got {other:?}"),
+    }
+    assert!(b.run_in("T", "Close50136").is_ok());
 }

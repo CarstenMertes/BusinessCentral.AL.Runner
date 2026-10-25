@@ -236,9 +236,14 @@ impl Session {
             s.refresh && s.refresh_by_update && s.refresh_update_false
         };
         // Without CurrPage.Update the page keeps showing the rows without MarkedOnly (`marked_only_unshown_call`). Pinned for a
-        // page without the row triggers only; with them the rows the page holds are walked, as before.
-        if !st.borrow().refresh && !row_triggers {
-            st.borrow_mut().marked_only_unshown = true;
+        // page without the row triggers only (corpus pages/lt-sc-outside-pages/ScDrillDownMarkedOnly.al:422
+        // DrilldownWithoutUpdateListAndGoTo); with them the later TestPage calls are refused.
+        if !st.borrow().refresh {
+            if row_triggers {
+                st.borrow_mut().marked_only_unpinned = true;
+            } else {
+                st.borrow_mut().marked_only_unshown = true;
+            }
             return;
         }
         if !update_false || !row_triggers || st.borrow().window.is_empty() {
@@ -263,6 +268,16 @@ impl Session {
         f: impl FnOnce(&mut Self) -> Result<Value, Signal>,
     ) -> Result<Value, Signal> {
         use al_builtins::page_op::PageOp;
+        if st.borrow().marked_only_unpinned {
+            if method == PageOp::TestPageClose {
+                st.borrow_mut().marked_only_unpinned = false;
+                return f(self);
+            }
+            return unsupported(format!(
+                "{method} after an OnDrillDown turned MarkedOnly on without CurrPage.Update on a page with OnAfterGetRecord or \
+                 OnAfterGetCurrRecord (what the page shows then is not pinned)"
+            ));
+        }
         if !st.borrow().marked_only_unshown {
             return f(self);
         }

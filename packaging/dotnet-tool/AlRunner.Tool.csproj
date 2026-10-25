@@ -1,0 +1,51 @@
+<!--
+  The .NET tool MSDyn365BC.AL.Runner (command al-runner) for AL Runner v3.
+  A small wrapper: the package carries the release binaries of al-runner and Program.cs runs the one
+  for the current OS and CPU. Build it with pack.sh, which unpacks the release archives into native/.
+  Owner decision 2026-10-25: bundle the binaries (no download on first run), publish on numbered releases.
+-->
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <!-- Runs on .NET 8 or any newer runtime, so a machine with only .NET 9 or 10 works too. -->
+    <RollForward>Major</RollForward>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <AssemblyName>al-runner-dotnet-tool</AssemblyName>
+    <RootNamespace>AlRunner.Tool</RootNamespace>
+
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>al-runner</ToolCommandName>
+    <PackageId>MSDyn365BC.AL.Runner</PackageId>
+    <!-- pack.sh passes the release version (-p:Version=...). This default only marks a local build. -->
+    <Version>0.0.0-local</Version>
+    <Authors>Stefan Maron</Authors>
+    <Description>Runs the tests of Business Central AL apps without a BC server, Docker or SQL Server. Version 3 is a wrapper around the native al-runner binary, which is in the package for linux-x64, osx-arm64 and win-x64.</Description>
+    <PackageTags>business-central;al;unit-test;runner</PackageTags>
+    <PackageProjectUrl>https://aldev.tools/al-runner/</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/aldevtools/BusinessCentral.AL.Runner</RepositoryUrl>
+    <PackageLicenseFile>LICENSE</PackageLicenseFile>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <IsPackable>true</IsPackable>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="../../LICENSE" Pack="true" PackagePath="/" />
+    <None Include="README.md" Pack="true" PackagePath="/" />
+    <!-- The binaries pack.sh unpacked: native/<rid>/al-runner[.exe]. They are published next to the
+         wrapper, so they land in tools/net8.0/any/native/<rid>/ of the package. -->
+    <None Include="native/**/*" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <!-- A package without binaries would install and then fail on every run: refuse to pack it. -->
+  <Target Name="CheckNativeBinaries" BeforeTargets="Build">
+    <Error Condition="!Exists('native/linux-x64/al-runner') Or !Exists('native/osx-arm64/al-runner') Or !Exists('native/win-x64/al-runner.exe')"
+           Text="native/ must hold linux-x64/al-runner, osx-arm64/al-runner and win-x64/al-runner.exe. Run pack.sh, which unpacks them from the release archives." />
+  </Target>
+
+</Project>

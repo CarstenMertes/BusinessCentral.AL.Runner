@@ -826,20 +826,31 @@ pub(crate) fn duplicate_id_objects(ws: &Workspace) -> Vec<usize> {
     dups
 }
 
-/// The shortest object name AL0305 is reported for. Must-not-compile 0055-object-name-too-long.al:1 pins a codeunit
-/// name of 37 characters; alc's text says the limit is 30, and al-runner issue 5845 shows alc rejecting 31 and
-/// accepting 30, but no corpus case pins a name of 31 to 36 characters yet (the corpus writer adds the boundary).
-/// Until it lands such a name compiles here (docs/probes-needed.md).
-const AL0305_PINNED_LENGTH: usize = 37;
+/// The longest object name the AL compiler accepts, from alc's text (must-not-compile 0055-object-name-too-long.al:1).
+const AL0305_LIMIT: usize = 30;
+/// The shortest name of a codeunit without `Subtype = Test` that AL0305 is reported for: 0055 pins a plain codeunit of
+/// 37 characters, and no case pins one of 31 to 36 characters, so such a name compiles here (docs/probes-needed.md).
+const AL0305_PLAIN_PINNED: usize = 37;
 
-/// AL0305: a codeunit whose name is too long (must-not-compile 0055-object-name-too-long.al:1; al-runner issue 5845).
-/// Only codeunits are pinned.
+/// AL0305: a codeunit whose name is too long (al-runner issue 5845). Pinned: a test codeunit of 31 characters
+/// (must-not-compile 2115-test-codeunit-name-31-characters.al:1, corpus PR 736) while one of 30 compiles
+/// (al-language/codeunit/TestScopeIsolationContracts.al:1, codeunit 60170), and a plain codeunit of 37 characters
+/// (0055-object-name-too-long.al:1). Other object types are not pinned.
 fn long_object_names(ws: &Workspace, out: &mut Vec<Diagnostic>) {
-    for o in &ws.objects {
+    for (oi, o) in ws.objects.iter().enumerate() {
         if ws.kinds[o.app] == AppKind::Dependency || o.kind != ObjKind::Codeunit {
             continue;
         }
-        if o.name.chars().count() >= AL0305_PINNED_LENGTH {
+        let len = o.name.chars().count();
+        if len <= AL0305_LIMIT {
+            continue;
+        }
+        let test = || {
+            ws.object_ast(oi)
+                .properties()
+                .any(|p| p.name().eq_ignore_ascii_case("Subtype") && p.value_text().trim().eq_ignore_ascii_case("Test"))
+        };
+        if len >= AL0305_PLAIN_PINNED || test() {
             push(
                 out,
                 ws,
@@ -847,7 +858,7 @@ fn long_object_names(ws: &Workspace, out: &mut Vec<Diagnostic>) {
                 o.offset,
                 "AL0305",
                 format!(
-                    "The length of the application object identifier '{}' cannot exceed 30 characters.",
+                    "The length of the application object identifier '{}' cannot exceed {AL0305_LIMIT} characters.",
                     o.name
                 ),
             );
@@ -2325,6 +2336,13 @@ mod tests {
             ]
         );
         assert!(codes(&["codeunit 50000 \"Thirty Characters Name Is Fine\" { }"]).is_empty());
+        // A test codeunit of 31 characters (must-not-compile 2115, al-runner issue 5845); 30 compiles
+        // (codeunit/TestScopeIsolationContracts.al:1).
+        assert_eq!(
+            codes(&["codeunit 50000 \"MNC Test Codeunit Name Length31\" { Subtype = Test; }"]),
+            vec!["AL0305"]
+        );
+        assert!(codes(&["codeunit 60170 \"Test Scope Isolation Contracts\" { Subtype = Test; }"]).is_empty());
     }
 
     // must-not-compile 0048 (a procedure) and 0348 (the OnRun trigger): AL0139 for exit(value) in a codeunit routine

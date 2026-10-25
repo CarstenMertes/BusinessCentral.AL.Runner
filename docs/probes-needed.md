@@ -1352,7 +1352,7 @@ Code: `al-sema/src/alcodes.rs` (`duplicate_ids`, `long_object_names`), `check/ob
 
 | Shape | Status | Probe wanted |
 |---|---|---|
-| AL0305 for an object name of 31 to 36 characters | Compiles (only 37 characters, case 0055, is pinned). Issue 5845 shows alc rejecting 31 and accepting 30; writer SC adds the boundary case next to 0055. | 30 compiles, 31 is AL0305; then lower `AL0305_PINNED_LENGTH` to 31. |
+| AL0305 for a codeunit without `Subtype = Test` whose name has 31 to 36 characters | Compiles. Pinned: a test codeunit of 31 characters (must-not-compile 2115, corpus PR 736) and a plain codeunit of 37 (0055). | A plain codeunit of 31 characters; then drop `AL0305_PLAIN_PINNED`. |
 | AL0305 for an object type other than a codeunit | Compiles. | A table, a page and an enum with a 31-character name. |
 | AL0264 for two objects of a type other than codeunit and table with one id in one app, or two apps with one id | Not reported; the program still lowers (the later declaration gets a key of its own). | A page, report, enum and query pair; two apps. |
 | AL0264 text | Ends after "by the extension": the rest names the app with its publisher and version, which the workspace does not carry. | None (text known). |

@@ -40,6 +40,7 @@ mod format_decimal_field_strings;
 mod format_precision_standard;
 mod format_variant_number;
 mod guid_max_str_len;
+mod guid_text_compare;
 mod impact_trace;
 mod in_precedence;
 mod interfaces;

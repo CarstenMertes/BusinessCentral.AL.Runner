@@ -1384,6 +1384,11 @@ fn compare_general(l: &Value, r: &Value) -> Result<Ordering, Signal> {
     if let (Some(a), Some(b)) = (crate::native::text_of(l), crate::native::text_of(r)) {
         return Ok(a.cmp(&b));
     }
+    match (l, r) {
+        (V::Guid(a), V::Text(t) | V::Code(t)) => return Ok(a.cmp(&guid_of_text(t.as_str())?)),
+        (V::Text(t) | V::Code(t), V::Guid(b)) => return Ok(guid_of_text(t.as_str())?.cmp(b)),
+        _ => {}
+    }
     Ok(match (l, r) {
         (V::Boolean(a), V::Boolean(b)) => a.cmp(b),
         (V::Date(a, ca), V::Date(b, cb)) => (a, ca).cmp(&(b, cb)),
@@ -1452,6 +1457,27 @@ fn compare_general(l: &Value, r: &Value) -> Result<Ordering, Signal> {
         }
         _ => return unsupported(format!("comparison of {} and {r}", l.describe(), r = r.describe())),
     })
+}
+
+/// The Guid a text stands for when it is compared with a Guid, in either order (misc/lt-cx-odd-leads/CxScalars.al:203-230,
+/// Guid_ComparedWithText: the braced form, the form without braces and lower case digits compare as that Guid). A text that
+/// is no Guid raises InvalidGuidFormat: pinned for the empty text, `garbage` (:203-230) and `abc` (:233-267,
+/// Guid_ComparedWithLiterals), so it is raised for a text with fewer than 32 hex digits, which no form of a Guid has. The
+/// other forms (32 digits, parentheses, blanks around) are not pinned for a comparison and are refused.
+fn guid_of_text(t: &str) -> Result<[u8; 16], Signal> {
+    if t.bytes().filter(u8::is_ascii_hexdigit).count() < 32 {
+        return crate::native::raise(
+            "Invalid format of GUID string. The correct format of the GUID string is: CDEF7890-ABCD-0123-1234-567890ABCDEF where 0-9, A-F symbolizes hexadecimal digits.",
+            "InvalidGuidFormat",
+        );
+    }
+    let inner = t.strip_prefix('{').and_then(|i| i.strip_suffix('}')).unwrap_or(t);
+    if inner.len() == 36 {
+        if let Some(Value::Guid(g)) = crate::evaluate::read_text(&crate::value::RtType::Guid, inner) {
+            return Ok(g);
+        }
+    }
+    unsupported(format!("a Guid compared with the text `{t}` (only the braced and the plain 36 character forms are pinned)"))
 }
 
 /// Whether two primary keys are the same value for value.

@@ -37,6 +37,21 @@ pub enum ExceptionKind {
     Cleared,
 }
 
+/// How the text of `Error(Text, ...)` or `FieldError(Field, Text)` is written in the code: the text `GetLastErrorText(true)`
+/// answers depends on it (error-handling/lt-last-error-text-exclude/LastErrorTextExcludeLabel.al, error-handling/
+/// lt-last-error-text-forms/). Lowering decides it from the syntax.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ErrorTextForm {
+    /// A string literal.
+    Literal,
+    /// A Label or TextConst variable of the object.
+    Constant,
+    /// A Text or Code variable of the routine, a concatenation with `+` or a `StrSubstNo` call.
+    Computed,
+    /// Any other form: the flag's text for it is not pinned.
+    Other,
+}
+
 /// How an error was raised, for the text `GetLastErrorText(true)` answers (corpus
 /// types/lt-evaluate-format-lasterror-setview/P86LastError.al, errors/lt-last-error-and-events/P70_02LastErrFlag.al,
 /// misc/lt-probes-needed-6/PnF01LastErrorFlag.al). An origin the corpus does not pin is `Unknown` and refused.
@@ -55,6 +70,16 @@ pub const PERSONAL_DATA_REMOVED: &str = "This message had personal data removed.
 
 /// The text of `Error('literal', args)` for the flag (P86LastError.al:189, PnF01LastErrorFlag.al:85, :103).
 pub const USE_ERROR_WITH_A_TEXT_CONSTANT: &str = "Use ERROR with a text constant to improve telemetry details";
+
+/// Raises an AL error with a pinned text and code, and the pinned text `GetLastErrorText(true)` answers for it.
+pub fn raise_redacted<T>(message: impl Into<String>, code: &str, redacted: impl Into<String>) -> Result<T, Signal> {
+    Err(Signal::Error(Box::new(AlError {
+        message: message.into(),
+        code: code.into(),
+        origin: ErrorOrigin::Redacted(redacted.into()),
+        ..Default::default()
+    })))
+}
 
 /// Raises an AL error with a pinned text and code.
 pub fn raise<T>(message: impl Into<String>, code: &str) -> Result<T, Signal> {
@@ -149,6 +174,16 @@ pub trait Ctx: FormatCtx {
         rec: Option<&mut Value>,
         args: &mut [Value],
     ) -> Result<Value, Signal>;
+    /// `Record.FieldError(Field, Text)` with the form its text is written in (the flag's text depends on it).
+    fn field_error_with_form(
+        &mut self,
+        rec: Option<&mut Value>,
+        args: &mut [Value],
+        form: ErrorTextForm,
+    ) -> Result<Value, Signal> {
+        let _ = form;
+        self.record(crate::record_op::RecordOp::FieldError, rec, args)
+    }
     /// `TestPage` / `TestField` / `TestAction` methods: the VM's test client
     /// implements them (ADR-012). `method` is `Receiver.Name`.
     fn page(
@@ -466,6 +501,10 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("System.CodeCoverageRefresh#1", code_coverage_refresh),
     ("Dialog.Error#2", error_text),
     ("Dialog.ErrorNotLiteral#1", error_text_not_literal),
+    ("Dialog.ErrorConstant#1", error_text_constant),
+    ("Dialog.ErrorComputed#1", error_text_computed),
+    ("Record.FieldErrorConstant#1", field_error_constant),
+    ("Record.FieldErrorComputed#1", field_error_computed),
     ("Dialog.Error#1", crate::errorinfo::raise),
     ("Session.GetExecutionContext#1", execution_context),
     ("Session.GetCurrentModuleExecutionContext#1", execution_context),
@@ -1709,15 +1748,40 @@ fn dialog_close(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Resu
 /// test libraries and the corpus Assert's DialogTxt use it; no corpus test
 /// pins it directly).
 fn error_text(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
-    error_text_with(ctx, args, true)
+    error_text_with(ctx, args, ErrorTextForm::Literal)
 }
 
-/// `Error(Label, ...)` and any `Error(Text, ...)` that is not a string literal: the flag's text for it is not pinned.
+/// `Error(Text, ...)` with a text written in a form whose flag text the corpus does not pin (a global Text variable, a
+/// field, a procedure's result, a local Label).
 fn error_text_not_literal(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
-    error_text_with(ctx, args, false)
+    error_text_with(ctx, args, ErrorTextForm::Other)
 }
 
-fn error_text_with(ctx: &mut dyn Ctx, args: &mut [Value], literal: bool) -> Result<Value, Signal> {
+/// `Error(Label, ...)` and `Error(TextConst, ...)` of a global variable: the flag answers the text as written, before the
+/// arguments are substituted (LastErrorTextExcludeLabel.al:136, :155, :159, :266; lt-last-error-text-forms/
+/// LastErrorTextExcludeTextConst.al:57-66, :81-85).
+fn error_text_constant(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
+    error_text_with(ctx, args, ErrorTextForm::Constant)
+}
+
+/// `Error(Text, ...)` of a local Text or Code variable, a concatenation or a `StrSubstNo` call: the flag answers what it
+/// answers for a literal (LastErrorTextExcludeTextVariable.al:79-93, :131-142; LastErrorTextExcludeLabel.al:163).
+fn error_text_computed(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
+    error_text_with(ctx, args, ErrorTextForm::Computed)
+}
+
+/// `Record.FieldError(Field, Label)` of a global Label or TextConst (`ErrorTextForm::Constant`).
+fn field_error_constant(ctx: &mut dyn Ctx, r: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
+    ctx.field_error_with_form(r, args, ErrorTextForm::Constant)
+}
+
+/// `Record.FieldError(Field, Text)` of a local Text or Code variable, a concatenation or a literal
+/// (`ErrorTextForm::Computed`; a literal answers the same, P86LastError.al:273).
+fn field_error_computed(ctx: &mut dyn Ctx, r: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
+    ctx.field_error_with_form(r, args, ErrorTextForm::Computed)
+}
+
+fn error_text_with(ctx: &mut dyn Ctx, args: &mut [Value], form: ErrorTextForm) -> Result<Value, Signal> {
     let template = text_arg(args, 0)?;
     let mut message = substitute(&template, &args[1..], ctx)?;
     // The error text of `Error(Text)` without arguments shows a CR LF as one backslash (misc/lt-system-functions/ErrorMessage.al:
@@ -1730,13 +1794,21 @@ fn error_text_with(ctx: &mut dyn Ctx, args: &mut [Value], literal: bool) -> Resu
         }
         message = message.replace("\r\n", "\\");
     }
-    let (origin, exception) = if literal {
-        (
+    let (origin, exception) = match form {
+        ErrorTextForm::Literal => (
             ErrorOrigin::Redacted(USE_ERROR_WITH_A_TEXT_CONSTANT.into()),
             ExceptionKind::Dialog,
-        )
-    } else {
-        (ErrorOrigin::Unknown, ExceptionKind::DialogComputed)
+        ),
+        ErrorTextForm::Computed => (
+            ErrorOrigin::Redacted(USE_ERROR_WITH_A_TEXT_CONSTANT.into()),
+            ExceptionKind::DialogComputed,
+        ),
+        // A CR LF in the label is not pinned for the flag.
+        ErrorTextForm::Constant if !template.contains("\r\n") => (
+            ErrorOrigin::Redacted(template.to_string()),
+            ExceptionKind::DialogComputed,
+        ),
+        ErrorTextForm::Constant | ErrorTextForm::Other => (ErrorOrigin::Unknown, ExceptionKind::DialogComputed),
     };
     Err(Signal::Error(Box::new(AlError {
         message,
@@ -2708,6 +2780,10 @@ pub(crate) mod tests {
             "System.FormatAutoFormatField#1",
             "System.OptionCaptionML#1",
             "Dialog.ErrorNotLiteral#1",
+            "Dialog.ErrorConstant#1",
+            "Dialog.ErrorComputed#1",
+            "Record.FieldErrorConstant#1",
+            "Record.FieldErrorComputed#1",
             "TextBuilder.AppendFieldValue#1",
             "Media.ToVariant#1",
             "Interface.AssertAssigned#1",

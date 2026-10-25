@@ -1560,6 +1560,13 @@ fn evaluate_with_max(
                     "Evaluate",
                 ),
                 (Some(1031), _) => unsupported(format!("the Evaluate error of {ty} in German (not pinned)")),
+                // The flag hides the text (errors/lt-last-error-and-events/P70_02LastErrFlag.al:Flag_EvaluateAndOverflow
+                // `eval_int|true`, `eval_int_var|true`); for the other types it is not pinned.
+                (_, "Integer") => crate::native::raise_redacted(
+                    format!("The value \"{text}\" can't be evaluated into type {ty}."),
+                    "Evaluate",
+                    "The value \"<redacted>\" can't be evaluated into type Integer.",
+                ),
                 _ => crate::native::raise(
                     format!("The value \"{text}\" can't be evaluated into type {ty}."),
                     "Evaluate",
@@ -1575,11 +1582,13 @@ fn evaluate_with_max(
                         .bytes()
                         .all(|b| b.is_ascii_digit() || matches!(b, b'-' | b'.' | b'/'))) =>
         {
-            crate::native::raise(
+            // The flag hides the text (P70_02LastErrFlag.al:Flag_EvaluateAndOverflow `eval_date|true`).
+            crate::native::raise_redacted(
                 format!(
                     "The format of the Date '{text}' does not match your device's date settings.\\\\Make sure that the day, month, and year are in the correct order and use the correct separator (such as - or /). Alternatively, you can always use the format 'yyyy-mm-dd'."
                 ),
                 "Evaluate",
+                "The format of the Date '<redacted>' does not match your device's date settings.\\\\Make sure that the day, month, and year are in the correct order and use the correct separator (such as - or /). Alternatively, you can always use the format 'yyyy-mm-dd'.",
             )
         }
         Parsed::Rejected if matches!(a[0], Value::Guid(_)) => crate::native::raise(

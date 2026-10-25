@@ -570,6 +570,9 @@ pub struct Session {
     pub(crate) baseline_rows: std::collections::BTreeSet<u32>,
     /// Whether the builtin being called has its result used (ADR-011 `ret_used`).
     pub(crate) ret_used: bool,
+    /// The form of the text of the `FieldError` being called, for the text `GetLastErrorText(true)` answers
+    /// (`Ctx::field_error_with_form`); `None` outside such a call.
+    pub(crate) field_error_form: Option<al_builtins::native::ErrorTextForm>,
     /// The parameters of the routine that just failed with an error, as it left them:
     /// the caller writes its `var` arguments back before it handles the error.
     pub(crate) error_finals: Option<Vec<Value>>,
@@ -807,6 +810,7 @@ impl Session {
             },
             baseline_rows: Default::default(),
             ret_used: true,
+            field_error_form: None,
             error_finals: None,
             var_alias_watch: Vec::new(),
             frames: Vec::new(),

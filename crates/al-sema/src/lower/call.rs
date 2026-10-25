@@ -369,9 +369,25 @@ impl Lowerer<'_> {
                 {
                     "System.EvaluateBounded#1".to_string()
                 } else if id == "Dialog.Error#2" && args.first().is_some_and(|a| a.kind() != SyntaxKind::Literal) {
-                    // `Error(Label, ...)` and `Error(Variable, ...)`: only a string literal has its text for
-                    // `GetLastErrorText(true)` pinned (corpus P86LastError.al:PlainError_Exclude).
-                    "Dialog.ErrorNotLiteral#1".to_string()
+                    // `Error(Label, ...)`, `Error(Variable, ...)`: the text `GetLastErrorText(true)` answers depends on how the
+                    // text is written (al_builtins::native::ErrorTextForm); a string literal keeps `Dialog.Error#2`
+                    // (corpus P86LastError.al:PlainError_Exclude).
+                    use al_builtins::native::ErrorTextForm;
+                    match args.first().map_or(ErrorTextForm::Other, |a| self.error_text_form(a)) {
+                        ErrorTextForm::Constant => "Dialog.ErrorConstant#1",
+                        ErrorTextForm::Computed | ErrorTextForm::Literal => "Dialog.ErrorComputed#1",
+                        ErrorTextForm::Other => "Dialog.ErrorNotLiteral#1",
+                    }
+                    .to_string()
+                } else if matches!(id.as_str(), "Record.FieldError#1" | "Record.FieldError#2") && args.len() == 2 {
+                    // `FieldError(Field, Text)`: as for `Error`, the flag's text depends on how the text is written.
+                    use al_builtins::native::ErrorTextForm;
+                    match args.get(1).map_or(ErrorTextForm::Other, |a| self.error_text_form(a)) {
+                        ErrorTextForm::Constant => "Record.FieldErrorConstant#1",
+                        ErrorTextForm::Computed | ErrorTextForm::Literal => "Record.FieldErrorComputed#1",
+                        ErrorTextForm::Other => id.as_str(),
+                    }
+                    .to_string()
                 } else if id == "System.Format#1"
                     && args.len() >= 3
                     && args.first().is_some_and(|a| matches!(self.ty_of(a), Ty::Variant))
@@ -906,6 +922,45 @@ impl Lowerer<'_> {
 
 /// The [`ir::BuiltinId`] of a catalog overload id. Every catalog id has one (a test in al-builtins checks it), so
 /// this fails only when `builtin_ids.rs` is stale.
+impl Lowerer<'_> {
+    /// How the text argument `a` of `Error` or `FieldError` is written, as far as the corpus tells the forms apart for
+    /// `GetLastErrorText(true)`: a string literal; a Label or TextConst variable of the object
+    /// (error-handling/lt-last-error-text-exclude/LastErrorTextExcludeLabel.al:28-32, lt-last-error-text-forms/
+    /// LastErrorTextExcludeTextConst.al:15-17, FieldErrorTextConst.al:28); a Text or Code variable of the routine, a
+    /// concatenation with `+` or a `StrSubstNo` call (LastErrorTextExcludeTextVariable.al:16-54, :129,
+    /// FieldErrorTextVariable.al:43-63, LastErrorTextExcludeLabel.al:55). Anything else (a global Text variable, a field,
+    /// a local Label, another call) is `Other`.
+    pub(crate) fn error_text_form(&self, a: &SyntaxNode) -> al_builtins::native::ErrorTextForm {
+        use al_builtins::native::ErrorTextForm;
+        if a.kind() == SyntaxKind::Literal {
+            return ErrorTextForm::Literal;
+        }
+        let ty = self.ty_of(a);
+        match a.kind() {
+            SyntaxKind::BinExpr
+                if matches!(ty, Ty::Text(_) | Ty::Code(_))
+                    && sig_tokens(a).first().is_some_and(|t| t.text() == "+") =>
+            {
+                return ErrorTextForm::Computed;
+            }
+            SyntaxKind::CallExpr => {
+                let strsubstno = matches!(self.res(a), Some(Res::Builtin(i)) if i.starts_with("Text.StrSubstNo#"));
+                return if strsubstno {
+                    ErrorTextForm::Computed
+                } else {
+                    ErrorTextForm::Other
+                };
+            }
+            _ => {}
+        }
+        match (self.res(a), ty) {
+            (Some(Res::Global(_)), Ty::Label) => ErrorTextForm::Constant,
+            (Some(Res::Local(_)), Ty::Text(_) | Ty::Code(_)) => ErrorTextForm::Computed,
+            _ => ErrorTextForm::Other,
+        }
+    }
+}
+
 pub(super) fn builtin_id(id: &str) -> Result<ir::BuiltinId, String> {
     ir::BuiltinId::of(id).ok_or_else(|| format!("builtin {id} has no builtin id (regenerate builtin_ids.rs)"))
 }

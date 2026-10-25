@@ -176,14 +176,23 @@ impl Session {
         // A table event (OnAfterInsertEvent and the others the platform raises) puts no frame of its own
         // between the subscriber and the code that raised it (session/TestSessionCallstackSourcesContracts.al:
         // Callstack_FromTablePageReportAndExtensionCode, `table event`); page events and Global Triggers are
-        // not measured.
+        // not measured, except these page events, whose subscriber stands right above the code that raised them as well
+        // (errors/lt-ms-refusals-128/P128CallstackPageEvents.al:189-193, lt-ms-refusals-129/P129CallstackEvents.al:269-272,
+        // lt-ms-refusals-135/P135CallstackPage.al:244-246).
+        let pinned_page_event = matches!(
+            ev.event,
+            "onopenpageevent"
+                | "onclosepageevent"
+                | "onaftergetrecordevent"
+                | "onaftergetcurrrecordevent"
+                | "onaftervalidateevent"
+                | "onbeforeactionevent"
+                | "onafteractionevent"
+        );
         let unpinned = !from_publisher
-            && self
-                .engine
-                .program
-                .objects
-                .get(ev.object)
-                .is_none_or(|o| !o.is_kind(al_ir::ObjKind::Table));
+            && self.engine.program.objects.get(ev.object).is_none_or(|o| {
+                !(o.is_kind(al_ir::ObjKind::Table) || (o.is_kind(al_ir::ObjKind::Page) && pinned_page_event))
+            });
         if unpinned {
             self.events.unpinned_event_depth += 1;
         }

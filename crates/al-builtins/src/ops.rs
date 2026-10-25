@@ -287,7 +287,18 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
         }
         // Text-like.
         (v, T::Text(max)) if crate::native::text_of(&v).is_some() => {
-            Value::Text(fit_txt(crate::native::text_of(&v).expect("text"), *max)?)
+            // The flag hides the value of a text too long for a Text field or variable (errors/lt-last-error-and-events/
+            // P70_02LastErrFlag.al:Flag_EvaluateAndOverflow `overflow_field|true`, `overflow_var|true`).
+            Value::Text(fit_txt(crate::native::text_of(&v).expect("text"), *max).map_err(|s| match s {
+                Signal::Error(mut e) if e.code == "StringLengthExceeded" => {
+                    let redacted = e.message.split_once(" Value: ").map(|(head, _)| format!("{head} Value: <redacted>"));
+                    if let Some(r) = redacted {
+                        e.origin = crate::native::ErrorOrigin::Redacted(r);
+                    }
+                    Signal::Error(e)
+                }
+                other => other,
+            })?)
         }
         (v, T::Code(max)) if crate::native::text_of(&v).is_some() => {
             // Doc (Code data type): upper case, leading and trailing spaces removed.

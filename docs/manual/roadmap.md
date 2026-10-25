@@ -38,8 +38,6 @@ AL Runner checks each behavior against real Business Central before it implement
 Some test isolation cases cannot be measured yet on the Linux Business Central setup
 that runs those checks. Until they can, their tests are not run:
 
-- `--isolation disabled`
-  ([issue 5609](https://github.com/aldevtools/BusinessCentral.AL.Runner/issues/5609)).
 - The `RequiredTestIsolation` cases listed under isolation in
   [Writing tests](writing-tests.md).
 

@@ -685,6 +685,25 @@ registry! {
             since: "2026-10-25",
         },
     },
+    RunnerTestIsolation => {
+        id: "runner-test-isolation",
+        assumed: "What a test runner codeunit's TestIsolation does for a whole run (al-runner --isolation test and --isolation disabled, a corpus runner without the property). Function: each test is rolled back to the state after OnRun, a Commit() inside it included, and so are an IsolatedStorage.Set of a new key and a NumberSequence.Insert; AutoIncrement and row versions are not reset. Disabled (and a runner without the property): nothing is rolled back but a failed test's writes since its last Commit(); the later test codeunits, in id order, see the rest; StartSession starts a session (refused here). RequiredTestIsolation has no effect under a runner. Measured by corpus writer SD on Windows containers of every supported BC major (identical) with the isolation probe app under four runners (branch al-runtime-rs-staging-pub-sd, commit 95c66e62, corpus PR 735); the corpus nightly does not run runners 61304 and 61305 yet.",
+        tests: "No Microsoft test: al-runner issues 5607 (Commit under --isolation test) and 5609 (--isolation disabled).",
+        probe: "The isolation probe app of corpus PR 735 (codeunits 61302-61320) under runners 61300, 61301, 61304 and 61305 in the corpus Windows nightly, with its JUnit files in oracle/.",
+        awaiting: Awaiting {
+            issues: &[5607, 5609],
+            files: &[
+                "tests/al-language-isolation-probe/src/SdIsolCommitError.Codeunit.al",
+                "tests/al-language-isolation-probe/src/SdIsolCommitReader.Codeunit.al",
+                "tests/al-language-isolation-probe/src/IsolProbeWriter.Codeunit.al",
+                "tests/al-language-isolation-probe/src/IsolProbeReader.Codeunit.al",
+                "tests/al-language-isolation-probe/src/IsolProbeCommit.Codeunit.al",
+                "tests/al-language-isolation-probe/src/IsolProbeAfterRollback.Codeunit.al",
+                "tests/al-language-isolation-probe/src/SdIsolStartSession.Codeunit.al",
+            ],
+            since: "2026-10-25",
+        },
+    },
 }
 
 thread_local! {

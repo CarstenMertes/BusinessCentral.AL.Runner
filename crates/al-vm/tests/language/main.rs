@@ -5,6 +5,7 @@ mod agent_natives;
 mod append_char;
 mod array_params;
 mod assumption_truth;
+mod bigtext_copystream_count;
 mod builtins;
 mod calc_const_guid;
 mod call_stack;

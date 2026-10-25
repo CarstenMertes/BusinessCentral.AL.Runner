@@ -713,6 +713,12 @@ pub fn format_value(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) 
             }
             _ => String::new(),
         },
+        // A BigText formats as its text (streams/StTBigText.al:ConvertTextAndBack `format` direct).
+        Value::Library(name, l) if name.as_str() == "BigText" && standard == 0 => match &*l.borrow() {
+            crate::value::LibraryValue::Text(t) => t.clone(),
+            crate::value::LibraryValue::Empty => String::new(),
+            _ => return Err("Format of a BigText with a capacity".to_string().into()),
+        },
         // Duration and the other reference types get their formats with
         // the corpus tests that pin them.
         other => {

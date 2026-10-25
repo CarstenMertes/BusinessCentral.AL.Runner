@@ -1704,7 +1704,7 @@ fn copy_stream(ctx: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> NRe
         };
     }
     if a.len() > 2 {
-        return unsupported("CopyStream with a byte count (not pinned)");
+        return copy_stream_count(ctx, a);
     }
     // Content carried unread in the company build (owner decision 2026-10-23 "Carry bytes unread", `is_carried_mark`): the
     // target becomes an opaque copy; the source has no bytes to drain.
@@ -1719,6 +1719,49 @@ fn copy_stream(ctx: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> NRe
     let bytes = with_in(Some(&mut a[1]), |s| Ok(s.drain()))?;
     write_bytes(&out, &bytes);
     Ok(Value::Boolean(true))
+}
+
+/// `CopyStream(OutStream, InStream, BytesToRead)` (streams/StTCopyBlob.al): a count the source still holds copies that many
+/// bytes, moves the source on and answers true (:77-80 `copied` Yes, `source-pos` 5; :187 copies `ab`); 0 copies nothing and
+/// answers true (:117-122 `copied0`, `pos0` 1); from an empty source it answers false and writes nothing (:144-157). A count
+/// beyond what is left of a source with data (:81-84 answers false but leaves EOS No), a negative count and a false answer in
+/// statement form are not pinned.
+fn copy_stream_count(ctx: &mut dyn Ctx, a: &mut [Value]) -> NResult {
+    let Value::Integer(n) = a[2] else {
+        return unsupported("CopyStream with a byte count that is not an Integer (not pinned)");
+    };
+    let Ok(n) = usize::try_from(n) else {
+        return unsupported("CopyStream with a negative byte count (not pinned)");
+    };
+    if ctx.company_build() && carried_mark_of_in(&a[1]).is_some() {
+        return unsupported("CopyStream with a byte count of content carried unread (not pinned)");
+    }
+    let used = ctx.ret_used();
+    let (out, _) = out_buf(Some(&mut a[0]))?;
+    let bytes = with_in(Some(&mut a[1]), |s| {
+        let left = s.len().saturating_sub(s.pos);
+        if s.is_empty() && n > 0 {
+            if !used {
+                return unsupported("CopyStream with a byte count from an empty stream, result unused (not pinned)");
+            }
+            return Ok(None);
+        }
+        if s.is_empty() || n > left {
+            return unsupported("CopyStream with a byte count beyond what the stream holds (not pinned)");
+        }
+        let taken = s.rest()[..n].to_vec();
+        s.pos += n;
+        Ok(Some(taken))
+    })?;
+    match bytes {
+        Some(b) => {
+            if !b.is_empty() {
+                write_bytes(&out, &b);
+            }
+            Ok(Value::Boolean(true))
+        }
+        None => Ok(Value::Boolean(false)),
+    }
 }
 
 // ------------------------------------------------------- arrays and strings

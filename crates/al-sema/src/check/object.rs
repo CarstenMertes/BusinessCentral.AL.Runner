@@ -25,6 +25,7 @@ impl<'a> Checker<'a> {
             resolved: Default::default(),
             panicked: HashMap::default(),
             cur_ret: None,
+            cur_no_result: None,
             tdd_apps: None,
             tdd_pending: Vec::new(),
             all_routines: false,
@@ -641,6 +642,10 @@ impl<'a> Checker<'a> {
             sc.vars.push(locals);
             let before = self.diags.len();
             self.cur_ret = r.return_type().map(|t| Ty::from_type_ref(&t));
+            // AL0139 (must-not-compile 0048-exit-value-without-return-type.al:1, a procedure of a codeunit;
+            // 0348, its OnRun trigger; al-runner issue 5852). Routines of other object types are not pinned.
+            self.cur_no_result =
+                (self.cur_ret.is_none() && self.ws.objects[oi].kind == ObjKind::Codeunit).then(|| r.name());
             if let Some(body) = r.body() {
                 self.walk(&mut sc, &body);
             }
@@ -792,6 +797,14 @@ impl<'a> Checker<'a> {
             for child in node.children() {
                 if is_expr(child.kind()) {
                     let t = self.ty(sc, &child);
+                    if let Some(name) = self.cur_no_result.clone() {
+                        self.diag(
+                            sc,
+                            node,
+                            "AL0139",
+                            format!("Since '{name}' doesn't have a return value, EXIT cannot be called with a value"),
+                        );
+                    }
                     if let Some(ret) = self.cur_ret.clone() {
                         // exit(value) of an enum of another type (corpus must-not-compile 0405).
                         self.al_enum_assignment(sc, &child, &ret, &t);

@@ -59,7 +59,22 @@ from the Actions tab (workflow_dispatch), or push `release` by hand:
    prints the tag's version. Then it publishes the release with the archives
    (`al-runner-<version>-<target>.tar.xz` or `.zip`), `SHA256SUMS`, `install.sh`
    and `install.ps1`. The notes are a short fixed text plus the commit list.
-7. Check: `mise ls-remote github:aldevtools/BusinessCentral.AL.Runner` lists the version.
+7. The same run packs the .NET tool `MSDyn365BC.AL.Runner` from the archives
+   (`packaging/dotnet-tool/pack.sh`; the package carries the binaries for
+   linux-x64, osx-arm64 and win-x64), installs it on Linux, Windows and macOS and
+   runs the smoke test through it, all before the GitHub release. After the
+   release it pushes the package to nuget.org with the repository secret
+   `NUGET_API_KEY` (owner decision 2026-10-25). A version with a suffix such as
+   `-alpha.6` is a NuGet prerelease. A version on nuget.org cannot be replaced; a
+   re-run skips the push when the version is already there.
+8. Check: `mise ls-remote github:aldevtools/BusinessCentral.AL.Runner` lists the
+   version, and `https://www.nuget.org/packages/MSDyn365BC.AL.Runner` shows it
+   (indexing takes a few minutes).
+
+The edge build is not published to NuGet. To test the wrapper locally:
+`packaging/dotnet-tool/test.sh` (a fake binary: arguments, stdin, exit codes,
+signals), or `pack.sh VERSION DIST OUT` on downloaded release archives followed by
+`smoke.sh OUT VERSION`.
 
 ## 3. A hotfix that cannot come from main
 
@@ -77,7 +92,8 @@ that `main` does not have. The merge-back in step 5 is missing. Do it, then push
 ## Dry runs
 
 - Release workflow: Actions, "Release", "Run workflow". It builds and packages
-  all targets and creates no release.
+  all targets, packs and smoke tests the .NET tool, and creates no release and
+  pushes nothing to NuGet.
 - Edge workflow: the same, from "Edge".
 
 To check a signed build: download the Windows zip of `edge` and run

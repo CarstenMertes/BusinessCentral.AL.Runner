@@ -2,7 +2,7 @@
   "corpus_commit": "80711c1b1ee4c1ea25ac3cbaff7faf729ddeca4b",
   "language": {
     "bc": "27-29",
-    "implemented": 1511,
+    "implemented": 1519,
     "methods": [
       {
         "bc": [
@@ -17,7 +17,7 @@
         "scope": "",
         "sig": "()",
         "site": "misc/lt-probe-requests-140/P140IntegerToText.al:140",
-        "state": "refused",
+        "state": "implemented",
         "type": "BigInteger"
       },
       {
@@ -33,7 +33,7 @@
         "scope": "",
         "sig": "(BigText, [Integer])",
         "site": "types/lt-totext-bigtext-codeunit-run/P93BigText.al:22",
-        "state": "refused",
+        "state": "implemented",
         "type": "BigText"
       },
       {
@@ -65,7 +65,7 @@
         "scope": "",
         "sig": "(var BigText, Integer, [Integer])",
         "site": "types/lt-totext-bigtext-codeunit-run/P93BigText.al:40",
-        "state": "refused",
+        "state": "implemented",
         "type": "BigText"
       },
       {
@@ -289,7 +289,7 @@
         "scope": "",
         "sig": "()",
         "site": "types/lt-totext-bigtext-codeunit-run/P93ScalarToText.al:185",
-        "state": "refused",
+        "state": "implemented",
         "type": "Byte"
       },
       {
@@ -305,7 +305,7 @@
         "scope": "",
         "sig": "([Boolean])",
         "site": "types/lt-totext-bigtext-codeunit-run/P93ScalarToText.al:186",
-        "state": "refused",
+        "state": "implemented",
         "type": "Byte"
       },
       {
@@ -4555,7 +4555,7 @@
         "scope": "",
         "sig": "()",
         "site": "text/lt-textconst-label-methods/P103TimeGuidMax.al:64",
-        "state": "refused",
+        "state": "implemented",
         "type": "Guid"
       },
       {
@@ -4571,7 +4571,7 @@
         "scope": "",
         "sig": "([Boolean])",
         "site": "text/lt-textconst-label-methods/P103TimeGuidMax.al:65",
-        "state": "refused",
+        "state": "implemented",
         "type": "Guid"
       },
       {
@@ -21589,7 +21589,7 @@
         "scope": "",
         "sig": "(Text, Text, Integer, Integer)",
         "site": "text/lt-label-textbuilder/TxCTextBuilderEdit.al:241",
-        "state": "refused",
+        "state": "implemented",
         "type": "TextBuilder"
       },
       {
@@ -27947,7 +27947,7 @@
     ],
     "overloads": 1750,
     "pinned": 1706,
-    "refused": 211,
+    "refused": 203,
     "runtime_only": [
       "ErrorInfo.Create#3",
       "FieldRef.FieldError#2",

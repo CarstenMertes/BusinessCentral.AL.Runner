@@ -2328,10 +2328,14 @@ fn clear(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result
         // (fieldref/lt-fieldref-testfield-types/SystemClearArraySecret.al:69-90, errorinfo/lt-errnotif/EnTSecret.al:15-26).
         // A cleared HttpClient is a new one: no base address, the default timeout, no default headers; the next call
         // starts it fresh (network/lt-http-relative-request/HttpRelativeRequestPath.al:NewClient clears, then sets the base address).
+        // A cleared ErrorInfo is a fresh one, a copy taken before keeps its values: `Error` of it raises '' with code Dialog
+        // (misc/lt-system-functions/ErrorMessage.al:184-206), its SystemId is the empty Guid
+        // (errorinfo/lt-bc-errorinfo-systemid/BcErrorInfoSystemId.al:55-66), and TestField given it raises the plain text
+        // (record/lt-testfield-value-types/RecordTestFieldGroupA.al:59-72).
         Value::Library(name, _)
             if matches!(
                 name.as_str(),
-                "OutStream" | "InStream" | "FileUpload" | "HttpClient" | "HttpHeaders" | "SecretText"
+                "OutStream" | "InStream" | "FileUpload" | "HttpClient" | "HttpHeaders" | "SecretText" | "ErrorInfo"
             ) =>
         {
             Value::Library(

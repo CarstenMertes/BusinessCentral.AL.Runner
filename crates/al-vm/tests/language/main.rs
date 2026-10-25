@@ -12,6 +12,7 @@ mod caption_class_areas;
 mod caption_setup_written;
 mod clear_all_temp_rows;
 mod clear_enum;
+mod clear_errorinfo;
 mod code_compare;
 mod codeunit_index;
 mod codeunit_run_variant_recordref;

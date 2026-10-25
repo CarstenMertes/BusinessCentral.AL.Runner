@@ -783,6 +783,9 @@ pub(crate) struct Checker<'a> {
     panicked: HashMap<(usize, usize), String>,
     /// The result type of the routine being checked (`None`: a trigger or a procedure without a result).
     cur_ret: Option<Ty>,
+    /// The name of the routine being checked when `exit` with a value is AL0139 in it: a procedure or trigger of a
+    /// codeunit without a return value (must-not-compile 0048, 0348).
+    cur_no_result: Option<String>,
     /// `--tdd` (ADR-051): per app, whether its call sites may become stubs (a workspace app that declares a test
     /// codeunit). `None`: `--tdd` is off.
     tdd_apps: Option<std::sync::Arc<Vec<bool>>>,

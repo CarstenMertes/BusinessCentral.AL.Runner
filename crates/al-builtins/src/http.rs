@@ -190,9 +190,6 @@ fn hand_out_headers(arg: Option<&Value>, list: &HttpHeaderList) -> Result<(), Si
     Ok(())
 }
 
-/// The Content-Length value a WriteFrom of another length left after a read put the header in: `GetValues` of it is refused.
-const UNPINNED_LENGTH: &str = "\u{1}unmeasured Content-Length";
-
 // ------------------------------------------------------------------------------------------------ uri
 
 const INVALID_URL: &str = "Failed to create the URL for the request. Please, make sure to set a valid URL.";
@@ -587,27 +584,179 @@ fn param_value(v: &str) -> bool {
     !v.is_empty() && (!v.starts_with('"') || (v.len() >= 2 && v.ends_with('"')))
 }
 
-/// An RFC 1123 date (`Tue, 15 Nov 1994 08:12:31 GMT`).
-fn is_http_date(v: &str) -> bool {
-    let p: Vec<&str> = v.split_whitespace().collect();
-    if p.len() != 6 || !p[0].ends_with(',') || p[5] != "GMT" {
-        return false;
+const WEEKDAYS: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const WEEKDAYS_LONG: [&str; 7] = [
+    "Sunday",
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+];
+const MONTHS: [&str; 12] = [
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
+
+/// Days since 1970-01-01 of a proleptic Gregorian date.
+fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let mp = (m + 9) % 12;
+    let doy = (153 * mp + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146_097 + doe - 719_468
+}
+
+fn civil_from_days(z: i64) -> (i64, i64, i64) {
+    let z = z + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    (if m <= 2 { yoe + era * 400 + 1 } else { yoe + era * 400 }, m, d)
+}
+
+fn digits_of(s: &str, len: std::ops::RangeInclusive<usize>) -> Option<i64> {
+    (len.contains(&s.len()) && s.chars().all(|c| c.is_ascii_digit())).then(|| s.parse().ok())?
+}
+
+/// `HH:MM:SS` as seconds of the day.
+fn time_of_day(s: &str) -> Option<i64> {
+    let mut p = s.split(':');
+    let (h, m, sec) = (p.next()?, p.next()?, p.next()?);
+    if p.next().is_some() {
+        return None;
     }
-    let days = ["Mon,", "Tue,", "Wed,", "Thu,", "Fri,", "Sat,", "Sun,"];
-    let months = [
-        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-    ];
-    let time_ok = p[4].split(':').count() == 3
-        && p[4]
-            .split(':')
-            .all(|x| x.len() == 2 && x.chars().all(|c| c.is_ascii_digit()));
-    days.contains(&p[0])
-        && p[1].len() <= 2
-        && p[1].chars().all(|c| c.is_ascii_digit())
-        && months.contains(&p[2])
-        && p[3].len() == 4
-        && p[3].chars().all(|c| c.is_ascii_digit())
-        && time_ok
+    let (h, m, sec) = (digits_of(h, 2..=2)?, digits_of(m, 2..=2)?, digits_of(sec, 2..=2)?);
+    (h < 24 && m < 60 && sec < 60).then_some(h * 3600 + m * 60 + sec)
+}
+
+/// Seconds since 1970 of a valid date and time; the weekday given, when there is one, must be the date's.
+fn instant(y: i64, mon: &str, d: i64, secs: i64, weekday: Option<usize>) -> Option<i64> {
+    let m = MONTHS.iter().position(|x| *x == mon)? as i64 + 1;
+    let days = days_from_civil(y, m, d);
+    if civil_from_days(days) != (y, m, d) {
+        return None;
+    }
+    if weekday.is_some_and(|w| w as i64 != (days + 4).rem_euclid(7)) {
+        return None;
+    }
+    Some(days * 86_400 + secs)
+}
+
+/// An instant written the way .NET writes a date header: `Tue, 15 Nov 1994 08:12:31 GMT`.
+fn rfc1123(t: i64) -> String {
+    let days = t.div_euclid(86_400);
+    let secs = t.rem_euclid(86_400);
+    let (y, m, d) = civil_from_days(days);
+    format!(
+        "{}, {d:02} {} {y:04} {:02}:{:02}:{:02} GMT",
+        WEEKDAYS[(days + 4).rem_euclid(7) as usize],
+        MONTHS[(m - 1) as usize],
+        secs / 3600,
+        secs / 60 % 60,
+        secs % 60
+    )
+}
+
+/// The date forms network/lt-se-header-values/SeHeaderValues.al:SE_Shapes_Dates measured (corpus bump PR 737), all stored as
+/// RFC 1123 GMT: `Tue, 15 Nov 1994 08:12:31 GMT` (also lt-http-header-rules/P87Values.al, AyHeaderAddResult.al:119), the same with
+/// `UTC`, RFC 850 `Tuesday, 15-Nov-94 08:12:31 GMT`, asctime `Tue Nov 15 08:12:31 1994` and `15 Nov 1994 08:12:31 +0100` (the offset
+/// is taken off). `None` for another text.
+fn parse_date_forms(v: &str) -> Option<i64> {
+    let p: Vec<&str> = v.split_whitespace().collect();
+    let weekday = |w: &str, names: &[&str; 7]| names.iter().position(|x| *x == w);
+    match p.as_slice() {
+        [wd, d, mon, y, time, zone] if wd.ends_with(',') && matches!(*zone, "GMT" | "UTC") => {
+            let w = weekday(&wd[..wd.len() - 1], &WEEKDAYS)?;
+            instant(
+                digits_of(y, 4..=4)?,
+                mon,
+                digits_of(d, 1..=2)?,
+                time_of_day(time)?,
+                Some(w),
+            )
+        }
+        [wd, dmy, time, "GMT"] if wd.ends_with(',') => {
+            let w = weekday(&wd[..wd.len() - 1], &WEEKDAYS_LONG)?;
+            let mut parts = dmy.split('-');
+            let (d, mon, yy) = (parts.next()?, parts.next()?, parts.next()?);
+            if parts.next().is_some() {
+                return None;
+            }
+            // A two-digit year of 50 or more is in the 1900s (94 is the measured one); a smaller one is not measured.
+            let yy = digits_of(yy, 2..=2)?;
+            if yy < 50 {
+                return None;
+            }
+            instant(1900 + yy, mon, digits_of(d, 1..=2)?, time_of_day(time)?, Some(w))
+        }
+        [wd, mon, d, time, y] if WEEKDAYS.contains(wd) => {
+            let w = weekday(wd, &WEEKDAYS)?;
+            instant(
+                digits_of(y, 4..=4)?,
+                mon,
+                digits_of(d, 1..=2)?,
+                time_of_day(time)?,
+                Some(w),
+            )
+        }
+        [d, mon, y, time, zone] if zone.len() == 5 && zone.starts_with(['+', '-']) => {
+            let hh = digits_of(&zone[1..3], 2..=2)?;
+            let mm = digits_of(&zone[3..5], 2..=2)?;
+            let offset = (hh * 3600 + mm * 60) * if zone.starts_with('-') { -1 } else { 1 };
+            Some(
+                instant(
+                    digits_of(y, 4..=4)?,
+                    mon,
+                    digits_of(d, 1..=2)?,
+                    time_of_day(time)?,
+                    None,
+                )? - offset,
+            )
+        }
+        _ => None,
+    }
+}
+
+/// A date header value: `Ok(Some(stored))`, `Ok(None)` for a refused one (InvalidHeader:Format), or a refusal of a text no probe
+/// measured. Refused: a text without a digit or without a space (`not a date`, `yesterday`, `soon`, `0`, `2020-01-01`,
+/// `1994-11-15T08:12:31Z`: lt-http/HttpHeaders.al:351, AyHeaderAddResult.al:131-132, :231, :315-328, P87Values.al:413-454) and a
+/// date in lower case (SeHeaderValues.al:SE_Shapes_Dates `ifunmodifiedsince_4`).
+fn http_date(v: &str) -> Result<Option<String>, Signal> {
+    if let Some(t) = parse_date_forms(v) {
+        let stored = rfc1123(t);
+        if stored != v {
+            // Measured by SeHeaderValues.al only (corpus bump PR 737).
+            assume(crate::assumptions::Assumption::HttpHeaderRules);
+        }
+        return Ok(Some(stored));
+    }
+    if !v.contains(|c: char| c.is_ascii_digit()) || !v.contains(' ') {
+        return Ok(None);
+    }
+    if !v.contains(|c: char| c.is_ascii_uppercase()) {
+        let capitalized: String = v
+            .split(' ')
+            .map(|w| {
+                let mut c = w.chars();
+                c.next()
+                    .map_or_else(String::new, |f| f.to_ascii_uppercase().to_string() + c.as_str())
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+            .replace("Gmt", "GMT");
+        if parse_date_forms(&capitalized).is_some() {
+            assume(crate::assumptions::Assumption::HttpHeaderRules);
+            return Ok(None);
+        }
+    }
+    unsupported(format!("HttpHeaders.Add of the date '{v}': its form is not measured"))
 }
 
 const KNOWN_NAMES: &[&str] = &[
@@ -921,8 +1070,28 @@ fn typed_add(bag: &HeaderBag, name: &str, value: &str) -> Result<Option<Typed>, 
             Some(parts) => list(parts),
             None => fail(),
         },
+        // `unit=first-last, first-last` and `unit=-suffix`, stored as written; a range without a digit is refused
+        // (SeHeaderValues.al:SE_Shapes_Range_Host `bytes=0-9, 20-29`, `bytes=-5`, `items=1-2`, `bytes=x`; P87Values.al:349-350,
+        // AyHeaderAddResult.al:201-203). Other range forms (`5-`, letters around digits) are not measured.
         "range" => match v.split_once('=') {
-            Some((unit, rest)) if is_token(unit) && !rest.trim().is_empty() => single(vec![v.to_string()]),
+            Some((unit, rest)) if is_token(unit) && !rest.trim().is_empty() => {
+                let digits = |s: &str| !s.is_empty() && s.chars().all(|c| c.is_ascii_digit());
+                let items: Vec<&str> = rest.split(',').map(str::trim).collect();
+                if items.iter().any(|i| i.starts_with('-')) {
+                    assume(crate::assumptions::Assumption::HttpHeaderRules);
+                }
+                if items.iter().all(|i| match i.split_once('-') {
+                    Some((a, b)) => (a.is_empty() || digits(a)) && digits(b),
+                    None => false,
+                }) {
+                    single(vec![v.to_string()])
+                } else if items.iter().any(|i| !i.contains(|c: char| c.is_ascii_digit())) {
+                    assume(crate::assumptions::Assumption::HttpHeaderRules);
+                    fail()
+                } else {
+                    unsupported(format!("HttpHeaders.Add of the Range '{v}': not measured"))
+                }
+            }
             _ => fail(),
         },
         "host" => {
@@ -930,9 +1099,13 @@ fn typed_add(bag: &HeaderBag, name: &str, value: &str) -> Result<Option<Typed>, 
                 Some((h, p)) => (h, Some(p)),
                 None => (v, None),
             };
+            if port == Some("") {
+                assume(crate::assumptions::Assumption::HttpHeaderRules);
+            }
             if !host.is_empty()
                 && !host.contains(char::is_whitespace)
-                && port.is_none_or(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()))
+                // An empty port is accepted as written (SeHeaderValues.al:SE_Shapes_Range_Host `a.example:`).
+                && port.is_none_or(|p| p.chars().all(|c| c.is_ascii_digit()))
             {
                 single(vec![v.to_string()])
             } else {
@@ -962,23 +1135,23 @@ fn typed_add(bag: &HeaderBag, name: &str, value: &str) -> Result<Option<Typed>, 
                 fail()
             }
         }
-        "content-length" => {
-            if !v.is_empty() && v.chars().all(|c| c.is_ascii_digit()) && v.parse::<u64>().is_ok() {
-                single(vec![v.to_string()])
-            } else {
-                fail()
+        // Stored as a number: ` 5` and `05` read `5` (SeHeaderValues.al:SE_Shapes_Content); `-1` is refused.
+        "content-length" => match v.parse::<u64>() {
+            Ok(n) if !v.is_empty() && v.chars().all(|c| c.is_ascii_digit()) => {
+                if n.to_string() != v {
+                    assume(crate::assumptions::Assumption::HttpHeaderRules);
+                }
+                single(vec![n.to_string()])
             }
-        }
-        "date" | "if-modified-since" | "if-unmodified-since" | "last-modified" | "expires" => {
-            if existing.is_some() || !is_http_date(v) {
-                fail()
-            } else {
-                Ok(Some(Typed {
-                    values: vec![value.to_string()],
-                    replace: false,
-                }))
-            }
-        }
+            _ => fail(),
+        },
+        "date" | "if-modified-since" | "if-unmodified-since" | "last-modified" | "expires" => match http_date(v)? {
+            Some(stored) if existing.is_none() => Ok(Some(Typed {
+                values: vec![stored],
+                replace: false,
+            })),
+            _ => fail(),
+        },
         // A media type is written back with "; " between its parameters (.NET's MediaTypeHeaderValue): 'text/plain;charset=utf-8' reads
         // 'text/plain; charset=utf-8', upper case and quotes stay (lt-http-header-rules/P87ContentType.al:ContentTypeVariantsStayVerbatim).
         "content-type" => {
@@ -1017,9 +1190,25 @@ fn uri_header(v: &str) -> Result<String, Signal> {
         s.starts_with(|c: char| c.is_ascii_alphabetic())
             && s.chars().all(|c| c.is_ascii_alphanumeric() || "+.-".contains(c))
     });
+    // .NET stores the uri's normal form. Measured: one already in it, a scheme and host in upper case (`HTTPS://A.example/x` reads
+    // `https://a.example/x`) and a host with no path (`https://a.example` reads `https://a.example/`): SeHeaderValues.al:
+    // SE_Shapes_Numbers_Uris `location_4`, `referer_5`. Any other rewrite is not measured.
     if has_scheme {
+        let simple = v.split_once("://").map(|(scheme, rest)| {
+            let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+            let path = if end == rest.len() { "/" } else { &rest[end..] };
+            format!(
+                "{}://{}{path}",
+                scheme.to_ascii_lowercase(),
+                rest[..end].to_ascii_lowercase()
+            )
+        });
         return match normalize_uri(v) {
             Ok(n) if n == v => Ok(n),
+            Ok(n) if simple.as_deref() == Some(n.as_str()) => {
+                assume(crate::assumptions::Assumption::HttpHeaderRules);
+                Ok(n)
+            }
             _ => unsupported(format!(
                 "HttpHeaders.Add of the uri '{v}': its stored form is not measured"
             )),
@@ -1036,12 +1225,17 @@ fn uri_header(v: &str) -> Result<String, Signal> {
 }
 
 /// `bytes 0-9/10` (AyHeaderAddResult.al:285; lt-http-header-names-cache-control/Hdr198Helper.al `bytes 0-1/2`): a unit, one space, a
-/// range `first-last` and `/length`. `abc` is refused (AyHeaderAddResult.al:297). `*` forms are not measured.
+/// range `first-last` and `/length`. `abc` is refused (AyHeaderAddResult.al:297). `bytes */10` (no range, a length) is accepted
+/// (SeHeaderValues.al:SE_Shapes_Numbers_Uris `contentrange_6`); other `*` forms are not measured.
 fn content_range(v: &str) -> Result<bool, Signal> {
     let Some((unit, rest)) = v.split_once(' ') else {
         return Ok(false);
     };
     let digits = |s: &str| !s.is_empty() && s.chars().all(|c| c.is_ascii_digit());
+    if is_token(unit) && rest.strip_prefix("*/").is_some_and(digits) {
+        assume(crate::assumptions::Assumption::HttpHeaderRules);
+        return Ok(true);
+    }
     let ok = is_token(unit)
         && rest
             .split_once('/')
@@ -1078,10 +1272,10 @@ fn typed_add_more(bag: &HeaderBag, name: &str, value: &str) -> Result<Option<Typ
         "accept-ranges",
     ];
     let probed_here = match bag.kind {
-        HeaderKind::Request => request.contains(&lower.as_str()),
+        // The client's default headers check like request headers (SeHeaderValues.al:SE_ClientHeaders, corpus bump PR 737).
+        HeaderKind::Request | HeaderKind::Default => request.contains(&lower.as_str()),
         HeaderKind::Content => content.contains(&lower.as_str()),
         HeaderKind::Response => response.contains(&lower.as_str()),
-        HeaderKind::Default => false,
     };
     // On another collection the header keeps the earlier rule, stored as written (the HeaderNameCase*.al probes add valid values of
     // these names to every collection; assumption http-header-rules).
@@ -1102,32 +1296,64 @@ fn typed_add_more(bag: &HeaderBag, name: &str, value: &str) -> Result<Option<Typ
         }
     };
     match lower.as_str() {
-        // `abc` refused (:241); `"a"` accepted (Hdr198Helper.al); an HTTP date is not measured here.
+        // `abc` refused (:241); `"a"` accepted (Hdr198Helper.al); a date is stored as a date header is (SeHeaderValues.al:
+        // SE_Shapes_EntityTags `ifrange_5`).
         "if-range" => match () {
             _ if existing => single_unmeasured(),
             _ if is_entity_tag(v) && v != "*" => one(v.to_string()),
-            _ if is_http_date(v) => unsupported("HttpHeaders.Add of If-Range with a date: not measured"),
-            _ => fail(),
+            _ => match http_date(v)? {
+                Some(d) => {
+                    assume(crate::assumptions::Assumption::HttpHeaderRules);
+                    one(d)
+                }
+                None => fail(),
+            },
         },
-        // `5` accepted, `five` refused (:242-243).
+        // `5` accepted, `five` refused (:242-243); `007` is stored as `7` (SeHeaderValues.al:SE_Shapes_Numbers_Uris `maxforwards_0`).
+        "max-forwards"
+            if !existing
+                && v.len() > 1
+                && v.starts_with('0')
+                && v.len() <= 9
+                && v.chars().all(|c| c.is_ascii_digit()) =>
+        {
+            assume(crate::assumptions::Assumption::HttpHeaderRules);
+            one(v.parse::<u32>().expect("checked").to_string())
+        }
         "max-forwards" | "age" => match () {
             _ if existing => single_unmeasured(),
             _ if plain_number(v)? => one(v.to_string()),
             _ => fail(),
         },
-        // `120` accepted, `later` refused (:367-368); a date is not measured here.
+        // `120` accepted, `later` refused (:367-368); a date is stored as a date header is (SeHeaderValues.al:SE_Shapes_Numbers_Uris
+        // `retryafter_2`).
         "retry-after" => match () {
             _ if existing => single_unmeasured(),
             _ if plain_number(v)? => one(v.to_string()),
-            _ if is_http_date(v) => unsupported("HttpHeaders.Add of Retry-After with a date: not measured"),
-            _ => fail(),
+            _ => match http_date(v)? {
+                Some(d) => {
+                    assume(crate::assumptions::Assumption::HttpHeaderRules);
+                    one(d)
+                }
+                None => fail(),
+            },
         },
         "referer" | "location" | "content-location" => match () {
             _ if existing => single_unmeasured(),
             _ => one(uri_header(v)?),
         },
-        // `=` refused (:257); `100-continue` accepted (Hdr198Helper.al). A value or parameters are not measured.
+        // `=` refused (:257); `100-continue` accepted (Hdr198Helper.al); `100-continue; a=b` stored as written (SeHeaderValues.al:
+        // SE_Shapes_Numbers_Uris `expect_7`). Other values or parameters are not measured.
         "expect" => {
+            if let Some((head, param)) = v.split_once("; ") {
+                if is_token(head)
+                    && !v.contains(',')
+                    && param.split_once('=').is_some_and(|(n, pv)| is_token(n) && is_token(pv))
+                {
+                    assume(crate::assumptions::Assumption::HttpHeaderRules);
+                    return one(v.to_string());
+                }
+            }
             let items = split_list(v);
             if items.iter().any(|i| i.contains(['=', ';']))
                 && items
@@ -1177,6 +1403,207 @@ fn typed_add_more(bag: &HeaderBag, name: &str, value: &str) -> Result<Option<Typ
     }
 }
 
+/// The names .NET keeps on request headers only, and on response headers only. On the other kind of message headers they are no
+/// typed headers and are stored as written (SeHeaderValues.al:SE_RequestHeaders_OnResponse, SE_ResponseHeaders_OnRequest, corpus bump
+/// PR 737).
+const REQUEST_ONLY: &[&str] = &[
+    "accept",
+    "accept-charset",
+    "accept-encoding",
+    "accept-language",
+    "authorization",
+    "expect",
+    "from",
+    "host",
+    "if-match",
+    "if-modified-since",
+    "if-none-match",
+    "if-range",
+    "if-unmodified-since",
+    "max-forwards",
+    "proxy-authorization",
+    "range",
+    "referer",
+    "te",
+    "user-agent",
+];
+const RESPONSE_ONLY: &[&str] = &[
+    "accept-ranges",
+    "age",
+    "etag",
+    "location",
+    "proxy-authenticate",
+    "retry-after",
+    "server",
+    "vary",
+    "www-authenticate",
+];
+/// The request-only names SE_RequestHeaders_OnResponse added to response headers.
+const REQUEST_ONLY_MEASURED_ON_RESPONSE: &[&str] = &[
+    "range",
+    "if-match",
+    "accept",
+    "authorization",
+    "user-agent",
+    "host",
+    "referer",
+    "max-forwards",
+    "expect",
+];
+/// The names SE_ClientHeaders added to the client's default headers.
+const MEASURED_ON_CLIENT: &[&str] = &[
+    "range",
+    "accept",
+    "if-match",
+    "etag",
+    "age",
+    "max-forwards",
+    "referer",
+    "via",
+    "date",
+];
+
+/// A header a request or response collection would store as written: a name of the other kind of message.
+fn of_the_other_message(kind: HeaderKind, lower: &str) -> bool {
+    match kind {
+        HeaderKind::Response => REQUEST_ONLY.contains(&lower),
+        HeaderKind::Request | HeaderKind::Default => RESPONSE_ONLY.contains(&lower),
+        HeaderKind::Content => false,
+    }
+}
+
+/// `q=<number>` with spaces around the parts allowed.
+fn is_quality(p: &str) -> bool {
+    p.split_once('=').is_some_and(|(n, q)| {
+        n.trim().eq_ignore_ascii_case("q")
+            && !q.trim().is_empty()
+            && q.trim().chars().all(|c| c.is_ascii_digit() || c == '.')
+    })
+}
+
+/// The general and message headers that network/lt-se-header-values/SeHeaderValues.al (corpus bump PR 737) measured and the rules
+/// above leave alone: Accept-Charset, Accept-Language and TE (request), Pragma, Trailer, Upgrade, Via and Warning (request and
+/// response), Server and Proxy-Authenticate (response). `From` is stored as written (`a@b.example`, `not an email`). Value shapes
+/// that file did not measure are refused.
+fn typed_add_se(bag: &HeaderBag, lower: &str, value: &str) -> Result<Option<Typed>, Signal> {
+    let v = value.trim();
+    let list = |values: Vec<String>| Ok(Some(Typed { values, replace: false }));
+    let fail = || header_error::<Option<Typed>>("Format");
+    let unmeasured = || unsupported(format!("HttpHeaders.Add of the {lower} value '{value}': not measured"));
+    let spaced_tokens = |s: &str| s.split_whitespace().count() > 1 && s.split_whitespace().all(is_token);
+    if matches!(
+        lower,
+        "accept-charset" | "accept-language" | "te" | "from" | "pragma" | "trailer" | "upgrade" | "via" | "warning"
+    ) || (bag.kind == HeaderKind::Response && matches!(lower, "server" | "proxy-authenticate"))
+    {
+        assume(crate::assumptions::Assumption::HttpHeaderRules);
+    }
+    match (bag.kind, lower) {
+        // `utf-8`, `utf-8 ; q=0.5` (read `utf-8; q=0.5`), `en-US,de;q=0.8` (two values), `deflate;q=0.5`; `a b`, `e n` and `;` refused
+        // (SE_Untyped_Request_1, _2).
+        (HeaderKind::Request | HeaderKind::Default, "accept-charset" | "accept-language" | "te") => {
+            let mut out = Vec::new();
+            for item in split_list(value) {
+                let mut parts = item.split(';');
+                let head = parts.next().unwrap_or("").trim();
+                if head.is_empty() || head.contains(char::is_whitespace) {
+                    return fail();
+                }
+                if !is_token(head) || !parts.all(is_quality) {
+                    return unmeasured();
+                }
+                out.push(join_params(&item));
+            }
+            if out.is_empty() {
+                return unmeasured();
+            }
+            list(out)
+        }
+        // `no-cache`, `a=b` stored as written; `a b` refused (SE_Untyped_Request_2, SE_Untyped_Response).
+        (_, "pragma") => match v.split_once('=') {
+            _ if v.contains(',') => unmeasured(),
+            None if is_token(v) => list(vec![v.to_string()]),
+            Some((n, pv)) if is_token(n) && is_token(pv) => list(vec![v.to_string()]),
+            None if spaced_tokens(v) => fail(),
+            _ => unmeasured(),
+        },
+        // `X-A`, `websocket`, `HTTP/2.0` stored as written; `a b` refused (SE_Untyped_Request_2, _3).
+        (_, "trailer" | "upgrade") => {
+            let product = |s: &str| match s.split_once('/') {
+                Some((n, ver)) => lower == "upgrade" && is_token(n) && is_token(ver),
+                None => is_token(s),
+            };
+            match () {
+                _ if v.contains(',') => unmeasured(),
+                _ if product(v) => list(vec![v.to_string()]),
+                _ if spaced_tokens(v) => fail(),
+                _ => unmeasured(),
+            }
+        }
+        // `1.1 proxy` and `1.0 fred, 1.1 p.example` (two values) stored as written; `bad` refused (SE_Untyped_Request_3,
+        // SE_Untyped_Response, SE_ClientHeaders).
+        (_, "via") => {
+            let mut out = Vec::new();
+            for item in split_list(value) {
+                let parts: Vec<&str> = item.split(' ').collect();
+                match parts.as_slice() {
+                    [one] if is_token(one) => return fail(),
+                    [version, host] if is_token(version) && is_token(host) => out.push(item.clone()),
+                    _ => return unmeasured(),
+                }
+            }
+            if out.is_empty() {
+                return unmeasured();
+            }
+            list(out)
+        }
+        // `199 - "msg"` stored as written; `bad` refused (SE_Untyped_Request_3).
+        (_, "warning") => {
+            let parts: Vec<&str> = v.splitn(3, ' ').collect();
+            match parts.as_slice() {
+                [one] if is_token(one) => fail(),
+                [code, agent, text]
+                    if code.len() == 3
+                        && code.chars().all(|c| c.is_ascii_digit())
+                        && is_token(agent)
+                        && text.len() >= 2
+                        && text.starts_with('"')
+                        && text.ends_with('"')
+                        && !text[1..text.len() - 1].contains('"') =>
+                {
+                    list(vec![v.to_string()])
+                }
+                _ => unmeasured(),
+            }
+        }
+        // Products and comments, each a value, as User-Agent: `a/1.0 (x)` reads `[a/1.0][(x)]`, `a b` reads `[a][b]`; `(` refused
+        // (SE_Untyped_Response).
+        (HeaderKind::Response, "server") => match user_agent_parts(value) {
+            Some(parts) => list(parts),
+            None => fail(),
+        },
+        // A lone comma is an empty list (Add answers true, nothing stored); `Basic realm="x"` stored as written (SE_Untyped_Response).
+        (HeaderKind::Response, "proxy-authenticate") => {
+            if split_list(v).is_empty() && !v.is_empty() {
+                return list(Vec::new());
+            }
+            match v.split_once(' ') {
+                Some((scheme, param))
+                    if is_token(scheme)
+                        && param.split_once('=').is_some_and(|(n, pv)| {
+                            is_token(n) && pv.len() >= 2 && pv.starts_with('"') && pv.ends_with('"')
+                        })
+                        && !param.contains(',') =>
+                {
+                    list(vec![v.to_string()])
+                }
+                _ => unmeasured(),
+            }
+        }
+        _ => Ok(None),
+    }
+}
+
 fn find<'a>(items: &'a [(String, Vec<String>)], name: &str) -> Option<&'a (String, Vec<String>)> {
     items.iter().find(|(n, _)| n.eq_ignore_ascii_case(name))
 }
@@ -1207,14 +1634,48 @@ fn add_header(bag: &mut HeaderBag, name: &str, value: &str, secret: bool) -> Res
         return Ok(());
     }
     let stored = stored_name(&bag.items, name)?;
-    let typed = match typed_add(bag, name, value)? {
-        Some(t) => Some(t),
-        None => typed_add_more(bag, name, value)?,
-    };
-    // The value rules of a typed header other than Cache-Control (pinned by network/lt-http-header-names-cache-control/CacheControl*.al) rest
-    // on the probes measured so far (assumption http-header-rules).
-    if typed.is_some() && !name.eq_ignore_ascii_case("cache-control") {
+    let lower = name.to_ascii_lowercase();
+    // A name of the other kind of message is stored as written (SeHeaderValues.al:SE_RequestHeaders_OnResponse,
+    // SE_ResponseHeaders_OnRequest, corpus bump PR 737: assumption http-header-rules until it lands). Measured for every response-only
+    // name on request headers, nine request-only names on response headers and ETag and Age on the client's headers.
+    if of_the_other_message(bag.kind, &lower) {
         assume(crate::assumptions::Assumption::HttpHeaderRules);
+        let measured = match bag.kind {
+            HeaderKind::Response => REQUEST_ONLY_MEASURED_ON_RESPONSE.contains(&lower.as_str()),
+            HeaderKind::Default => MEASURED_ON_CLIENT.contains(&lower.as_str()),
+            _ => true,
+        };
+        if !measured {
+            assume(crate::assumptions::Assumption::HttpTypedHeaderValueShapes);
+        }
+        push_value(&mut bag.items, &stored, value.to_string());
+        return Ok(());
+    }
+    let se = typed_add_se(bag, &lower, value)?;
+    let typed = match se {
+        Some(t) => {
+            // Measured by SeHeaderValues.al only (corpus bump PR 737).
+            assume(crate::assumptions::Assumption::HttpHeaderRules);
+            Some(t)
+        }
+        None => match typed_add(bag, name, value)? {
+            Some(t) => Some(t),
+            None => typed_add_more(bag, name, value)?,
+        },
+    };
+    // The client's default headers check like request headers (SeHeaderValues.al:SE_ClientHeaders, corpus bump PR 737); names that
+    // file did not add to them follow that rule too.
+    if bag.kind == HeaderKind::Default {
+        assume(crate::assumptions::Assumption::HttpHeaderRules);
+        if !MEASURED_ON_CLIENT.contains(&lower.as_str()) {
+            assume(crate::assumptions::Assumption::HttpTypedHeaderValueShapes);
+        }
+    }
+    // The value rules of a typed header other than Cache-Control (pinned by network/lt-http-header-names-cache-control/CacheControl*.al)
+    // were measured for a few values each (AyHeaderAddResult.al, the P87 files, SeHeaderValues.al); a value of a shape they did not
+    // measure follows the same rule (assumption http-typed-header-value-shapes).
+    if typed.is_some() && lower != "cache-control" {
+        assume(crate::assumptions::Assumption::HttpTypedHeaderValueShapes);
     }
     match typed {
         Some(t) if t.replace => {
@@ -1268,14 +1729,17 @@ fn headers_add(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
         }
         return header_error("Argument");
     }
+    let kind = with_bag(r.as_deref(), |b| b.kind)?;
     let added = with_bag(r.as_deref(), |b| add_header(b, &name, &value, secret))?;
     match added {
         Ok(()) => Ok(Value::Boolean(true)),
         // A statement raises the invalid header; an Add whose result is used answers false instead, for a refused value
         // (network/lt-ay-http/AyHeaderAddResult.al:88-89, :115-116, :129-130 and the typed headers below them), a name that is no
         // token (:157-158, :171-173, :185), an empty name (:159, InvalidHeader:Argument) and a name the collection refuses (:186-187,
-        // :383, InvalidOperation). lt-http-header-rules/P87Twice.al raises it for the statement. What the last error holds after the
-        // false is not measured (assumption http-headers-add-used-result).
+        // :383, InvalidOperation). lt-http-header-rules/P87Twice.al raises it for the statement. The false sets the last error to the
+        // header error, text and code (:499-543 PY_AddFalse_LastError_*, on request, content and response headers); an Add that
+        // answers true leaves it (`ok_after_prior`). For an empty name, on client headers and in the `if not H.Add(..)` form the pin
+        // is :552-620 (SE_AddFalse_*, corpus bump PR 737; assumption http-headers-add-used-result until it lands).
         Err(Signal::Error(e))
             if ret_used
                 && matches!(
@@ -1283,7 +1747,10 @@ fn headers_add(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
                     "InvalidHeader:Format" | "InvalidHeader:Argument" | "InvalidOperation"
                 ) =>
         {
-            assume(crate::assumptions::Assumption::HttpHeadersAddUsedResult);
+            if name.is_empty() || kind == HeaderKind::Default {
+                assume(crate::assumptions::Assumption::HttpHeadersAddUsedResult);
+            }
+            c.set_last_error(*e);
             Ok(Value::Boolean(false))
         }
         Err(e) => Err(e),
@@ -1363,11 +1830,6 @@ fn headers_get_values(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -
         }
         Ok((find(&b.items, &name).map(|(_, v)| v.clone()), b.kind))
     })??;
-    if values.as_ref().is_some_and(|v| v.iter().any(|x| x == UNPINNED_LENGTH)) {
-        return unsupported(
-            "the Content-Length of an HttpContent that a read measured and a WriteFrom of another length rewrote: what it shows is not measured (docs/probes-needed.md)",
-        );
-    }
     let Some(values) = values else {
         let error = crate::native::AlError {
             message: GET_VALUES_MISSING.into(),
@@ -1501,21 +1963,19 @@ fn read_as(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
                         .then(|| v.trim().trim_matches('"').to_ascii_lowercase())
                 })
             });
-        // Reading the body makes the content buffer it, and its headers then list a Content-Length (misc/lt-probes-needed-5/PnE12HttpContent.al:
-        // WriteFromText_ThenReadAndHeaders reads `5` after WriteFrom('hello') and ReadAs; the headers fetched before the read show it too, and
-        // none shows it before: lt-http-header-rules/P87Content.al:RewriteKeepsHeader, HttpWriteFromStream.al:P100_*). Assumption
-        // http-content-length-after-read.
+        // Reading the body makes the content buffer it, and its headers then list a Content-Length of the body's length when they
+        // hold none (misc/lt-probes-needed-5/PnE12HttpContent.al:WriteFromText_ThenReadAndHeaders reads `5` after WriteFrom('hello')
+        // and ReadAs; network/lt-ay-http/AyContentLength.al:ContentLength_* and PY_*: none after ReadAs(InStream), an empty body reads
+        // `0`). A Content-Length the headers already hold stays as it is: one an earlier read put there (PY_ContentLength_LongerBodyAfterRead
+        // `second_read` Yes[5]) and, with corpus bump PR 737, one added by hand (AyContentLength.al:333-351
+        // SE_ContentLength_AddedByHandBeforeRead `Yes[3]`; assumption http-content-length-after-read until it lands).
         if !s.uninitialized {
-            assume(crate::assumptions::Assumption::HttpContentLengthAfterRead);
-            let len = vec![s.data.len().to_string()];
             let mut bag = s.headers.borrow_mut();
-            match bag
-                .items
-                .iter_mut()
-                .find(|(n, _)| n.eq_ignore_ascii_case("Content-Length"))
-            {
-                Some((_, v)) => *v = len,
-                None => bag.items.push(("Content-Length".into(), len)),
+            if find(&bag.items, "Content-Length").is_some() {
+                assume(crate::assumptions::Assumption::HttpContentLengthAfterRead);
+            } else {
+                bag.items
+                    .push(("Content-Length".into(), vec![s.data.len().to_string()]));
             }
         }
         let taken = s.stream_taken && (s.copied || s.from_stream);
@@ -2026,12 +2486,10 @@ fn with_cookie<R>(r: Option<&mut Value>, f: impl FnOnce(&mut CookieState) -> R) 
     }
 }
 
-fn cookie_name(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
+fn cookie_name(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
     let new = if a.is_empty() { None } else { Some(text(a, 0)?) };
-    // What a setter answers is not pinned (assumption `cookie-setter-result`).
-    if new.is_some() && c.ret_used() {
-        crate::assumptions::assume(crate::assumptions::Assumption::CookieSetterResult);
-    }
+    // A setter whose result is used answers the new text (network/lt-ay-http/AyCookieSetterExpression.al:28, `[n] get=n` and
+    // `[v] get=v`, on a fresh cookie and on one with other values).
     // An empty name raises and keeps the old one (network/lt-ay-http/AyCookieSetterExpression.al:CookieSetter_EmptyName, BC 27-29).
     if new.as_deref() == Some("") {
         return raise("The 'Name'='' part of the cookie is invalid.", "AL:Cookie");
@@ -2044,12 +2502,10 @@ fn cookie_name(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
     })
 }
 
-fn cookie_value(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
+fn cookie_value(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
     let new = if a.is_empty() { None } else { Some(text(a, 0)?) };
-    // What a setter answers is not pinned (assumption `cookie-setter-result`).
-    if new.is_some() && c.ret_used() {
-        crate::assumptions::assume(crate::assumptions::Assumption::CookieSetterResult);
-    }
+    // A setter whose result is used answers the new text (network/lt-ay-http/AyCookieSetterExpression.al:28, `[n] get=n` and
+    // `[v] get=v`, on a fresh cookie and on one with other values).
     with_cookie(r, |s| {
         if let Some(n) = new {
             s.value = n;
@@ -2249,8 +2705,9 @@ impl HttpContentState {
     /// (lt-http-header-rules/P87Content.al:AddThenWrite_Text, WriteThenAdd_Text, RewriteKeepsHeader, P87ContentType.al:HeaderBeforeWrite,
     /// P87ContentStream.al, HttpWriteFromStream.al:P100_*). A Content-Length the headers already hold (see `read_as`) is not
     /// rewritten: it stays for an empty body (network/lt-ay-http/AyContentLength.al:ContentLength_SecondWriteFrom `empty`
-    /// `Yes[13]`) and for a body of the same length (P100_SecondWrite_ReplacesBody, 5 bytes twice); after a body of another
-    /// length the value is not measured: reading it is refused (`UNPINNED_LENGTH`).
+    /// `Yes[13]`), for a body of the same length (P100_SecondWrite_ReplacesBody, 5 bytes twice) and for a longer, a shorter or a
+    /// stream body (AyContentLength.al:PY_ContentLength_LongerBodyAfterRead, _ShorterBodyAfterRead, _InStreamAfterRead `Yes[5]`).
+    /// Pinned for a value a read put there; for one added by hand it is assumption http-content-length-after-read.
     fn write_body(&mut self, data: Vec<u8>) {
         {
             let mut bag = self.headers.borrow_mut();
@@ -2264,15 +2721,8 @@ impl HttpContentState {
                     .items
                     .insert(0, ("Content-Type".into(), vec!["text/plain; charset=utf-8".into()])),
             }
-            if let Some((_, v)) = bag
-                .items
-                .iter_mut()
-                .find(|(n, _)| n.eq_ignore_ascii_case("Content-Length"))
-            {
+            if find(&bag.items, "Content-Length").is_some() {
                 assume(crate::assumptions::Assumption::HttpContentLengthAfterRead);
-                if !data.is_empty() && v.first() != Some(&data.len().to_string()) {
-                    *v = vec![UNPINNED_LENGTH.into()];
-                }
             }
         }
         self.data = data;

@@ -250,10 +250,18 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
                     Err(_) if matches!(v, Value::Decimal(_)) => return cast_error("Int64"),
                     Err(_) => return unsupported(format!("{d} overflows BigInteger")),
                 },
-                T::Byte => Value::Byte(
-                    u8::try_from(d.mantissa() / 10i128.pow(d.scale()))
-                        .or_else(|_| unsupported(format!("{d} overflows Byte")))?,
-                ),
+                // An Integer beyond a Byte raises (misc/lt-probes-needed-2/PnBErrorsCollections.al:560-562, 582-583,
+                // Arithmetic_ErrorTexts `byteOverflow`: 300). Other sources are not pinned.
+                T::Byte => match u8::try_from(d.mantissa() / 10i128.pow(d.scale())) {
+                    Ok(b) => Value::Byte(b),
+                    Err(_) if matches!(v, Value::Integer(_)) => {
+                        return raise(
+                            format!("Overflow under conversion of System.Int32 value {d} to System.Byte."),
+                            "ConversionCast",
+                        );
+                    }
+                    Err(_) => return unsupported(format!("{d} overflows Byte")),
+                },
                 T::Char => Value::Char(
                     u16::try_from(d.mantissa() / 10i128.pow(d.scale()))
                         .or_else(|_| unsupported(format!("{d} overflows Char")))?,

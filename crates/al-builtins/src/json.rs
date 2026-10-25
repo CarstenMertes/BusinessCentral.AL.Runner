@@ -816,6 +816,11 @@ fn as_integer(s: &Scalar) -> Result<Value, Signal> {
     if matches!(s, Scalar::Null) {
         return Err(conversion(NAV_JSON_VALUE, "System.Int32"));
     }
+    // A JSON `true` read as an Integer is 1 (misc/lt-probes-needed-1/PnAJsonGetters.al:191-210, ArrayWrongKindAtIndex
+    // `int-of-bool`); `false` is not pinned.
+    if let Scalar::Val(Value::Boolean(true)) = s {
+        return Ok(Value::Integer(1));
+    }
     if let Scalar::Val(Value::Text(t) | Value::Code(t)) = s {
         match t.trim().parse::<i32>() {
             Ok(n) => return Ok(Value::Integer(n)),

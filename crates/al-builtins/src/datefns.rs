@@ -247,8 +247,10 @@ fn dt2time(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
 /// Any other part raises (types/TestDateRoundFormatStringContracts.al:Date2DMY_Part4_Throws, measured for 4).
 fn date2dmy(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
     let day = match &a[0] {
-        // Only Date2DWY of the undefined date is pinned (text/TestProbeTextDateFormatContracts.al:Dates_Date2DWY_BadPart).
-        Value::Date(0, _) => return unsupported("Date2DMY of an undefined date (not pinned)"),
+        // The undefined date raises for part 1 (misc/lt-probes-needed-2/PnBDateFormat.al:135-163, Date2DWY_PartsOutOfRange
+        // `undefinedDmy`); the other parts are not pinned.
+        Value::Date(0, _) if int_of(a.get(1)) == Some(1) => return raise("The date is not valid.", "DateInvalid"),
+        Value::Date(0, _) => return unsupported("Date2DMY of an undefined date with a part other than 1 (not pinned)"),
         Value::Date(n, _) if *n > 0 => *n,
         other => return plain_date(other, "Date2DMY").map(|_| unreachable!()),
     };

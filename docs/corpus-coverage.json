@@ -2,7 +2,7 @@
   "corpus_commit": "80711c1b1ee4c1ea25ac3cbaff7faf729ddeca4b",
   "language": {
     "bc": "27-29",
-    "implemented": 1511,
+    "implemented": 1515,
     "methods": [
       {
         "bc": [
@@ -17,7 +17,7 @@
         "scope": "",
         "sig": "()",
         "site": "misc/lt-probe-requests-140/P140IntegerToText.al:140",
-        "state": "refused",
+        "state": "implemented",
         "type": "BigInteger"
       },
       {
@@ -1963,7 +1963,7 @@
         "scope": "",
         "sig": "(Integer, Text, var Text)",
         "site": "misc/lt-open-overloads-collections-isolated/P107Collections.al:21",
-        "state": "refused",
+        "state": "implemented",
         "type": "Dictionary"
       },
       {
@@ -10160,7 +10160,7 @@
         "scope": "",
         "sig": "(Integer, Integer, var List of [Integer])",
         "site": "misc/lt-open-overloads-collections-isolated/P107Collections.al:77",
-        "state": "refused",
+        "state": "implemented",
         "type": "List"
       },
       {
@@ -10304,7 +10304,7 @@
         "scope": "",
         "sig": "(Integer, Integer, var Integer)",
         "site": "misc/lt-open-overloads-collections-isolated/P107Collections.al:147",
-        "state": "refused",
+        "state": "implemented",
         "type": "List"
       },
       {
@@ -27947,7 +27947,7 @@
     ],
     "overloads": 1750,
     "pinned": 1706,
-    "refused": 211,
+    "refused": 207,
     "runtime_only": [
       "ErrorInfo.Create#3",
       "FieldRef.FieldError#2",

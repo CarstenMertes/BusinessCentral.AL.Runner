@@ -110,7 +110,10 @@ fn a_textconst_without_an_enu_text_and_an_unpinned_order_is_refused() {
     for src in [global, local] {
         match al_testkit::run_with(&src, "C", "F", vec![]) {
             Err(al_builtins::native::Signal::Unsupported(why)) => {
-                assert!(why.contains("no ENU text, other than one text or DEU then FRA"), "{why}")
+                assert!(
+                    why.contains("no ENU text, other than one text or DEU then FRA"),
+                    "{why}"
+                )
             }
             other => panic!("{other:?}"),
         }

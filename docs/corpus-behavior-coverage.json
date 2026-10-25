@@ -16225,7 +16225,7 @@
         "code": "InvalidStreamMode",
         "file": "crates/al-builtins/src/stream.rs",
         "generic": false,
-        "line": 1550,
+        "line": 1562,
         "pinned": true,
         "site": "streams/lt-stream-length/StreamLengthOthers.al:573",
         "template": "ALStream.ALWrite, invalid stream mode: Stream"
@@ -16234,7 +16234,7 @@
         "code": "InvalidStreamLength",
         "file": "crates/al-builtins/src/stream.rs",
         "generic": false,
-        "line": 1686,
+        "line": 1698,
         "pinned": true,
         "site": "misc/lt-probes-needed-1/PnAStreamReadMisc.al:223",
         "template": "An invalid length % was specified in stream function. % was expected."

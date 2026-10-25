@@ -15,7 +15,7 @@
 //!   runtime, the keys of its app.json). The caller supplies them; a compile without them skips
 //!   these checks.
 //!
-//! The codes the checker itself reports (`check/`, where types are known) are AL0118, AL0122,
+//! The codes the checker itself reports (`check/`, where types are known) are AL0118, AL0122, AL0135, AL0139,
 //! AL0132, AL0161 and AL0398 (and AL0175 for Char - Text); they are listed in [`IMPLEMENTED`] too.
 
 use crate::workspace::{AppKind, Diagnostic, ObjKind, Resolution, Workspace};
@@ -68,6 +68,19 @@ pub const IMPLEMENTED: &[(&str, &str)] = &[
         "OnInit, OnFindRecord and OnNextRecord in a page extension; a trigger the object type does not have (any but OnRun in a codeunit; page, table and report triggers of another object type)",
     ),
     ("AL0197", "two objects of one type and name in one app"),
+    ("AL0264", "two codeunits or two tables with one id in one app"),
+    (
+        "AL0305",
+        "a codeunit name of 37 characters or more (the 31 to 36 range is not pinned yet)",
+    ),
+    (
+        "AL0135",
+        "a bare call of a procedure of the same object, the only one of its name, with fewer arguments than it has parameters",
+    ),
+    (
+        "AL0139",
+        "exit with a value in a procedure or trigger of a codeunit that has no return value",
+    ),
     (
         "AL0296",
         "a Cloud app names a platform table that is Scope = OnPrem (the 123 of System.app that the corpus lists), calls GetLastErrorObject, SecretText.Unwrap, or File.Open, or sets the report property EnableExternalAssemblies to true",
@@ -403,6 +416,8 @@ fn display_kind(k: ObjKind) -> &'static str {
 pub fn check_workspace(ws: &Workspace) -> Vec<Diagnostic> {
     let mut out = Vec::new();
     duplicate_names(ws, &mut out);
+    duplicate_ids(ws, &mut out);
+    long_object_names(ws, &mut out);
     event_subscriptions(ws, &mut out);
     // The files the parser did not accept (`parameter_names` skips them).
     let unparsed: std::collections::HashSet<(usize, &str)> = ws
@@ -763,6 +778,91 @@ fn duplicate_names(ws: &Workspace, out: &mut Vec<Diagnostic>) {
                 o.name
             ),
         );
+    }
+}
+
+/// The object types whose repeated id AL0264 pins: must-not-compile 0036 (two codeunits) and 0296 (two tables).
+const AL0264_KINDS: &[ObjKind] = &[ObjKind::Codeunit, ObjKind::Table];
+
+/// AL0264: one diagnostic for every declaration of an id that an app declares more than once for the same object type
+/// (must-not-compile 0036-two-codeunits-same-id.al:1-2, 0296-duplicate-table-id.al:1-2; al-runner issue 5854). The
+/// text is alc's up to the name of the extension, which names the app's publisher and version: the workspace has
+/// neither. Other object types are not pinned and are not reported; the link step keeps compiling such a program
+/// (`lower::assemble::link_pieces`). Two apps that declare one id are not judged here.
+pub(crate) fn duplicate_ids(ws: &Workspace, out: &mut Vec<Diagnostic>) {
+    for oi in duplicate_id_objects(ws) {
+        let o = &ws.objects[oi];
+        if !AL0264_KINDS.contains(&o.kind) {
+            continue;
+        }
+        push(
+            out,
+            ws,
+            o.file,
+            o.offset,
+            "AL0264",
+            format!(
+                "An application object of type '{}' with ID '{}' is already declared by the extension",
+                display_kind(o.kind),
+                o.id.unwrap_or_default()
+            ),
+        );
+    }
+}
+
+/// The objects of the workspace apps whose type and id another object of the same app also has, in object order.
+pub(crate) fn duplicate_id_objects(ws: &Workspace) -> Vec<usize> {
+    let mut seen: std::collections::HashMap<(usize, ObjKind, u32), Vec<usize>> = Default::default();
+    for (oi, o) in ws.objects.iter().enumerate() {
+        if ws.kinds[o.app] == AppKind::Dependency {
+            continue;
+        }
+        if let Some(id) = o.id {
+            seen.entry((o.app, o.kind, id)).or_default().push(oi);
+        }
+    }
+    let mut dups: Vec<usize> = seen.into_values().filter(|v| v.len() > 1).flatten().collect();
+    dups.sort_unstable();
+    dups
+}
+
+/// The longest object name the AL compiler accepts, from alc's text (must-not-compile 0055-object-name-too-long.al:1).
+const AL0305_LIMIT: usize = 30;
+/// The shortest name of a codeunit without `Subtype = Test` that AL0305 is reported for: 0055 pins a plain codeunit of
+/// 37 characters, and no case pins one of 31 to 36 characters, so such a name compiles here (docs/probes-needed.md).
+const AL0305_PLAIN_PINNED: usize = 37;
+
+/// AL0305: a codeunit whose name is too long (al-runner issue 5845). Pinned: a test codeunit of 31 characters
+/// (must-not-compile 2115-test-codeunit-name-31-characters.al:1, corpus PR 736) while one of 30 compiles
+/// (al-language/codeunit/TestScopeIsolationContracts.al:1, codeunit 60170), and a plain codeunit of 37 characters
+/// (0055-object-name-too-long.al:1). Other object types are not pinned.
+fn long_object_names(ws: &Workspace, out: &mut Vec<Diagnostic>) {
+    for (oi, o) in ws.objects.iter().enumerate() {
+        if ws.kinds[o.app] == AppKind::Dependency || o.kind != ObjKind::Codeunit {
+            continue;
+        }
+        let len = o.name.chars().count();
+        if len <= AL0305_LIMIT {
+            continue;
+        }
+        let test = || {
+            ws.object_ast(oi)
+                .properties()
+                .any(|p| p.name().eq_ignore_ascii_case("Subtype") && p.value_text().trim().eq_ignore_ascii_case("Test"))
+        };
+        if len >= AL0305_PLAIN_PINNED || test() {
+            push(
+                out,
+                ws,
+                o.file,
+                o.offset,
+                "AL0305",
+                format!(
+                    "The length of the application object identifier '{}' cannot exceed {AL0305_LIMIT} characters.",
+                    o.name
+                ),
+            );
+        }
     }
 }
 
@@ -2199,6 +2299,105 @@ mod tests {
         for ok in ["D := V;", "Evaluate(D, T);", "D := 5;"] {
             assert!(messages(&cu(ok)).is_empty(), "{ok}");
         }
+    }
+
+    // must-not-compile 0036 (two codeunits) and 0296 (two tables): AL0264 for every declaration of an id one app
+    // declares twice for one object type (al-runner issue 5854).
+    #[test]
+    fn al0264_every_declaration_of_a_repeated_id_is_reported() {
+        let want = |kind: &str, id: u32| {
+            format!("AL0264 An application object of type '{kind}' with ID '{id}' is already declared by the extension")
+        };
+        assert_eq!(
+            messages("codeunit 50000 \"MNC First\" { } codeunit 50000 \"MNC Second\" { }"),
+            vec![want("Codeunit", 50000), want("Codeunit", 50000)]
+        );
+        let table = |name: &str| {
+            format!(
+                "table 50109 \"{name}\" {{ fields {{ field(1; Id; Integer) {{ }} }} keys {{ key(PK; Id) {{ Clustered = true; }} }} }}"
+            )
+        };
+        assert_eq!(
+            messages(&format!("{} {}", table("MNC T296A"), table("MNC T296B"))),
+            vec![want("Table", 50109), want("Table", 50109)]
+        );
+        // One id for objects of two types is fine.
+        assert!(codes(&["codeunit 50000 A { } table 50000 B { fields { field(1; Id; Integer) { } } }"]).is_empty());
+    }
+
+    // must-not-compile 0055: AL0305 for an object name of 37 characters (al-runner issue 5845).
+    #[test]
+    fn al0305_an_object_name_too_long() {
+        assert_eq!(
+            messages("codeunit 50000 \"MNC Object Name That Is Much Too Long\" { }"),
+            vec![
+                "AL0305 The length of the application object identifier 'MNC Object Name That Is Much Too Long' cannot exceed 30 characters."
+                    .to_string()
+            ]
+        );
+        assert!(codes(&["codeunit 50000 \"Thirty Characters Name Is Fine\" { }"]).is_empty());
+        // A test codeunit of 31 characters (must-not-compile 2115, al-runner issue 5845); 30 compiles
+        // (codeunit/TestScopeIsolationContracts.al:1).
+        assert_eq!(
+            codes(&["codeunit 50000 \"MNC Test Codeunit Name Length31\" { Subtype = Test; }"]),
+            vec!["AL0305"]
+        );
+        assert!(codes(&["codeunit 60170 \"Test Scope Isolation Contracts\" { Subtype = Test; }"]).is_empty());
+    }
+
+    // must-not-compile 0048 (a procedure) and 0348 (the OnRun trigger): AL0139 for exit(value) in a codeunit routine
+    // without a return value, also where nothing calls it (al-runner issue 5852).
+    #[test]
+    fn al0139_exit_with_a_value_without_a_return_value() {
+        assert_eq!(
+            messages("codeunit 50001 \"MNC Codeunit\" { procedure DoIt() begin exit(1); end; }"),
+            vec!["AL0139 Since 'DoIt' doesn't have a return value, EXIT cannot be called with a value".to_string()]
+        );
+        assert_eq!(
+            messages("codeunit 50166 \"MNC C348\" { trigger OnRun() begin exit(1); end; }"),
+            vec!["AL0139 Since 'OnRun' doesn't have a return value, EXIT cannot be called with a value".to_string()]
+        );
+        // Inside a statement, as in the issue's `Bump`.
+        assert_eq!(
+            codes(&["codeunit 50001 C { procedure Bump() var I: Integer; begin if I = 0 then exit(5); end; }"]),
+            vec!["AL0139"]
+        );
+        for ok in [
+            "codeunit 50001 C { procedure DoIt() begin exit; end; }",
+            "codeunit 50001 C { procedure DoIt(): Integer begin exit(1); end; }",
+            "codeunit 50001 C { procedure DoIt() R: Integer begin exit(1); end; }",
+        ] {
+            assert!(codes(&[ok]).is_empty(), "{ok}");
+        }
+    }
+
+    // must-not-compile 0242 and 0066: AL0135 for a call of an own procedure with too few arguments, also where
+    // nothing calls the caller (al-runner issue 5853).
+    #[test]
+    fn al0135_own_procedure_called_with_too_few_arguments() {
+        assert_eq!(
+            messages(
+                "codeunit 50048 \"MNC C242\" { local procedure Take(A: Integer; B: Integer) begin end; procedure Run1() begin Take(1); end; }"
+            ),
+            vec![
+                "AL0135 There is no argument given that corresponds to the required formal parameter 'B' of 'Take(Integer, Integer)'"
+                    .to_string()
+            ]
+        );
+        // The issue's shape: the call is an argument of exit, the procedure returns a value.
+        assert_eq!(
+            messages(
+                "codeunit 50600 L { procedure Add(A: Integer; B: Integer): Integer begin exit(A + B); end; procedure Twice(A: Integer): Integer begin exit(Add(A)); end; }"
+            ),
+            vec![
+                "AL0135 There is no argument given that corresponds to the required formal parameter 'B' of 'Add(Integer, Integer)'"
+                    .to_string()
+            ]
+        );
+        assert!(
+            codes(&["codeunit 50048 C { local procedure Take(A: Integer; B: Integer) begin end; procedure Run1() begin Take(1, 2); end; }"])
+                .is_empty()
+        );
     }
 
     #[test]

@@ -895,6 +895,11 @@ impl<'a> Checker<'a> {
                     E::Callable(c) if self.tdd_apps.is_some() && self.tdd_overload(sc, node, callee, &c, &arg_tys) => {
                         E::Val(Ty::Unknown)
                     }
+                    E::Callable(c)
+                        if callee.kind() == NameRef && self.al_too_few_arguments(sc, node, &c, arg_tys.len()) =>
+                    {
+                        E::Val(Ty::Unknown)
+                    }
                     E::Callable(c) => {
                         let ret = self.pick(sc, node, &c, &arg_tys, &member_name(callee));
                         if self.tdd_apps.is_some() {
@@ -1330,4 +1335,55 @@ fn capitalized_kind(t: &Ty) -> String {
     let mut c = s.chars();
     c.next()
         .map_or(String::new(), |f| f.to_uppercase().collect::<String>() + c.as_str())
+}
+
+impl Checker<'_> {
+    /// AL0135: a bare call of a procedure of the same codeunit, the only candidate of its name, with fewer arguments
+    /// than the procedure has parameters (must-not-compile 0242-own-proc-too-few.al:1, 0066; al-runner issue 5853, also
+    /// on a path no test reaches). The text names the first parameter without an argument and the procedure's parameter
+    /// types; it is alc's for Integer parameters (both cases) and for Text and `var` (the built-in cases, 0067 and
+    /// others). For any other parameter type the text ends before the signature, as that rendering is not pinned.
+    /// Calls on a variable, of a procedure of another object type, or of a name with several candidates are not judged
+    /// here (the overload choice keeps refusing them).
+    pub(crate) fn al_too_few_arguments(&mut self, sc: &Scope, node: &SyntaxNode, cands: &[Cand], argc: usize) -> bool {
+        let [c] = cands else { return false };
+        let Res::Proc { object, offset } = c.target else {
+            return false;
+        };
+        if object != sc.oi || self.ws.objects[object].kind != ObjKind::Codeunit || argc >= c.min {
+            return false;
+        }
+        let Some(p) = self.members[object]
+            .procedures
+            .iter()
+            .find(|p| p.offset == offset && p.declared_in == object)
+            .cloned()
+        else {
+            return false;
+        };
+        let Some(missing) = p.params.get(argc) else {
+            return false;
+        };
+        let pinned = |t: &Ty| matches!(t, Ty::Integer | Ty::Text(None));
+        let mut message = format!(
+            "There is no argument given that corresponds to the required formal parameter '{}' of",
+            missing.name
+        );
+        if p.params.iter().all(|q| pinned(&q.ty)) {
+            let sig: Vec<String> = p
+                .params
+                .iter()
+                .map(|q| {
+                    if q.by_var {
+                        format!("var {}", q.ty)
+                    } else {
+                        q.ty.to_string()
+                    }
+                })
+                .collect();
+            message.push_str(&format!(" '{}({})'", p.name, sig.join(", ")));
+        }
+        self.diag(sc, node, "AL0135", message);
+        true
+    }
 }

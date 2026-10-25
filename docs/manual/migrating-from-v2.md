@@ -11,10 +11,17 @@ visibly. The version 2 engine is frozen on the
 [`v2` branch](https://github.com/aldevtools/BusinessCentral.AL.Runner/tree/v2).
 
 The NuGet package [`MSDyn365BC.AL.Runner`](https://www.nuget.org/packages/MSDyn365BC.AL.Runner)
-stays and keeps getting updates. It becomes a wrapper around the version 3 engine,
-so you can keep installing with `dotnet tool` and run the new engine. The wrapper
-adds some start-up overhead, which should be small. Releases of the package that
-predate the wrapper still contain the version 2 engine and keep working.
+stays and keeps getting updates. From version 3 it is a wrapper around the version 3
+engine, so you can keep installing with `dotnet tool` and run the new engine. The
+wrapper adds some start-up overhead, which should be small. Version 3 is a
+prerelease on NuGet until 3.0.0, so you need `--prerelease`:
+
+```bash
+dotnet tool update --global MSDyn365BC.AL.Runner --prerelease
+```
+
+Without `--prerelease` you get 2.12.0, the last version 2 release. Releases of the
+package before version 3 contain the version 2 engine and keep working.
 
 If you maintain a tool that calls AL Runner, read
 [Tool protocol](tool-protocol.md).
@@ -23,7 +30,7 @@ If you maintain a tool that calls AL Runner, read
 
 | | Version 2 | Version 3 |
 |---|---|---|
-| Install | `dotnet tool install -g MSDyn365BC.AL.Runner`, needs the .NET SDK | Standalone binary with no .NET: use mise or the install script. Or keep using `dotnet tool`, now a wrapper around the version 3 engine. |
+| Install | `dotnet tool install -g MSDyn365BC.AL.Runner`, needs the .NET SDK | Standalone binary with no .NET: use mise or the install script. Or keep using `dotnet tool` with `--prerelease`, now a wrapper around the version 3 engine. |
 | Command | `al-runner [FLAGS] DIR...` | `al-runner test [FLAGS] APP...` |
 | Input | A "bundle" folder | An app folder, a source archive or an `.app` with source. Name the app and its test app. |
 | Unsupported surface | The test fails with `RunnerOutOfScopeException` | The test is **not run**, with a reason. Exit code 7. |
@@ -41,7 +48,7 @@ If you maintain a tool that calls AL Runner, read
 |---|---|
 | `--test PATTERN`, `--filter PATTERN` | Same names. A pattern with a dot matches `Codeunit<ID>.<Method>`; without a dot it matches the method name. |
 | `--test-exact`, `--exclude-test` | Same. |
-| `--isolation codeunit\|test\|disabled` | `codeunit` and `test` work. `disabled` is not supported. |
+| `--isolation codeunit\|test\|disabled` | All three work. `StartSession` under `disabled` is reported as not run. |
 | `--test-timeout SECONDS` | Same flag, now CPU time. Default 20. |
 | `--package-cache PATH` | Same. |
 | `--test-data`, `--test-data-company` | Same flags. |

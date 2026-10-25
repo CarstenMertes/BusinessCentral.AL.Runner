@@ -1046,7 +1046,10 @@ impl CorpusRuntime {
                             isolation: *i,
                             hub: *hub,
                             hub_leg: on_hub(lowered, oi, *hub, hub_path),
-                            onrun_carry: !on_hub(lowered, oi, *hub, hub_path) && onrun_writes(lowered, oi),
+                            // Under Disabled isolation OnRun's writes are carried with the rest.
+                            onrun_carry: *i != TestIsolation::Disabled
+                                && !on_hub(lowered, oi, *hub, hub_path)
+                                && onrun_writes(lowered, oi),
                             leak: None,
                             without_baseline: false,
                             coverage: opts.coverage,
@@ -1137,7 +1140,10 @@ impl CorpusRuntime {
             // Codeunits runner 130450 runs whose OnRun can write (`Unit::onrun_carry`) join the chain after them: the hub runs
             // its codeunits first (RqIsolationModes.al:12), and each carries what its OnRun left (leg 1).
             let mut chain: Vec<(usize, u8, u32, Link)> = (0..units.len())
-                .filter(|&k| (units[k].hub && units[k].isolation == TestIsolation::Disabled) || units[k].onrun_carry)
+                // A test runner's TestIsolation = Disabled (al-runner --isolation disabled, a runner codeunit of the suite)
+                // runs every codeunit this way, in id order: corpus PR 735, IsolProbeReader.Codeunit.al:82-89 and
+                // SdIsolCommitReader.Codeunit.al:3-4 (the reader, a higher id, runs after the writer and sees its rows).
+                .filter(|&k| units[k].isolation == TestIsolation::Disabled || units[k].onrun_carry)
                 .map(|k| (units[k].si, u8::from(units[k].onrun_carry), units[k].id, Link::Run(k)))
                 .chain(
                     refused_disabled
@@ -1164,10 +1170,15 @@ impl CorpusRuntime {
                         let mut r = run_unit(&engine, lowered, start, &units[k], None, limit);
                         let left = super::run::CARRIED.with(|c| c.borrow_mut().take());
                         if let (Some((_, _, _, b)), Ok(done)) = (before, &mut r.result) {
-                            if done.5.leak_hit || b.everything {
-                                if let Some(why) = &b.unfinished {
-                                    refuse_all(&mut done.0, why);
-                                }
+                            let storage = b.everything && reaches_session_storage(&engine, lowered, units[k].oi);
+                            let why =
+                                if storage { b.storage_why.as_ref() } else { None }.or(if done.5.leak_hit || storage {
+                                    b.unfinished.as_ref()
+                                } else {
+                                    None
+                                });
+                            if let Some(why) = why {
+                                refuse_all(&mut done.0, why);
                             }
                         }
                         slots[k] = Some(r);
@@ -1178,6 +1189,7 @@ impl CorpusRuntime {
                 if let Some((_, _, _, b)) = before {
                     left.tables.extend(b.tables.iter().copied());
                     left.unfinished = left.unfinished.or_else(|| b.unfinished.clone());
+                    left.storage_why = left.storage_why.or_else(|| b.storage_why.clone());
                     left.everything |= b.everything;
                     if left.baseline.is_none() {
                         left.baseline = b.baseline.clone();
@@ -1273,8 +1285,9 @@ impl CorpusRuntime {
                     .iter()
                     .rev()
                     .find(|(si, id, leg, _)| sees(*si, *id, *leg, &units[k]));
-                let hit = r.result.as_ref().is_ok_and(|done| done.5.leak_hit)
-                    || before.is_some_and(|(_, _, _, c)| c.everything);
+                let storage = before
+                    .is_some_and(|(_, _, _, c)| c.everything && reaches_session_storage(&engine, lowered, units[k].oi));
+                let hit = r.result.as_ref().is_ok_and(|done| done.5.leak_hit) || storage;
                 if let (true, Some((_, _, leg, c))) = (hit, before) {
                     let o = &lowered.program.objects[units[k].oi];
                     let handlers = o.routines.iter().any(|r| {
@@ -1282,7 +1295,8 @@ impl CorpusRuntime {
                             .iter()
                             .any(|a| a.name.eq_ignore_ascii_case("HandlerFunctions"))
                     });
-                    let refused = match &c.unfinished {
+                    let unfinished = if storage { c.storage_why.as_ref() } else { None }.or(c.unfinished.as_ref());
+                    let refused = match unfinished {
                         Some(why) => Some(why.clone()),
                         // BC's CI runs a codeunit with handlers through another runner than the TestRunnerHub
                         // (QuCommitIsolation.al:11-13): whether it runs before or after the Disabled codeunit is not pinned.
@@ -1789,6 +1803,26 @@ fn onrun_writes(lowered: &Lowered, oi: usize) -> bool {
         .is_some_and(|r| !crate::baseline::tables_written(lowered, oi, r).is_empty())
 }
 
+/// Whether the static reach of test codeunit `oi` (its tests and its `OnRun`) can read or change isolated storage or a
+/// number sequence, or is not fully known. Only such a codeunit can see what an earlier Disabled codeunit left there
+/// (`Carried::everything`); one that cannot reach them does not depend on it.
+fn reaches_session_storage(engine: &Arc<al_vm::Engine>, lowered: &Lowered, oi: usize) -> bool {
+    use super::written::{ReachIndex, reach_facts, state};
+    let index = engine.derived(|| ReachIndex::new(&engine.events, lowered));
+    let bits = state::ISOLATED_STORAGE | state::NUMBER_SEQUENCE | state::OTHER;
+    let o = &lowered.program.objects[oi];
+    (0..o.routines.len())
+        .filter(|&r| {
+            let routine = &o.routines[r];
+            (routine.is_trigger && routine.name.eq_ignore_ascii_case("OnRun"))
+                || routine.attributes.iter().any(|a| a.name.eq_ignore_ascii_case("Test"))
+        })
+        .any(|r| {
+            let f = reach_facts(&engine.events, lowered, &index, oi, r);
+            f.unknown.is_some() || (f.state_reads | f.state_writes) & bits != 0
+        })
+}
+
 /// Every outcome of a codeunit becomes not run, for `why`.
 fn refuse_all(done: &mut [(String, Outcome)], why: &str) {
     for (_, o) in done.iter_mut() {
@@ -1822,6 +1856,7 @@ fn not_run_link(lowered: &Lowered, oi: usize, why: String) -> super::run::Carrie
             o.name,
             why.chars().take(160).collect::<String>()
         )),
+        storage_why: None,
         everything: false,
     }
 }

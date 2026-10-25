@@ -1,13 +1,14 @@
 //! Test isolation: what the test runner resets between the test methods of a test codeunit.
 //!
-//! BC's test runner codeunits carry a `TestIsolation` property. The corpus pins two of its three
-//! values; the third is refused (docs/probes-needed.md).
+//! BC's test runner codeunits carry a `TestIsolation` property. The corpus nightly pins two of its three
+//! values; all three and a runner without the property were measured by corpus writer SD (corpus PR 735,
+//! registered assumption `runner-test-isolation`).
 //!
 //! | Value | Database between test methods | Pinned by |
 //! |---|---|---|
 //! | `Codeunit` | kept, and undone when the codeunit ends | the whole corpus runs under it (Microsoft's `Test Runner - Isol. Codeunit`, 130450); `T5` of the isolation probe fails under it |
 //! | `Function` | returned to its state after `OnRun` | isolation probe `T5` and `T6` |
-//! | `Disabled` | nothing is undone, not even across codeunits | not pinned for a runner: refused |
+//! | `Disabled` | nothing is undone, not even across codeunits, but a failed test's writes since its last `Commit()` | corpus PR 735 (IsolProbeWriter, IsolProbeReader, SdIsolCommitError, SdIsolCommitReader under runner 61304) |
 //!
 //! BC's TestRunnerHub (the corpus CI on BC 28 and later, for a codeunit without handlers) takes the isolation from the
 //! test codeunit's `RequiredTestIsolation` instead (`RunOptions::required_isolation`). There a `Commit()` inside a test
@@ -66,8 +67,7 @@ impl TestIsolation {
 /// is read, because this harness is the runner (corpus tests/al-language-isolation-probe, whose
 /// `-testRunnerCodeunitId` runners differ from each other in nothing but this property).
 ///
-/// A runner without the property is refused: Microsoft's documentation says its default is
-/// `Disabled`, and nothing in the corpus pins that.
+/// A runner without the property runs as `Disabled`, as Microsoft's documentation says and the probe measured.
 pub fn runner_isolation(lowered: &al_sema::lower::Lowered, runner: u32) -> Result<TestIsolation, String> {
     let Some(o) = lowered
         .program
@@ -92,31 +92,45 @@ pub fn runner_isolation(lowered: &al_sema::lower::Lowered, runner: u32) -> Resul
     match property("TestIsolation") {
         Some(v) => TestIsolation::parse(v)
             .ok_or_else(|| format!("test runner {runner} {}: unknown TestIsolation `{v}`", o.name)),
-        None => Err(format!(
-            "test runner {runner} {} sets no TestIsolation: its default is not pinned",
-            o.name
-        )),
+        // A runner without the property gave exactly the rows of the Disabled runner on BC 27.5, 28.5 and 29.0 (corpus PR
+        // 735, tests/al-language-isolation-probe/src/IsolProbeRunnerNoProperty.Codeunit.al, runner 61305 against 61304;
+        // registered assumption `runner-test-isolation` until the nightly measures it).
+        None => Ok(TestIsolation::Disabled),
     }
 }
 
 /// Where a unit's database returns to when a test method ends. Cheap: the clone of a persistent
 /// map. Taken once per unit, after `OnRun` (probe `T6`: the rollback target is the state after
 /// `OnRun`, not before it).
-pub struct Checkpoint(al_data::memory::MemStore);
+pub struct Checkpoint(al_data::memory::MemStore, al_vm::StorageCheckpoint);
 
 impl Checkpoint {
     /// The session's committed data now.
     pub fn take(session: &mut Session) -> Checkpoint {
         session.commit_transaction();
         session.media_checkpoint();
-        Checkpoint(al_data::SnapshotStore::snapshot(session.store_mut()))
+        let storage = session.storage_checkpoint();
+        Checkpoint(al_data::SnapshotStore::snapshot(session.store_mut()), storage)
     }
 
-    /// Discards everything since: the open transaction, and any commit the test made.
+    /// Discards everything since: the open transaction, and any commit the test made. The isolated storage and the
+    /// number sequences stay as the test left them (BC's TestRunnerHub under RequiredTestIsolation = Function; not
+    /// measured there).
     pub fn restore(&self, session: &mut Session) {
         session.rollback_transaction();
         al_data::SnapshotStore::restore(session.store_mut(), self.0.clone());
         session.restore_media_checkpoint();
+    }
+
+    /// [`Checkpoint::restore`] as a test runner codeunit with TestIsolation = Function does it: the isolated storage and
+    /// the number sequences go back too. Measured for a new key's `IsolatedStorage.Set` and a new sequence's
+    /// `NumberSequence.Insert` (corpus PR 735, tests/al-language-isolation-probe/src/IsolProbeAfterRollback.Codeunit.al
+    /// S7-S9 fail under runner 61300), while AutoIncrement counters and row versions are not reset (S5, S6 pass: the
+    /// store's counters are not part of the snapshot). `None`: neither changed; `Some(false)`: the test changed a key or a sequence that was there
+    /// before it, which the probe does not measure.
+    pub fn restore_for_runner(&self, session: &mut Session) -> Option<bool> {
+        self.restore(session);
+        session.restore_storage_checkpoint(&self.1)
     }
 }
 
@@ -159,11 +173,8 @@ mod tests {
         assert_eq!(runner_isolation(&l, 61300), Ok(TestIsolation::Function));
         assert_eq!(runner_isolation(&l, 61301), Ok(TestIsolation::Codeunit));
         assert_eq!(runner_isolation(&l, 61304), Ok(TestIsolation::Disabled));
-        assert!(
-            runner_isolation(&l, 61305)
-                .unwrap_err()
-                .contains("default is not pinned")
-        );
+        // IsolProbeRunnerNoProperty.Codeunit.al (corpus PR 735): the rows of the Disabled runner.
+        assert_eq!(runner_isolation(&l, 61305), Ok(TestIsolation::Disabled));
         assert!(runner_isolation(&l, 61306).unwrap_err().contains("not a test runner"));
         assert!(
             runner_isolation(&l, 1)

@@ -598,6 +598,10 @@ Each is one decision. My recommendation is first.
      tool package (needs a check; recommended if it works): no action for users.
    - Keep NuGet frozen at v2 and point to the new installers: simple, but v2 users
      are not nudged.
+   - Owner decision (2026-10-25): publish v3 under the same id. The package is a small
+     .NET tool (`packaging/dotnet-tool`) that carries the release binaries and runs the
+     one for the current platform; `release-tag.yml` publishes it on numbered releases
+     only. While v3 is an alpha it is a NuGet prerelease, so users need `--prerelease`.
 6. **How long does v2 get fixes after v3.0?**
    - 6 months for security and new-BC-version fixes (recommended).
    - 12 months.

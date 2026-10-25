@@ -731,10 +731,6 @@ fn parse_date_forms(v: &str) -> Option<i64> {
 fn http_date(v: &str) -> Result<Option<String>, Signal> {
     if let Some(t) = parse_date_forms(v) {
         let stored = rfc1123(t);
-        if stored != v {
-            // Measured by SeHeaderValues.al only (corpus bump PR 737).
-            assume(crate::assumptions::Assumption::HttpHeaderRules);
-        }
         return Ok(Some(stored));
     }
     if !v.contains(|c: char| c.is_ascii_digit()) || !v.contains(' ') {
@@ -752,7 +748,6 @@ fn http_date(v: &str) -> Result<Option<String>, Signal> {
             .join(" ")
             .replace("Gmt", "GMT");
         if parse_date_forms(&capitalized).is_some() {
-            assume(crate::assumptions::Assumption::HttpHeaderRules);
             return Ok(None);
         }
     }
@@ -1077,16 +1072,12 @@ fn typed_add(bag: &HeaderBag, name: &str, value: &str) -> Result<Option<Typed>, 
             Some((unit, rest)) if is_token(unit) && !rest.trim().is_empty() => {
                 let digits = |s: &str| !s.is_empty() && s.chars().all(|c| c.is_ascii_digit());
                 let items: Vec<&str> = rest.split(',').map(str::trim).collect();
-                if items.iter().any(|i| i.starts_with('-')) {
-                    assume(crate::assumptions::Assumption::HttpHeaderRules);
-                }
                 if items.iter().all(|i| match i.split_once('-') {
                     Some((a, b)) => (a.is_empty() || digits(a)) && digits(b),
                     None => false,
                 }) {
                     single(vec![v.to_string()])
                 } else if items.iter().any(|i| !i.contains(|c: char| c.is_ascii_digit())) {
-                    assume(crate::assumptions::Assumption::HttpHeaderRules);
                     fail()
                 } else {
                     unsupported(format!("HttpHeaders.Add of the Range '{v}': not measured"))
@@ -1099,9 +1090,6 @@ fn typed_add(bag: &HeaderBag, name: &str, value: &str) -> Result<Option<Typed>, 
                 Some((h, p)) => (h, Some(p)),
                 None => (v, None),
             };
-            if port == Some("") {
-                assume(crate::assumptions::Assumption::HttpHeaderRules);
-            }
             if !host.is_empty()
                 && !host.contains(char::is_whitespace)
                 // An empty port is accepted as written (SeHeaderValues.al:SE_Shapes_Range_Host `a.example:`).
@@ -1138,9 +1126,6 @@ fn typed_add(bag: &HeaderBag, name: &str, value: &str) -> Result<Option<Typed>, 
         // Stored as a number: ` 5` and `05` read `5` (SeHeaderValues.al:SE_Shapes_Content); `-1` is refused.
         "content-length" => match v.parse::<u64>() {
             Ok(n) if !v.is_empty() && v.chars().all(|c| c.is_ascii_digit()) => {
-                if n.to_string() != v {
-                    assume(crate::assumptions::Assumption::HttpHeaderRules);
-                }
                 single(vec![n.to_string()])
             }
             _ => fail(),
@@ -1206,7 +1191,6 @@ fn uri_header(v: &str) -> Result<String, Signal> {
         return match normalize_uri(v) {
             Ok(n) if n == v => Ok(n),
             Ok(n) if simple.as_deref() == Some(n.as_str()) => {
-                assume(crate::assumptions::Assumption::HttpHeaderRules);
                 Ok(n)
             }
             _ => unsupported(format!(
@@ -1233,7 +1217,6 @@ fn content_range(v: &str) -> Result<bool, Signal> {
     };
     let digits = |s: &str| !s.is_empty() && s.chars().all(|c| c.is_ascii_digit());
     if is_token(unit) && rest.strip_prefix("*/").is_some_and(digits) {
-        assume(crate::assumptions::Assumption::HttpHeaderRules);
         return Ok(true);
     }
     let ok = is_token(unit)
@@ -1278,7 +1261,7 @@ fn typed_add_more(bag: &HeaderBag, name: &str, value: &str) -> Result<Option<Typ
         HeaderKind::Response => response.contains(&lower.as_str()),
     };
     // On another collection the header keeps the earlier rule, stored as written (the HeaderNameCase*.al probes add valid values of
-    // these names to every collection; assumption http-header-rules).
+    // these names to every collection).
     if !probed_here {
         return Ok(None);
     }
@@ -1303,7 +1286,6 @@ fn typed_add_more(bag: &HeaderBag, name: &str, value: &str) -> Result<Option<Typ
             _ if is_entity_tag(v) && v != "*" => one(v.to_string()),
             _ => match http_date(v)? {
                 Some(d) => {
-                    assume(crate::assumptions::Assumption::HttpHeaderRules);
                     one(d)
                 }
                 None => fail(),
@@ -1317,7 +1299,6 @@ fn typed_add_more(bag: &HeaderBag, name: &str, value: &str) -> Result<Option<Typ
                 && v.len() <= 9
                 && v.chars().all(|c| c.is_ascii_digit()) =>
         {
-            assume(crate::assumptions::Assumption::HttpHeaderRules);
             one(v.parse::<u32>().expect("checked").to_string())
         }
         "max-forwards" | "age" => match () {
@@ -1332,7 +1313,6 @@ fn typed_add_more(bag: &HeaderBag, name: &str, value: &str) -> Result<Option<Typ
             _ if plain_number(v)? => one(v.to_string()),
             _ => match http_date(v)? {
                 Some(d) => {
-                    assume(crate::assumptions::Assumption::HttpHeaderRules);
                     one(d)
                 }
                 None => fail(),
@@ -1350,7 +1330,6 @@ fn typed_add_more(bag: &HeaderBag, name: &str, value: &str) -> Result<Option<Typ
                     && !v.contains(',')
                     && param.split_once('=').is_some_and(|(n, pv)| is_token(n) && is_token(pv))
                 {
-                    assume(crate::assumptions::Assumption::HttpHeaderRules);
                     return one(v.to_string());
                 }
             }
@@ -1491,13 +1470,6 @@ fn typed_add_se(bag: &HeaderBag, lower: &str, value: &str) -> Result<Option<Type
     let fail = || header_error::<Option<Typed>>("Format");
     let unmeasured = || unsupported(format!("HttpHeaders.Add of the {lower} value '{value}': not measured"));
     let spaced_tokens = |s: &str| s.split_whitespace().count() > 1 && s.split_whitespace().all(is_token);
-    if matches!(
-        lower,
-        "accept-charset" | "accept-language" | "te" | "from" | "pragma" | "trailer" | "upgrade" | "via" | "warning"
-    ) || (bag.kind == HeaderKind::Response && matches!(lower, "server" | "proxy-authenticate"))
-    {
-        assume(crate::assumptions::Assumption::HttpHeaderRules);
-    }
     match (bag.kind, lower) {
         // `utf-8`, `utf-8 ; q=0.5` (read `utf-8; q=0.5`), `en-US,de;q=0.8` (two values), `deflate;q=0.5`; `a b`, `e n` and `;` refused
         // (SE_Untyped_Request_1, _2).
@@ -1636,10 +1608,9 @@ fn add_header(bag: &mut HeaderBag, name: &str, value: &str, secret: bool) -> Res
     let stored = stored_name(&bag.items, name)?;
     let lower = name.to_ascii_lowercase();
     // A name of the other kind of message is stored as written (SeHeaderValues.al:SE_RequestHeaders_OnResponse,
-    // SE_ResponseHeaders_OnRequest, corpus bump PR 737: assumption http-header-rules until it lands). Measured for every response-only
+    // SE_ResponseHeaders_OnRequest). Measured for every response-only
     // name on request headers, nine request-only names on response headers and ETag and Age on the client's headers.
     if of_the_other_message(bag.kind, &lower) {
-        assume(crate::assumptions::Assumption::HttpHeaderRules);
         let measured = match bag.kind {
             HeaderKind::Response => REQUEST_ONLY_MEASURED_ON_RESPONSE.contains(&lower.as_str()),
             HeaderKind::Default => MEASURED_ON_CLIENT.contains(&lower.as_str()),
@@ -1654,8 +1625,7 @@ fn add_header(bag: &mut HeaderBag, name: &str, value: &str, secret: bool) -> Res
     let se = typed_add_se(bag, &lower, value)?;
     let typed = match se {
         Some(t) => {
-            // Measured by SeHeaderValues.al only (corpus bump PR 737).
-            assume(crate::assumptions::Assumption::HttpHeaderRules);
+            // Measured by SeHeaderValues.al (corpus bump 72-78).
             Some(t)
         }
         None => match typed_add(bag, name, value)? {
@@ -1666,7 +1636,6 @@ fn add_header(bag: &mut HeaderBag, name: &str, value: &str, secret: bool) -> Res
     // The client's default headers check like request headers (SeHeaderValues.al:SE_ClientHeaders, corpus bump PR 737); names that
     // file did not add to them follow that rule too.
     if bag.kind == HeaderKind::Default {
-        assume(crate::assumptions::Assumption::HttpHeaderRules);
         if !MEASURED_ON_CLIENT.contains(&lower.as_str()) {
             assume(crate::assumptions::Assumption::HttpTypedHeaderValueShapes);
         }
@@ -1729,7 +1698,6 @@ fn headers_add(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
         }
         return header_error("Argument");
     }
-    let kind = with_bag(r.as_deref(), |b| b.kind)?;
     let added = with_bag(r.as_deref(), |b| add_header(b, &name, &value, secret))?;
     match added {
         Ok(()) => Ok(Value::Boolean(true)),
@@ -1739,7 +1707,7 @@ fn headers_add(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
         // :383, InvalidOperation). lt-http-header-rules/P87Twice.al raises it for the statement. The false sets the last error to the
         // header error, text and code (:499-543 PY_AddFalse_LastError_*, on request, content and response headers); an Add that
         // answers true leaves it (`ok_after_prior`). For an empty name, on client headers and in the `if not H.Add(..)` form the pin
-        // is :552-620 (SE_AddFalse_*, corpus bump PR 737; assumption http-headers-add-used-result until it lands).
+        // is :552-620 (SE_AddFalse_*).
         Err(Signal::Error(e))
             if ret_used
                 && matches!(
@@ -1747,9 +1715,6 @@ fn headers_add(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
                     "InvalidHeader:Format" | "InvalidHeader:Argument" | "InvalidOperation"
                 ) =>
         {
-            if name.is_empty() || kind == HeaderKind::Default {
-                assume(crate::assumptions::Assumption::HttpHeadersAddUsedResult);
-            }
             c.set_last_error(*e);
             Ok(Value::Boolean(false))
         }
@@ -1967,13 +1932,10 @@ fn read_as(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
         // hold none (misc/lt-probes-needed-5/PnE12HttpContent.al:WriteFromText_ThenReadAndHeaders reads `5` after WriteFrom('hello')
         // and ReadAs; network/lt-ay-http/AyContentLength.al:ContentLength_* and PY_*: none after ReadAs(InStream), an empty body reads
         // `0`). A Content-Length the headers already hold stays as it is: one an earlier read put there (PY_ContentLength_LongerBodyAfterRead
-        // `second_read` Yes[5]) and, with corpus bump PR 737, one added by hand (AyContentLength.al:333-351
-        // SE_ContentLength_AddedByHandBeforeRead `Yes[3]`; assumption http-content-length-after-read until it lands).
+        // `second_read` Yes[5]) and one added by hand (AyContentLength.al:324-343 SE_ContentLength_AddedByHandBeforeRead `Yes[3]`).
         if !s.uninitialized {
             let mut bag = s.headers.borrow_mut();
-            if find(&bag.items, "Content-Length").is_some() {
-                assume(crate::assumptions::Assumption::HttpContentLengthAfterRead);
-            } else {
+            if find(&bag.items, "Content-Length").is_none() {
                 bag.items
                     .push(("Content-Length".into(), vec![s.data.len().to_string()]));
             }
@@ -2707,7 +2669,8 @@ impl HttpContentState {
     /// rewritten: it stays for an empty body (network/lt-ay-http/AyContentLength.al:ContentLength_SecondWriteFrom `empty`
     /// `Yes[13]`), for a body of the same length (P100_SecondWrite_ReplacesBody, 5 bytes twice) and for a longer, a shorter or a
     /// stream body (AyContentLength.al:PY_ContentLength_LongerBodyAfterRead, _ShorterBodyAfterRead, _InStreamAfterRead `Yes[5]`).
-    /// Pinned for a value a read put there; for one added by hand it is assumption http-content-length-after-read.
+    /// Pinned for a value a read put there (AyContentLength.al PY_ContentLength_*); for one added by hand it is assumption
+    /// http-content-length-after-read.
     fn write_body(&mut self, data: Vec<u8>) {
         {
             let mut bag = self.headers.borrow_mut();

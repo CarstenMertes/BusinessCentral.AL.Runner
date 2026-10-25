@@ -425,45 +425,11 @@ registry! {
         tests: "Microsoft and NP Retail code that sets SetBaseAddress and then Get('/orders').",
         probe: "SetBaseAddress('https://example.invalid/api') (no trailing slash) then Get('orders'); SetBaseAddress('https://example.invalid/api/v1/') then Get('a/b'), Get('./x'), Get('a/../b'), Get('../../x'), Get('orders?x=1#f') with a handler printing Request.Path.",
     },
-    HttpHeadersAddUsedResult => {
-        id: "http-headers-add-used-result",
-        assumed: "HttpHeaders.Add whose result is used answers false and sets the last error to the header error (text and code) also for an empty name (InvalidHeader:Argument) and on the client's default headers. (Pinned on master for request, content and response headers: network/lt-ay-http/AyHeaderAddResult.al:499-543 PY_AddFalse_LastError_*; the empty name, the client headers and the `if not H.Add(..)` form are pinned by SE_AddFalse_* in corpus bump PR 737, writer SE, green on every measured major.)",
-        tests: "Code that tests the result of HttpHeaders.Add and then reads GetLastErrorText.",
-        probe: "Done by writer SE (branch al-runtime-rs-staging-pub-se, corpus PR 737): remove this entry when the bump lands.",
-        awaiting: Awaiting {
-            issues: &[],
-            files: &[
-                "tests/al-language/network/lt-ay-http/AyHeaderAddResult.al::SE_AddFalse_LastError_EmptyName",
-                "tests/al-language/network/lt-ay-http/AyHeaderAddResult.al::SE_AddFalse_LastError_ClientHeaders",
-                "tests/al-language/network/lt-ay-http/AyHeaderAddResult.al::SE_AddFalse_LastError_IfNotForm",
-            ],
-            since: "2026-10-25",
-        },
-    },
     HttpContentLengthAfterRead => {
         id: "http-content-length-after-read",
-        assumed: "A Content-Length the headers of a content already hold stays as it is through ReadAs(Text) and WriteFrom, also when it was added by hand. (Pinned on master for one a read put there: network/lt-ay-http/AyContentLength.al PY_ContentLength_*; a hand-set value kept by a read is pinned by SE_ContentLength_AddedByHandBeforeRead in corpus bump PR 737, writer SE; a hand-set value then WriteFrom of a body of another length is not measured and follows the same rule.)",
-        tests: "Code that sets Content-Length by hand and then reads or rewrites the content.",
-        probe: "Done by writer SE (branch al-runtime-rs-staging-pub-se, corpus PR 737): remove this entry when the bump lands. Still wanted: Add('Content-Length', '3') then WriteFrom('a longer text') and GetValues.",
-        awaiting: Awaiting {
-            issues: &[],
-            files: &[
-                "tests/al-language/network/lt-ay-http/AyContentLength.al::SE_ContentLength_AddedByHandBeforeRead",
-                "tests/al-language/network/lt-ay-http/AyContentLength.al::SE_ContentLength_EmptyBody",
-            ],
-            since: "2026-10-25",
-        },
-    },
-    HttpHeaderRules => {
-        id: "http-header-rules",
-        assumed: "HttpHeaders.Add follows the rules network/lt-se-header-values/SeHeaderValues.al (codeunit 89030, corpus bump PR 737, writer SE, same on every measured major) measured: a request-only name on response headers and a response-only name on request or client headers is stored as written; the client's default headers check like request headers; Accept-Charset, Accept-Language, TE, Pragma, Trailer, Upgrade, Via, Warning, Server and Proxy-Authenticate check their values; dates of the RFC 850, asctime, UTC and offset forms are stored as RFC 1123 GMT and a date in lower case is refused; If-Range and Retry-After take a date; Max-Forwards 007 reads 7, Content-Length 05 reads 5; a uri with an upper-case scheme or host or no path is stored in its normal form; Host with an empty port, Range with a suffix range, Content-Range `bytes */10` and Expect with a parameter are accepted, Range `bytes=x` is refused.",
-        tests: "Every Microsoft or NP Retail test that builds a request with headers (Authorization, Accept, Content-Type, custom X- headers).",
-        probe: "Done by writer SE (branch al-runtime-rs-staging-pub-se, corpus PR 737): remove this entry when the bump lands.",
-        awaiting: Awaiting {
-            issues: &[],
-            files: &["tests/al-language/network/lt-se-header-values/SeHeaderValues.al"],
-            since: "2026-10-25",
-        },
+        assumed: "A Content-Length added by hand stays as it is when WriteFrom then writes a body of another length. (Pinned: one a read put there stays through WriteFrom, network/lt-ay-http/AyContentLength.al PY_ContentLength_*; one added by hand stays through ReadAs, SE_ContentLength_AddedByHandBeforeRead.)",
+        tests: "Code that sets Content-Length by hand and then rewrites the content.",
+        probe: "Add('Content-Length', '3') then WriteFrom('a longer text') and GetValues, and the length a request sends.",
     },
     HttpTypedHeaderValueShapes => {
         id: "http-typed-header-value-shapes",

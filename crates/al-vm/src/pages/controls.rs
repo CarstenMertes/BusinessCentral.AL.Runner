@@ -141,15 +141,11 @@ impl Session {
             && ctl.trigger("__sourceset").is_some()
             && !self.has_source(st)
             && !self.is_request_page(st);
-        let ty = self.control_type(st, idx, &current).or_else(|| {
-            no_source_expr
-                // Only a Decimal (the array element) and a Text (the temporary record's field) are pinned.
-                .then(|| match &current {
-                    Value::Decimal(_) => Some(RtType::Decimal),
-                    Value::Text(_) => Some(RtType::Text(None)),
-                    _ => None,
-                })
-                .flatten()
+        // Only a Decimal (the array element) and a Text (the temporary record's field) are pinned.
+        let ty = self.control_type(st, idx, &current).or_else(|| match &current {
+            Value::Decimal(_) if no_source_expr => Some(RtType::Decimal),
+            Value::Text(_) if no_source_expr => Some(RtType::Text(None)),
+            _ => None,
         });
         let Some(ty) = ty else {
             if no_source_expr {

@@ -728,8 +728,23 @@ pub fn format_value(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) 
             return Ok(format!("{s}{}", " ".repeat(length as usize - n)));
         }
     }
-    // A negative length cuts a Text the same way (types/lt-scalars/ScT70053.al:Text_FormatNumbers `len-5`).
-    if let (Value::Text(_) | Value::Code(_), true) = (v, length < 0) {
+    // A RecordId is padded on the right too (types/lt-implicit-conversions/P79RecordId.al:409,421 `len-30`).
+    if let (Value::Library(crate::library_kind::LibraryKind::RecordId, _), true) = (v, length > 0) {
+        let n = s.chars().count();
+        if n < length as usize {
+            return Ok(format!("{s}{}", " ".repeat(length as usize - n)));
+        }
+    }
+    // A negative length cuts a Text the same way (types/lt-scalars/ScT70053.al:Text_FormatNumbers `len-5`), and a Date
+    // (types/lt-datetime/Format.al:525,535: `Format(20240305D, -1, 9)` is `2`), and a RecordId (P79RecordId.al:410,422).
+    if let (
+        Value::Text(_)
+        | Value::Code(_)
+        | Value::Date(..)
+        | Value::Library(crate::library_kind::LibraryKind::RecordId, _),
+        true,
+    ) = (v, length < 0)
+    {
         if s.chars().count() > length.unsigned_abs() as usize {
             return Ok(s.chars().take(length.unsigned_abs() as usize).collect());
         }
@@ -995,7 +1010,18 @@ fn format_datetime(ms: i64, standard: i32) -> Result<String, FormatFail> {
         in_day / 1000 % 60,
         in_day % 1000,
     );
-    let date = format!("{m:02}/{d:02}/{:02}", y.rem_euclid(100));
+    // The year 9999 shows four digits in format 0: the largest DateTime is `12/31/9999 11:59 PM` (types/lt-datetime/Format.al:377,
+    // 396). The other formats of that year are not pinned.
+    if y == 9999 && matches!(standard, 1..=3) {
+        return Err(FormatFail::Unsupported(format!(
+            "Format of a DateTime in the year 9999 with standard format {standard} (not pinned)"
+        )));
+    }
+    let date = if y == 9999 {
+        format!("{m:02}/{d:02}/{y}")
+    } else {
+        format!("{m:02}/{d:02}/{:02}", y.rem_euclid(100))
+    };
     Ok(match standard {
         0 | 2 => format!("{date} {}", format_time_12h(in_day)),
         1 => {

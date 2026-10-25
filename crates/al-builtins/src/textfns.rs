@@ -892,20 +892,29 @@ fn tb_remove(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult
 
 /// `EnsureCapacity(N)` makes the capacity at least N and answers true; N above the maximum is an overflow; zero and a negative N
 /// change nothing (TxCTextBuilderBasics.al:EnsureCapacity_Basics).
-fn tb_ensure_capacity(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
+fn tb_ensure_capacity(ctx: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
     let h = string_of(r)?;
     let n = int(a, 0)?;
     if n > i64::from(i32::MAX) {
         return crate::native::raise("Arithmetic operation resulted in an overflow.", "AL:Overflow");
     }
-    // A negative capacity on a builder that holds text is an argument error (types/lt-format-codes-textbuilder-pagerun-labels/
-    // P144TextBuilderCapacity.al:P144_EnsureCapacity_Negative: 'abc' appended, capacity 16); on an empty builder with capacity 50 it
-    // changes nothing (text/lt-label-textbuilder/TxCTextBuilderBasics.al:EnsureCapacity_Basics). The two files differ in the text
-    // held and the capacity; which of them decides is not probed (docs/probes-needed.md).
-    if n < 0 && with_string(&h, |s| !s.is_empty()) {
-        return crate::native::raise::<Value>(
-            "An invalid argument was passed to a 'TextBuilder' data type method.".to_string(),
-            "ArgumentOutOfRange",
+    // A negative capacity whose answer is used answers false and changes nothing, on an empty builder and on one holding 'abc',
+    // with capacity 16 and 50 (types/lt-ax-text-format-dates/AxFillerBuilderAutoFormat.al:156-185, `Ret := TB.EnsureCapacity(-1)`
+    // in a TryFunction; TxCTextBuilderBasics.al:356 raises nothing either). Called as a statement on a builder that holds text it
+    // is an argument error (types/lt-format-codes-textbuilder-pagerun-labels/P144TextBuilderCapacity.al:160-173: 'abc' appended,
+    // capacity 16). Called as a statement on an empty builder is not pinned.
+    if n < 0 {
+        if ctx.ret_used() {
+            return Ok(Value::Boolean(false));
+        }
+        if with_string(&h, |s| !s.is_empty()) {
+            return crate::native::raise::<Value>(
+                "An invalid argument was passed to a 'TextBuilder' data type method.".to_string(),
+                "ArgumentOutOfRange",
+            );
+        }
+        return unsupported(
+            "TextBuilder.EnsureCapacity of a negative number on an empty builder, as a statement (not pinned)",
         );
     }
     if n > i64::from(capacity_of(&h)) {

@@ -139,3 +139,17 @@ fn data_transfer_errors_carry_their_code_and_ensure_capacity_grows() {
     };
     assert_eq!(s, "DB:Ok|Yes");
 }
+
+#[test]
+fn ensure_capacity_of_a_negative_number_answers_false_when_the_answer_is_used() {
+    // types/lt-ax-text-format-dates/AxFillerBuilderAutoFormat.al:156-185; P144TextBuilderCapacity.al:160-173 (a statement on a
+    // builder that holds text raises).
+    let src = "codeunit 50100 C { procedure F(): Text var Empty: TextBuilder; Abc: TextBuilder; B1: Boolean; B2: Boolean; S: Text; begin
+        Abc.Append('abc'); B1 := Empty.EnsureCapacity(-1); B2 := Abc.EnsureCapacity(-1);
+        S := Format(B1) + '|' + Format(B2) + '|' + Format(Abc.Capacity());
+        asserterror Abc.EnsureCapacity(-1); exit(S + '|' + GetLastErrorCode()); end; }";
+    assert_eq!(
+        text(al_testkit::run_with(src, "C", "F", vec![]).map(|(v, _)| v)),
+        "No|No|16|ArgumentOutOfRange"
+    );
+}

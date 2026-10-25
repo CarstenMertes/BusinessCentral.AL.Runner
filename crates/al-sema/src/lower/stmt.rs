@@ -612,8 +612,9 @@ impl Lowerer<'_> {
         };
         let expr = prop("AutoFormatExpression")?;
         // A constant currency code is pinned for an amount and a unit amount (SaUnitAmountSubst.al `A1Lit`, `A2Lit`: the
-        // currency's places); a blank text keeps its fixed places (`decimal_field_places`).
-        let constant_code = matches!(prop("AutoFormatType").as_deref(), Some("1" | "2")) && expr.len() > 2;
+        // currency's places), and for types 4 and 5 with a code that is no currency (types/lt-ax-text-format-dates/
+        // AxFillerBuilderAutoFormat.al:193-260, checked when it runs); a blank text keeps its fixed places (`decimal_field_places`).
+        let constant_code = matches!(prop("AutoFormatType").as_deref(), Some("1" | "2" | "4" | "5")) && expr.len() > 2;
         if expr.starts_with('\'') && !constant_code {
             return None;
         }

@@ -2018,3 +2018,39 @@ fn a_selection_still_finds_the_compile_errors_of_what_it_leaves_out() {
         );
     }
 }
+
+/// Two objects of one type with one id in one app (al-runner issue 5854, must-not-compile 0036): the compile ends with
+/// AL0264 for both instead of a panic in the link step. The issues 5852 and 5853 too: exit(value) in a procedure
+/// without a return value (AL0139, must-not-compile 0048) and a call with too few arguments (AL0135, 0242) are found
+/// whether a selected test reaches them or not.
+#[test]
+fn duplicate_ids_exit_values_and_missing_arguments_are_compile_errors() {
+    const SRC: &str = "codeunit 50600 \"Probe Logic\" {
+            procedure Add(A: Integer; B: Integer): Integer begin Bump(); exit(A + B); end;
+            procedure Bump() begin exit(5); end;
+            procedure Twice(A: Integer): Integer begin exit(Add(A)); end; }
+        codeunit 50600 \"Probe Dup\" { }
+        codeunit 50650 \"Probe Tests\" { Subtype = Test;
+            [Test] procedure Passes() var L: Codeunit \"Probe Logic\"; begin if L.Add(2, 3) <> 5 then Error('x'); end; }";
+    for only_tests in [None, Some(vec![(0, 50650)])] {
+        let (_, l) = compile_apps_with(
+            vec![AppSource {
+                id: "a".into(),
+                name: "a".into(),
+                dependencies: vec![],
+                files: vec![("f.al".to_string(), SRC.to_string())],
+            }],
+            vec![crate::workspace::AppKind::Workspace],
+            &Default::default(),
+            None,
+            crate::check::Roots {
+                baseline: false,
+                only_tests: only_tests.clone(),
+                ..Default::default()
+            },
+        );
+        let mut got: Vec<&str> = l.al_diagnostics.iter().map(|d| d.code).collect();
+        got.sort_unstable();
+        assert_eq!(got, vec!["AL0135", "AL0139", "AL0264", "AL0264"], "{only_tests:?}");
+    }
+}

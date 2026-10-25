@@ -641,11 +641,13 @@ fn convert_rare(v: Value, t: &RtType) -> Result<Value, Signal> {
             ),
             None => unsupported(format!("conversion of {} to {t}", v.describe(), t = t.describe())),
         },
-        // A Variant holding an empty Text or letters assigned to an Integer raises TypeConversion:Format, also into an Integer
+        // A Variant holding an empty Text or two letters or more assigned to an Integer raises TypeConversion:Format, also into an Integer
         // parameter (types/lt-variant/VaTConvert.al:13-38, 310-338; ScT70063 Variant_Types `text_to_int`); digits are read
-        // in `convert` (assumption text-digits-to-integer). Other forms are refused.
+        // in `convert` (assumption text-digits-to-integer). Other forms, a single letter included (a Char literal may stand there),
+        // are refused.
         (Value::Text(s) | Value::Code(s), RtType::Integer)
-            if s.as_str().is_empty() || s.as_str().bytes().all(|b| b.is_ascii_alphabetic()) =>
+            if s.as_str().is_empty()
+                || (s.as_str().len() > 1 && s.as_str().bytes().all(|b| b.is_ascii_alphabetic())) =>
         {
             raise(
                 "The expression Variant cannot be type-converted to a Integer value.".to_string(),

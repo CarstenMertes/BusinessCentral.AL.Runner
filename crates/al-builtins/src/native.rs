@@ -380,10 +380,6 @@ pub trait Ctx: FormatCtx {
     fn commit(&mut self) -> Result<(), Signal>;
     /// A new, unique Guid (from the host or a deterministic sequence, ADR-006).
     fn new_guid(&mut self) -> [u8; 16];
-    /// The tasks `TaskScheduler.CreateTask` made in this session and not cancelled: `None` when the context keeps none.
-    fn scheduled_tasks(&mut self) -> Option<&mut std::collections::HashSet<[u8; 16]>> {
-        None
-    }
     /// Whether the result of the builtin being called is used (`[Ok :=]` forms
     /// return false instead of raising when it is).
     fn ret_used(&self) -> bool {
@@ -517,31 +513,16 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     // CreateTask hands back a new task id (session/TestTaskSchedulerCloudBehavior.al:9-20 pins that
     // and nothing more). A task starts in a session of its own after the creating transaction
     // commits, which a test does not wait for, so the task is not run (docs/probes-needed.md).
-    ("TaskScheduler.CreateTask#1", |c, _, _| create_task(c)),
-    ("TaskScheduler.CreateTask#2", |c, _, _| create_task(c)),
+    ("TaskScheduler.CreateTask#1", |c, _, _| Ok(Value::Guid(c.new_guid()))),
+    ("TaskScheduler.CreateTask#2", |c, _, _| Ok(Value::Guid(c.new_guid()))),
     ("TaskScheduler.SetTaskReady#1", |_, _, _| {
         unsupported("TaskScheduler.SetTaskReady (not pinned)")
     }),
-    // A task created in this session exists until it is cancelled; an id no task has, the empty one included, does not exist.
-    // CancelTask answers whether it cancelled a task (types/lt-evaluate-format-lasterror-setview/P86TaskExists.al:22-140, tasks
-    // created not ready or ready, with or without a failure codeunit, and cancelled in the same test).
-    ("TaskScheduler.TaskExists#1", |c, _, a| {
-        let Some(Value::Guid(id)) = a.first().cloned() else {
-            return unsupported("TaskScheduler.TaskExists of something else than a Guid");
-        };
-        match c.scheduled_tasks() {
-            Some(tasks) => Ok(Value::Boolean(tasks.contains(&id))),
-            None => unsupported("TaskScheduler.TaskExists in a context that keeps no tasks"),
-        }
+    ("TaskScheduler.TaskExists#1", |_, _, _| {
+        unsupported("TaskScheduler.TaskExists (not pinned)")
     }),
-    ("TaskScheduler.CancelTask#1", |c, _, a| {
-        let Some(Value::Guid(id)) = a.first().cloned() else {
-            return unsupported("TaskScheduler.CancelTask of something else than a Guid");
-        };
-        match c.scheduled_tasks() {
-            Some(tasks) => Ok(Value::Boolean(tasks.remove(&id))),
-            None => unsupported("TaskScheduler.CancelTask in a context that keeps no tasks"),
-        }
+    ("TaskScheduler.CancelTask#1", |_, _, _| {
+        unsupported("TaskScheduler.CancelTask (not pinned)")
     }),
     ("Session.StartSession#1", start_session),
     ("Session.StartSession#2", start_session),
@@ -2527,17 +2508,6 @@ pub(crate) fn method_lower(s: &str) -> String {
 
 pub(crate) fn simple_lower(s: &str) -> String {
     s.chars().map(|c| c.to_lowercase().next().unwrap_or(c)).collect()
-}
-
-/// CreateTask hands back a new task id (session/TestTaskSchedulerCloudBehavior.al:9-20). A task starts in a session of its own
-/// after the creating transaction commits, which a test does not wait for, so the task is not run (docs/probes-needed.md); the
-/// session keeps its id for `TaskExists` and `CancelTask`.
-fn create_task(c: &mut dyn Ctx) -> Result<Value, Signal> {
-    let id = c.new_guid();
-    if let Some(tasks) = c.scheduled_tasks() {
-        tasks.insert(id);
-    }
-    Ok(Value::Guid(id))
 }
 
 fn guid_to_text(r: Option<&mut Value>) -> Result<Value, Signal> {

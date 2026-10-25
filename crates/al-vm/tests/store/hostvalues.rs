@@ -1011,18 +1011,3 @@ fn random_of_a_decimal() {
         other => panic!("{other:?}"),
     }
 }
-
-#[test]
-fn task_exists_until_it_is_cancelled() {
-    // types/lt-evaluate-format-lasterror-setview/P86TaskExists.al:22-140.
-    assert_eq!(
-        text(
-            "Id: Guid; E: Guid; S: Text;",
-            "Id := TaskScheduler.CreateTask(Codeunit::C, 0, false, CompanyName(), CreateDateTime(DMY2Date(1, 1, 2099), 120000T));
-             S := Format(TaskScheduler.TaskExists(Id)) + Format(TaskScheduler.TaskExists(E)) + Format(TaskScheduler.TaskExists(CreateGuid()));
-             S += Format(TaskScheduler.CancelTask(Id)) + Format(TaskScheduler.TaskExists(Id)) + Format(TaskScheduler.CancelTask(Id));
-             exit(S);"
-        ),
-        "YesNoNoYesNoNo"
-    );
-}

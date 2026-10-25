@@ -533,8 +533,6 @@ pub struct Session {
     /// How many numbers `Random` has drawn in this session (a test that draws after tests that did not run sees another
     /// sequence than BC's).
     pub(crate) random_draws: u64,
-    /// The tasks `TaskScheduler.CreateTask` made and nothing cancelled (`TaskExists`, `CancelTask`).
-    pub(crate) scheduled_tasks: std::collections::HashSet<[u8; 16]>,
     /// How many AL routine calls the session has made: `Record.IsDirty` notes whether a record write ran triggers or
     /// subscribers (isdirty.rs).
     pub(crate) calls_made: u64,
@@ -790,7 +788,6 @@ impl Session {
             guid_seed: random_seed,
             rng: al_host::random::NetRandom::new(random_seed),
             random_draws: 0,
-            scheduled_tasks: Default::default(),
             calls_made: 0,
             sql: Default::default(),
             dirty_ops_open: 0,

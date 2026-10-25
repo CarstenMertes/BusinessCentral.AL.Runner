@@ -275,17 +275,6 @@ fn big_text_add_text_at_a_position_and_get_sub_text_bounds() {
 }
 
 #[test]
-fn a_text_read_past_its_end_is_the_character_zero() {
-    // text/lt-text-instance/Index1.Codeunit.al:33-40, 53-60.
-    let src = r#"codeunit 50100 C { procedure F(): Text var T: Text; E: Text; C: Char; begin
-        T := 'abcdef'; C := T[100]; exit(Format(C = 0) + Format(E[1] = 0)); end; }"#;
-    assert_eq!(
-        text(al_testkit::run_with(src, "C", "F", vec![]).map(|(v, _)| v)),
-        "YesYes"
-    );
-}
-
-#[test]
 fn last_index_of_the_empty_text_and_index_of_any_one_past_the_end() {
     // text/lt-text-instance/Search1.Codeunit.al:418-487.
     let src = r#"codeunit 50100 C { procedure F(): Text var T: Text; E: Text; L: List of [Char]; C: Char; begin

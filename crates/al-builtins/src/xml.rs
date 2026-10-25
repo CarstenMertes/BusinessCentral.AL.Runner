@@ -180,6 +180,14 @@ fn parent_of(h: &Handle) -> Option<Handle> {
     }
 }
 
+/// Whether `h` had a parent that no variable references any more.
+fn parent_dropped(h: &Handle) -> bool {
+    match &*h.borrow() {
+        LibraryValue::Xml(c) => c.parent.as_ref().is_some_and(|w| w.upgrade().is_none()),
+        _ => false,
+    }
+}
+
 fn set_parent(child: &Handle, parent: Option<&Handle>) {
     if let LibraryValue::Xml(c) = &mut *child.borrow_mut() {
         c.parent = parent.map(Rc::downgrade);
@@ -1697,7 +1705,61 @@ fn detached_is_invalid(h: &Handle) -> bool {
     })
 }
 
-fn position_in_parent(h: &Handle) -> Result<(Handle, usize), Signal> {
+/// Why a sibling operation on an element, attribute or document without a parent fails, before its arguments are read.
+/// - A detached attribute raises `InvalidOperation` whatever the arguments are, an unassigned `XmlNode` and an Integer
+///   included (xml/lt-xml-attr-doc-http-members/P97AttrEdit.al:AddAfterSelf_Detached_Kinds `k1`..`k18`, *_Detached_Typed).
+/// - A document raises `InvalidOperation` for every argument kind, except that an unassigned `XmlNode` argument raises
+///   `NotInitialized` first (P97DocEdit.al:*_Kinds `k14`, *_Typed `t1`..`t11`; P97DocMisc.al:Uninitialised_Document_Edits).
+/// - An element without a parent raises `InvalidOperation` for element arguments (xml/XmlElement.al:521
+///   AddAfterSelf_Root_Error `lone_after`, `lone_before`; :601 ReplaceWith_Root_Unparented `lone`); other arguments are
+///   not pinned.
+fn unparented_sibling_error(h: &Handle, args: &[Value]) -> Signal {
+    // A node whose parent was dropped (a document held only by a local variable that went out of scope) still has
+    // that parent on BC, which keeps it alive; the runtime holds parents weakly and cannot answer for it.
+    if parent_dropped(h) {
+        return Signal::Unsupported(
+            "a sibling operation on a node whose parent is no longer referenced (the runtime does not keep it)".into(),
+        );
+    }
+    let invalid = || {
+        error(
+            "The requested operation cannot be performed in this context.",
+            "InvalidOperation",
+        )
+    };
+    match kind(h) {
+        "XmlAttribute" => invalid(),
+        "XmlDocument" => {
+            for a in args {
+                if let Value::Library(name, v) = a {
+                    if matches!(&*v.borrow(), LibraryValue::Empty) {
+                        if name == "XmlNode" {
+                            return uninitialized("XmlNode");
+                        }
+                        return Signal::Unsupported(format!(
+                            "a sibling operation on a document with an unassigned {name} argument (not pinned)"
+                        ));
+                    }
+                }
+            }
+            invalid()
+        }
+        "XmlElement"
+            if !args.is_empty()
+                && args
+                    .iter()
+                    .all(|a| matches!(a, Value::Library(_, v) if is_xml(v) && kind(v) == "XmlElement")) =>
+        {
+            invalid()
+        }
+        _ => Signal::Unsupported(
+            "a sibling operation on an element without a parent with an argument other than an element (not pinned)"
+                .into(),
+        ),
+    }
+}
+
+fn position_in_parent(h: &Handle, args: &[Value]) -> Result<(Handle, usize), Signal> {
     let Some(p) = parent_of(h) else {
         if detached_is_invalid(h) {
             return Err(error(
@@ -1705,7 +1767,7 @@ fn position_in_parent(h: &Handle) -> Result<(Handle, usize), Signal> {
                 "InvalidOperation",
             ));
         }
-        return unsupported("a sibling operation on a node without a parent (error text not pinned yet)");
+        return Err(unparented_sibling_error(h, args));
     };
     let pos = children_of(&p).iter().position(|c| Rc::ptr_eq(c, h));
     match pos {
@@ -3329,7 +3391,7 @@ fn add_first(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult
 
 fn add_after_self(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
     let h = recv(r)?;
-    let (p, i) = position_in_parent(&h)?;
+    let (p, i) = position_in_parent(&h, a)?;
     let nodes = content_nodes(a)?;
     reject_attributes(&nodes)?;
     insert(&p, Some(i + 1), nodes)?;
@@ -3338,7 +3400,7 @@ fn add_after_self(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NR
 
 fn add_before_self(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
     let h = recv(r)?;
-    let (p, i) = position_in_parent(&h)?;
+    let (p, i) = position_in_parent(&h, a)?;
     let nodes = content_nodes(a)?;
     reject_attributes(&nodes)?;
     insert(&p, Some(i), nodes)?;
@@ -3385,7 +3447,7 @@ fn replace_with(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NRes
             "InvalidOperation",
         ));
     }
-    let (p, i) = position_in_parent(&h)?;
+    let (p, i) = position_in_parent(&h, a)?;
     // A comment or a processing instruction of a document that cannot be replaced is gone all the same, whether the nodes
     // are refused as an argument or in the document (xml/lt-xml-cdata-comment-pi-text/P90CommentRead.al:
     // DocLevel_BeforeSelf_AndReplace, P90PIRead.al).

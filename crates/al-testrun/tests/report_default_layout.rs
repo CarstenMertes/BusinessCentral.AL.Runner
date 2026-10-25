@@ -28,6 +28,16 @@ codeunit 50570 "T"
     [Test] procedure RenderingExcel() begin if Kind(50573) <> 'Excel' then Error('%1', Kind(50573)); end;
     [Test] procedure ProcessingOnlyWithAKindIsRefused() begin if Kind(50574) = '' then; end;
     [Test] procedure UnknownIdIsRefused() begin if Kind(99999) = '' then; end;
+    [TryFunction] local procedure TryKind(Id: Integer)
+    begin
+        if Kind(Id) = '' then;
+    end;
+    // From a try function: the missing-object error (report/lt-report-members-testrequestpage/P91Static.al:113-115).
+    [Test] procedure UnknownIdFromATryFunctionRaises()
+    begin
+        if TryKind(99999) then Error('no error');
+        if GetLastErrorCode() <> 'AL:MetadataNotFound' then Error('%1', GetLastErrorCode());
+    end;
 }
 "#;
 
@@ -55,7 +65,13 @@ fn outcome(name: &str) -> Outcome {
 
 #[test]
 fn the_default_layout_of_a_report_by_number() {
-    for t in ["ProcessingOnlyIsNone", "PlainIsRdlc", "DeclaredWord", "RenderingExcel"] {
+    for t in [
+        "ProcessingOnlyIsNone",
+        "PlainIsRdlc",
+        "DeclaredWord",
+        "RenderingExcel",
+        "UnknownIdFromATryFunctionRaises",
+    ] {
         assert_eq!(outcome(t), Outcome::Pass, "{t}");
     }
 }

@@ -242,9 +242,9 @@ impl Session {
                         } else {
                             // As a statement: the missing-object error (report/lt-report-members-testrequestpage/P91Static.al:
                             // 127-128, :140-141, :153-154, ids 0 and 71999).
-                            if self.in_test_method_itself() {
+                            if self.tx.try_depth == 0 {
                                 return unsupported(format!(
-                                    "Report.{kind}Layout of an id no report has, called by the test method itself (only from a try function is it pinned)"
+                                    "Report.{kind}Layout of an id no report has, called outside a try function (only from a try function is it pinned)"
                                 ));
                             }
                             Err(self.missing_object("Report", n))
@@ -265,9 +265,9 @@ impl Session {
                     if let Some(why) = self.missing_may_be_skipped("Report", i64::from(*n)) {
                         return unsupported(why);
                     }
-                    if self.in_test_method_itself() {
+                    if self.tx.try_depth == 0 {
                         return unsupported(
-                            "Report.DefaultLayout of an id no report has, called by the test method itself (only from a try function is it pinned)",
+                            "Report.DefaultLayout of an id no report has, called outside a try function (only from a try function is it pinned)",
                         );
                     }
                     return Err(self.missing_object("Report", i64::from(*n)));
@@ -984,6 +984,12 @@ impl Session {
                     return unsupported(why);
                 }
                 // The missing-object error (report/lt-report-members-testrequestpage/P91Static.al:167-168, ids 0 and 71999).
+                // Only from a try function is it pinned: which object the text names elsewhere is not.
+                if self.tx.try_depth == 0 {
+                    return unsupported(
+                        "Report.WordXmlPart of an id no report has, called outside a try function (only from a try function is it pinned)",
+                    );
+                }
                 return Err(self.missing_object("Report", n));
             }
             (1, self.report_by_number(id, args.first())?.1)

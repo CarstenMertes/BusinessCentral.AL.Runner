@@ -36,6 +36,7 @@ explains what a pass, a failure and "not run" each mean.
 - **[Roadmap](roadmap.md)**: what is deferred, experimental, not built yet or decided against.
 - **[Migrating from version 2](migrating-from-v2.md)**: command and flag changes.
 - **[Troubleshooting](troubleshooting.md)**: what common messages mean.
+- **[Reporting a problem](feedback.md)**: a wrong result, a refused feature you need, or a crash.
 
 ## What it is for
 

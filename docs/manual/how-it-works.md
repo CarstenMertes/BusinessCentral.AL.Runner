@@ -77,4 +77,4 @@ The current numbers are in [What works and what is refused](what-works.md#status
    Business Central.
 
 If you see a result that differs from real Business Central, please report it. See
-[Reading results](results.md#reporting-a-wrong-result).
+[Reporting a problem](feedback.md).

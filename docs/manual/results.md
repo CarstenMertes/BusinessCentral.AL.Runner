@@ -123,6 +123,4 @@ Business Central, and lists the known risks.
 ## Reporting a wrong result
 
 A test that passes or fails here and behaves differently on real Business Central
-is the most useful report. Open a GitHub issue with the "Alpha feedback" template.
-Include `al-runner --version`, the Business Central version, the test name, what
-you expected, and the output of `--explain TEST`.
+is the most useful report. [Reporting a problem](feedback.md) says what to include.

@@ -85,8 +85,5 @@ The macOS and Linux binaries are not signed. The Windows binary is signed. See
 
 ## Something else
 
-If a result differs from real Business Central, open an issue with the "Alpha
-feedback" template at
-[aldevtools/BusinessCentral.AL.Runner](https://github.com/aldevtools/BusinessCentral.AL.Runner/issues/new/choose).
-Include `al-runner --version`, the Business Central version, the test name, what you
-expected, and the output of `--explain TEST`.
+If a result differs from real Business Central, a test you need is not run, or AL
+Runner crashes, see [Reporting a problem](feedback.md).

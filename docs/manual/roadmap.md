@@ -11,7 +11,7 @@ and what was decided against. For what works today, see
 
 Each item links to its GitHub issue where one exists. If you need an item, comment on
 the issue and say what you need it for. Demand from users decides the order. If no
-issue exists, open one (see [Reading results](results.md#reporting-a-wrong-result) for what to include).
+issue exists, open one (see [Reporting a problem](feedback.md)).
 
 ## Deferred until users ask
 

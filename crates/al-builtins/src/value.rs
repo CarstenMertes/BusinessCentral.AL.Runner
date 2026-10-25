@@ -718,7 +718,7 @@ pub struct PageState {
     /// Since that refresh only events happened that are pinned to leave this page as it is.
     pub shown_current: bool,
     /// The kinds of unpinned events since that refresh (bits of al-vm `pages/shown.rs`).
-    pub shown_doubts: u8,
+    pub shown_doubts: u16,
     /// The first call since that refresh after which a read of an expression it does not keep is refused.
     pub shown_doubt_call: Option<&'static str>,
 }

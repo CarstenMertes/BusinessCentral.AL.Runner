@@ -272,6 +272,18 @@ pub fn format_with_field_places(
             && pieces.get(i + 2).is_some_and(|(c, t)| *c && *t == "Filler Character,0")
     };
     for (i, &(is_code, text)) in pieces.iter().enumerate() {
+        // At the start of the string any filler character changes nothing on a date or time: `<Filler Character,#><Day,4>`
+        // is `0005` on a Date, `<Filler Character,*><Hours12,4>` `   9` on a Time (types/lt-aj-probes/AjScalars.al:269-270,
+        // 292, 323).
+        if is_code
+            && temporal
+            && text.starts_with("Filler Character,")
+            && text.chars().count() == 18
+            && i == 1
+            && pieces[0].1.is_empty()
+        {
+            continue;
+        }
         if is_code && temporal && text == "Filler Character,0" {
             let at_start = i == 1 && pieces[0].1.is_empty();
             let after_code = i >= 2 && pieces[i - 1].1.is_empty() && pieces[i - 2].0;
@@ -284,9 +296,19 @@ pub fn format_with_field_places(
             ));
         }
         if is_code && filler_after(i) {
-            let part = code(v, text, numeric.as_ref(), ctx).map_err(|e| format!("format string `{template}`: {e}"))?;
+            let part = code(v, text, numeric.as_ref(), ctx).map_err(|e| {
+                if e == INVALID_FORMAT_MARK {
+                    format!("{INVALID_FORMAT_MARK}{template}")
+                } else {
+                    format!("format string `{template}`: {e}")
+                }
+            })?;
             match (v, text) {
                 (Value::Time(_), "Hours24,2" | "Hours12,2") => out.push_str(&part.replace(' ', "0")),
+                // `<Day,4>` and `<Month,4>` of a Date or DateTime pad with zeros already (AjScalars.al:266,272,282,295).
+                (Value::Date(..) | Value::DateTime(_), t) if t.starts_with("Day,") || t.starts_with("Month,") => {
+                    out.push_str(&part)
+                }
                 // The other codes of a date or time pinned before a filler pad with zeros already.
                 (_, "Hours24,2" | "Minutes,2" | "Seconds,2" | "Day,2" | "Month,2" | "Year4" | "Year,2") => {
                     out.push_str(&part)
@@ -758,6 +780,33 @@ fn code(v: &Value, code: &str, numeric: Option<&Numeric>, ctx: &dyn FormatCtx) -
             }
         }
     }
+    // Widths on dates and times (types/lt-aj-probes/AjScalars.al:225-327): `<Day,N>` and `<Month,N>` of a Date or DateTime pad
+    // with zeros (`<Day,4>` `0005`, `<Month,4>` `0003`; `<Day,3>` `005`: types/lt-datetime/Format.al:142,173); the clock codes of a
+    // DateTime pad with zeros (`<Hours24,5>` `00009`, `<Minutes,5>` `00007`, `<Hours12,4>` `0009`), those of a Time pad the hour
+    // with blanks and the minutes with zeros (`    9`, `00007`, `   9`). The hour codes on a Date and the day code on a Time are
+    // the invalid-format error. Widths of 2 to 5 follow these rules; others are not pinned.
+    if let Some((base, w)) = code.split_once(',') {
+        let w = w.trim().parse::<usize>().ok().filter(|w| (2..=5).contains(w));
+        match (v, base, w, date, clock) {
+            (Value::Date(..), "Hours24" | "Hours12", ..) | (Value::Time(_), "Day", ..) => {
+                return Err(INVALID_FORMAT_MARK.to_string());
+            }
+            (Value::Date(..) | Value::DateTime(_), "Day", Some(w), Some((_, _, d)), _) if w <= 4 => {
+                return Ok(format!("{d:0w$}"));
+            }
+            (Value::Date(..) | Value::DateTime(_), "Month", Some(w), Some((_, m, _)), _) if w <= 4 => {
+                return Ok(format!("{m:0w$}"));
+            }
+            (Value::DateTime(_), "Hours24", Some(w), _, Some(ms)) => return Ok(format!("{:0w$}", ms / 3_600_000)),
+            (Value::DateTime(_), "Hours12", Some(w), _, Some(ms)) => return Ok(format!("{:0w$}", hour12(ms))),
+            (Value::DateTime(_) | Value::Time(_), "Minutes", Some(w), _, Some(ms)) => {
+                return Ok(format!("{:0w$}", ms / 60_000 % 60));
+            }
+            (Value::Time(_), "Hours24", Some(w), _, Some(ms)) if w > 2 => return Ok(format!("{:>w$}", ms / 3_600_000)),
+            (Value::Time(_), "Hours12", Some(w), _, Some(ms)) if w > 2 => return Ok(format!("{:>w$}", hour12(ms))),
+            _ => {}
+        }
+    }
     let part = match (code, date, clock) {
         ("Year4", Some((y, _, _)), _) => format!("{y:04}"),
         // A two-digit year below 10 would print as one digit or two: not measured.
@@ -771,8 +820,6 @@ fn code(v: &Value, code: &str, numeric: Option<&Numeric>, ctx: &dyn FormatCtx) -
         ("Month Text", Some(_), _) => code_name("Month Text", date, day_no, ctx.language())?,
         ("Day", Some((_, _, d)), _) => format!("{d}"),
         ("Day,2", Some((_, _, d)), _) => format!("{d:02}"),
-        // `<Day,3>` pads with zeros: 2024-03-05 is `005` (types/lt-datetime/Format.al:142,173).
-        ("Day,3", Some((_, _, d)), _) if matches!(v, Value::Date(..)) => format!("{d:03}"),
         ("Weekday Text", Some(_), _) => code_name("Weekday Text", date, day_no, ctx.language())?,
         // A Time with an hour of 1 to 9 is padded with a space: 09:00 is ` 9` (misc/lt-probes-needed-2/PnBDateFormat.al:
         // PictureCodes_Numbers `hours24`). A DateTime keeps the zero (types/lt-datetime RoundTrip_AndFormatCodes,
@@ -1013,7 +1060,7 @@ mod tests {
     fn other_codes_and_values_are_refused() {
         let day = Value::Date(day_from_civil(2024, 3, 7), false);
         for (v, f) in [
-            (day.clone(), "<Hours24,2>"),
+            (day.clone(), "<Seconds,2>"),
             (day.clone(), "<Day,5>"),
             (day.clone(), "<Year4"),
             (Value::Integer(1), "<Standard Format,x>"),
@@ -1218,5 +1265,47 @@ mod tests {
                 "{bad}"
             );
         }
+    }
+    // types/lt-aj-probes/AjScalars.al:225-327 (Format_FillerCharacter_On*): widths and fillers on a Date, a DateTime and a Time.
+    #[test]
+    fn widths_and_fillers_on_dates_datetimes_and_times() {
+        let day = day_from_civil(2024, 3, 5);
+        let clock = ((9 * 60 + 7) * 60 + 2) * 1000 + 123;
+        let dt = Value::DateTime(i64::from(day - 1) * 86_400_000 + clock + 1);
+        let d = Value::Date(day, false);
+        let tm = Value::Time(clock + 1);
+        let invalid =
+            |r: Result<Value, Signal>| matches!(r, Err(Signal::Error(ref e)) if e.code == "InvalidFormatString");
+        for v in [dt.clone(), d.clone()] {
+            assert_eq!(text(fmt(v.clone(), "<Filler Character,0><Day,4>")), "0005");
+            assert_eq!(text(fmt(v.clone(), "<Day,4><Filler Character,0>")), "0005");
+            assert_eq!(
+                text(fmt(v.clone(), "<Filler Character,0><Day,2><Month,4><Year4>")),
+                "0500032024"
+            );
+            assert_eq!(text(fmt(v.clone(), "<Filler Character,#><Day,4>")), "0005");
+            assert_eq!(text(fmt(v.clone(), "<Day,4><Filler Character,0><Month,4>")), "00050003");
+        }
+        assert_eq!(
+            text(fmt(dt.clone(), "<Filler Character,0><Hours24,5><Minutes,5>")),
+            "0000900007"
+        );
+        assert_eq!(text(fmt(dt.clone(), "<Filler Character,*><Hours12,4>")), "0009");
+        assert!(invalid(fmt(d.clone(), "<Filler Character,0><Hours24,5><Minutes,5>")));
+        assert!(invalid(fmt(d.clone(), "<Filler Character,*><Hours12,4>")));
+        for f in [
+            "<Filler Character,0><Day,4>",
+            "<Day,4><Filler Character,0>",
+            "<Filler Character,#><Day,4>",
+        ] {
+            assert!(invalid(fmt(tm.clone(), f)), "{f}");
+        }
+        assert!(invalid(fmt(tm.clone(), "<Day,4><Filler Character,0><Month,4>")));
+        assert!(invalid(fmt(tm.clone(), "<Filler Character,0><Day,2><Month,4><Year4>")));
+        assert_eq!(
+            text(fmt(tm.clone(), "<Filler Character,0><Hours24,5><Minutes,5>")),
+            "    900007"
+        );
+        assert_eq!(text(fmt(tm.clone(), "<Filler Character,*><Hours12,4>")), "   9");
     }
 }

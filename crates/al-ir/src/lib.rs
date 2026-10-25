@@ -916,6 +916,10 @@ pub struct Control {
     /// For a control with a `var_field`: the slot of that record variable among the page's globals.
     #[serde(default)]
     pub var_slot: Option<usize>,
+    /// For a page's own control bound to an element of a page array with a number index (`Costs[1]`): the source as
+    /// written, which Page Control Field reports as its SourceExpression (assumption page-control-field-array-element-source).
+    #[serde(default)]
+    pub array_element_source: Option<String>,
 }
 
 /// The action an `actionref` delegates to.

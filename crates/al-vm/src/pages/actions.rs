@@ -135,6 +135,7 @@ impl Session {
             }
         };
         st.borrow_mut().refresh = false;
+        let marked_only_before = self.page_rec(st).borrow().marked_only;
         let result = if method == PageMethod::Lookup {
             // OnLookup(var Text): Boolean. The text it writes back replaces the field's value, and
             // the Boolean says whether the user picked anything (corpus
@@ -185,6 +186,7 @@ impl Session {
             st.borrow_mut().refresh = false;
         }
         let v = result?;
+        self.drilldown_marked_only_refresh(st, method, marked_only_before);
         // The client refreshes the page after an AssistEdit trigger: OnAfterGetRecord runs again
         // (pages/lt-page-runtime/P82Lookups.al:AssistEdit_Trigger, `OnAssistEdit;OnAfterGetRecord(L1)`). A DrillDown and a Lookup are not pinned to.
         // The row is not read again: a field the trigger set on the record stays (pages/lt-page-editability-width-lookups/
@@ -208,6 +210,39 @@ impl Session {
         }
         self.run_refresh(st)?;
         Ok(v)
+    }
+
+    /// After an OnDrillDown that turned MarkedOnly on for Rec and called `CurrPage.Update(false)`, a list with OnAfterGetRecord or
+    /// OnAfterGetCurrRecord drops the rows it held, so its moves read the marked rows from the table, as a list without those
+    /// triggers does (al-runner issue 5844, the reporter's run on real BC; not pinned by the corpus yet).
+    fn drilldown_marked_only_refresh(&mut self, st: &St, method: PageMethod, marked_only_before: bool) {
+        let shape = {
+            let s = st.borrow();
+            method == PageMethod::DrillDown
+                && s.open
+                && s.refresh
+                && s.refresh_by_update
+                && s.refresh_update_false
+                && s.host.is_none()
+                && s.parts.is_empty()
+                && !s.draft
+                && !s.window.is_empty()
+        };
+        if !shape
+            || marked_only_before
+            || !self.page_rec(st).borrow().marked_only
+            || !self.is_list(st)
+            || self.declares(st, "onfindrecord")
+            || self.declares(st, "onnextrecord")
+            || !(self.declares(st, "onaftergetrecord") || self.declares(st, "onaftergetcurrrecord"))
+        {
+            return;
+        }
+        al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::DrilldownMarkedOnlyUpdateRefresh);
+        let mut s = st.borrow_mut();
+        s.window.clear();
+        s.window_from_start = false;
+        s.window_top_unread = false;
     }
 
     /// `Lookup()` on a control with no OnLookup trigger of its own: the source table field's

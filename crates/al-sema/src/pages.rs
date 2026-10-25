@@ -319,6 +319,18 @@ pub fn plain_name(text: &str) -> Option<String> {
     .then(|| t.to_string())
 }
 
+/// `Name[1]`, a plain name and a number index with no space, as (name, the text as written); `None` for any other text
+/// (assumption page-control-field-array-element-source pins this one form).
+pub fn array_element(text: &str) -> Option<(String, String)> {
+    let t = text.trim();
+    let (name, rest) = t.split_once('[')?;
+    let index = rest.strip_suffix(']')?;
+    (!index.is_empty() && index.chars().all(|c| c.is_ascii_digit()) && !name.starts_with('"') && name == name.trim())
+        .then_some(())
+        .and_then(|_| plain_name(name))
+        .map(|n| (n, t.to_string()))
+}
+
 /// `Var.Field` as its two plain names (`Settings."Avail. Filter"`); `None` for any other text.
 pub fn var_and_field(text: &str) -> Option<(String, String)> {
     let t = text.trim();

@@ -242,6 +242,17 @@ impl Session {
                 .all(|n| matches!(n, ShownNote::UpdateFalse(x) if *x == Rc::as_ptr(s)))
         };
         match (m, target) {
+            // A Lookup on a control of a page with no parts whose code (OnLookup returning true, then OnValidate) calls only
+            // `CurrPage.Update(false)` of that page refreshes it (al-runner issue 5843, the reporter's run on real BC; not
+            // pinned by the corpus yet).
+            (PageMethod::Lookup, Some(ControlTarget::Control(_)))
+                if on_root && tree.len() == 1 && !notes.is_empty() && only_update_false_of(st) =>
+            {
+                al_builtins::assumptions::assume(
+                    al_builtins::assumptions::Assumption::TestPageLookupUpdateFalseRefresh,
+                );
+                Effect::Refresh
+            }
             // The open computed the values (`shown_opened`).
             (PageMethod::OpenEdit | PageMethod::OpenView | PageMethod::OpenNew, None) => Effect::Keep,
             (PageMethod::Invoke, Some(ControlTarget::Control(idx)))

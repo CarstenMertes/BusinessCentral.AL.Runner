@@ -553,6 +553,12 @@ fn control_row(
                 .ok_or_else(|| format!("page '{}' control '{}': no such variable", o.name, ctl.name))?;
             r[pos(t, 9)] = Value::Text(g.name.clone().into());
         }
+        // A control bound to an element of a page array (`Costs[1]`) has no source field and names the element as written
+        // (al-runner issue 5842, the reporter's run on real BC; not pinned by the corpus yet).
+        Binding::Expr(_) if let Some(text) = &ctl.array_element_source => {
+            al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::PageControlFieldArrayElementSource);
+            r[pos(t, 9)] = Value::Text(text.clone().into());
+        }
         _ => {
             return Err(format!(
                 "page '{}' control '{}': an expression-bound control (its SourceExpression is not pinned)",

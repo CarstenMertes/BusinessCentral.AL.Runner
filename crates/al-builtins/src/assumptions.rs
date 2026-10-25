@@ -660,6 +660,39 @@ registry! {
             since: "2026-10-25",
         },
     },
+    PageControlFieldArrayElementSource => {
+        id: "page-control-field-array-element-source",
+        assumed: "The Page Control Field row of a page's own control bound to an element of a page array variable with a number index (`field(CostOne; Costs[1])`) has FieldNo 0 and SourceExpression the source as written (`Costs[1]`); TableNo, Enabled, Editable, Visible and Sequence follow the rules of the other rows. Measured by the reporter on real BC 29.0.54011.55407 (al-runner issue 5842: `TableNo=50100 FieldNo=0 Enabled=[true] Editable=[false] Visible=[true] SourceExpression=[Costs[1]] OptionString=[] Sequence=2`). Any other expression source stays refused.",
+        tests: "No Microsoft test: al-runner issue 5842 (1 test of a partner app).",
+        probe: "Page Control Field rows of controls bound to `Arr[1]`, `Arr[2]`, `Arr[ 1 ]`, `Arr[I]` and a two-dimensional `Arr[1, 2]` of a page global; FieldNo, SourceExpression and OptionString of each.",
+        awaiting: Awaiting {
+            issues: &[5842],
+            files: &["tests/al-language/record/TestPageControlFieldArraySource.al"],
+            since: "2026-10-25",
+        },
+    },
+    TestPageLookupUpdateFalseRefresh => {
+        id: "testpage-lookup-update-false-refresh",
+        assumed: "TestField.Lookup on a control of a page with no parts, whose OnLookup returns true and whose OnValidate (run with the returned Text) calls only `CurrPage.Update(false)` of that page, refreshes the page: a read of an expression control afterwards (`field(ResourceNo; Setting.\"Resource No.\")`) gives its value as it is now. Measured by the reporter on real BC 29.0.54011.55407 (al-runner issue 5843: Value() reads the picked `R2`). A Lookup whose code calls no Update, or any other page call, keeps the read refused.",
+        tests: "No Microsoft test: al-runner issue 5843 (1 test of a partner app).",
+        probe: "A header control bound to a global record's field with OnLookup (sets Text, exit(true)) and OnValidate (Modify; CurrPage.Update(false)): Value() after Lookup; the same without the Update, with Update(true), and with OnLookup returning false.",
+        awaiting: Awaiting {
+            issues: &[5843],
+            files: &["tests/al-language/pages/TestPageLookupGlobalRecordField.al"],
+            since: "2026-10-25",
+        },
+    },
+    DrilldownMarkedOnlyUpdateRefresh => {
+        id: "drilldown-marked-only-update-refresh",
+        assumed: "A field's OnDrillDown that sets marks and MarkedOnly(true) on Rec and calls `CurrPage.Update(false)` leaves the page showing only the marked rows also when the page declares OnAfterGetRecord or OnAfterGetCurrRecord (with neither trigger the page already did so): First/Next walk the marked rows and GoToRecord of an unmarked row answers false. Measured by the reporter on real BC 29.0.54011.55407 (al-runner issue 5844: all four tests pass there, with empty triggers).",
+        tests: "No Microsoft test: al-runner issue 5844 (1 test of a partner app).",
+        probe: "Worksheets with both triggers, only OnAfterGetRecord and neither, whose header field's OnDrillDown marks one of two rows, sets MarkedOnly and calls CurrPage.Update(false): First/Next listing and GoToRecord of the unmarked row; the same with triggers that write a global.",
+        awaiting: Awaiting {
+            issues: &[5844],
+            files: &["tests/al-language/pages/TestPageDrillDownMarkedOnly.al"],
+            since: "2026-10-25",
+        },
+    },
 }
 
 thread_local! {

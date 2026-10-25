@@ -130,6 +130,7 @@ impl Lowerer<'_> {
                     prop_texts: Vec::new(),
                     var_field: None,
                     var_slot: None,
+                    array_element_source: None,
                 });
                 continue;
             }
@@ -229,6 +230,7 @@ impl Lowerer<'_> {
             let mut binding = ir::Binding::None;
             let mut var_field = None;
             let mut var_slot = None;
+            let mut array_element_source = None;
             if raw.kind == ir::ControlKind::Field && sec.name().eq_ignore_ascii_case("label") {
                 binding = ir::Binding::Caption;
             } else if raw.kind == ir::ControlKind::Field {
@@ -334,6 +336,15 @@ impl Lowerer<'_> {
                                                 Some(((t, p), slot))
                                             });
                                     (var_field, var_slot) = (found.map(|f| f.0), found.map(|f| f.1));
+                                    array_element_source = args
+                                        .get(1)
+                                        .and_then(|a| crate::pages::array_element(a))
+                                        .filter(|(v, _)| {
+                                            globals.iter().any(|g| {
+                                                g.name.eq_ignore_ascii_case(v) && matches!(g.ty, RtType::Array(..))
+                                            })
+                                        })
+                                        .map(|(_, text)| text);
                                 }
                             }
                             // A control of an extension that names a variable of the base object
@@ -426,6 +437,7 @@ impl Lowerer<'_> {
                 prop_texts,
                 var_field,
                 var_slot,
+                array_element_source,
             });
         }
         let base = owner_of(None);

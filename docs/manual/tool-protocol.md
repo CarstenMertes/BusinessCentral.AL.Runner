@@ -218,6 +218,11 @@ Differences a client must adapt to:
    files, the options or a file in a package folder change), the engines and the install baseline: a request that
    reuses the compile costs the tests and little else. What a request starts from is the same as when nothing is
    kept: the rows the install code left, none of an earlier request's writes.
+   What each test codeunit starts from (in every request and every entry; al-runner issue 5862): a new session over
+   the post-install database. Reset: table rows, the system id, row version and AutoIncrement counters,
+   IsolatedStorage, NumberSequence, SingleInstance codeunits (also those of dependency apps), event bindings, handlers,
+   and session settings such as WorkDate and GlobalLanguage. Not reset: files a `--files-dir` folder holds on disk,
+   and the state of the .NET helper processes, which the codeunits of one request share.
 5. A request that cannot run answers one `{"error": "<reason>"}` line instead of a summary with exit code 2 or 3:
    for example `{"error":"/x: no such file or folder"}`, ``{"error":"unknown field `cobertura` for runTests"}``,
    ``{"error":"`sourcePaths` needs at least one app folder"}``. A `test` or `excludeTests` that matches no test is not

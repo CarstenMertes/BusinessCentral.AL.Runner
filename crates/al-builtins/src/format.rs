@@ -1106,8 +1106,15 @@ fn unit_word(lang: i32, unit: usize, plural: bool) -> Option<String> {
 }
 
 fn format_duration(ms: i64, standard: i32, lang: i32) -> Result<String, FormatFail> {
+    // Format 9 of 5000000000 hours (18000000000000000 ms) is `P208333333DT8H0M0.0S` (types/lt-filter-enum-relation-duration-guid/
+    // D_Duration.al:420-444, Duration_Evaluate `big_number`); beyond that it is not pinned.
+    if standard == 9 && ms.unsigned_abs() > (i64::MAX / 10_000) as u64 {
+        if ms.unsigned_abs() > 18_000_000_000_000_000 {
+            return Err(FormatFail::Unsupported(format!("Format 9 of a Duration of {ms} ms (not pinned)")));
+        }
+    }
     // A Duration beyond what a .NET TimeSpan holds (ticks of 100 ns in an Int64) raises (D_Duration.al:Duration_To_Integer_BeyondRange `af128`).
-    if ms.unsigned_abs() > (i64::MAX / 10_000) as u64 {
+    else if ms.unsigned_abs() > (i64::MAX / 10_000) as u64 {
         return Err(FormatFail::Error {
             message: "Arithmetic operation resulted in an overflow.".into(),
             code: "AL:Overflow".into(),

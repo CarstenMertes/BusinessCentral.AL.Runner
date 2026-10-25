@@ -496,6 +496,135 @@ fn guid(text: &str) -> Result<Parsed, Signal> {
     Ok(Parsed::Value(Value::Guid(out)))
 }
 
+/// `Evaluate` into a Duration, as far as measured (types/lt-datetime/Evaluate.al:379-447, Duration_Evaluate; types/
+/// lt-filter-enum-relation-duration-guid/D_Duration.al:420-444, Duration_Evaluate; misc/lt-system-functions/EvalLastError.al:
+/// 257-264, Evaluate_DateTimeTypes). In the language 1033:
+/// - number 0: the empty text is 0; a number alone is a number of hours (`1500`, `-1500`, `5000000000`, `1.5`); otherwise
+///   amounts with a unit, in any order (`1 minute 1 hour`), the unit glued or not (`1h`, `1 h`): h, hour(s), day(s),
+///   minute(s), second(s), millisecond(s); a fraction of hours (`1.5 hours`), one negative amount (`-1 hour`); a unit given
+///   twice (`1 hour 1 hour`) and a text without a digit (`abc`) are rejected;
+/// - numbers 1 to 3 read a number alone as number 0 does (`1500 fmt 1` to `fmt 3`);
+/// - number 9 reads the form Format 9 writes (`P0DT1H30M0.0S`); a text that does not start with P (digits, `1.5`, `1 hour`,
+///   `abc`, the empty text) is rejected.
+///
+/// Every other text, unit, number or language is not pinned and is refused.
+fn duration(text: &str, number: i64, language: i32) -> Result<Parsed, Signal> {
+    let refuse = || unsupported(format!("Evaluate of `{text}` into a Duration with format number {number} (not pinned)"));
+    if language != 1033 {
+        return refuse();
+    }
+    let t = text.trim();
+    const HOUR: i64 = 3_600_000;
+    let ms_of = |amount: &str, unit: i64| -> Option<i64> {
+        let n = amount.parse::<rust_decimal::Decimal>().ok()? * rust_decimal::Decimal::from(unit);
+        if !n.fract().is_zero() {
+            return None;
+        }
+        n.trunc().to_string().parse::<i64>().ok()
+    };
+    let number_shape = |w: &str| {
+        let w = w.strip_prefix('-').unwrap_or(w);
+        let (int, frac) = w.split_once('.').unwrap_or((w, ""));
+        !int.is_empty() && int.bytes().all(|b| b.is_ascii_digit()) && frac.bytes().all(|b| b.is_ascii_digit())
+    };
+    if number == 9 {
+        if !t.starts_with('P') && !t.starts_with("-P") {
+            return Ok(Parsed::Rejected);
+        }
+        let (neg, body) = match t.strip_prefix('-') {
+            Some(b) => (true, b),
+            None => (false, t),
+        };
+        let parsed = (|| {
+            let rest = body.strip_prefix('P')?;
+            let (d, rest) = rest.split_once("DT")?;
+            let (h, rest) = rest.split_once('H')?;
+            let (m, rest) = rest.split_once('M')?;
+            let (sec, rest) = rest.split_once('.')?;
+            let frac = rest.strip_suffix('S')?;
+            let digits = |x: &str| !x.is_empty() && x.bytes().all(|b| b.is_ascii_digit());
+            if ![d, h, m, sec].iter().all(|x| digits(x)) || !digits(frac) || frac.len() > 3 {
+                return None;
+            }
+            let f: i64 = format!("{frac:0<3}").parse().ok()?;
+            let total = d.parse::<i64>().ok()?.checked_mul(86_400_000)?
+                .checked_add(h.parse::<i64>().ok()?.checked_mul(HOUR)?)?
+                .checked_add(m.parse::<i64>().ok()?.checked_mul(60_000)?)?
+                .checked_add(sec.parse::<i64>().ok()?.checked_mul(1000)?)?
+                .checked_add(f)?;
+            Some(if neg { -total } else { total })
+        })();
+        return match parsed {
+            Some(ms) => Ok(Parsed::Value(Value::Duration(ms))),
+            None => refuse(),
+        };
+    }
+    if matches!(number, 1..=3) {
+        return match number_shape(t).then(|| ms_of(t, HOUR)).flatten() {
+            Some(ms) => Ok(Parsed::Value(Value::Duration(ms))),
+            None => refuse(),
+        };
+    }
+    if number != 0 {
+        return refuse();
+    }
+    if t.is_empty() {
+        return Ok(Parsed::Value(Value::Duration(0)));
+    }
+    if !t.bytes().any(|b| b.is_ascii_digit()) {
+        return Ok(Parsed::Rejected);
+    }
+    if number_shape(t) {
+        return match ms_of(t, HOUR) {
+            Some(ms) => Ok(Parsed::Value(Value::Duration(ms))),
+            None => refuse(),
+        };
+    }
+    // Amount and unit pairs: split `1h` into `1` and `h`.
+    let mut tokens: Vec<String> = Vec::new();
+    for w in t.split_whitespace() {
+        match w.find(|ch: char| ch.is_ascii_alphabetic()) {
+            Some(i) if i > 0 && number_shape(&w[..i]) => {
+                tokens.push(w[..i].to_string());
+                tokens.push(w[i..].to_string());
+            }
+            _ => tokens.push(w.to_string()),
+        }
+    }
+    if tokens.len() % 2 != 0 {
+        return refuse();
+    }
+    let pairs = tokens.len() / 2;
+    let mut seen = Vec::new();
+    let mut total: i64 = 0;
+    for pair in tokens.chunks(2) {
+        let (amount, word) = (pair[0].as_str(), pair[1].as_str());
+        let unit = match word {
+            "h" | "hour" | "hours" => HOUR,
+            "day" | "days" => 24 * HOUR,
+            "minute" | "minutes" => 60_000,
+            "second" | "seconds" => 1000,
+            "millisecond" | "milliseconds" => 1,
+            _ => return refuse(),
+        };
+        if !number_shape(amount)
+            || (amount.contains('.') && unit != HOUR)
+            || (amount.starts_with('-') && pairs > 1)
+        {
+            return refuse();
+        }
+        if seen.contains(&unit) {
+            return Ok(Parsed::Rejected);
+        }
+        seen.push(unit);
+        let Some(sum) = ms_of(amount, unit).and_then(|v| total.checked_add(v)) else {
+            return refuse();
+        };
+        total = sum;
+    }
+    Ok(Parsed::Value(Value::Duration(total)))
+}
+
 /// Number 0: the inverse of `Format(Date)` as the runtime formats it (`MM/DD/YY`,
 /// docs/probes-needed.md); a two-digit year below 50 is 20yy and from 50 on 19yy. Number 9: ISO `yyyy-MM-dd`.
 /// `today` is the host's current day, for the text `T`.
@@ -1321,6 +1450,7 @@ fn evaluate_with_max(
         && number != 9
         && !(number == 2 && matches!(a[0], Value::DateFormula(_)))
         && !(matches!(number, 1 | 2) && matches!(a[0], Value::Text(_) | Value::Code(_)))
+        && !(matches!(number, 1..=3) && matches!(a[0], Value::Duration(_)))
         && !matches!(a[0], Value::Date(..))
     {
         return unsupported(format!(
@@ -1340,6 +1470,7 @@ fn evaluate_with_max(
         Value::Decimal(_) => decimal(&text, number)?,
         Value::Boolean(_) => boolean(&text, number)?,
         Value::Guid(_) => guid(&text)?,
+        Value::Duration(_) => duration(&text, number, c.language())?,
         // Every number but 9 reads a Date as the default does (types/lt-datetime/Evaluate.al:Date_Other_Formats `fmt 1` to `fmt 8`,
         // `fmt 10`, `fmt -1`; errors/lt-ms-refusals-130/P130EvaluateDate.al:P130_EvaluateDate_EveryFormat_*).
         Value::Date(..) => date(

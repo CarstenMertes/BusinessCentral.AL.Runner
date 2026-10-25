@@ -32,6 +32,7 @@ mod erm_defects;
 mod errorcollect;
 mod errorcollect_internal;
 mod event_var_nested;
+mod evaluate_duration;
 mod evaluate_option_rejects;
 mod events;
 mod exec;

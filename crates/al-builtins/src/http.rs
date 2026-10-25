@@ -1627,10 +1627,8 @@ fn add_header(bag: &mut HeaderBag, name: &str, value: &str, secret: bool) -> Res
     };
     // The client's default headers check like request headers (SeHeaderValues.al:SE_ClientHeaders, corpus bump PR 737); names that
     // file did not add to them follow that rule too.
-    if bag.kind == HeaderKind::Default {
-        if !MEASURED_ON_CLIENT.contains(&lower.as_str()) {
-            assume(crate::assumptions::Assumption::HttpTypedHeaderValueShapes);
-        }
+    if bag.kind == HeaderKind::Default && !MEASURED_ON_CLIENT.contains(&lower.as_str()) {
+        assume(crate::assumptions::Assumption::HttpTypedHeaderValueShapes);
     }
     // The value rules of a typed header other than Cache-Control (pinned by network/lt-http-header-names-cache-control/CacheControl*.al)
     // were measured for a few values each (AyHeaderAddResult.al, the P87 files, SeHeaderValues.al); a value of a shape they did not

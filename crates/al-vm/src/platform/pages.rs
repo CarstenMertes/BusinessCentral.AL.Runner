@@ -553,11 +553,14 @@ fn control_row(
                 .ok_or_else(|| format!("page '{}' control '{}': no such variable", o.name, ctl.name))?;
             r[pos(t, 9)] = Value::Text(g.name.clone().into());
         }
-        // A control bound to an element of a page array (`Costs[1]`) has no source field and names the element as written
-        // (al-runner issue 5842, the reporter's run on real BC; not pinned by the corpus yet).
-        Binding::Expr(_) if let Some(text) = &ctl.array_element_source => {
+        // A control bound to an expression of a served form (`Control::expr_source`) has no source field and names the
+        // expression as written; an undeclared Editable is `True` for an array element or a record variable's field and
+        // `False` for an arithmetic expression (al-runner issue 5842, corpus writer's probe
+        // record/TestPageControlFieldArraySource.al; not on the pinned corpus yet).
+        Binding::Expr(_) if let Some((text, editable)) = &ctl.expr_source => {
             al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::PageControlFieldArrayElementSource);
             r[pos(t, 9)] = Value::Text(text.clone().into());
+            r[pos(t, 7)] = bool_prop(o, ctl, "editable", if *editable { "True" } else { "False" })?;
         }
         _ => {
             return Err(format!(

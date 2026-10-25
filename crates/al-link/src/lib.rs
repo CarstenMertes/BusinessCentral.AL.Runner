@@ -1729,7 +1729,7 @@ mod tests {
                 prop_texts: vec![],
                 var_field: None,
                 var_slot: None,
-                array_element_source: None,
+                expr_source: None,
             },
             pred,
             parent: None,

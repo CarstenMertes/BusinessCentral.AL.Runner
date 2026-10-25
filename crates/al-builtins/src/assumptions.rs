@@ -662,9 +662,9 @@ registry! {
     },
     PageControlFieldArrayElementSource => {
         id: "page-control-field-array-element-source",
-        assumed: "The Page Control Field row of a page's own control bound to an element of a page array variable with a number index (`field(CostOne; Costs[1])`) has FieldNo 0 and SourceExpression the source as written (`Costs[1]`); TableNo, Enabled, Editable, Visible and Sequence follow the rules of the other rows. Measured by the reporter on real BC 29.0.54011.55407 (al-runner issue 5842: `TableNo=50100 FieldNo=0 Enabled=[true] Editable=[false] Visible=[true] SourceExpression=[Costs[1]] OptionString=[] Sequence=2`). Any other expression source stays refused.",
+        assumed: "The Page Control Field row of a page's own control bound to an expression has the page's source table as TableNo, FieldNo 0 and SourceExpression the source as written, for three forms: an element of a page array with a number index (`Costs[1]`), a field of a page record variable (`OtherLine.Amount`) and an arithmetic expression (`Costs[1] + Costs[2]`). An undeclared Editable is `True` for the first two and `False` for the third; a declared one is its text. Text with a quote or irregular spacing, and every other expression, stay refused. Measured on BC 27.5, 28.5 and 29.0 by the corpus writer's probe (corpus branch al-runtime-rs-staging-pub-sc @2150ff97, cu 89002), from al-runner issue 5842.",
         tests: "No Microsoft test: al-runner issue 5842 (1 test of a partner app).",
-        probe: "Page Control Field rows of controls bound to `Arr[1]`, `Arr[2]`, `Arr[ 1 ]`, `Arr[I]` and a two-dimensional `Arr[1, 2]` of a page global; FieldNo, SourceExpression and OptionString of each.",
+        probe: "Written (record/TestPageControlFieldArraySource.al on al-runtime-rs-staging-pub-sc); remove this entry when the corpus bump brings it.",
         awaiting: Awaiting {
             issues: &[5842],
             files: &["tests/al-language/record/TestPageControlFieldArraySource.al"],
@@ -673,23 +673,23 @@ registry! {
     },
     TestPageLookupUpdateFalseRefresh => {
         id: "testpage-lookup-update-false-refresh",
-        assumed: "TestField.Lookup on a control of a page with no parts, whose OnLookup returns true and whose OnValidate (run with the returned Text) calls only `CurrPage.Update(false)` of that page, refreshes the page: a read of an expression control afterwards (`field(ResourceNo; Setting.\"Resource No.\")`) gives its value as it is now. Measured by the reporter on real BC 29.0.54011.55407 (al-runner issue 5843: Value() reads the picked `R2`). A Lookup whose code calls no Update, or any other page call, keeps the read refused.",
+        assumed: "TestField.Lookup through a control's own OnLookup trigger, on a page with no parts, whose code calls no `CurrPage` method but `CurrPage.Update(false)` of that page, refreshes the page: a read of an expression control afterwards (`field(ResourceNo; Setting.\"Resource No.\")`) gives its value as it is now. That is the picked value when OnLookup answers true (with and without the Update in OnValidate), and the value kept when the modal page is cancelled or OnLookup sets Text and answers false. Measured on BC 27.5, 28.5 and 29.0 by the corpus writer's probe (corpus branch al-runtime-rs-staging-pub-sc @2150ff97, cu 89008), from al-runner issue 5843.",
         tests: "No Microsoft test: al-runner issue 5843 (1 test of a partner app).",
-        probe: "A header control bound to a global record's field with OnLookup (sets Text, exit(true)) and OnValidate (Modify; CurrPage.Update(false)): Value() after Lookup; the same without the Update, with Update(true), and with OnLookup returning false.",
+        probe: "Written (pages/lt-sc-outside-pages/ScLookupGlobalRecordField.al on al-runtime-rs-staging-pub-sc); remove this entry when the corpus bump brings it.",
         awaiting: Awaiting {
             issues: &[5843],
-            files: &["tests/al-language/pages/TestPageLookupGlobalRecordField.al"],
+            files: &["tests/al-language/pages/lt-sc-outside-pages/ScLookupGlobalRecordField.al"],
             since: "2026-10-25",
         },
     },
     DrilldownMarkedOnlyUpdateRefresh => {
         id: "drilldown-marked-only-update-refresh",
-        assumed: "A field's OnDrillDown that sets marks and MarkedOnly(true) on Rec and calls `CurrPage.Update(false)` leaves the page showing only the marked rows also when the page declares OnAfterGetRecord or OnAfterGetCurrRecord (with neither trigger the page already did so): First/Next walk the marked rows and GoToRecord of an unmarked row answers false. Measured by the reporter on real BC 29.0.54011.55407 (al-runner issue 5844: all four tests pass there, with empty triggers).",
+        assumed: "A field's OnDrillDown that turns MarkedOnly on for Rec (after setting marks) on a list without OnFindRecord and OnNextRecord: with `CurrPage.Update(false)` the page shows only the marked rows, also when it declares OnAfterGetRecord or OnAfterGetCurrRecord (First/Next walk the marked rows, GoToRecord of an unmarked row answers false); without the Update a page without those triggers still shows every row of the view (First/Next list both rows, GoToRecord of the unmarked row answers true) until it closes; another TestPage call before that is refused. Measured on BC 27.5, 28.5 and 29.0 by the corpus writer's probe (corpus branch al-runtime-rs-staging-pub-sc @2150ff97, cu 89016), from al-runner issue 5844.",
         tests: "No Microsoft test: al-runner issue 5844 (1 test of a partner app).",
-        probe: "Worksheets with both triggers, only OnAfterGetRecord and neither, whose header field's OnDrillDown marks one of two rows, sets MarkedOnly and calls CurrPage.Update(false): First/Next listing and GoToRecord of the unmarked row; the same with triggers that write a global.",
+        probe: "Written (pages/lt-sc-outside-pages/ScDrillDownMarkedOnly.al on al-runtime-rs-staging-pub-sc); remove this entry when the corpus bump brings it. Not in it: no Update on a page with the row triggers, other TestPage calls before Close.",
         awaiting: Awaiting {
             issues: &[5844],
-            files: &["tests/al-language/pages/TestPageDrillDownMarkedOnly.al"],
+            files: &["tests/al-language/pages/lt-sc-outside-pages/ScDrillDownMarkedOnly.al"],
             since: "2026-10-25",
         },
     },

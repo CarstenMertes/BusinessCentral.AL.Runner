@@ -1,7 +1,8 @@
 //! TestField.Lookup on a header control bound to a field of a global record of the page, whose OnLookup sets Text and
 //! returns true and whose OnValidate saves the record and calls `CurrPage.Update(false)`: the control then reads the
 //! picked value and the record holds it (al-runner issue 5843, the reporter's run on real BC 29.0.54011.55407, 2/2 tests).
-//! The read after the Lookup rests on assumption testpage-lookup-update-false-refresh until the corpus pins it.
+//! The read after the Lookup rests on assumption testpage-lookup-update-false-refresh until the corpus bump brings the
+//! writer's probe (pages/lt-sc-outside-pages/ScLookupGlobalRecordField.al, run in outside_sc_pins.rs).
 
 use al_test_cli::report::Outcome;
 
@@ -103,7 +104,7 @@ codeunit 50114 T
 
     [Test]
     [HandlerFunctions('PickSecondResource')]
-    procedure LookupWithoutUpdateIsRefused()
+    procedure LookupWithoutUpdateShowsThePickedResource()
     var
         Schedule: TestPage "Repro Schedule 50115";
     begin
@@ -188,9 +189,10 @@ fn a_lookup_whose_on_validate_updates_the_page_shows_the_picked_value() {
     let o = al_testkit::outcomes_in(SRC, "T");
     assert_eq!(outcome(&o, "LookupShowsThePickedResource"), Outcome::Pass, "{o:?}");
     assert_eq!(outcome(&o, "LookupSavesThePickedResource"), Outcome::Pass, "{o:?}");
-    // Without CurrPage.Update(false) in the OnValidate, whether the page refreshes after the Lookup is not pinned.
-    assert!(
-        matches!(outcome(&o, "LookupWithoutUpdateIsRefused"), Outcome::NotRun(_)),
+    // Without CurrPage.Update(false) in the OnValidate too (ScLookupGlobalRecordField.al LookupWithoutUpdateShowsThePickedResource).
+    assert_eq!(
+        outcome(&o, "LookupWithoutUpdateShowsThePickedResource"),
+        Outcome::Pass,
         "{o:?}"
     );
 }

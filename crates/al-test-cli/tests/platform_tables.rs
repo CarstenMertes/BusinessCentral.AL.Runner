@@ -2303,8 +2303,8 @@ codeunit 50000 "T" { Subtype = Test;
 
 // al-runner issue 5842 (the reporter's run on real BC 29.0.54011.55407, 2/2 tests): the row of a control bound to an element
 // of a page array (`Costs[1]`) has no source field and reports the expression as written; the other rows of the page are
-// served beside it. Assumption page-control-field-array-element-source until the corpus pins it. Another index form is not
-// pinned and stays refused.
+// served beside it. Assumption page-control-field-array-element-source until the corpus bump brings the writer's probe
+// (record/TestPageControlFieldArraySource.al, also run below). A call expression is not pinned and stays refused.
 #[test]
 fn page_control_field_serves_the_row_of_an_array_element_control() {
     let o = outcomes(
@@ -2329,7 +2329,7 @@ page 50103 "Repro Cost Line List 50103"
     PageType = List;
     SourceTable = "Repro Cost Line 50100";
     layout { area(Content) { repeater(Lines) {
-        field(CostSum; Costs[1] + Costs[2]) { }
+        field(CostText; Format(Costs[1])) { }
     } } }
     var Costs: array[2] of Decimal;
 }
@@ -2355,4 +2355,21 @@ codeunit 50000 "T" { Subtype = Test;
     passes(&o, "HiddenControlReportsVisibleFalse");
     passes(&o, "ArrayElementControlRow");
     not_run(&o, "OtherExpressionRefused");
+}
+
+// The corpus writer's probe of al-runner issue 5842 (corpus branch al-runtime-rs-staging-pub-sc @2150ff97, green on BC 27.5, 28.5
+// and 29.0), a copy in fixtures/outside-sc with a stand-in for the Assert codeunit, until the corpus bump lands.
+#[test]
+fn page_control_field_array_source_probe_passes() {
+    let src = format!(
+        "{}\n{}",
+        include_str!("fixtures/outside-sc/TestPageControlFieldArraySource.al")
+            .replace("codeunit 89002 \"LT SC Control Field Arr Tests\"", "codeunit 89002 T"),
+        include_str!("fixtures/outside-sc/Assert.al")
+    );
+    let o = outcomes(&src);
+    assert_eq!(o.len(), 5, "{o:?}");
+    for (n, _) in &o {
+        passes(&o, n);
+    }
 }

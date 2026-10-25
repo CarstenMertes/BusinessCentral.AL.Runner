@@ -331,6 +331,33 @@ pub fn array_element(text: &str) -> Option<(String, String)> {
         .map(|n| (n, t.to_string()))
 }
 
+/// Text with no quote, no tab or line break and no two spaces in a row.
+pub fn plain_spacing(text: &str) -> bool {
+    let t = text.trim();
+    !t.contains(['"', '\'', '\t', '\n', '\r']) && !t.contains("  ")
+}
+
+/// Text with a `+`, `-`, `*` or `/` between spaces outside quotes and brackets (`Costs[1] + Costs[2]`): an arithmetic expression
+/// (assumption page-control-field-array-element-source).
+pub fn arithmetic(text: &str) -> bool {
+    let t = text.trim();
+    let (mut depth, mut quoted, mut prev) = (0i32, false, ' ');
+    let chars: Vec<char> = t.chars().collect();
+    for (i, &c) in chars.iter().enumerate() {
+        match c {
+            '\'' | '"' => quoted = !quoted,
+            '[' | '(' if !quoted => depth += 1,
+            ']' | ')' if !quoted => depth -= 1,
+            '+' | '-' | '*' | '/' if !quoted && depth == 0 && prev == ' ' && chars.get(i + 1) == Some(&' ') => {
+                return true;
+            }
+            _ => {}
+        }
+        prev = c;
+    }
+    false
+}
+
 /// `Var.Field` as its two plain names (`Settings."Avail. Filter"`); `None` for any other text.
 pub fn var_and_field(text: &str) -> Option<(String, String)> {
     let t = text.trim();

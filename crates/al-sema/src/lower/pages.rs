@@ -130,7 +130,7 @@ impl Lowerer<'_> {
                     prop_texts: Vec::new(),
                     var_field: None,
                     var_slot: None,
-                    array_element_source: None,
+                    expr_source: None,
                 });
                 continue;
             }
@@ -230,7 +230,7 @@ impl Lowerer<'_> {
             let mut binding = ir::Binding::None;
             let mut var_field = None;
             let mut var_slot = None;
-            let mut array_element_source = None;
+            let mut expr_source = None;
             if raw.kind == ir::ControlKind::Field && sec.name().eq_ignore_ascii_case("label") {
                 binding = ir::Binding::Caption;
             } else if raw.kind == ir::ControlKind::Field {
@@ -336,15 +336,20 @@ impl Lowerer<'_> {
                                                 Some(((t, p), slot))
                                             });
                                     (var_field, var_slot) = (found.map(|f| f.0), found.map(|f| f.1));
-                                    array_element_source = args
-                                        .get(1)
-                                        .and_then(|a| crate::pages::array_element(a))
-                                        .filter(|(v, _)| {
-                                            globals.iter().any(|g| {
-                                                g.name.eq_ignore_ascii_case(v) && matches!(g.ty, RtType::Array(..))
-                                            })
-                                        })
-                                        .map(|(_, text)| text);
+                                    // Only text with no quote and single spaces: how BC writes other text is not pinned.
+                                    expr_source =
+                                        args.get(1).filter(|a| crate::pages::plain_spacing(a)).and_then(|a| {
+                                            let element = crate::pages::array_element(a).is_some_and(|(v, _)| {
+                                                globals.iter().any(|g| {
+                                                    g.name.eq_ignore_ascii_case(&v) && matches!(g.ty, RtType::Array(..))
+                                                })
+                                            });
+                                            if element || found.is_some() {
+                                                Some((a.trim().to_string(), true))
+                                            } else {
+                                                crate::pages::arithmetic(a).then(|| (a.trim().to_string(), false))
+                                            }
+                                        });
                                 }
                             }
                             // A control of an extension that names a variable of the base object
@@ -437,7 +442,7 @@ impl Lowerer<'_> {
                 prop_texts,
                 var_field,
                 var_slot,
-                array_element_source,
+                expr_source,
             });
         }
         let base = owner_of(None);

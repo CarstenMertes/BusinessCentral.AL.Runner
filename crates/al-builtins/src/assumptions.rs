@@ -218,12 +218,6 @@ registry! {
         tests: "Tests that read the Code Coverage table after a refresh while logging is still on: none known in the buckets.",
         probe: "CodeCoverageLog(true, false), run code, CodeCoverageRefresh(), count the rows, run more code, count again (still logging), then CodeCoverageRefresh() and count. Asked in corpus #647.",
     },
-    NextWholeDecimal => {
-        id: "next-whole-decimal",
-        assumed: "Record.Next(Decimal) with a whole number steps like the Integer; a fraction is refused.",
-        tests: "Phys. Invt. Count.-Management.CalcPeriod (Calendar.Next(12 / CountFrequency)).",
-        probe: "R.Next(1.5) and R.Next(-1.5). Asked in corpus #643.",
-    },
     TableRelationQuotes => {
         id: "table-relation-quotes",
         assumed: "A filter(...) text of a TableRelation where() clause or arm condition that quotes an identifier with \" is read like a SetFilter text after the quotes are rewritten to '. (Pinned, no mark, on an Enum or Option field: members joined by |, one quoted member alone and <> one quoted member, record/lt-table-relation-quotes/TableRelationQuotes.al:41-46; a range with one quoted and one plain bound, A..\"B C\" and \"B C\"..D, two <> terms joined by & with one quoted, and on an Enum field \"B C\".., TableRelationQuotes.al:279-397; in the if (...) condition of an arm on an Option field, <> \"B C\" & <> D and \" \" | A, TableRelationQuotes.al QP_Arms_* and QP_BlankOr_*.) Assumed: other ranges and filter operators (..\"B C\", two quoted bounds, more & terms), a quoted blank member in a where() clause, a field of another type, and the other forms of an arm condition.",
@@ -757,10 +751,10 @@ mod tests {
         clear_hits();
         assume(Assumption::QueryClosedAfterLastRow);
         assume(Assumption::QueryClosedAfterLastRow);
-        assume(Assumption::NextWholeDecimal);
+        assume(Assumption::CodeCoverageSnapshotWhileLogging);
         assert_eq!(
             take_hits(),
-            vec![Assumption::QueryClosedAfterLastRow, Assumption::NextWholeDecimal]
+            vec![Assumption::QueryClosedAfterLastRow, Assumption::CodeCoverageSnapshotWhileLogging]
         );
         assert!(take_hits().is_empty());
         assume(Assumption::QueryClosedAfterLastRow);

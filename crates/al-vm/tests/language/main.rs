@@ -21,6 +21,7 @@ mod continue_stmt;
 mod corpus_failures_1;
 mod cross_app;
 mod dataformats;
+mod date_decimal_fraction;
 mod debugger;
 mod duration_date_arith;
 mod enum_in_set;

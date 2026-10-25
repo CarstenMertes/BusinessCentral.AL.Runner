@@ -970,9 +970,9 @@ fn arith_general(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
             return Ok(V::Integer(a - b));
         }
         // A whole-number Decimal adds days like an Integer (`StartDate + Days` with `Days: Decimal` holding
-        // `(EndDate - StartDate + 1) div 2` in Base Application's Phys. Invt. Count.-Management). A fraction
-        // would round or truncate: not pinned, so it stays refused below. Pinned for a whole Decimal: corpus
-        // record/lt-record-conversion-assumptions/DateDecimalWhole.al:P98_DatePlusMinusWholeDecimal.
+        // `(EndDate - StartDate + 1) div 2` in Base Application's Phys. Invt. Count.-Management). Pinned for a whole Decimal:
+        // corpus record/lt-record-conversion-assumptions/DateDecimalWhole.al:P98_DatePlusMinusWholeDecimal. A fraction raises
+        // (the next arm).
         (V::Date(a, c), n) if matches!(op, Arith::Add | Arith::Sub) && whole_days(n).is_some() => {
             // The result stays within 0001-01-01 and 9999-12-31, an undefined date takes no days, and the sum of days is
             // computed in 32 bits (Arithmetic.al:Date_Arithmetic_Errors, Date_Plus_Minus_Integer `af39`, `af41`).
@@ -992,6 +992,19 @@ fn arith_general(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
                 return date_invalid();
             }
             return Ok(V::Date(sum, *c));
+        }
+        // A defined Date plus or minus a Decimal with a fraction raises; a subtraction names the negated amount
+        // (misc/lt-probes-needed-6/PnF11DateDecimalArithmetic.al:57-117, DatePlusDecimal: 2.5, 0.4, -0.5, 12 / 5 as `2.4`;
+        // DateMinusDecimal: D - 2.5 names `-2.5`, D - -2.5 names `2.5`). A Decimal before the Date and the undefined date are
+        // not pinned.
+        (V::Date(a, _), V::Decimal(d)) if matches!(op, Arith::Add | Arith::Sub) && *a > 0 && !d.fract().is_zero() => {
+            let d = if op == Arith::Sub { -*d } else { *d };
+            return raise(
+                format!(
+                    "Overflow under conversion of Microsoft.Dynamics.Nav.Runtime.Decimal18 value {d} to System.Int32."
+                ),
+                "ConversionCast",
+            );
         }
         _ => {}
     }

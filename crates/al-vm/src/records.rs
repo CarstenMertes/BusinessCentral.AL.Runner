@@ -3514,11 +3514,21 @@ impl Session {
             RecordOp::Next => {
                 let steps = match args.first() {
                     Some(Value::Integer(n)) => *n,
-                    // A whole-number Decimal (`Calendar.Next(12 / CountFrequency)`); a fraction would round or
-                    // truncate, which is not pinned.
+                    // A whole-number Decimal steps like the Integer (`Calendar.Next(12 / CountFrequency)`); one with a fraction
+                    // raises and leaves the row (misc/lt-probes-needed-6/PnF11DateDecimalArithmetic.al:119-187,
+                    // Next_Decimal_Whole: 1, 2, -1, -2, 12 / 4, 0, 20 past the end; Next_Decimal_Fraction: 1.5, -1.5, 0.4, ...).
                     Some(Value::Decimal(d)) if d.fract().is_zero() && i32::try_from(d.trunc()).is_ok() => {
-                        al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::NextWholeDecimal);
                         i32::try_from(d.trunc()).unwrap_or(0)
+                    }
+                    Some(Value::Decimal(d)) if !d.fract().is_zero() => {
+                        return Err(Signal::Error(Box::new(AlError {
+                            message: format!(
+                                "Overflow under conversion of Microsoft.Dynamics.Nav.Runtime.Decimal18 value {d} to System.Int32."
+                            ),
+                            code: "ConversionCast".into(),
+                            call_stack: String::new(),
+                            ..Default::default()
+                        })));
                     }
                     None => 1,
                     other => return unsupported(format!("Next({})", other.describe())),

@@ -831,7 +831,7 @@ mod tests {
         let mut flagged = r(1, "A", "T1", Outcome::Pass);
         flagged.assumptions = vec![
             al_testrun::assumptions::Assumption::QueryClosedAfterLastRow,
-            al_testrun::assumptions::Assumption::NextWholeDecimal,
+            al_testrun::assumptions::Assumption::CodeCoverageSnapshotWhileLogging,
         ];
         let rs = [
             flagged,
@@ -852,7 +852,7 @@ mod tests {
         let refs: Vec<&TestResult> = rs.iter().collect();
         let x = junit(&refs, None, 0.0, &|_, _| false, &[]);
         assert!(
-            x.contains("name=\"T1\" time=\"0.000\"><properties><property name=\"assumptions\" value=\"query-closed-after-last-row,next-whole-decimal\" /></properties></testcase>"),
+            x.contains("name=\"T1\" time=\"0.000\"><properties><property name=\"assumptions\" value=\"query-closed-after-last-row,code-coverage-snapshot-while-logging\" /></properties></testcase>"),
             "{x}"
         );
         assert!(x.contains("name=\"T2\" time=\"0.000\" />"), "{x}");

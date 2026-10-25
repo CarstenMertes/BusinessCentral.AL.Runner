@@ -77,3 +77,81 @@ fn under_codeunit_isolation_t5_fails_with_bcs_message_and_every_method_ends_as_i
     );
     assert!(matches!(t5, Outcome::Fail(_)), "{t5:?}");
 }
+
+/// The isolation probe app of corpus PR 735 (not in the pinned corpus yet) under all four of its runners, against the
+/// JUnit files corpus writer SD measured on Windows containers (registered assumption `runner-test-isolation`). Local
+/// only, until the nightly measures runners 61304 and 61305:
+/// `AL_ISOLATION_PROBE_APP=<corpus-sd>/tests/al-language-isolation-probe AL_ISOLATION_PROBE_ORACLE=<dir of
+/// junit-isolation-<version>-<runner>.xml> [AL_ISOLATION_PROBE_VERSION=28.5] cargo test -p al-test-cli --test
+/// isolation_probe -- --ignored --nocapture`. A case real BC passed must pass and one it failed must fail; a case not run
+/// is listed.
+#[test]
+#[ignore]
+fn the_pr_735_probe_under_every_runner_ends_as_measured() {
+    let (Some(app), Some(oracle)) = (
+        std::env::var_os("AL_ISOLATION_PROBE_APP"),
+        std::env::var_os("AL_ISOLATION_PROBE_ORACLE"),
+    ) else {
+        panic!("set AL_ISOLATION_PROBE_APP and AL_ISOLATION_PROBE_ORACLE");
+    };
+    let version = std::env::var("AL_ISOLATION_PROBE_VERSION").unwrap_or_else(|_| "28.5".into());
+    let runners = [
+        ("function", 61300),
+        ("codeunit", 61301),
+        ("disabled", 61304),
+        ("none", 61305),
+    ];
+    let app = runtime::load_app(Path::new(&app)).unwrap();
+    let suites: Vec<SuiteRun> = runners
+        .iter()
+        .map(|(name, id)| SuiteRun {
+            name: (*name).into(),
+            app: Some(0),
+            runner: Some(*id),
+        })
+        .collect();
+    let rt = CorpusRuntime::run_suites(
+        vec![app],
+        vec![al_sema::AppKind::Workspace],
+        &[],
+        &Default::default(),
+        None,
+        Default::default(),
+        &suites,
+    );
+    // Known, outside this runner work: under TestIsolation = Codeunit (the default of this runtime, unchanged) a
+    // NumberSequence.Insert of S3 is gone in S8 on BC, after S4 failed; this runtime keeps it. When BC drops it (S4's
+    // failure, or a test end) is not measured.
+    let known = [
+        ("codeunit", "S8_NumberSequenceStillExists"),
+        ("codeunit", "S9_NumberSequenceNotReset"),
+    ];
+    let mut wrong = Vec::new();
+    for (name, id) in runners {
+        let file = Path::new(&oracle).join(format!("junit-isolation-{version}-{id}.xml"));
+        let bc = oracle::parse_junit(&std::fs::read_to_string(&file).unwrap()).unwrap();
+        let (mut same, mut not_run) = (0, Vec::new());
+        for c in &bc {
+            match (c.bc_failed, rt.outcome_in(name, &c.id)) {
+                (false, Outcome::Pass) | (true, Outcome::Fail(_)) => same += 1,
+                _ if known.contains(&(name, c.id.name.as_str())) => println!("  known difference: {}", c.id.name),
+                (_, Outcome::NotRun(why)) => not_run.push(format!("{} {}: {why}", c.id.codeunit, c.id.name)),
+                (bc_failed, ours) => wrong.push(format!(
+                    "{name} {} {}: BC {}, runtime {ours:?}",
+                    c.id.codeunit,
+                    c.id.name,
+                    if bc_failed { "failed" } else { "passed" }
+                )),
+            }
+        }
+        println!(
+            "runner {id} ({name}): {same} of {} as on BC, {} not run",
+            bc.len(),
+            not_run.len()
+        );
+        for n in not_run {
+            println!("  not run: {}", n.chars().take(200).collect::<String>());
+        }
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+}

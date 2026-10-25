@@ -48,7 +48,7 @@ If you maintain a tool that calls AL Runner, read
 |---|---|
 | `--test PATTERN`, `--filter PATTERN` | Same names. A pattern with a dot matches `Codeunit<ID>.<Method>`; without a dot it matches the method name. |
 | `--test-exact`, `--exclude-test` | Same. |
-| `--isolation codeunit\|test\|disabled` | `codeunit` and `test` work. `disabled` is not supported. |
+| `--isolation codeunit\|test\|disabled` | All three work. `StartSession` under `disabled` is reported as not run. |
 | `--test-timeout SECONDS` | Same flag, now CPU time. Default 20. |
 | `--package-cache PATH` | Same. |
 | `--test-data`, `--test-data-company` | Same flags. |

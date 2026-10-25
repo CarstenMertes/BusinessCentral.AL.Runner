@@ -101,16 +101,23 @@ al-runner test --isolation test     ./MyApp ./MyApp.Test
   This is the default of Microsoft's test runner.
 - `test` (also `function`, `method`): the database goes back to its state after
   `OnRun` after every test method. The codeunit's AL variables are kept, as with
-  `TestIsolation = Function`.
-- `disabled` is not supported yet. Every test is reported as not run.
+  `TestIsolation = Function`. Rows a test committed with `Commit()` are rolled
+  back too. So are `IsolatedStorage.Set` of a new key and `NumberSequence.Insert`.
+  AutoIncrement counters and row versions are not reset.
+- `disabled`: nothing is rolled back, except the writes a failed test made after
+  its last `Commit()`. The test codeunits run one after the other, in id order,
+  and each one sees what the ones before it left. A test that calls
+  `StartSession` is reported as not run, because AL Runner does not start a
+  second session.
 - `required`: each test codeunit runs under its own `RequiredTestIsolation`
   property, the way Business Central 28 and later runs a test codeunit from
   VS Code or `al runtests` (without a test runner codeunit). Off by default.
 
-Under `test`, a test that calls `Commit()` is reported as not run, because whether
-Business Central keeps the committed rows for the next test is not pinned yet. Run
-that codeunit with `codeunit` isolation, or set `RequiredTestIsolation` on the
-codeunit and use `required`.
+`test` and `disabled` work like a test runner codeunit with that `TestIsolation`.
+The `RequiredTestIsolation` property of a test codeunit has no effect then, as in
+Business Central. Under `test`, a test that changes an isolated storage key or a
+number sequence that existed before it makes the later tests of its codeunit
+"not run": what the rollback leaves of it has not been measured.
 
 ### `--isolation required`
 

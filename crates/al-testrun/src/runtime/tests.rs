@@ -1857,34 +1857,38 @@ fn function_isolation_also_rolls_back_a_failed_test() {
     assert_eq!(o[1].1, Outcome::Pass, "{o:?}");
 }
 
-// Nothing pins what Disabled leaves behind, so every test of the codeunit is refused.
+// Under a runner's TestIsolation = Disabled the probe's T5 fails, as under Codeunit (corpus PR 735: the rows of runner
+// 61304 for "Isol Probe Fixture").
 #[test]
-fn disabled_isolation_is_refused_for_every_test() {
+fn disabled_isolation_keeps_the_database_between_tests() {
     let o = outcomes_isolated(PROBE, TestIsolation::Disabled);
-    assert_eq!(o.len(), 7);
-    assert!(
-        o.iter()
-            .all(|(_, x)| matches!(x, Outcome::NotRun(w) if w.contains("Disabled"))),
-        "{o:?}"
+    let passes: Vec<_> = o.iter().map(|(n, x)| (n.as_str(), *x == Outcome::Pass)).collect();
+    assert_eq!(
+        passes,
+        vec![
+            ("T1", true),
+            ("T2", true),
+            ("T3", true),
+            ("T4", true),
+            ("T5", false),
+            ("T6", true),
+            ("T7", true)
+        ]
     );
 }
 
-// What a Commit() inside a test does under Function isolation is not pinned: the test that
-// would depend on it is refused, and the next test still starts from the OnRun state.
+// A Commit() inside a test under a runner's TestIsolation = Function is rolled back with the test (corpus PR 735,
+// IsolProbeCommit.Codeunit.al C1-C3 under runner 61300).
 #[test]
-fn a_commit_inside_a_function_isolated_test_is_refused_and_still_rolled_back() {
+fn a_commit_inside_a_function_isolated_test_is_rolled_back() {
     let src = with_rows(
             "codeunit 60102 T { Subtype = Test;
                 [Test] procedure Commits() var R: Record S; begin R.K := 'A'; R.Insert(); Commit(); end;
                 [Test] procedure Next() var R: Record S; begin if R.Count() <> 0 then Error('rows left: %1', R.Count()); end; }",
         );
     let o = outcomes_isolated(&src, TestIsolation::Function);
-    assert!(
-        matches!(&o[0].1, Outcome::NotRun(w) if w.contains("Commit") && w.contains("Function")),
-        "{o:?}"
-    );
+    assert_eq!(o[0].1, Outcome::Pass, "{o:?}");
     assert_eq!(o[1].1, Outcome::Pass, "{o:?}");
-    // Under Codeunit isolation the same Commit is the pinned default behaviour.
     let o = outcomes_isolated(&src, TestIsolation::Codeunit);
     assert_eq!(o[0].1, Outcome::Pass, "{o:?}");
 }

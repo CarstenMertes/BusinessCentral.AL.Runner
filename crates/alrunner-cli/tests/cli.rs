@@ -1084,10 +1084,12 @@ fn isolation_decides_whether_the_database_is_rolled_back_between_the_tests_of_a_
         assert_eq!(code(&o), 0, "{mode}: {}", text(&o));
         assert_eq!(json_of(&o)["passed"], 2);
     }
-    // disabled is not pinned: every test is reported as not run.
+    // disabled: the passing test's row stays for the next test, as under a runner with TestIsolation = Disabled
+    // (corpus PR 735, IsolProbeWriter.Codeunit.al W3 under runner 61304).
     let o = run(&["--isolation", "disabled"]);
-    assert_eq!(code(&o), 7, "{}", text(&o));
-    assert_eq!(json_of(&o)["notRun"], 2);
+    assert_eq!(code(&o), 1, "{}", text(&o));
+    assert_eq!(row(&json_of(&o), "Codeunit50300.B_SeesTheRow")["message"], "kept");
+    assert_eq!(row(&json_of(&o), "Codeunit50300.A_Inserts")["status"], "pass");
     assert_eq!(code(&run(&["--isolation", "nope"])), 2);
 }
 
@@ -2079,13 +2081,23 @@ fn isolation_required_runs_each_codeunit_under_its_required_test_isolation() {
         "{}",
         text(&o)
     );
-    // The old values stay refused: a Commit() under --isolation test.
+    // A Commit() under --isolation test is rolled back with the test, as under a runner with TestIsolation = Function
+    // (corpus PR 735, IsolProbeCommit.Codeunit.al C1-C3 under runner 61300; al-runner issue 5607).
     let o = run(&["--isolation", "test"]);
-    let m = row(&json_of(&o), "Codeunit50670.A_CommitCall")["message"]
-        .as_str()
-        .unwrap()
-        .to_string();
-    assert!(m.contains("Commit inside a test under TestIsolation = Function"), "{m}");
+    assert_eq!(
+        row(&json_of(&o), "Codeunit50670.A_CommitCall")["status"],
+        "pass",
+        "{}",
+        text(&o)
+    );
+    assert_eq!(
+        row(&json_of(&o), "Codeunit50670.B_NextTestSeesNothing")["status"],
+        "pass",
+        "{}",
+        text(&o)
+    );
+    // RequiredTestIsolation = Disabled has no effect under it: the next codeunit does not see the row.
+    assert_eq!(row(&json_of(&o), "Codeunit50672.SeesTheRow")["message"], "gone");
     // A codeunit with handlers runs under runner 130450, as Codeunit isolation, whatever its RequiredTestIsolation says
     // (corpus codeunit/lt-qu-commit-isolation/RqIsolationModes.al:673-839).
     let h = d.path().join("handlers");

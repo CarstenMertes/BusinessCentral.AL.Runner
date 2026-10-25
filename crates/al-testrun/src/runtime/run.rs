@@ -211,17 +211,13 @@ pub(crate) fn run_codeunit_core(
     if let Some(why) = &engine.company_refusal {
         return all(Outcome::NotRun(why.clone()));
     }
-    // Nothing pins what a runner with TestIsolation = Disabled leaves behind, within a codeunit or
-    // for the next one (docs/probes-needed.md), so it is refused (hard rule 4). BC's TestRunnerHub under a codeunit's
-    // RequiredTestIsolation = Disabled is pinned (QuCommitIsolation.al:572-718): it runs (`Scratch::hub`).
-    if isolation == TestIsolation::Disabled && !scratch.hub {
-        return all(Outcome::NotRun(
-            "TestIsolation = Disabled is not supported yet: no corpus test pins what BC keeps between tests and test \
-             codeunits in this mode (corpus issue 645). Run with TestIsolation = Codeunit (al-runner: --isolation codeunit, \
-             the default) or Function (--isolation test)"
-                .into(),
-        ));
-    }
+    // A test runner codeunit with TestIsolation = Disabled (al-runner --isolation disabled) runs: what it keeps between
+    // tests and for the later codeunits was measured by corpus writer SD (corpus PR 735, registered assumption
+    // `runner-test-isolation`, below). BC's TestRunnerHub under a codeunit's RequiredTestIsolation = Disabled is pinned
+    // (QuCommitIsolation.al:572-718, `Scratch::hub`).
+    let runner_disabled = isolation == TestIsolation::Disabled && !scratch.hub && !execute;
+    // A test runner codeunit with TestIsolation = Function (al-runner --isolation test), not the hub.
+    let runner_function = isolation == TestIsolation::Function && !scratch.hub && !execute;
     // A [TransactionModel] other than AutoCommit, AutoRollback or None is refused.
     let mut models = std::collections::HashMap::new();
     for &r in &tests {
@@ -254,7 +250,9 @@ pub(crate) fn run_codeunit_core(
     session.mark_install_end();
     session.in_test_codeunit = true;
     session.isolation_from_hub = scratch.hub && isolation != TestIsolation::Codeunit;
-    session.hub_disabled = scratch.hub && isolation == TestIsolation::Disabled;
+    // StartSession starts a session under Disabled isolation, from the hub (RqIsolationModes.al:573-600) and from a runner
+    // (corpus PR 735, SdIsolStartSession.Codeunit.al:20-22): refused there, as no second session is modelled.
+    session.hub_disabled = isolation == TestIsolation::Disabled;
     session.test_object = Some(object);
     // Company Triggers when the test session opens the company, before the codeunit's OnRun and first test (ADR-046
     // amendment 1, A4 item 10). A scratch run (`execute`) is not a test session.
@@ -278,10 +276,10 @@ pub(crate) fn run_codeunit_core(
     // What a Disabled codeunit leaves for the later codeunits is its writes from here on ([`CARRIED`]). With
     // Company Triggers subscribers each session writes on its own when it opens the company, and how those writes
     // meet the ones carried over is not pinned.
-    let carries = scratch.hub && isolation == TestIsolation::Disabled && !execute;
+    let carries = isolation == TestIsolation::Disabled && !execute;
     if carries && company_open.who.is_some() {
         return all(Outcome::NotRun(
-            "RequiredTestIsolation = Disabled with a Company Triggers subscriber that writes when the test session opens \
+            "Disabled test isolation with a Company Triggers subscriber that writes when the test session opens \
              the company: how its writes meet what an earlier codeunit left is not pinned"
                 .into(),
         ));
@@ -388,7 +386,8 @@ pub(crate) fn run_codeunit_core(
                     onrun_left = Some(Carried {
                         baseline: Some(baseline),
                         tables: session.store_mut().tables_changed_since(changes_from),
-                        unfinished: everything.then(|| {
+                        unfinished: None,
+                        storage_why: everything.then(|| {
                             format!(
                                 "an earlier test codeunit, {}, changed isolated storage or a number sequence in its OnRun \
                                  trigger, which under the test runner 130450 every later codeunit sees: that is not followed",
@@ -505,6 +504,9 @@ pub(crate) fn run_codeunit_core(
     let mut reach_index: Option<Arc<ReachIndex>> = None;
     let flags = settled_flags(lowered, object);
     let mut panicked = false;
+    // Why the tests after one are not run: under a runner's TestIsolation = Function, that test changed an isolated
+    // storage key or a number sequence that was there before it, and what the rollback leaves of it is not measured.
+    let mut unmeasured_restore: Option<String> = None;
     for r in tests.iter().copied() {
         // A cancelled run starts no further test (the one running finishes).
         if crate::events::cancelled() {
@@ -534,7 +536,9 @@ pub(crate) fn run_codeunit_core(
         al_builtins::assumptions::clear_hits();
         session.take_tdd_reached();
         let mut began = false;
-        let outcome = if let Err(reason) = &handlers {
+        let outcome = if let Some(why) = &unmeasured_restore {
+            Outcome::NotRun(why.clone())
+        } else if let Err(reason) = &handlers {
             Outcome::NotRun(reason.clone())
         } else if let Some(b) = blocked_site(lowered, object, r) {
             refused_in = Some((b.object, b.routine));
@@ -574,6 +578,10 @@ pub(crate) fn run_codeunit_core(
                     // The AL test runner enables every application area before each test method
                     // (corpus session/TestSessionApplicationAreaTestBoundary.al:67552).
                     session.start_test_method();
+                    // Under a runner's TestIsolation = Disabled each test relies on the measured mode (corpus PR 735).
+                    if runner_disabled {
+                        al_builtins::assumptions::assume(Assumption::RunnerTestIsolation);
+                    }
                     let model = models.get(&r).copied().unwrap_or_default();
                     // TransactionModel::None is handled before the method body: every active
                     // transaction is ended on the way in (codeunit/TestWriteTxTestBoundary.al:
@@ -853,20 +861,15 @@ pub(crate) fn run_codeunit_core(
                 }),
             });
         }
-        // Whether a Commit() inside a test is kept or ignored under Function isolation is not
-        // pinned (docs/probes-needed.md): a test that passed through one is not reported as run.
-        let outcome = match outcome {
-            // Under BC's TestRunnerHub with RequiredTestIsolation = Function the next test sees nothing a Commit() wrote
-            // (QuCommitIsolation.al:466-488 QU_F04_NextTestSees, :530-551 QU_F09_LaterTestSeesCommittedRows): the
-            // checkpoint below restores it. Under a runner codeunit's TestIsolation = Function it is not pinned.
-            Outcome::Pass if committed && checkpoint.is_some() && !scratch.hub => Outcome::NotRun(
-                "Commit inside a test under TestIsolation = Function is not supported yet: no corpus test pins whether \
-                 BC keeps the committed rows for the next test (corpus issue 645). Run this codeunit with TestIsolation = \
-                 Codeunit (al-runner: --isolation codeunit, the default)"
-                    .into(),
-            ),
-            o => o,
-        };
+        // A Commit() inside a test under Function isolation is rolled back with the rest of the test: under BC's
+        // TestRunnerHub with RequiredTestIsolation = Function (QuCommitIsolation.al:466-488 QU_F04_NextTestSees, :530-551
+        // QU_F09_LaterTestSeesCommittedRows), and under a runner codeunit's TestIsolation = Function, the part before the
+        // Commit() too, whether the test passes or fails (corpus PR 735, IsolProbeCommit.Codeunit.al C1-C3,
+        // SdIsolCommitError.Codeunit.al:24-25 E2-E5 under runner 61300; registered assumption `runner-test-isolation`).
+        // The checkpoint below restores it.
+        if committed && runner_function {
+            al_builtins::assumptions::assume(Assumption::RunnerTestIsolation);
+        }
         if let Some(observe) = observe.as_mut() {
             observe(
                 &routine.name,
@@ -879,7 +882,24 @@ pub(crate) fn run_codeunit_core(
             );
         }
         if let Some(cp) = &checkpoint {
-            cp.restore(&mut session);
+            if runner_function {
+                match cp.restore_for_runner(&mut session) {
+                    None => {}
+                    Some(true) => al_builtins::assumptions::assume(Assumption::RunnerTestIsolation),
+                    Some(false) => {
+                        unmeasured_restore.get_or_insert_with(|| {
+                            format!(
+                                "an earlier test of this codeunit, {}, changed an isolated storage key or a number sequence \
+                                 that existed before it: what the rollback of TestIsolation = Function leaves of it is not \
+                                 measured (only a new key's IsolatedStorage.Set and a new NumberSequence.Insert are)",
+                                routine.name
+                            )
+                        });
+                    }
+                }
+            } else {
+                cp.restore(&mut session);
+            }
         }
         if let (Outcome::Fail(_), Some(e)) = (&outcome, &failure) {
             if !e.call_stack.is_empty() {
@@ -987,16 +1007,27 @@ pub(crate) fn run_codeunit_core(
     }
     // RequiredTestIsolation = Disabled under the TestRunnerHub: everything persists into the next codeunit, the write
     // still open when a test ended included, as the boundary commits it (QuCommitIsolation.al:695-718 QU_D11_NextCodeunitSees).
-    // What a test that did not pass leaves is not pinned (QuCommitIsolation.al:22).
+    // What a test that did not pass leaves is not pinned there (QuCommitIsolation.al:22). Under a runner's TestIsolation =
+    // Disabled a failed test leaves what it committed and nothing else (corpus PR 735, SdIsolCommitReader.Codeunit.al:13-15,
+    // IsolProbeReader.Codeunit.al:113-120 R3): only a test that was not run leaves something not known.
     if let Some(start) = carried_from {
-        let mut unfinished = out.iter().find(|(_, o)| *o != Outcome::Pass).map(|(name, o)| {
+        let mode = if runner_disabled {
+            "a test runner's TestIsolation = Disabled"
+        } else {
+            "RequiredTestIsolation = Disabled"
+        };
+        let unfinished = out.iter().find(|(_, o)| match o {
+            Outcome::Pass => false,
+            Outcome::Fail(_) => !runner_disabled,
+            _ => true,
+        }).map(|(name, o)| {
             let how = match o {
                 Outcome::Fail(_) => "failed",
                 _ => "was not run",
             };
             format!(
-                "an earlier codeunit with RequiredTestIsolation = Disabled, {}, wrote a table this test reads, and its \
-                 test {name} {how}: what it left for the later codeunits is not pinned",
+                "an earlier codeunit under {mode}, {}, wrote a table this test reads, and its test {name} {how}: what it \
+                 left for the later codeunits is not pinned",
                 obj.name
             )
         });
@@ -1009,15 +1040,13 @@ pub(crate) fn run_codeunit_core(
         }
         // Isolated storage and number sequences carry over as well, but who reads them later is not followed.
         let everything = session.storage_or_sequences_differ(&start);
-        if everything {
-            unfinished.get_or_insert_with(|| {
-                format!(
-                    "an earlier codeunit with RequiredTestIsolation = Disabled, {}, changed isolated storage or a number \
-                     sequence, which every later codeunit sees: that is not followed",
-                    obj.name
-                )
-            });
-        }
+        let storage_why = everything.then(|| {
+            format!(
+                "an earlier codeunit under {mode}, {}, changed isolated storage or a number sequence, which every \
+                     later codeunit sees: that is not followed",
+                obj.name
+            )
+        });
         let mut baseline = session.capture_baseline();
         // The install code already ran for what it left; the later codeunits must not run it again on top.
         baseline.workspace_installs = Some(skipped_installs.clone());
@@ -1025,6 +1054,7 @@ pub(crate) fn run_codeunit_core(
             baseline: Some(baseline),
             tables,
             unfinished,
+            storage_why,
             everything,
         };
         CARRIED.with(|c| *c.borrow_mut() = Some(carried));
@@ -1050,8 +1080,11 @@ pub(crate) struct Carried {
     pub tables: BTreeSet<u32>,
     /// Why what it left is not known (a test of it did not pass): a later codeunit that reads `tables` is not run.
     pub unfinished: Option<String>,
-    /// It changed state besides the tables: every later codeunit counts as reading what it left.
+    /// It changed isolated storage or a number sequence: a later codeunit whose reach can touch them counts as reading
+    /// what it left (`corpus.rs` `reaches_session_storage`).
     pub everything: bool,
+    /// Why what it left there is not followed (set with `everything`): such a later codeunit is not run.
+    pub storage_why: Option<String>,
 }
 
 /// Sets a session's stop flag when a test has used more than its limit of CPU time. The time the

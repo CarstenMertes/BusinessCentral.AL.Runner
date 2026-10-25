@@ -1923,10 +1923,11 @@ fn a_quoted_test_name_is_selected_by_its_al_name() {
     assert!(text(&o).contains("Space Step"), "{}", text(&o));
 }
 
-/// Issues 5609 and 5607: the two isolation refusals say why (no corpus test pins BC's behavior) and what to use
-/// instead.
+/// Issues 5609 and 5607: a test that calls Commit() runs under `--isolation disabled` and `--isolation test`, as under a
+/// test runner codeunit with that TestIsolation (corpus PR 735, IsolProbeCommit.Codeunit.al and SdIsolCommitError.Codeunit.al
+/// under runners 61300 and 61304).
 #[test]
-fn isolation_refusals_say_why_and_what_to_use_instead() {
+fn a_commit_runs_under_every_isolation() {
     let d = tempfile::tempdir().unwrap();
     let dir = d.path().join("commit");
     write(
@@ -1940,23 +1941,10 @@ fn isolation_refusals_say_why_and_what_to_use_instead() {
         "codeunit 50660 \"Commit Tests\"\n{\n    Subtype = Test;\n\n    [Test]\n    procedure CommitCall()\n    begin\n        Commit();\n    end;\n}\n",
     );
     let a = dir.to_str().unwrap();
-    let message = |isolation: &str| -> String {
-        let o = alrunner(&["test", a, "--no-download", "--output-json", "--isolation", isolation]);
-        assert_eq!(code(&o), 7, "{}", text(&o));
-        json_of(&o)["tests"][0]["message"].as_str().unwrap().to_string()
-    };
-    let m = message("disabled");
-    assert!(
-        m.contains("no corpus test pins") && m.contains("--isolation codeunit"),
-        "{m}"
-    );
-    let m = message("test");
-    assert!(
-        m.contains("no corpus test pins") && m.contains("--isolation codeunit"),
-        "{m}"
-    );
-    let o = alrunner(&["test", a, "--no-download", "--isolation", "codeunit"]);
-    assert_eq!(code(&o), 0, "{}", text(&o));
+    for isolation in ["disabled", "test", "codeunit"] {
+        let o = alrunner(&["test", a, "--no-download", "--isolation", isolation]);
+        assert_eq!(code(&o), 0, "{isolation}: {}", text(&o));
+    }
 }
 
 /// Issues 5607 and 5609 with RequiredTestIsolation on the test codeunit: `--isolation required` runs each test codeunit

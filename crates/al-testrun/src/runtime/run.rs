@@ -866,8 +866,9 @@ pub(crate) fn run_codeunit_core(
         // QU_F09_LaterTestSeesCommittedRows), and under a runner codeunit's TestIsolation = Function, the part before the
         // Commit() too, whether the test passes or fails (corpus PR 735, IsolProbeCommit.Codeunit.al C1-C3,
         // SdIsolCommitError.Codeunit.al:24-25 E2-E5 under runner 61300; registered assumption `runner-test-isolation`).
-        // The checkpoint below restores it.
-        if committed && runner_function {
+        // The checkpoint below restores it. A failed test after a Commit() is pinned by the nightly oracle (isolation
+        // probe T10 and T11 under runner 61300, IsolProbeFixture.Codeunit.al:118-160): only a passed one is flagged.
+        if committed && runner_function && outcome == Outcome::Pass {
             al_builtins::assumptions::assume(Assumption::RunnerTestIsolation);
         }
         if let Some(observe) = observe.as_mut() {

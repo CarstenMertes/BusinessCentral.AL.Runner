@@ -1,6 +1,6 @@
 ---
 title: "Getting started"
-weight: 2
+weight: 20
 ---
 
 ## Install

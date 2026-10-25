@@ -470,7 +470,7 @@ load it.
   SDK these tests are not run, with a reason.
 - Many features are missing. See `docs/status.md` and `docs/al-runner-v2-parity.md`.
 - No watch mode. `al-runner debug` is a Debug Adapter Protocol server for breakpoints, stepping and
-  locals (`docs/debugging.md`). `al-runner serve` and `--coverage` (Cobertura XML,
+  locals (`docs/manual/debugging.md`). `al-runner serve` and `--coverage` (Cobertura XML,
   `--coverage-json`) exist. `serve` speaks AL Runner v2's JSON-lines protocol (`runTests`,
   `execute`, `cancel`, `shutdown`). All requests run in the one server process, which keeps the
   compile of the last request, so a repeated request with the same sources takes 0.2 to 2 s
@@ -640,7 +640,7 @@ many more of these tests run.
 
 ## Documentation
 
-- `docs/debugging.md`: `al-runner debug`, the Debug Adapter Protocol server.
+- `docs/manual/debugging.md`: `al-runner debug`, the Debug Adapter Protocol server.
 - `docs/releasing.md`: how an edge build, a numbered alpha and a hotfix are released.
 - `docs/architecture.md`: pipeline, crates, runtime model, budgets.
 - `docs/codemap.md`: which module owns what, and where the entry points are.

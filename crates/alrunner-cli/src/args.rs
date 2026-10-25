@@ -621,7 +621,8 @@ DEBUG
     --port [N]           Listen on 127.0.0.1:N (default 4711, also without --port; 0 picks a free port).
                          The port is printed on stderr.
                          The other options are those of `test`; --output-json, --impact-of, --recipe and
-                         --explain are refused. Tests run one after the other. See docs/debugging.md.
+                         --explain are refused. Tests run one after the other.
+                         See https://aldev.tools/al-runner/debugging/.
 
 WARM
     al-runner warm [PATH.bak] [--bc-version BUILD] [--country CODE] [--cache-dir DIR] [--no-download]

@@ -1,6 +1,6 @@
 ---
 title: "Migrating from version 2"
-weight: 12
+weight: 120
 ---
 
 Version 3 replaces version 2. Version 2 was written in C# on top of Business

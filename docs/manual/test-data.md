@@ -1,6 +1,6 @@
 ---
 title: "Test data"
-weight: 6
+weight: 60
 ---
 
 ## The demo company

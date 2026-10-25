@@ -1,6 +1,6 @@
 ---
 title: "Reading results"
-weight: 4
+weight: 40
 ---
 
 A pass or a failure is meant to match real Business Central. When AL Runner cannot

@@ -1,6 +1,6 @@
 ---
 title: "Running Microsoft's tests"
-weight: 7
+weight: 70
 ---
 
 Microsoft's own test apps are the best check of how closely AL Runner matches

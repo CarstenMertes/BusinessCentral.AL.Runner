@@ -25,7 +25,7 @@ built on the language, not on BC's internals".
 | 3 | `al-runner serve` (`runTests`, `cancel`, `shutdown`) | done (section 4b; ADR-028, Proposed) |
 | 4 | `execute`, `cancel`, `coverage`, `perTestCoverage` in `serve` | done (section 4b; ADR-028) |
 | 5 | `captureValues`, `iterationTracking` | done (section 4b; ADR-030, Proposed) |
-| 6 | `al-runner debug --stdio` (DAP) | done, also in dependency apps compiled from source (`docs/debugging.md`; ADR-048) |
+| 6 | `al-runner debug --stdio` (DAP) | done, also in dependency apps compiled from source (`docs/manual/debugging.md`; ADR-048) |
 
 ## 1. The command
 
@@ -35,7 +35,7 @@ built on the language, not on BC's internals".
 | `al-runner [FLAGS] DIR [DIR]` | `al-runner test [FLAGS] APP...` | Put the word `test` first. APP is an app folder (with `app.json`), a `*.Source.zip` or an `.app` that carries source. |
 | install: `dotnet tool install -g msdyn365bc.al.runner` | one binary | Do not run `dotnet tool`. The user sets the path. v3 needs no .NET (an optional helper exists for `DotNet` variables). |
 | `al-runner --server [--package-cache P]... [--define S]... [--test-timeout N]` | `al-runner serve [--package-cache P]... [--define S]... [--test-timeout N]` | Same options (section 4b). |
-| `al-runner --dap stdio DIR` | `al-runner debug --stdio APP...` | Same DAP session (`docs/debugging.md`). |
+| `al-runner --dap stdio DIR` | `al-runner debug --stdio APP...` | Same DAP session (`docs/manual/debugging.md`). |
 | `al-runner --dap [PORT] DIR` | `al-runner debug [--port [PORT]] APP...` | Default port 4711 as v2. The listening line is on stderr (`al-runner debug: listening on 127.0.0.1:PORT`); v2 printed `[dap] listening on ...` on stdout. |
 
 ## 2. `--version`
@@ -309,7 +309,7 @@ ALchemist needs `al-runner serve` (step 3, done), `execute` (step 4), value capt
    events and breakpoint answers are v2's. Differences: `pause` stops at the next statement (v2 continued);
    `setExceptionBreakpoints` succeeds with no filters; frame names are `Object.Routine`; a value that is not rendered yet
    shows `<not rendered: KIND>`; `--test` and `--codeunit` select tests (v2 ran all); a file of a dependency read from a
-   source package is shown from `<cache>/debug-sources/` (`docs/debugging.md`).
+   source package is shown from `<cache>/debug-sources/` (`docs/manual/debugging.md`).
 
 ### A note for ALchemist's author
 
@@ -318,7 +318,7 @@ The debugger needs one change in ALchemist: the arguments of the `DebugAdapterEx
 `['--dap', 'stdio', ...sourcePaths]`, with `--dep` for a dependency folder whose code should be debugged and the
 launch configuration's `testFilter` as `--test`. Nothing else in the DAP code has to change: requests, capabilities,
 events and breakpoint answers are v2's. ALchemist's text that says "stepping acts as continue"
-(`debugLaunch.ts:61-62`) is out of date: `next`, `stepIn` and `stepOut` step. `docs/debugging.md`, section "Using the
+(`debugLaunch.ts:61-62`) is out of date: `next`, `stepIn` and `stepOut` step. `docs/manual/debugging.md`, section "Using the
 debugger from ALchemist", has the command line and a table of what differs from v2. AL Runner ships no VS Code
 extension of its own (ADR-048, owner decision 3).
 

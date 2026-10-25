@@ -200,7 +200,7 @@ impl Baseline {
             self.store = self
                 .store
                 .with_backing(std::rc::Rc::new(crate::testdata::TestBacking::new(
-                    engine.clone(),
+                    engine,
                     td.clone(),
                 )));
         }

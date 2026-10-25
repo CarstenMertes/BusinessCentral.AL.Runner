@@ -1642,3 +1642,86 @@ codeunit 50982 \"Quiet\" { Subtype = Test; trigger OnRun() begin end; [Test] pro
     s.send(json!({"command": "shutdown"}));
     assert_eq!(s.line(), json!({"status": "shutting down"}));
 }
+
+/// A dependency app (folder `dep`) whose install code leaves one row, and an app under test whose two test codeunits
+/// read it and write.
+fn installing_apps(root: &Path) -> (PathBuf, PathBuf) {
+    let dep = root.join("dep");
+    write(
+        &dep,
+        "app.json",
+        r#"{"id":"33333333-0000-0000-0000-000000000001","name":"Seeding Dep","publisher":"Someone","version":"1.0.0.0","dependencies":[]}"#,
+    );
+    write(
+        &dep,
+        "src/Dep.al",
+        "table 50700 Seeded { fields { field(1; K; Code[20]) { } field(2; N; Integer) { } } keys { key(PK; K) { } } }
+codeunit 50701 \"Seeding Install\" { Subtype = Install;
+    trigger OnInstallAppPerCompany() var S: Record Seeded; begin S.K := 'INSTALL'; S.N := 10; S.Insert(); end; }",
+    );
+    let main = root.join("main");
+    write(
+        &main,
+        "app.json",
+        r#"{"id":"33333333-0000-0000-0000-000000000002","name":"Seeded Tests","publisher":"Test","version":"1.0.0.0","dependencies":[{"id":"33333333-0000-0000-0000-000000000001","name":"Seeding Dep","publisher":"Someone","version":"1.0.0.0"}]}"#,
+    );
+    let test = |id: u32, key: &str| {
+        format!(
+            "codeunit {id} \"Seeded {key}\" {{ Subtype = Test;
+    [Test] procedure SeesTheInstallRowOnly() var S: Record Seeded; begin
+        if S.Count() <> 1 then Error('Seeded holds %1 rows', S.Count());
+        S.Get('INSTALL'); if S.N <> 10 then Error('N is %1', S.N);
+        S.N += 1; S.Modify(); S.K := '{key}'; S.Insert(); Commit(); end; }}\n"
+        )
+    };
+    write(&main, "src/T.al", &(test(50710, "A") + &test(50711, "B")));
+    (main, dep)
+}
+
+/// Al-runner issue 5856: every request says where its time went, and a request over a kept compile also keeps the
+/// engines and the install baseline, while it still starts from the rows the install code left and none of an earlier
+/// request's writes.
+#[test]
+fn a_summary_says_where_the_time_went_and_a_kept_baseline_does_not_carry_writes() {
+    let d = tempfile::tempdir().unwrap();
+    let (main, dep) = installing_apps(d.path());
+    let dep = dep.to_string_lossy().to_string();
+    let cache = d.path().join("cache").to_string_lossy().to_string();
+    let mut s = Server::start(&["--no-download", "--no-test-data", "--dep", &dep, "--cache-dir", &cache]);
+    s.line();
+    let mut summaries = Vec::new();
+    for entries in [None, None, Some(json!([{"id": "a", "test": "Codeunit50710."}, {"id": "b"}]))] {
+        let mut req = json!({"command": "runTests", "sourcePaths": [main]});
+        if let Some(e) = entries {
+            req["entries"] = e;
+        }
+        s.send(req);
+        let lines = s.until_summary();
+        let failed: Vec<&Value> = lines.iter().filter(|l| l["type"] == "test" && l["status"] != "pass").collect();
+        assert!(failed.is_empty(), "{lines:?}");
+        for e in lines.iter().filter(|l| l["type"] == "entrySummary") {
+            assert!(e["timings"]["resetMs"].is_number() && e["timings"]["wallMs"].is_number(), "{e}");
+        }
+        summaries.push(lines.last().unwrap().clone());
+    }
+    for summary in &summaries {
+        let t = &summary["timings"];
+        for key in ["setupMs", "compileMs", "engineMs", "baselineMs", "testsMs", "coverageMs", "otherMs"] {
+            assert!(t[key].as_f64().is_some_and(|v| v >= 0.0), "{key}: {summary}");
+        }
+    }
+    assert_eq!(
+        summaries.iter().map(|s| s["passed"].clone()).collect::<Vec<_>>(),
+        vec![json!(2), json!(2), json!(3)],
+        "{summaries:?}"
+    );
+    // The first request ran the install code; the later ones used what it kept.
+    assert_eq!(summaries[0]["timings"]["baselineSource"], "ran", "{summaries:?}");
+    for later in &summaries[1..] {
+        assert_eq!(later["cached"], true, "{later}");
+        assert_eq!(later["timings"]["baselineSource"], "kept", "{later}");
+        assert_eq!(later["timings"]["engineKept"], true, "{later}");
+    }
+    s.send(json!({"command": "shutdown"}));
+    assert_eq!(s.line(), json!({"status": "shutting down"}));
+}

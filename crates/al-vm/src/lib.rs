@@ -82,7 +82,7 @@ pub struct Engine {
     /// Per object, per routine: why it cannot run, if it cannot.
     pub blocked: Vec<Vec<Option<String>>>,
     /// Store schema per table object.
-    pub tables: Vec<Option<Arc<al_data::TableDef>>>,
+    pub tables: Arc<[Option<Arc<al_data::TableDef>>]>,
     /// Event publishers and their subscribers, resolved by name.
     pub events: events::Registry,
     /// The BC version this program runs as; `None` gets the newest behaviour (ADR-015 3.4).
@@ -246,7 +246,7 @@ impl Engine {
         dotnet: dotnet::DotNetConfig,
     ) -> Arc<Engine> {
         let program: Arc<ir::Program> = program.into();
-        let tables = program
+        let tables: Vec<Option<Arc<al_data::TableDef>>> = program
             .objects
             .iter()
             .enumerate()
@@ -369,7 +369,7 @@ impl Engine {
         Arc::new(Engine {
             program,
             blocked,
-            tables,
+            tables: tables.into(),
             events,
             target,
             dotnet,
@@ -757,7 +757,7 @@ impl Session {
             media.clone(),
         )));
         if let Some(td) = &engine.test_data {
-            store = store.with_backing(Rc::new(testdata::TestBacking::new(engine.clone(), td.clone())));
+            store = store.with_backing(Rc::new(testdata::TestBacking::new(&engine, td.clone())));
         }
         let sequences = restored_sequences(&engine, &company);
         al_builtins::ops::set_turkic_code(al_builtins::native::is_turkic_language(host.identity.global_language()));

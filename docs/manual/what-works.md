@@ -65,7 +65,7 @@ of which 16848 passed, 2508 failed and 20944 were not run.
 | Test data | CRONUS from the artifact, loaded per table on first touch | Only the demo company. |
 | Identity | User `TESTUSER`, tenant `default`, company `My Company`, session 1 | Tests that probe real authentication or other users. |
 | Environment | `--environment saas` (default) or `onprem` | Server topology is fixed. |
-| Clock | The system clock. `Sleep(n)` does not wait. | A test sees a jump, not a delay. |
+| Clock | Starts at the system time and moves forward 1 ms on every read. `Sleep(n)` moves it n ms and does not wait. | A test sees a jump, not a delay. |
 | Client UI | Handlers and the `TestPage` client | No pixels, no layout, no add-ins. |
 | Permissions | Everything is granted | A test that expects "access denied" fails here. |
 | Task scheduler | `CanCreateTask` is false. `CreateTask` returns an id and never runs the task. | A task never executes. |

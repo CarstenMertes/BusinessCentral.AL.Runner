@@ -23,6 +23,7 @@ explains what a pass, a failure and "not run" each mean.
 - **[Supported versions](versions.md)**: Business Central versions, platforms and release channels.
 - **[Writing tests](writing-tests.md)**: apps, test codeunits, selecting tests, isolation, test-first work.
 - **[Reading results](results.md)**: what you can trust, and how to find out why a test did not run.
+- **[How results are checked](how-it-works.md)**: why results can be trusted, and the known risks.
 - **[Command line reference](cli-reference.md)**: every command and flag.
 - **[Test data](test-data.md)**: the CRONUS demo company, other countries, the RapidStart package company.
 - **[Running Microsoft's tests](microsoft-tests.md)**: `test-microsoft`, the recipe, and the Microsoft tests your extension can affect.

@@ -1710,20 +1710,6 @@ impl CorpusRuntime {
     }
 }
 
-/// The key under which the install baseline of this run is kept on disk, or `None` when it must run every time.
-/// The baseline is what the install code of the dependency apps and `Company-Initialize` write, followed by the
-/// workspace's own install codeunits. It is the same for the same program and the same world around it, which is
-/// everything the key holds: this runtime build, the dependency layers (the key of the top layer holds every app of
-/// them and the target), the source of every other app, the test codeunits that were compiled, the BC target, the
-/// environment of the host and the day. The rows carry the time the run began (`SystemClock`), and a test may ask how
-/// old one is. The file therefore holds that instant, and a run that reads the file starts its own clock there, so
-/// the rows and the clock agree as they do in a run that began then and ran the install code. The day only bounds how
-/// far in the past a run may think it began.
-///
-/// Not kept at all: a run that reads test data, runs .NET, lets `File` use a real directory, reads the real clock as
-/// it goes, records, compares two executable forms or has a test runner of its own: what such a run does is not in
-/// the key.
-#[allow(clippy::too_many_arguments)]
 /// What a baseline a warm server keeps over the test data of `engine` depends on (`baseline_cache::read_kept`): the
 /// test data and the program the rows read from it are built for.
 fn kept_backing(engine: &Engine) -> String {
@@ -1779,6 +1765,20 @@ fn take_kept_engines(
     (install, tests)
 }
 
+/// The key under which the install baseline of this run is kept on disk, or `None` when it must run every time.
+/// The baseline is what the install code of the dependency apps and `Company-Initialize` write, followed by the
+/// workspace's own install codeunits. It is the same for the same program and the same world around it, which is
+/// everything the key holds: this runtime build, the dependency layers (the key of the top layer holds every app of
+/// them and the target), the source of every other app, the test codeunits that were compiled, the BC target, the
+/// environment of the host and the day. The rows carry the time the run began (`SystemClock`), and a test may ask how
+/// old one is. The file therefore holds that instant, and a run that reads the file starts its own clock there, so
+/// the rows and the clock agree as they do in a run that began then and ran the install code. The day only bounds how
+/// far in the past a run may think it began.
+///
+/// Not kept at all: a run that reads test data, runs .NET, lets `File` use a real directory, reads the real clock as
+/// it goes, records, compares two executable forms or has a test runner of its own: what such a run does is not in
+/// the key.
+#[allow(clippy::too_many_arguments)]
 fn baseline_key(
     ws: &al_sema::Workspace,
     lowered: &Lowered,

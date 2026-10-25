@@ -1148,19 +1148,20 @@ fn unit_word(lang: i32, unit: usize, plural: bool) -> Option<String> {
 }
 
 fn format_duration(ms: i64, standard: i32, lang: i32) -> Result<String, FormatFail> {
-    // A Duration of 9223372028264841218 ms raises the overflow (D_Duration.al:Duration_To_Integer_BeyondRange `af128`).
-    // Below that it formats: 922337203685478 ms, 3e15 ms and 5000000000 hours (types/lt-datetime/Evaluate.al:640-670;
-    // D_Duration.al:421-443 `big_number`). Between 1.8e16 ms and that value it is not pinned.
-    if ms.unsigned_abs() > 18_000_000_000_000_000 && ms.unsigned_abs() < 9_223_372_028_264_841_218 {
-        return Err(FormatFail::Unsupported(format!(
-            "Format of a Duration of {ms} ms (not pinned)"
-        )));
-    }
-    if ms.unsigned_abs() >= 9_223_372_028_264_841_218 {
+    // A Duration of 9223372028264841218 ms raises the overflow with the default format (D_Duration.al:Duration_To_Integer_BeyondRange
+    // `af128`, `Format(D)`). Up to 1.8e16 ms it formats: 922337203685478 ms, 3e15 ms and 5000000000 hours (types/lt-datetime/
+    // Evaluate.al:640-670; D_Duration.al:421-443 `big_number`). Other values above 1.8e16 ms, that value with another format and a
+    // negative Duration below -922337203685477 ms (the largest .NET TimeSpan) are not pinned.
+    if ms == 9_223_372_028_264_841_218 && standard == 0 {
         return Err(FormatFail::Error {
             message: "Arithmetic operation resulted in an overflow.".into(),
             code: "AL:Overflow".into(),
         });
+    }
+    if ms > 18_000_000_000_000_000 || ms < -922_337_203_685_477 {
+        return Err(FormatFail::Unsupported(format!(
+            "Format of a Duration of {ms} ms with format {standard} (not pinned)"
+        )));
     }
     match standard {
         0 | 1 => duration_format(ms, false, lang),
@@ -1787,6 +1788,30 @@ mod tests {
         assert_eq!(f2(Value::Time(1)), "000000T");
         assert_eq!(f2(Value::Time(86_400_000)), "235959.999T");
     }
+    // D_Duration.al:Duration_To_Integer_BeyondRange `af128`; types/lt-datetime/Evaluate.al:640-670.
+    #[test]
+    fn duration_overflow_only_where_pinned() {
+        use super::format_duration;
+        assert!(matches!(
+            format_duration(9_223_372_028_264_841_218, 0, 1033),
+            Err(FormatFail::Error { .. })
+        ));
+        assert!(format_duration(922_337_203_685_478, 0, 1033).is_ok());
+        assert!(format_duration(18_000_000_000_000_000, 9, 1033).is_ok());
+        for (ms, n) in [
+            (9_223_372_028_264_841_218, 9),
+            (9_223_372_028_264_841_219, 0),
+            (i64::MAX, 0),
+            (18_000_000_000_000_001, 0),
+            (-922_337_203_685_478, 0),
+        ] {
+            assert!(
+                matches!(format_duration(ms, n, 1033), Err(FormatFail::Unsupported(_))),
+                "{ms} {n}"
+            );
+        }
+    }
+
     // types/lt-ax-text-format-dates/AxLanguageFormats.al:52-163.
     #[test]
     fn month_names_and_duration_words_in_other_languages() {

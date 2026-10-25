@@ -63,13 +63,17 @@ enum Parsed {
 }
 
 /// A Duration as `Evaluate` reads it (types/lt-datetime/Evaluate.al:380-447 Duration_Evaluate, :566-605 BT_Duration_UnitAbbreviations,
-/// :640-670 BT_Duration_BeyondTimeSpan; types/lt-filter-enum-relation-duration-guid/D_Duration.al:421-443). Formats 0 to 3: the empty
-/// text is 0; a plain number counts hours (`1500` is 62 days 12 hours, `1.5` 90 minutes, `-1500` and numbers beyond an Integer too);
-/// otherwise terms of a number and a unit in any order and case, with or without a blank between them: `day(s)`/`d`, `hour(s)`/`h`,
-/// `minute(s)`/`min`/`m`, `second(s)`/`sec`/`s`, `millisecond(s)`/`milli`/`millis`; a fraction except of milliseconds; a minus
-/// before the first and only term. A unit given twice, `mins`, `ms`, `week`, a fraction of milliseconds and a text that starts with
-/// no number are rejected. Format 9 reads the form Format 9 gives (`P0DT1H30M0.0S`) and rejects any text that does not start with
-/// `P`. Other texts are not pinned.
+/// :640-670 BT_Duration_BeyondTimeSpan; types/lt-filter-enum-relation-duration-guid/D_Duration.al:421-443). Only the pinned forms are
+/// read; every other text is refused.
+/// - Format 0: the empty text is 0; a plain whole number counts hours (`1500` is 62 days 12 hours, `-1500`, numbers beyond an
+///   Integer), and so does an unsigned decimal (`1.5` is 90 minutes). Otherwise terms of a number and a unit, in any order, with or
+///   without a blank between them (`1h`, `2days 4hours`): the units spelled `day`, `days`, `d`, `D`, `hour`, `hours`, `h`, `HOUR`,
+///   `minute`, `minutes`, `min`, `m`, `second`, `seconds`, `sec`, `s`, `milliseconds`, `milli`, `millis`; a fraction of hours and of
+///   seconds (`1.5 hours`, `3.7 seconds`); a minus before a single hour term (`-1 hour`). Rejected: the same unit word twice
+///   (`1 hour 1 hour`), the words `mins`, `ms` and `week`, a fraction of milliseconds, and a text of lower-case letters only (`abc`).
+/// - Formats 1 to 3: a plain unsigned whole number, read as with format 0.
+/// - Format 9: the form Format 9 gives (`P0DT1H30M0.0S`), unsigned. Rejected: the empty text, a text that starts with a digit or
+///   with `-` and a digit, and a text of lower-case letters only.
 fn duration(text: &str, number: i64) -> Result<Parsed, Signal> {
     let refuse = || {
         unsupported(format!(
@@ -82,61 +86,75 @@ fn duration(text: &str, number: i64) -> Result<Parsed, Signal> {
         }
         i64::try_from(d.mantissa() / 10i128.pow(d.scale())).ok()
     };
-    if number == 9 {
-        let (neg, body) = match text.strip_prefix('-') {
-            Some(r) => (true, r),
-            None => (false, text),
-        };
-        let Some(body) = body.strip_prefix('P') else {
-            return Ok(Parsed::Rejected);
-        };
-        let parse = || -> Option<Decimal> {
-            let (d, rest) = body.split_once("DT")?;
-            let (h, rest) = rest.split_once('H')?;
-            let (m, rest) = rest.split_once('M')?;
-            let sec = rest.strip_suffix('S')?;
-            let all = |t: &str| !t.is_empty() && t.bytes().all(|b| b.is_ascii_digit());
-            let (whole, frac) = sec.split_once('.').unwrap_or((sec, "0"));
-            if !(all(d) && all(h) && all(m) && all(whole) && all(frac)) {
-                return None;
-            }
-            let n = |t: &str| t.parse::<Decimal>().ok();
-            Some(
-                n(d)? * Decimal::from(86_400_000)
-                    + n(h)? * Decimal::from(3_600_000)
-                    + n(m)? * Decimal::from(60_000)
-                    + n(&format!("{whole}.{frac}"))? * Decimal::from(1000),
-            )
-        };
-        let Some(ms) = parse().and_then(ms_of) else {
-            return refuse();
-        };
-        return Ok(Parsed::Value(Value::Duration(if neg { -ms } else { ms })));
-    }
-    if text.is_empty() {
-        return Ok(Parsed::Value(Value::Duration(0)));
-    }
-    let is_number = |t: &str| {
-        let t = t.strip_prefix('-').unwrap_or(t);
-        let (w, f) = t.split_once('.').unwrap_or((t, "0"));
-        !w.is_empty() && !f.is_empty() && w.bytes().all(|b| b.is_ascii_digit()) && f.bytes().all(|b| b.is_ascii_digit())
-    };
-    if is_number(text) {
-        let Some(ms) = text
+    let digits = |t: &str| !t.is_empty() && t.bytes().all(|b| b.is_ascii_digit());
+    let lower_letters = |t: &str| !t.is_empty() && t.bytes().all(|b| b.is_ascii_lowercase());
+    let hours = |t: &str| -> Result<Parsed, Signal> {
+        match t
             .parse::<Decimal>()
             .ok()
             .and_then(|d| d.checked_mul(Decimal::from(3_600_000)))
             .and_then(ms_of)
-        else {
-            return refuse();
-        };
-        return Ok(Parsed::Value(Value::Duration(ms)));
+        {
+            Some(ms) => Ok(Parsed::Value(Value::Duration(ms))),
+            None => refuse(),
+        }
+    };
+    if number == 9 {
+        if let Some(body) = text.strip_prefix('P') {
+            let parse = || -> Option<Decimal> {
+                let (d, rest) = body.split_once("DT")?;
+                let (h, rest) = rest.split_once('H')?;
+                let (m, rest) = rest.split_once('M')?;
+                let sec = rest.strip_suffix('S')?;
+                let (whole, frac) = sec.split_once('.').unwrap_or((sec, "0"));
+                if !(digits(d) && digits(h) && digits(m) && digits(whole) && digits(frac)) {
+                    return None;
+                }
+                let n = |t: &str| t.parse::<Decimal>().ok();
+                Some(
+                    n(d)? * Decimal::from(86_400_000)
+                        + n(h)? * Decimal::from(3_600_000)
+                        + n(m)? * Decimal::from(60_000)
+                        + n(&format!("{whole}.{frac}"))? * Decimal::from(1000),
+                )
+            };
+            return match parse().and_then(ms_of) {
+                Some(ms) => Ok(Parsed::Value(Value::Duration(ms))),
+                None => refuse(),
+            };
+        }
+        let first_digit = |t: &str| t.as_bytes().first().is_some_and(u8::is_ascii_digit);
+        let rejected = text.is_empty()
+            || first_digit(text)
+            || text.strip_prefix('-').is_some_and(first_digit)
+            || (lower_letters(text) && !text.starts_with('p'));
+        return if rejected { Ok(Parsed::Rejected) } else { refuse() };
+    }
+    if number != 0 {
+        // Formats 1 to 3: `1500` only (Evaluate.al:440-446).
+        return if digits(text) { hours(text) } else { refuse() };
+    }
+    if text.is_empty() {
+        return Ok(Parsed::Value(Value::Duration(0)));
+    }
+    if digits(text.strip_prefix('-').unwrap_or(text)) {
+        return hours(text);
+    }
+    if let Some((w, f)) = text.split_once('.') {
+        if digits(w) && digits(f) {
+            return hours(text);
+        }
+    }
+    if lower_letters(text) {
+        return Ok(Parsed::Rejected);
     }
     let b = text.as_bytes();
     let mut i = 0;
     let mut total = Decimal::ZERO;
-    let mut seen: Vec<i64> = Vec::new();
+    let mut words: Vec<&str> = Vec::new();
+    let mut units: Vec<i64> = Vec::new();
     let mut negative = false;
+    let mut rejected = false;
     let mut terms = 0;
     while i < b.len() {
         while b.get(i) == Some(&b' ') {
@@ -157,13 +175,14 @@ fn duration(text: &str, number: i64) -> Result<Parsed, Signal> {
             i += 1;
         }
         if start == i {
-            return if terms == 0 && !negative && b[i].is_ascii_alphabetic() {
-                Ok(Parsed::Rejected)
-            } else {
-                refuse()
-            };
+            return refuse();
         }
-        let Ok(n) = text[start..i].parse::<Decimal>() else {
+        let num = &text[start..i];
+        let (w, f) = num.split_once('.').unwrap_or((num, "0"));
+        if !digits(w) || !digits(f) {
+            return refuse();
+        }
+        let Ok(n) = num.parse::<Decimal>() else {
             return refuse();
         };
         while b.get(i) == Some(&b' ') {
@@ -173,25 +192,43 @@ fn duration(text: &str, number: i64) -> Result<Parsed, Signal> {
         while b.get(i).is_some_and(u8::is_ascii_alphabetic) {
             i += 1;
         }
-        let unit = text[ustart..i].to_ascii_lowercase();
-        let per: i64 = match unit.as_str() {
-            "day" | "days" | "d" => 86_400_000,
-            "hour" | "hours" | "h" => 3_600_000,
+        let word = &text[ustart..i];
+        let per: i64 = match word {
+            "day" | "days" | "d" | "D" => 86_400_000,
+            "hour" | "hours" | "h" | "HOUR" => 3_600_000,
             "minute" | "minutes" | "min" | "m" => 60_000,
             "second" | "seconds" | "sec" | "s" => 1000,
-            "millisecond" | "milliseconds" | "milli" | "millis" => 1,
-            "mins" | "ms" | "week" => return Ok(Parsed::Rejected),
+            "milliseconds" | "milli" | "millis" => 1,
+            "mins" | "ms" | "week" => {
+                rejected = true;
+                terms += 1;
+                continue;
+            }
             _ => return refuse(),
         };
-        if seen.contains(&per) || (per == 1 && !n.fract().is_zero()) {
-            return Ok(Parsed::Rejected);
+        let fraction = !n.fract().is_zero();
+        if fraction && matches!(per, 86_400_000 | 60_000) {
+            return refuse();
         }
-        seen.push(per);
+        if fraction && per == 1 {
+            rejected = true;
+        }
+        if words.contains(&word) {
+            rejected = true;
+        } else if units.contains(&per) {
+            // The same unit in another spelling (`1 h 1 hour`) is not pinned.
+            return refuse();
+        }
+        words.push(word);
+        units.push(per);
         terms += 1;
         total += n * Decimal::from(per);
     }
-    if terms > 1 && negative {
+    if negative && (terms > 1 || units.as_slice() != [3_600_000]) {
         return refuse();
+    }
+    if rejected {
+        return Ok(Parsed::Rejected);
     }
     let Some(ms) = ms_of(total) else {
         return refuse();
@@ -1959,5 +1996,27 @@ mod tests {
         assert_eq!(ms("P0DT1H30M0.0S", 9), Some(5_400_000));
         assert_eq!(ms("1500", 9), None);
         assert_eq!(ms("", 9), None);
+        assert_eq!(ms("-1500", 9), None);
+        assert_eq!(ms("2 days 3 h 4 min 5 sec 6 ms", 0), None);
+        assert_eq!(ms("1500", 2), Some(1500 * 3_600_000));
+        // Forms no corpus test pins are refused.
+        for (t, n) in [
+            ("1 Hour", 0),
+            ("1 millisecond", 0),
+            ("1.5 days", 0),
+            ("1.5 minutes", 0),
+            ("-1 minute", 0),
+            ("-1 hour 2 minutes", 0),
+            ("-1.5", 0),
+            ("1 h 1 hour", 0),
+            ("5 ms 1 foo", 0),
+            ("hour 1", 0),
+            ("Abc", 0),
+            ("1 hour", 1),
+            ("-P0DT1H0M0.0S", 9),
+            ("Abc", 9),
+        ] {
+            assert!(matches!(duration(t, n), Err(Signal::Unsupported(_))), "{t} {n}");
+        }
     }
 }

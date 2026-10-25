@@ -285,13 +285,12 @@ pub fn format_with_field_places(
             && pieces.get(i + 2).is_some_and(|(c, t)| *c && *t == "Filler Character,0")
     };
     for (i, &(is_code, text)) in pieces.iter().enumerate() {
-        // At the start of the string any filler character changes nothing on a date or time: `<Filler Character,#><Day,4>`
+        // At the start of the string the filler characters `#` and `*` change nothing on a date or time: `<Filler Character,#><Day,4>`
         // is `0005` on a Date, `<Filler Character,*><Hours12,4>` `   9` on a Time (types/lt-aj-probes/AjScalars.al:269-270,
-        // 292, 323).
+        // 292, 323). Other characters are not pinned.
         if is_code
             && temporal
-            && text.starts_with("Filler Character,")
-            && text.chars().count() == 18
+            && matches!(text, "Filler Character,#" | "Filler Character,*")
             && i == 1
             && pieces[0].1.is_empty()
         {
@@ -802,30 +801,35 @@ fn code(v: &Value, code: &str, numeric: Option<&Numeric>, ctx: &dyn FormatCtx) -
             }
         }
     }
-    // Widths on dates and times (types/lt-aj-probes/AjScalars.al:225-327): `<Day,N>` and `<Month,N>` of a Date or DateTime pad
-    // with zeros (`<Day,4>` `0005`, `<Month,4>` `0003`; `<Day,3>` `005`: types/lt-datetime/Format.al:142,173); the clock codes of a
-    // DateTime pad with zeros (`<Hours24,5>` `00009`, `<Minutes,5>` `00007`, `<Hours12,4>` `0009`), those of a Time pad the hour
-    // with blanks and the minutes with zeros (`    9`, `00007`, `   9`). The hour codes on a Date and the day code on a Time are
-    // the invalid-format error. Widths of 2 to 5 follow these rules; others are not pinned.
+    // Widths on dates and times (types/lt-aj-probes/AjScalars.al:225-327): `<Day,4>` and `<Month,4>` of a Date or DateTime pad
+    // with zeros (`0005`, `0003`; `<Day,3>` of a Date `005`: types/lt-datetime/Format.al:142,173); the clock codes of a DateTime pad
+    // with zeros (`<Hours24,5>` `00009`, `<Minutes,5>` `00007`, `<Hours12,4>` `0009`), those of a Time pad the hour with blanks and
+    // the minutes with zeros (`    9`, `00007`, `   9`). `<Hours24,5>` and `<Hours12,4>` on a Date and `<Day,4>` on a Time are the
+    // invalid-format error (`<Day,2>` on a Time too: the template `<Filler Character,0><Day,2><Month,4><Year4>` raises,
+    // AjScalars.al:302,317). Only these code, width and type triples are pinned; the others fall through to the arms below
+    // (width 2) or are refused there.
     if let Some((base, w)) = code.split_once(',') {
-        let w = w.trim().parse::<usize>().ok().filter(|w| (2..=5).contains(w));
+        let w = w.trim().parse::<usize>().ok();
         match (v, base, w, date, clock) {
-            (Value::Date(..), "Hours24" | "Hours12", ..) | (Value::Time(_), "Day", ..) => {
+            (Value::Date(..), "Hours24", Some(5), ..)
+            | (Value::Date(..), "Hours12", Some(4), ..)
+            | (Value::Time(_), "Day", Some(2 | 4), ..) => {
                 return Err(INVALID_FORMAT_MARK.to_string());
             }
-            (Value::Date(..) | Value::DateTime(_), "Day", Some(w), Some((_, _, d)), _) if w <= 4 => {
+            (Value::Date(..), "Day", Some(w @ (3 | 4)), Some((_, _, d)), _)
+            | (Value::DateTime(_), "Day", Some(w @ 4), Some((_, _, d)), _) => {
                 return Ok(format!("{d:0w$}"));
             }
-            (Value::Date(..) | Value::DateTime(_), "Month", Some(w), Some((_, m, _)), _) if w <= 4 => {
+            (Value::Date(..) | Value::DateTime(_), "Month", Some(w @ 4), Some((_, m, _)), _) => {
                 return Ok(format!("{m:0w$}"));
             }
-            (Value::DateTime(_), "Hours24", Some(w), _, Some(ms)) => return Ok(format!("{:0w$}", ms / 3_600_000)),
-            (Value::DateTime(_), "Hours12", Some(w), _, Some(ms)) => return Ok(format!("{:0w$}", hour12(ms))),
-            (Value::DateTime(_) | Value::Time(_), "Minutes", Some(w), _, Some(ms)) => {
+            (Value::DateTime(_), "Hours24", Some(w @ 5), _, Some(ms)) => return Ok(format!("{:0w$}", ms / 3_600_000)),
+            (Value::DateTime(_), "Hours12", Some(w @ 4), _, Some(ms)) => return Ok(format!("{:0w$}", hour12(ms))),
+            (Value::DateTime(_) | Value::Time(_), "Minutes", Some(w @ 5), _, Some(ms)) => {
                 return Ok(format!("{:0w$}", ms / 60_000 % 60));
             }
-            (Value::Time(_), "Hours24", Some(w), _, Some(ms)) if w > 2 => return Ok(format!("{:>w$}", ms / 3_600_000)),
-            (Value::Time(_), "Hours12", Some(w), _, Some(ms)) if w > 2 => return Ok(format!("{:>w$}", hour12(ms))),
+            (Value::Time(_), "Hours24", Some(w @ 5), _, Some(ms)) => return Ok(format!("{:>w$}", ms / 3_600_000)),
+            (Value::Time(_), "Hours12", Some(w @ 4), _, Some(ms)) => return Ok(format!("{:>w$}", hour12(ms))),
             _ => {}
         }
     }
@@ -879,6 +883,10 @@ fn code(v: &Value, code: &str, numeric: Option<&Numeric>, ctx: &dyn FormatCtx) -
         // DateFuncs.al:427). The code on a DateTime and other widths are not pinned.
         ("Week" | "Week,2", Some(_), _) if matches!(v, Value::Date(..)) => {
             let week = iso_week(day_no.unwrap_or(1));
+            // The pinned weeks are 1, 3, 10, 19, 28, 40, 52 and 53; the ISO rule for the others is an assumption.
+            if !matches!(week, 1 | 3 | 10 | 19 | 28 | 40 | 52 | 53) {
+                crate::assumptions::assume(crate::assumptions::Assumption::FormatWeekCodeIso);
+            }
             if code == "Week,2" {
                 format!("{week:02}")
             } else {
@@ -888,7 +896,12 @@ fn code(v: &Value, code: &str, numeric: Option<&Numeric>, ctx: &dyn FormatCtx) -
         // `<Weekday>` is the ISO day number, Monday 1 to Sunday 7: 2024-01-17 is `3` (types/lt-datetime/DateFuncs.al:415,425),
         // 2021-01-03 `7` (FormatWeekCodeIso.al:121,128). On a DateTime it is not pinned.
         ("Weekday", Some(_), _) if matches!(v, Value::Date(..)) => {
-            format!("{}", (day_no.unwrap_or(1) - 1).rem_euclid(7) + 1)
+            let weekday = (day_no.unwrap_or(1) - 1).rem_euclid(7) + 1;
+            // Wednesday 3 and Sunday 7 are pinned; the other days follow the same ISO numbering on an assumption.
+            if !matches!(weekday, 3 | 7) {
+                crate::assumptions::assume(crate::assumptions::Assumption::FormatWeekCodeIso);
+            }
+            format!("{weekday}")
         }
         // `<Quarter>` is 1 to 4, a closing date shows the quarter of its day, `<quarter>` is read too
         // (types/lt-quarter-duration/FormatQuarterDuration.al:30-110). On a DateTime it is not pinned.
@@ -1099,6 +1112,17 @@ mod tests {
             (day.clone(), "<Seconds,2>"),
             (day.clone(), "<Day,5>"),
             (day.clone(), "<Year4"),
+            // Widths no corpus test pins (AjScalars.al:225-327 pins 3 and 4 for the day, 4 for the month, 5 and 4 for the hours).
+            (day.clone(), "<Hours24,2>"),
+            (day.clone(), "<Hours12,5>"),
+            (day.clone(), "<Month,3>"),
+            (day.clone(), "<Filler Character,x><Day,4>"),
+            (Value::DateTime(1), "<Day,3>"),
+            (Value::DateTime(1), "<Hours24,4>"),
+            (Value::DateTime(1), "<Minutes,4>"),
+            (Value::Time(1), "<Hours24,3>"),
+            (Value::Time(1), "<Hours12,5>"),
+            (Value::Time(1), "<Day,3>"),
             (Value::Integer(1), "<Standard Format,x>"),
         ] {
             assert!(matches!(fmt(v, f), Err(Signal::Unsupported(_))), "{f}");
@@ -1258,6 +1282,15 @@ mod tests {
         assert_eq!(text(fmt(d(2021, 1, 3), "<Week>-<Weekday>")), "53-7");
         assert_eq!(text(fmt(d(2024, 1, 17), "<Weekday>")), "3");
         assert_eq!(text(fmt(d(2024, 1, 17), "<Week>")), "3");
+        // A week and a weekday no corpus test pins are flagged passes.
+        use crate::assumptions::{Assumption, take_hits};
+        take_hits();
+        assert_eq!(text(fmt(d(2022, 2, 14), "<Week>")), "7");
+        assert_eq!(take_hits(), vec![Assumption::FormatWeekCodeIso]);
+        assert_eq!(text(fmt(d(2022, 2, 14), "<Weekday>")), "1");
+        assert_eq!(take_hits(), vec![Assumption::FormatWeekCodeIso]);
+        assert_eq!(text(fmt(d(2022, 3, 7), "<Week,2>")), "10");
+        assert!(take_hits().is_empty());
         assert_eq!(text(fmt(d(2026, 5, 15), "<Quarter>/<Year>")), "2/26");
         assert_eq!(text(fmt(d(2026, 5, 15), "<quarter>")), "2");
         assert_eq!(text(fmt(d(2026, 5, 15), "<Quarter><Quarter>")), "22");

@@ -83,6 +83,7 @@ mod ternary_args;
 mod text_append;
 mod text_methods;
 mod text_scans;
+mod textconst_languages;
 mod tree_free;
 mod typed_ops;
 mod user_gaps_evaluate;

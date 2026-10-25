@@ -779,6 +779,8 @@ const REGISTRY: &[(&str, NativeFn)] = &[
         }
         unsupported("System.TranslatedText with other arguments than a value, an app id and a text")
     }),
+    // A TextConst whose text depends on the language in force (language code, text, ... in declaration order).
+    ("System.TextConstText#1", |c, _, a| textconst_text(c.language(), a)),
     // An interface assigned from another interface variable: one that holds no implementation raises
     // (codeunit/lt-enums-interfaces/OjT71047.al:250-251, Uninitialized_AssignedFromUninitialized `af224`).
     ("Interface.AssertAssigned#1", |_, _, a| match a.first() {
@@ -924,6 +926,7 @@ pub const INVENTED_IDS: &[&str] = &[
     "Text.MaxStrLenOfVarParameter#1",
     "InStream.OwnerOutOfScope#1",
     "System.TranslatedText#1",
+    "System.TextConstText#1",
 ];
 
 /// Every name that gets a [`BuiltinId`]: the catalog's overloads of every version, the registered natives
@@ -2128,6 +2131,50 @@ fn strsubstno(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> R
     Ok(Value::Text(substitute_fields(&template, &args[1..], ctx)?.into()))
 }
 
+/// The text a TextConst reads in language `language`, from its language codes and texts `args` in declaration order:
+/// - the text of the language in force (misc/lt-probe-requests-140/P140TextConstLang.al:20-56, P140_ReadAsText_Deu: `DeuFra`
+///   reads 'Hallo' in 1031; :58-91, P140_ReadAsText_Fra: 'Bonjour' in 1036; :163-191, BM_TextConst_Methods: an ENU and DEU
+///   TextConst reads its DEU text in 1031);
+/// - else the ENU text (P140TextConstLang.al:58-91: `EnuEmptyDeu` reads '' in 1036; types/lt-variant/VaTTextConst.al:
+///   TextConst_To_Text_Basics);
+/// - else the text of its only language (P140TextConstNoEnu.al:23-71, P140_ReadAsText_DefaultLanguage: `OnlyFra` reads
+///   'Seulement'; P140TextConstLang.al:20-56: `OnlyFra` in 1031);
+/// - else, measured only for DEU declared first and before the others in alphabetical order, the first text (P140TextConstNoEnu.al:
+///   23-71: `DeuFra`, DEU then FRA, reads 'Hallo' in 1033). Whether BC takes the first, the alphabetically first or the DEU text
+///   is not pinned, so other orders are refused (docs/probes-needed.md "TextConst").
+///
+/// Only the codes ENU, DEU and FRA map to a language id here: in a language other than those, a TextConst that has a code
+/// of another language is refused, as that code could be the language in force.
+fn textconst_text(language: i32, args: &[Value]) -> Result<Value, Signal> {
+    const KNOWN: [(&str, i32); 3] = [("ENU", 1033), ("DEU", 1031), ("FRA", 1036)];
+    let mut texts = Vec::new();
+    for pair in args.chunks(2) {
+        let [Value::Text(code), Value::Text(text)] = pair else {
+            return unsupported("System.TextConstText with arguments other than pairs of a language code and a text");
+        };
+        texts.push((code.to_string(), text.clone()));
+    }
+    let id = |code: &str| KNOWN.iter().find(|(c, _)| *c == code).map(|(_, id)| *id);
+    if let Some((_, t)) = texts.iter().find(|(c, _)| id(c) == Some(language)) {
+        return Ok(Value::Text(t.clone()));
+    }
+    if !KNOWN.iter().any(|(_, id)| *id == language) && texts.iter().any(|(c, _)| id(c).is_none()) {
+        return unsupported(&format!(
+            "a TextConst with a text of a language code other than ENU, DEU and FRA, read in language {language} (which code is that language is not mapped)"
+        ));
+    }
+    if let Some((_, t)) = texts.iter().find(|(c, _)| c == "ENU") {
+        return Ok(Value::Text(t.clone()));
+    }
+    match texts.as_slice() {
+        [(_, t)] => Ok(Value::Text(t.clone())),
+        [(first, t), rest @ ..] if first == "DEU" && rest.iter().all(|(c, _)| c.as_str() > "DEU") => Ok(Value::Text(t.clone())),
+        _ => unsupported(
+            "a TextConst with no text in the language in force and no ENU text, whose first language is not DEU: which of its texts BC reads is not pinned (docs/probes-needed.md)",
+        ),
+    }
+}
+
 /// `UpperCase` and `LowerCase` follow `GlobalLanguage` for Turkish (1055) and Azerbaijani (1068): `i` becomes the dotted `İ` and `I`
 /// the dotless `ı`; every other letter maps as in the default language, and Greek (1032), German (1031) and Lithuanian (1063) map as
 /// the default too (text/lt-text-functions/CaseConv.Codeunit.al:145-180, LT_BU_CaseConv_TurkishGreekLanguage; :218-276,
@@ -2715,6 +2762,7 @@ pub(crate) mod tests {
             "Variant.IntoOption#1",
             "InStream.OwnerOutOfScope#1",
             "System.TranslatedText#1",
+            "System.TextConstText#1",
         ];
         for id in registered_ids().into_iter().filter(|id| !derived.contains(id)) {
             assert!(ids.iter().any(|i| i == id), "{id} is not a catalog overload id");

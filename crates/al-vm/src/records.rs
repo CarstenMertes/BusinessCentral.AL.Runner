@@ -3659,8 +3659,16 @@ impl Session {
                                 ));
                             }
                             if self.global_language == 1033 && args.len() <= 2 {
+                                let failing = parsed
+                                    .as_ref()
+                                    .err()
+                                    .and_then(|e| al_builtins::filter::not_evaluated_value(e))
+                                    .unwrap_or_default()
+                                    .to_string();
                                 if let Some(fixed) =
-                                    self.repair_word_filter_text(event, param, &text, &|t| parse(t).is_ok())?
+                                    self.repair_word_filter_text(event, param, &text, &failing, &|t| {
+                                        parse(t).map(|_| ())
+                                    })?
                                 {
                                     parsed = parse(&fixed);
                                 }

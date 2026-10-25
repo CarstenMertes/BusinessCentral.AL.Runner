@@ -136,6 +136,11 @@ fn not_evaluated(ty: &str, text: &str) -> String {
     format!("{NOT_EVALUATED}{ty}\t{text}")
 }
 
+/// The value text of an error `not_evaluated` made, `None` for another error.
+pub fn not_evaluated_value(e: &str) -> Option<&str> {
+    e.strip_prefix(NOT_EVALUATED)?.split_once('\t').map(|(_, v)| v)
+}
+
 /// Whether `text` is one word of ASCII letters, the only text a Decimal, Time or DateTime filter is pinned to refuse with the
 /// evaluate error (PtObserve.al: `abc`).
 pub fn letters_only(text: &str) -> bool {
@@ -165,11 +170,25 @@ fn decimal_filter_text(text: &str) -> Option<Result<rust_decimal::Decimal, ()>> 
     if let Ok(d) = text.parse() {
         return Some(Ok(d));
     }
-    if letters_or_hyphens(text) || text == "*" || digit_groups(text, ';', 2) || digit_groups(text, '.', 3) {
+    if letters_or_hyphens(text)
+        || text == "*"
+        || digit_groups(text, ';', 2)
+        || digit_groups(text, '.', 3)
+        || spaced_number(text)
+    {
         return Some(Err(()));
     }
     if digit_groups(text, ',', 2) {
         return text.replace(',', "").parse().ok().map(Ok);
+    }
+    // A thousands comma before a fraction: `1,234.5` is 1234.5 (events/lt-bd-filter-events/BdFilterEvents.al:BdFilter_Decimal_8).
+    if let Some((int, frac)) = text.split_once('.') {
+        let digits = |p: &str| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit());
+        if let Some((th, rest)) = int.split_once(',') {
+            if digits(th) && th.len() <= 3 && rest.len() == 3 && digits(rest) && digits(frac) {
+                return text.replace(',', "").parse().ok().map(Ok);
+            }
+        }
     }
     // One exponent digit, the pinned `1e3`; a larger exponent is not pinned.
     if digit_groups(text, 'e', 2) && text.split('e').nth(1).is_some_and(|e| e.len() == 1) {
@@ -187,6 +206,57 @@ fn is_noon_text(t: &str) -> bool {
         && t[3..5].parse::<u32>().is_ok_and(|m| m < 60)
         && t[6..8].parse::<u32>().is_ok_and(|s| s < 60)
         && t[3..5].bytes().chain(t[6..8].bytes()).all(|c| c.is_ascii_digit())
+}
+
+/// Two digit groups split by one blank (`1 000`, `1 2`) or a minus sign, a blank and digits (`- 1`): texts an Integer or
+/// Decimal filter is pinned to refuse with the evaluate error (events/lt-bd-filter-events/BdFilterEvents.al:BdFilter_Int_4,
+/// BdFilter_Decimal_6, BdFilter_Decimal_7). Other texts with blank space in them are not pinned.
+pub fn spaced_number(text: &str) -> bool {
+    let digits = |p: &str| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit());
+    match text.split_once(' ') {
+        Some((a, b)) => (digits(a) || a == "-") && digits(b),
+        None => false,
+    }
+}
+
+/// The Time a filter text names in an English session, for the forms the corpus pins (events/lt-bd-filter-events/
+/// BdFilterEvents.al:BdFilter_Time_1 to _10): an hour of one digit (`1`), a digit, a dot and a digit for the hour and the
+/// minutes (`1.5` is 1:05), `H:MM` (`9:00`), `HH:MM:SS` (`13:00:00`, `09:05:07`), `12:MM:SS PM`, four digits for the hour and the
+/// minutes (`1300`) and six with the seconds (`120000`). `None` for any other text, and for an hour, minute or second out of range.
+fn time_filter_text(t: &str) -> Option<Value> {
+    let ctx = DATE_CONTEXT.with(std::cell::Cell::get)?;
+    if ctx.language != 1033 {
+        return None;
+    }
+    let num = |p: &str, len: usize| -> Option<i64> {
+        (p.len() == len && p.bytes().all(|b| b.is_ascii_digit()))
+            .then(|| p.parse().ok())
+            .flatten()
+    };
+    let (h, m, s) = if let Some(rest) = t.strip_suffix(" PM") {
+        // Only noon is pinned with PM (BdFilter_Time_7).
+        match rest.split(':').collect::<Vec<_>>()[..] {
+            ["12", m, s] => (12, num(m, 2)?, num(s, 2)?),
+            _ => return None,
+        }
+    } else if t.contains(':') {
+        match t.split(':').collect::<Vec<_>>()[..] {
+            [h, m] => (num(h, 1)?, num(m, 2)?, 0),
+            [h, m, s] => (num(h, 2)?, num(m, 2)?, num(s, 2)?),
+            _ => return None,
+        }
+    } else if let Some((h, m)) = t.split_once('.') {
+        (num(h, 1)?, num(m, 1)?, 0)
+    } else {
+        match t.len() {
+            // `0` is not pinned: it may name the undefined time.
+            1 if t != "0" => (num(t, 1)?, 0, 0),
+            4 => (num(&t[0..2], 2)?, num(&t[2..4], 2)?, 0),
+            6 => (num(&t[0..2], 2)?, num(&t[2..4], 2)?, num(&t[4..6], 2)?),
+            _ => return None,
+        }
+    };
+    (h < 24 && m < 60 && s < 60).then_some(Value::Time(((h * 60 + m) * 60 + s) * 1000 + 1))
 }
 
 /// What the text of a Date filter needs from the session: today, the work date and the language of the messages.
@@ -488,7 +558,7 @@ impl Parser<'_> {
             // Any text that is no Integer: letters, a range end `x`, `1.5`, a number past the range (RcAFilters.al:392-414, PtObserve.al:277).
             // A text with blank space in it is not pinned.
             T::Integer => Value::Integer(text.parse().map_err(|_| {
-                if text.contains(char::is_whitespace) {
+                if text.contains(char::is_whitespace) && !spaced_number(&text) {
                     format!("`{text}` is not an Integer")
                 } else {
                     not_evaluated("Integer", &text)
@@ -517,6 +587,9 @@ impl Parser<'_> {
                 let t = text.trim();
                 let (m, s) = (t[3..5].parse::<i64>().unwrap_or(0), t[6..8].parse::<i64>().unwrap_or(0));
                 Value::Time(12 * 3_600_000 + m * 60_000 + s * 1000 + 1)
+            }
+            T::Time if time_filter_text(text.trim()).is_some() => {
+                time_filter_text(text.trim()).unwrap_or(Value::Time(0))
             }
             T::DateTime if letters_only(text.trim()) => return Err(not_evaluated("DateTime", text.trim())),
             // Format(false) = 'No' is used as a filter value in the corpus. The words BC accepts,
@@ -702,7 +775,9 @@ impl Parser<'_> {
                         Some(h) => Some(self.typed(h)?),
                         None => None,
                     };
-                    if self.date()
+                    // An Integer range with the same two ends shows as `5..5` too (events/lt-bd-filter-events/
+                    // BdFilterEvents.al:BdFilter_Int_8 m3, the text a MakeIntFilter subscriber repaired to `5..5`).
+                    if (self.date() || matches!(self.ty, crate::value::RtType::Integer))
                         && hi
                             .as_ref()
                             .is_some_and(|h| compare(h, &lo).ok() == Some(Ordering::Equal))
@@ -935,6 +1010,52 @@ mod tests {
             let cd = parse_filter("CD", &[], &T::Date).expect("the closing date of today");
             assert!(cd.matches(&Value::Date(today, true)) && !cd.matches(&Value::Date(today, false)));
         });
+    }
+
+    /// events/lt-bd-filter-events/BdFilterEvents.al: the Time texts an English session reads, the Integer and Decimal texts with a
+    /// blank that raise the evaluate error, `1,234.5`, and `5..5` on an Integer showing both ends.
+    #[test]
+    fn bd_filter_texts_for_time_integer_and_decimal() {
+        use crate::value::RtType as T;
+        let at = |h: i64, m: i64, s: i64| Value::Time(((h * 60 + m) * 60 + s) * 1000 + 1);
+        assert!(
+            parse_filter("1", &[], &T::Time).is_err(),
+            "no session language: refused"
+        );
+        let ctx = DateFilterContext {
+            today: 1,
+            work_date: 1,
+            language: 1033,
+        };
+        with_date_context(ctx, || {
+            for (text, v) in [
+                ("1", at(1, 0, 0)),
+                ("1.5", at(1, 5, 0)),
+                ("9:00", at(9, 0, 0)),
+                ("13:00:00", at(13, 0, 0)),
+                ("09:05:07", at(9, 5, 7)),
+                ("12:00:00 PM", at(12, 0, 0)),
+                ("1300", at(13, 0, 0)),
+                ("120000", at(12, 0, 0)),
+            ] {
+                let f = parse_filter(text, &[], &T::Time).unwrap_or_else(|e| panic!("{text}: {e}"));
+                assert!(f.matches(&v), "{text}");
+            }
+            for text in ["0", "25:00:00", "1:00:00 PM", "12345"] {
+                let e = parse_filter(text, &[], &T::Time).expect_err(text);
+                assert!(!e.starts_with(NOT_EVALUATED), "{text} stays refused: {e}");
+            }
+        });
+        for (text, ty) in [("1 2", T::Integer), ("1 000", T::Decimal), ("- 1", T::Decimal)] {
+            let e = parse_filter(text, &[], &ty).expect_err(text);
+            assert_eq!(not_evaluated_value(&e), Some(text), "{text}");
+        }
+        let d = parse_filter("1,234.5", &[], &T::Decimal).expect("a thousands comma");
+        assert!(d.matches(&Value::Decimal(rust_decimal::Decimal::new(12345, 1))));
+        assert!(matches!(
+            parse_filter("5..5", &[], &T::Integer),
+            Ok(FilterExpr::RangeSame(Value::Integer(5)))
+        ));
     }
 
     /// Microsoft's Library - ERM `GetDiscountPaymentTerm` filters a DateFormula field with `<>` and the empty text: there the

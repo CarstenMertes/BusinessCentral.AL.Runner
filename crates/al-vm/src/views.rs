@@ -89,7 +89,14 @@ impl Session {
             if *t != 0 && (t - 1) % 1000 == 0 {
                 return al_builtins::format::try_format(v, 0, 0, self).map_err(Signal::Unsupported);
             }
-            return unsupported("the filter text of an undefined Time or one with milliseconds (not pinned)");
+            // A time with milliseconds shows them as standard format 1 writes it (`12:00:00.123 PM`, `>= 9:05:07.5 AM`), and a
+            // view writes it on a 24-hour clock as format 9 does (`T=FILTER(23:59:59.999)`) (events/lt-bd-filter-events/
+            // BdFilterEvents.al:BdFilter_TimeMilliseconds, BdFilter_TimeMillisecondsView).
+            if *t != 0 {
+                let standard = if iso { 9 } else { 1 };
+                return al_builtins::format::try_format(v, 0, standard, self).map_err(Signal::Unsupported);
+            }
+            return unsupported("the filter text of an undefined Time (not pinned)");
         }
         // A DateTime with milliseconds shows its seconds and milliseconds, as standard format 1 writes them
         // (errors/lt-ms-refusals-130/P130DateFilters.al:211, `03/24/24 11:59:59.999 PM`; a whole minute stays `12:00 AM`).

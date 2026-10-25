@@ -3750,12 +3750,19 @@ impl Session {
                         })));
                     }
                     // record/TestFilterTextBooleanFindContracts.al:130 (SetFilter_BooleanField_UnknownWord_Throws).
+                    // A leading blank stays in the quoted filter (misc/lt-system-functions/EvalLastError.al:501-539,
+                    // BT_Evaluate_Boolean_LeadingBlank `filter [ Da]`); a trailing one is not pinned.
                     Err(e) if e.starts_with(al_builtins::filter::INVALID_BOOLEAN) => {
                         let word = &e[al_builtins::filter::INVALID_BOOLEAN.len()..];
+                        if text.ends_with(char::is_whitespace) {
+                            return unsupported(
+                                "the error of a Boolean filter with a trailing blank (its quoted filter is not pinned)",
+                            );
+                        }
                         return Err(Signal::Error(Box::new(AlError {
                             message: format!(
                                 "The filter \"{}\" is not valid for the {} field on the {} table. The value \"{word}\" can't be evaluated into type Boolean.",
-                                text.trim(),
+                                text,
                                 self.field_caption(&t, pos),
                                 self.caption(&t)
                             ),

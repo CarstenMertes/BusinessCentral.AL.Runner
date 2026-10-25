@@ -1158,7 +1158,7 @@ fn format_duration(ms: i64, standard: i32, lang: i32) -> Result<String, FormatFa
             code: "AL:Overflow".into(),
         });
     }
-    if ms > 18_000_000_000_000_000 || ms < -922_337_203_685_477 {
+    if !(-922_337_203_685_477..=18_000_000_000_000_000).contains(&ms) {
         return Err(FormatFail::Unsupported(format!(
             "Format of a Duration of {ms} ms with format {standard} (not pinned)"
         )));

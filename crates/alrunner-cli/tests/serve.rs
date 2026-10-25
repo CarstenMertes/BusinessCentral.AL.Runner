@@ -1690,23 +1690,41 @@ fn a_summary_says_where_the_time_went_and_a_kept_baseline_does_not_carry_writes(
     let mut s = Server::start(&["--no-download", "--no-test-data", "--dep", &dep, "--cache-dir", &cache]);
     s.line();
     let mut summaries = Vec::new();
-    for entries in [None, None, Some(json!([{"id": "a", "test": "Codeunit50710."}, {"id": "b"}]))] {
+    for entries in [
+        None,
+        None,
+        Some(json!([{"id": "a", "test": "Codeunit50710."}, {"id": "b"}])),
+    ] {
         let mut req = json!({"command": "runTests", "sourcePaths": [main]});
         if let Some(e) = entries {
             req["entries"] = e;
         }
         s.send(req);
         let lines = s.until_summary();
-        let failed: Vec<&Value> = lines.iter().filter(|l| l["type"] == "test" && l["status"] != "pass").collect();
+        let failed: Vec<&Value> = lines
+            .iter()
+            .filter(|l| l["type"] == "test" && l["status"] != "pass")
+            .collect();
         assert!(failed.is_empty(), "{lines:?}");
         for e in lines.iter().filter(|l| l["type"] == "entrySummary") {
-            assert!(e["timings"]["resetMs"].is_number() && e["timings"]["wallMs"].is_number(), "{e}");
+            assert!(
+                e["timings"]["resetMs"].is_number() && e["timings"]["wallMs"].is_number(),
+                "{e}"
+            );
         }
         summaries.push(lines.last().unwrap().clone());
     }
     for summary in &summaries {
         let t = &summary["timings"];
-        for key in ["setupMs", "compileMs", "engineMs", "baselineMs", "testsMs", "coverageMs", "otherMs"] {
+        for key in [
+            "setupMs",
+            "compileMs",
+            "engineMs",
+            "baselineMs",
+            "testsMs",
+            "coverageMs",
+            "otherMs",
+        ] {
             assert!(t[key].as_f64().is_some_and(|v| v >= 0.0), "{key}: {summary}");
         }
     }

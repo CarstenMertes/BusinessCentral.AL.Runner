@@ -135,6 +135,9 @@ fn a_kept_engine_is_reset_to_what_a_new_engine_has() {
     assert!(engine.test_data.is_none());
     // What comes from the program stays.
     assert_eq!(engine.uid, uid);
-    assert_eq!(engine.compiled_codeunit(Some(50100)), fresh.compiled_codeunit(Some(50100)));
+    assert_eq!(
+        engine.compiled_codeunit(Some(50100)),
+        fresh.compiled_codeunit(Some(50100))
+    );
     assert_eq!(engine.platform_unseeded, fresh.platform_unseeded);
 }

@@ -142,7 +142,11 @@ fn request(warm: &mut Warm, dir: &std::path::Path, only: Option<Vec<(usize, u32)
     let files = [("Tests.al".to_string(), TESTS.to_string())];
     let changes: Vec<FileChange> = files
         .iter()
-        .map(|(p, t)| FileChange { app: 0, path: p, text: t })
+        .map(|(p, t)| FileChange {
+            app: 0,
+            path: p,
+            text: t,
+        })
         .collect();
     let o = opts(dir, only);
     let (rt, _) = warm
@@ -171,7 +175,13 @@ fn every_request_starts_from_the_install_rows_and_none_of_an_earlier_requests_wr
     // The first request ran the install code on an engine it built.
     assert_eq!((both.1.as_str(), both.2), ("Some(\"ran\")", false), "{both:?}");
     let mut seen = Vec::new();
-    for only in [None, Some(vec![(0, 60100)]), Some(vec![(0, 60101)]), None, Some(vec![(0, 60100)])] {
+    for only in [
+        None,
+        Some(vec![(0, 60100)]),
+        Some(vec![(0, 60101)]),
+        None,
+        Some(vec![(0, 60100)]),
+    ] {
         seen.push(request(&mut warm, dir.path(), only));
     }
     for (o, _, _) in &seen {
@@ -188,7 +198,18 @@ fn every_request_starts_from_the_install_rows_and_none_of_an_earlier_requests_wr
     // A run of one request over a compile of its own has the same outcomes.
     let (apps, kinds, m) = build();
     let o = opts(dir.path(), None);
-    let c = CorpusRuntime::compile_suites(apps, kinds, &m, &Default::default(), None, &[SuiteRun::everything()], &o)
-        .unwrap();
-    assert_eq!(outcomes(&CorpusRuntime::run_compiled(&c, None, Default::default(), &o)), both.0);
+    let c = CorpusRuntime::compile_suites(
+        apps,
+        kinds,
+        &m,
+        &Default::default(),
+        None,
+        &[SuiteRun::everything()],
+        &o,
+    )
+    .unwrap();
+    assert_eq!(
+        outcomes(&CorpusRuntime::run_compiled(&c, None, Default::default(), &o)),
+        both.0
+    );
 }

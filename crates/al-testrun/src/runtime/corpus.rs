@@ -730,7 +730,16 @@ impl CorpusRuntime {
         let baseline_key = if baseline {
             // The install baseline depends on the compile, not on which of its tests a request runs: a warm server's
             // requests over one compile share it (al-runner issue 5856). In a run of one request the two are the same.
-            baseline_key(ws, lowered, cache_report.as_ref(), suites, compiled_only, target, &dotnet, opts)
+            baseline_key(
+                ws,
+                lowered,
+                cache_report.as_ref(),
+                suites,
+                compiled_only,
+                target,
+                &dotnet,
+                opts,
+            )
         } else {
             None
         };
@@ -757,9 +766,7 @@ impl CorpusRuntime {
                 match keep {
                     // A warm server reads the file once and keeps what it holds, over the test data as far as its
                     // tests read it (al-runner issue 5856). The test data and the program must be the same.
-                    true => {
-                        crate::baseline_cache::read_kept(&cc.dir, key, &kept_backing(&engine), backed)
-                    }
+                    true => crate::baseline_cache::read_kept(&cc.dir, key, &kept_backing(&engine), backed),
                     false => crate::baseline_cache::read(&cc.dir, key).map(|(run, at)| (backed(run), at, false)),
                 }
             })
@@ -1509,7 +1516,8 @@ impl CorpusRuntime {
                 entry_ranges.push(start..list.len());
             }
             pass_times.push(PassTime {
-                reset: encode_time + std::time::Duration::from_nanos(reset_ns.load(std::sync::atomic::Ordering::Relaxed)),
+                reset: encode_time
+                    + std::time::Duration::from_nanos(reset_ns.load(std::sync::atomic::Ordering::Relaxed)),
                 wall: pass_started.elapsed(),
             });
         }

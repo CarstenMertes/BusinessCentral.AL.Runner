@@ -516,28 +516,33 @@ fn a_field_changed_since_the_fetch_is_kept_by_the_load_of_the_missing_fields() {
     assert_eq!(rn("ChangedByTransferFields"), "42|Yes|alpha|42");
 }
 
+// record/lt-outside-records/ResetClearsLoadFields.al:59 ResetThenFindFirst_NoEarlierFetch: Reset drops the request, so FindFirst
+// loads every field; :181 InitThenFindFirst_NoEarlierFetch_KeepsLoadFields: Init keeps it. Pinned, no assumption is marked.
 #[test]
-fn reset_clears_the_load_fields() {
-    // al-runner issue 5764 Q3 (reporter, real BC 28.1): SetLoadFields(Description); Reset; FindFirst loads Notes.
-    // Not pinned by the corpus yet: a registered assumption (reset-clears-load-fields).
-    use al_builtins::assumptions::{Assumption, take_hits};
+fn reset_clears_the_load_fields_and_init_keeps_them() {
+    use al_builtins::assumptions::take_hits;
     take_hits();
     let body = format!(
         "{SEED} Rec.SetLoadFields(Rec.Name); Rec.Reset(); Rec.FindFirst(); {} exit(a);",
         yn("Rec.AreFieldsLoaded(Rec.Note)")
     );
     assert_eq!(text("", &body).unwrap(), "Yes");
-    assert_eq!(take_hits(), vec![Assumption::ResetClearsLoadFields]);
-}
-
-#[test]
-fn reset_without_load_fields_marks_no_assumption() {
-    use al_builtins::assumptions::take_hits;
-    take_hits();
     let body = format!(
-        "{SEED} Rec.Reset(); Rec.FindFirst(); {} exit(a);",
+        "{SEED} Rec.SetLoadFields(Rec.Name); Rec.Init(); Rec.FindFirst(); {} exit(a);",
         yn("Rec.AreFieldsLoaded(Rec.Note)")
     );
-    assert_eq!(text("", &body).unwrap(), "Yes");
+    assert_eq!(text("", &body).unwrap(), "No");
     assert!(take_hits().is_empty());
+}
+
+// record/lt-outside-records/ResetClearsLoadFields.al:111 ResetThenGet_AfterEarlierFullGet `control without Reset`: a full Get, then
+// SetLoadFields and a Get of another row: the fields the request does not name are not loaded.
+#[test]
+fn a_partial_get_of_another_row_after_a_full_get_loads_only_the_request() {
+    let body = format!(
+        "{SEED} Rec.Get(1); Rec.SetLoadFields(Rec.Name); Rec.Get(2); {} {} exit(a);",
+        yn("Rec.AreFieldsLoaded(Rec.Name)"),
+        yn("Rec.AreFieldsLoaded(Rec.Note)")
+    );
+    assert_eq!(text("", &body).unwrap(), "YesNo");
 }

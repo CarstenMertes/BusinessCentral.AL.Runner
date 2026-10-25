@@ -529,7 +529,8 @@ fn byte_or_char(target: &Value, text: &str) -> Result<Parsed, Signal> {
 /// - number 0: the empty text is 0; a number alone is a number of hours (`1500`, `-1500`, `5000000000`, `1.5`); otherwise
 ///   amounts with a unit, in any order (`1 minute 1 hour`), the unit glued or not (`1h`, `1 h`): h, hour(s), day(s),
 ///   minute(s), second(s), millisecond(s); a fraction of hours (`1.5 hours`), one negative amount (`-1 hour`); a unit given
-///   twice (`1 hour 1 hour`) and a text without a digit (`abc`) are rejected;
+///   twice (`1 hour 1 hour`), a text without a digit (`abc`), another unit (`0 ms`, `12abc`, `1e3`) and another number
+///   (`+5`, `1,5`) are rejected (errors/lt-ms-refusals-131/P131EvalScalars.al:144-200, P131_EvaluateDuration_PlainNumbers);
 /// - numbers 1 to 3 read a number alone as number 0 does (`1500 fmt 1` to `fmt 3`);
 /// - number 9 reads the form Format 9 writes (`P0DT1H30M0.0S`); a text that does not start with P (digits, `1.5`, `1 hour`,
 ///   `abc`, the empty text) is rejected.
@@ -619,7 +620,7 @@ fn duration(text: &str, number: i64, language: i32) -> Result<Parsed, Signal> {
         }
     }
     if tokens.len() % 2 != 0 {
-        return refuse();
+        return Ok(Parsed::Rejected);
     }
     let pairs = tokens.len() / 2;
     let mut seen = Vec::new();
@@ -632,12 +633,12 @@ fn duration(text: &str, number: i64, language: i32) -> Result<Parsed, Signal> {
             "minute" | "minutes" => 60_000,
             "second" | "seconds" => 1000,
             "millisecond" | "milliseconds" => 1,
-            _ => return refuse(),
+            _ => return Ok(Parsed::Rejected),
         };
-        if !number_shape(amount)
-            || (amount.contains('.') && unit != HOUR)
-            || (amount.starts_with('-') && pairs > 1)
-        {
+        if !number_shape(amount) {
+            return Ok(Parsed::Rejected);
+        }
+        if (amount.contains('.') && unit != HOUR) || (amount.starts_with('-') && pairs > 1) {
             return refuse();
         }
         if seen.contains(&unit) {

@@ -899,7 +899,12 @@ fn arith_general(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
             };
             // A BigInteger beyond the Int32 range raises the conversion error with the signed amount moved
             // (types/lt-time-big-integer/TimeBigIntegerArithmetic.al:P170_TimePlusMinusBigInteger `plus_over_int32`, `minus_over_int32`).
-            if matches!(n, V::BigInteger(_)) && i32::try_from(ms).is_err() {
+            // A Duration beyond Int32 added to a Time raises the same (types/lt-filter-enum-relation-duration-guid/D_Duration.al:
+            // 445-478, TimePlusDuration `af373`); subtracting one is not pinned.
+            if matches!(n, V::Duration(_)) && op == Arith::Sub && i32::try_from(ms).is_err() {
+                return unsupported("a Time minus a Duration beyond the Integer range (not pinned)".to_string());
+            }
+            if matches!(n, V::BigInteger(_) | V::Duration(_)) && i32::try_from(ms).is_err() {
                 let delta = if op == Arith::Add { ms } else { -ms };
                 return raise(
                     format!("Overflow under conversion of System.Int64 value {delta} to System.Int32."),

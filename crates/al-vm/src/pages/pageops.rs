@@ -163,6 +163,7 @@ impl Session {
                 // (errors/lt-ms-refusals-132/P132TwoModalHandlers.al:466 PW_ProbeB_Statement, :508 PW_ProbeB_InIf).
                 if method == PageOp::PageRunModalStatic {
                     let mut s = st.borrow_mut();
+                    s.run_static = Some(true);
                     s.lookup = used;
                     s.lookup_set = used;
                     s.static_lookup = used;
@@ -1106,6 +1107,7 @@ impl Session {
             }
             PageMethod::RunModal => {
                 let record = st.borrow().set_record.clone();
+                st.borrow_mut().run_static = Some(false);
                 self.run_page_ui(st, record, true)
             }
             // `CurrPage.Close()` in a procedure of a Page variable that never ran does nothing and the procedure goes on

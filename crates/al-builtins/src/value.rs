@@ -471,6 +471,9 @@ pub struct PageState {
     pub test_close_vetoed: bool,
     /// A `TestPage.Close()` in the modal page's handler closed the page (no veto).
     pub test_closed_in_handler: bool,
+    /// How the current modal run started: `Some(true)` the static `Page.RunModal(Id)`, `Some(false)` a Page variable's
+    /// `RunModal()`, `None` any other run (an action, a lookup).
+    pub run_static: Option<bool>,
     /// The row the page was left on when it closed with LookupOK (`Page.RunModal(Id, Rec)` hands it back to `Rec`).
     pub selection: Option<Vec<Value>>,
     pub pending: Option<Vec<Value>>,
@@ -786,6 +789,7 @@ impl PageState {
             close_vetoed: false,
             test_close_vetoed: false,
             test_closed_in_handler: false,
+            run_static: None,
             selection: None,
             pending: None,
             modal: false,

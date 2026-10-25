@@ -3052,6 +3052,18 @@ impl Session {
         // variable's RunModal of a Card given SetRecord, whose Rec is the blank record without filters afterwards
         // (pages/lt-bl-unopened-currpage/UnopenedCurrPage.al:273 Update_Then_RunModal_Card_HandlerCloses `rec-after-close`).
         if modal && std::mem::take(&mut st.borrow_mut().test_closed_in_handler) {
+            let page_type = self.engine.object_facts[st.borrow().object as usize]
+                .page_type_lower()
+                .to_string();
+            let pinned = matches!(
+                (page_type.as_str(), st.borrow().run_static),
+                ("standarddialog", Some(true)) | ("card", Some(false))
+            );
+            if !pinned {
+                return unsupported(
+                    "a TestPage.Close() in a ModalPageHandler of a page type or run other than a static RunModal of a StandardDialog or a Page variable's RunModal of a Card (not pinned)",
+                );
+            }
             st.borrow_mut().modal = false;
             if let Some(inst) = st.borrow().instance.clone() {
                 let object = st.borrow().object as usize;

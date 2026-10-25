@@ -1008,15 +1008,13 @@ pub struct RecordState {
 /// See [`RecordState::row_origin`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RowOrigin {
-    /// The variable's own Insert (else a Get).
-    pub insert: bool,
+    /// The variable's own write: its Insert, or its own Modify or Rename after its Insert or Get in the same transaction
+    /// (record/lt-sb-stale-own-modify/SbStaleOwnModify.al). Else a Get.
+    pub own_write: bool,
     /// The row version the buffer got.
     pub version: i64,
     /// The session's commit count at that moment.
     pub commits: u64,
-    /// The buffer's version is that of its own Modify(false) after its own Insert, in the same transaction (assumption
-    /// stale-insert-buffer-own-modify).
-    pub own_modify: bool,
 }
 
 /// What an action's `RunPageLink` fills into Rec before OnOpenPage (field position, value) and the link's filters

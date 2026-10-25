@@ -638,17 +638,6 @@ registry! {
         tests: "No Microsoft test: the reporter shape with RunPageLink is pinned; RunPageOnRec and RunPageView alone keep the same rule.",
         probe: "RunPageOnRec, and RunPageView without RunPageLink, to a List with SourceTableView = sorting(...) order(descending), = where(...), and both: the open row, the rows from First/Next and Filter.GetFilter of the view's field.",
     },
-    StaleInsertBufferOwnModify => {
-        id: "stale-insert-buffer-own-modify",
-        assumed: "A record variable that did its own Insert and then one own Modify(false) in the same transaction, made stale by the next Commit, follows the rule of a buffer from its own Insert (TestRecordStaleBufferWrite.al:395-690): written, the stale buffer winning, once the new transaction modified the row (changed or not); refused with DB:RecordChanged with nothing in between. Measured by the reporter on real BC on Windows (the newest major) (al-runner issue 5823). A Modify(true), a second own Modify or an own Modify in a later transaction keep the rule of a buffer of another origin.",
-        tests: "No Microsoft test: al-runner issue 5823 (3 tests of a partner app).",
-        probe: "Insert(true), own Modify(false), another variable's Modify and a Commit, then a changed and an unchanged Modify in the new transaction, then a Modify through the buffer: accepted and the stored row, or DB:RecordChanged with nothing in between. Wanted beside it: own Modify(true), two own Modifies, own Rename, own Modify then Delete, LockTable Get and a plain Get in the new transaction.",
-        awaiting: Awaiting {
-            issues: &[5823],
-            files: &["tests/al-language/record/lt-sb-stale-own-modify/SbStaleOwnModify.al"],
-            since: "2026-10-25",
-        },
-    },
     TestCodeunitOnRunRows => {
         id: "test-codeunit-onrun-rows",
         assumed: "How the runner reports the OnRun trigger of a test codeunit. From the gate TestCodeunitOnRunRowFrom28 on: a declared OnRun gets a row 'OnRun' of its own, failed with the error's text when it raises (and then the test methods have no rows), else passed. Before that gate: a codeunit whose OnRun raises has no rows at all. Measured by corpus writer RL in the corpus CI (the three supported majors on Linux, probe commit c69419f6 on branch al-runtime-rs-staging-rl, codeunit/lt-outside-onrun-error/RlOnRunError.al); not a green corpus case, because the probe codeunit fails the corpus CI by design.",

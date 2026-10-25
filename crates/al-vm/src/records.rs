@@ -1176,10 +1176,11 @@ impl Session {
     /// record/lt-record-conversion-assumptions/StaleBuffer.al: P98_Stale_AfterAsserterror_SameBuffer,
     /// P98_Stale_CommitThenErrorThenModify_Rec). A stale buffer is refused (record/TestRecordStaleBufferWrite.al), with one
     /// exception (TestRecordStaleBufferWrite.al:395-690, AL Runner issue 5805): a buffer from the variable's own Insert in the
-    /// transaction the last Commit closed is written, the stale buffer winning, once the new transaction Modified the row
+    /// transaction the last Commit closed, or from its own Modify or Rename after its Insert or Get in that transaction
+    /// (record/lt-sb-stale-own-modify/SbStaleOwnModify.al, AL Runner issue 5823), is written, the stale buffer winning, once the new transaction Modified the row
     /// (changed or not, through any variable: :495, :513, :567, Delete :676) or read it by Get after a LockTable (:533). It is
     /// refused with nothing in between (:481, Delete :662), after a plain Get (:551), and after a further Commit (:586). A
-    /// buffer read by Get is refused whatever the new transaction did (:604, :623, :642). Not pinned, refused: other contact
+    /// buffer read by Get, with no own write since, is refused whatever the new transaction did (:604, :623, :642). Not pinned, refused: other contact
     /// with the table in the new transaction (another write, another lock, a rollback), an Insert buffer older than one
     /// Commit that the new transaction touched. A stale buffer of another origin whose row the new transaction wrote is written
     /// under the assumption stale-buffer-other-origin-written.
@@ -1228,12 +1229,9 @@ impl Session {
             || self.tx.lock_unpinned.is_some()
             || self.store_for(rec).written_since_commit(cx, t);
         match origin.filter(|o| o.version == mine) {
-            Some(o) if o.insert && o.commits + 1 == self.commits => {
-                // A buffer whose own Modify(false) followed its own Insert in that transaction follows the same rule: not
-                // pinned, the reporter's real-BC repro of al-runner issue 5823 (assumption stale-insert-buffer-own-modify).
-                if o.own_modify {
-                    al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::StaleInsertBufferOwnModify);
-                }
+            // A buffer whose version came from its own Modify or Rename after its own Insert or Get in that transaction follows the
+            // same rule (record/lt-sb-stale-own-modify/SbStaleOwnModify.al:132-448, al-runner issue 5823).
+            Some(o) if o.own_write && o.commits + 1 == self.commits => {
                 if touched && !self.tx.rolled_back {
                     return Ok(StaleVerdict::Written);
                 }
@@ -1245,7 +1243,7 @@ impl Session {
                 }
                 Ok(StaleVerdict::Refused)
             }
-            Some(o) if o.insert && contact => unsupported(format!(
+            Some(o) if o.own_write && contact => unsupported(format!(
                 "a stale {} buffer from an Insert older than the last Commit but one, written after the new transaction touched the table",
                 t.name
             )),
@@ -1661,10 +1659,9 @@ impl Session {
         let passes = self.row_passes(rec, &t, &row)?;
         let origin = match t.fields.iter().position(|f| f.id == 2_000_000_005).map(|i| &row[i]) {
             Some(Value::BigInteger(v)) if via_get => Some(al_builtins::value::RowOrigin {
-                insert: false,
+                own_write: false,
                 version: *v,
                 commits: self.commits,
-                own_modify: false,
             }),
             _ => None,
         };
@@ -2749,10 +2746,9 @@ impl Session {
                         if let Some(Value::BigInteger(v)) = version {
                             let commits = self.commits;
                             rec.borrow_mut().row_origin = Some(al_builtins::value::RowOrigin {
-                                insert: true,
+                                own_write: true,
                                 version: v,
                                 commits,
-                                own_modify: false,
                             });
                         }
                         // The Blob content an Insert of a temporary record stored is persisted, as one a Modify stored (see Rename).
@@ -2914,7 +2910,7 @@ impl Session {
                 // same for the events). A row a page saves carries the page's own previous row
                 // (record/TestXRecDriverContracts.al:32-51 Record_Modify_FromPage_xRecHoldsPreviousValue).
                 let stored_row = stored.clone();
-                // The buffer's version before this Modify and its origin, for the own Modify after an own Insert below.
+                // The buffer's version before this Modify and its origin, for the own Modify after an own Insert or Get below.
                 let version_before = t.fields.iter().position(|f| f.id == 2_000_000_005).map(|i| {
                     let r = rec.borrow();
                     (
@@ -3021,11 +3017,10 @@ impl Session {
                         if !rec.borrow().temporary {
                             let image = rec.borrow().fields.clone();
                             rec.borrow_mut().last_modify = Some(image);
-                            // The first own Modify(false) after the variable's own Insert, in the Insert's transaction, keeps the
-                            // Insert origin at the new version (assumption stale-insert-buffer-own-modify, al-runner issue 5823).
-                            // A Modify(true), a second own Modify or one in a later transaction leaves the origin behind, as before.
+                            // The variable's own Modify (false or true, the first or a later one) after its own Insert or Get, in that
+                            // transaction, makes the buffer's new version its own write (record/lt-sb-stale-own-modify/SbStaleOwnModify.al:
+                            // 132-264, :410-448). An own Modify in a later transaction leaves the origin behind, as before.
                             if let Some((i, was, Some(o))) = version_before
-                                && o.insert
                                 && o.version == was
                             {
                                 let now = if let Value::BigInteger(n) = &rec.borrow().fields[i] {
@@ -3034,10 +3029,10 @@ impl Session {
                                     0
                                 };
                                 if now != was {
-                                    let keep = !run && !o.own_modify && o.commits == self.commits;
+                                    let keep = o.commits == self.commits;
                                     rec.borrow_mut().row_origin = keep.then_some(al_builtins::value::RowOrigin {
+                                        own_write: true,
                                         version: now,
-                                        own_modify: true,
                                         ..o
                                     });
                                 }
@@ -4117,6 +4112,25 @@ impl Session {
                 };
                 match outcome {
                     RenameOutcome::Renamed => {
+                        // The variable's own Rename after its own Insert, in that transaction, makes the buffer's new version its own
+                        // write (record/lt-sb-stale-own-modify/SbStaleOwnModify.al:268-298). After a Get it is not pinned: the origin
+                        // is left behind, as before.
+                        if !rec.borrow().temporary
+                            && let Some(i) = t.fields.iter().position(|f| f.id == 2_000_000_005)
+                        {
+                            let mut r = rec.borrow_mut();
+                            let (was, now) = match (&old[i], &r.fields[i]) {
+                                (Value::BigInteger(a), Value::BigInteger(b)) => (*a, *b),
+                                _ => (0, 0),
+                            };
+                            if let Some(o) = r.row_origin
+                                && o.version == was
+                                && now != was
+                            {
+                                let keep = o.own_write && o.commits == self.commits;
+                                r.row_origin = keep.then_some(al_builtins::value::RowOrigin { version: now, ..o });
+                            }
+                        }
                         // The record itself shows no Blob value after a Rename of a temporary record; the row keeps one only when a write came
                         // after the last Insert or Modify (misc/lt-probes-needed-1/PnABlobAssignRename.al:RenameTemporary_* `A..E-rec-content`).
                         // So does a database record for every Blob field, while the renamed row keeps the bytes

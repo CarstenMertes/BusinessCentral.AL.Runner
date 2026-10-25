@@ -173,7 +173,7 @@ steps for each tool in
 
 These rows are the long tail. The corpus tracks them. On 2026-10-21 the corpus
 passed 81-82% on BC 27.5, 28.5 and 29.0, with 0 failing; the rest is refused with a
-reason (`README.md`, "Status"). Per-area numbers are in `docs/status.md`, which is
+reason (`docs/manual/what-works.md`, "Status"). Per-area numbers are in `docs/status.md`, which is
 older.
 
 | ID | Feature | v2 reference | Status | AL Runner today |

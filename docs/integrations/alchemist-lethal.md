@@ -7,7 +7,7 @@ LethAL run unchanged). State: research, written 2026-10-15. No runtime code chan
 
 - Both tools drive AL Runner v2 through its command line and a JSON-lines server. v3 had
   `al-runner test` only when this was written; `al-runner serve` and `al-runner debug` exist now
-  (`migrating-tools-to-v3.md`).
+  (`docs/manual/tool-protocol.md`).
 - LethAL can run on v3 earliest, with one-shot mode only. It needs a v2-shaped
   `--output-json`, `--isolation test`, `--exclude-test`, qualified test names and a few
   accepted-and-ignored flags. No server needed. No conflict with the "server deferred" direction.
@@ -214,7 +214,7 @@ Each step is useful alone. Order is smallest first.
 
 | Step | What | Unblocks | Size | Needs owner |
 |---|---|---|---|---|
-| 1 (done, branch tools-step-1; see migrating-tools-to-v3.md) | `al-runner test` accepts `--output-json` (v2 shape, section 1.2), `--isolation test|codeunit|disabled`, `--exclude-test`, qualified-name `--test`, `--define`, `--auto-provision` (ignored), and reads `AL_RUNNER_TEST_TIMEOUT_SEC`. Not-run tests become rows. Timeouts use v2's sentence. | LethAL one-shot (section 3.3) | 3 to 5 | #3 (version), #4 (exit 7), and #2 only for spelling. Flags that v3 already plans (`--output-json`, `--isolation`, `--exclude-test`) do not conflict. |
+| 1 (done, branch tools-step-1; see docs/manual/tool-protocol.md) | `al-runner test` accepts `--output-json` (v2 shape, section 1.2), `--isolation test|codeunit|disabled`, `--exclude-test`, qualified-name `--test`, `--define`, `--auto-provision` (ignored), and reads `AL_RUNNER_TEST_TIMEOUT_SEC`. Not-run tests become rows. Timeouts use v2's sentence. | LethAL one-shot (section 3.3) | 3 to 5 | #3 (version), #4 (exit 7), and #2 only for spelling. Flags that v3 already plans (`--output-json`, `--isolation`, `--exclude-test`) do not conflict. |
 | 2 | `--coverage --coverage-out` (Cobertura) in the positions the compiled input has. Per-test file is one run per test already. | LethAL coverage (L19), gate R item 5 | 4 to 6 | none (needs IR positions, which exist) |
 | 3 | `al-runner serve`: ready line, `runTests` stream, `summary` with `protocolVersion:2`, `shutdown`, `{"error"}`, field warnings and refusals, `--package-cache`, `--define`, `--test-timeout` start flags, stderr request marker. No warm state: compile per request. | LethAL server mode (S1 to S10). ALchemist Test Explorer without inline values. | 5 to 7, plus a short ADR for the wire protocol | #1, #2 |
 | 4 (done, ADR-028 item 9) | `serve` adds `execute` (inline `code` or one `OnRun` codeunit), `cancel` side channel (flag checked between tests), `coverage` and `perTestCoverage` tables on both commands. | ALchemist scratch runs (A11), cancel (A13), coverage (A10); LethAL `perTestCoverage` (S6) | 5 to 8 | none beyond #1 |

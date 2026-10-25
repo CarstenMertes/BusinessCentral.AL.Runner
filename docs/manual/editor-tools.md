@@ -50,7 +50,7 @@ the like. Options that select tests or write reports (`--filter`, `--junit`,
 `--recipe` and `--impact-of`.
 
 The complete field list and the answers are in
-[Migrating tools to version 3](https://github.com/aldevtools/BusinessCentral.AL.Runner/blob/main/docs/integrations/migrating-tools-to-v3.md), section 4b.
+[Tool protocol](tool-protocol.md), section 4b.
 
 ## Debugging
 

@@ -7,7 +7,7 @@ and without a BC license.
 > AL Runner v2 (C#) is frozen on the [`v2` branch](https://github.com/aldevtools/BusinessCentral.AL.Runner/tree/v2) (MIT License).
 > Its dotnet tool [`MSDyn365BC.AL.Runner`](https://www.nuget.org/packages/MSDyn365BC.AL.Runner)
 > stays on NuGet. v2 gets no further releases; the versions published on NuGet keep working. If you maintain a tool that
-> calls AL Runner, see [Migrating tools from AL Runner v2 to v3](docs/integrations/migrating-tools-to-v3.md).
+> calls AL Runner, see [Tool protocol](docs/manual/tool-protocol.md).
 >
 > v3 was developed in the repository `StefanMaron/al-runtime-rs`, now archived. Issue and pull
 > request numbers below about 5570 in the commit history and in older documents refer to that
@@ -475,7 +475,7 @@ load it.
   `execute`, `cancel`, `shutdown`). All requests run in the one server process, which keeps the
   compile of the last request, so a repeated request with the same sources takes 0.2 to 2 s
   (more with Microsoft's apps when many tests run). Each request starts from the same database. Fields and answers are in
-  `docs/integrations/migrating-tools-to-v3.md`, section 4b.
+  `docs/manual/tool-protocol.md`, section 4b.
 - `--tdd` (test-first work): a test that calls a procedure of a codeunit that does not exist
   yet runs against a stub that returns the default value (0, '', false, an empty record)
   instead of failing to compile. Each such test is reported as stubbed, pass or fail, and the

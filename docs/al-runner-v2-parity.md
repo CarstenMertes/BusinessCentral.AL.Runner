@@ -44,7 +44,7 @@ migration guides say how to move.
 Terms: a **bundle** is a folder with an `app.json` (v2's name; AL Runner says "app
 folder"). The **corpus** is the AL language test corpus, the oracle (ADR-007).
 The **migration guides** are `docs/manual/migrating-from-v2.md` (for users) and
-`docs/integrations/migrating-tools-to-v3.md` (for tools such as ALchemist and
+`docs/manual/tool-protocol.md` (for tools such as ALchemist and
 LethAL).
 
 ## 1. Inputs
@@ -152,7 +152,7 @@ LethAL).
 The interface points of ALchemist and LethAL are in
 [`docs/integrations/alchemist-lethal.md`](integrations/alchemist-lethal.md), and the
 steps for each tool in
-[`docs/integrations/migrating-tools-to-v3.md`](integrations/migrating-tools-to-v3.md).
+[`docs/manual/tool-protocol.md`](manual/tool-protocol.md).
 
 | ID | Feature | v2 reference | Status | AL Runner today |
 |---|---|---|---|---|

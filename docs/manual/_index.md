@@ -27,6 +27,7 @@ explains what a pass, a failure and "not run" each mean.
 - **[Running Microsoft's tests](microsoft-tests.md)**: `test-microsoft`, the recipe, and the Microsoft tests your extension can affect.
 - **[Continuous integration](ci.md)**: GitHub Actions, caching, exit codes.
 - **[Editor and tool integration](editor-tools.md)**: the `serve` protocol, coverage output.
+- **[Tool protocol](tool-protocol.md)**: the command line, JSON and `serve` contract for tool authors.
 - **[Debugging](debugging.md)**: `al-runner debug`, breakpoints and stepping from an editor.
 - **[Impact analysis](impact.md)**: what an extension changes in other apps' tests.
 - **[What works and what is refused](what-works.md)**: the supported surface and the deliberate limits.

@@ -33,9 +33,8 @@ test counts as passing only when it passes here and passed on real Business Cent
 
 "Failing" is a case where real Business Central passed and AL Runner gave a
 different result or an error. About 435 passes on each version run through an
-unprobed assumption and are counted as flagged. Microsoft's own Base Application
-test buckets mostly do not run yet: the full run of 2026-10-16 held 40300 tests,
-of which 16848 passed, 2508 failed and 20944 were not run.
+unprobed assumption and are counted as flagged. Most of Microsoft's own Base
+Application tests do not run yet; see [Running Microsoft's tests](microsoft-tests.md#how-many-of-microsofts-tests-run).
 
 ## Runs as Business Central does
 

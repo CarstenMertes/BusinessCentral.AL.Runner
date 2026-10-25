@@ -30,6 +30,10 @@ test data line and its exclusions. Without test data (`--no-test-data`, or no ba
 could be had), Microsoft's tests mostly fail on missing setup data. See
 [Test data](test-data.md).
 
+Some setup is missing from the demo backup itself. Those tests fail even with test
+data. [Known gaps in the demo data](test-data.md#known-gaps-in-the-demo-data) lists
+the tables and the messages.
+
 ## The first run takes a long time
 
 The first run that uses Microsoft's apps downloads them, restores the demo backup

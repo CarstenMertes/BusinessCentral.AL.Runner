@@ -466,6 +466,14 @@ pub(crate) enum EncryptionKey {
     Recreated,
 }
 
+/// The isolated storage and the number sequences of a session at a test runner's checkpoint
+/// ([`Session::storage_checkpoint`]).
+#[derive(Debug, Clone, Default)]
+pub struct StorageCheckpoint {
+    isolated: std::collections::HashMap<(String, String), (String, bool, bool)>,
+    sequences: std::collections::HashMap<(String, String), sessionops::Sequence>,
+}
+
 pub struct Session {
     pub engine: Arc<Engine>,
     pub last_error: AlError,
@@ -586,7 +594,8 @@ pub struct Session {
     /// The test codeunit runs under its RequiredTestIsolation = Function or Disabled, as BC's TestRunnerHub runs it
     /// (al-testrun `RunOptions::required_isolation`), not under a test runner codeunit's TestIsolation.
     pub isolation_from_hub: bool,
-    /// That isolation is Disabled (`isolation_from_hub` set).
+    /// The test codeunit runs under Disabled isolation: from the hub (`isolation_from_hub` set) or from a test runner's
+    /// TestIsolation = Disabled.
     pub hub_disabled: bool,
     /// The test runner's step that assigns the permission sets of a test method runs (codeunit 130302 "Set State Test
     /// Run", al-testrun `runner_reset.rs`): `PermissionTestHelper.AddEffectivePermissionSet` runs there on the assumption
@@ -1005,6 +1014,31 @@ impl Session {
     pub fn restore_media_checkpoint(&mut self) {
         let removed = std::mem::take(&mut self.media_removed.1);
         self.restore_media(removed);
+    }
+
+    /// The isolated storage and the number sequences now, for [`Session::restore_storage_checkpoint`] (a test runner's
+    /// TestIsolation = Function, al-testrun `isolation::Checkpoint`).
+    pub fn storage_checkpoint(&self) -> StorageCheckpoint {
+        StorageCheckpoint {
+            isolated: self.isolated_storage.clone(),
+            sequences: self.sequences.clone(),
+        }
+    }
+
+    /// Puts the isolated storage and the number sequences back as they were at `cp`. A key or a sequence that `cp`
+    /// already held and that changed or went away since is put back too, but the answer is `false`: only a new key's
+    /// `IsolatedStorage.Set` and a new sequence's `NumberSequence.Insert` are measured to be rolled back. `None`: nothing
+    /// changed since `cp`.
+    pub fn restore_storage_checkpoint(&mut self, cp: &StorageCheckpoint) -> Option<bool> {
+        if self.isolated_storage == cp.isolated && self.sequences == cp.sequences {
+            return None;
+        }
+        let kept_storage = cp.isolated.iter().all(|(k, v)| self.isolated_storage.get(k) == Some(v));
+        let kept_sequences = cp.sequences.iter().all(|(k, v)| self.sequences.get(k) == Some(v));
+        self.isolated_storage = cp.isolated.clone();
+        self.isolated_committed = cp.isolated.clone();
+        self.sequences = cp.sequences.clone();
+        Some(kept_storage && kept_sequences)
     }
 
     /// The transaction a write call started has ended (record/TestProbeRecordRefContracts.al:WriteTransaction_State starts

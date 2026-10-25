@@ -938,8 +938,8 @@ fn big_text() {
         "B.AddText('Hello World'); exit(Format(B.TextPos('World')) + Format(B.TextPos('Hello')) + Format(B.TextPos('xyz')));",
     );
     assert_eq!(t, "7".to_string() + "10");
-    // Position in AddText is not pinned.
-    assert!(unsupported("B: BigText;", "B.AddText('x', 1); exit('');"));
+    // A position past one beyond the end is not pinned (streams/StTBigText.al:AddTextAtPosition pins 1 to one past the end).
+    assert!(unsupported("B: BigText;", "B.AddText('x', 3); exit('');"));
 }
 
 #[test]

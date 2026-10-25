@@ -160,7 +160,7 @@ registry! {
     },
     RecordRefIntoRecord => {
         id: "recordref-into-record",
-        assumed: "A RecordRef (held by a Variant) assigned or passed to a Record of the same table gives a copy of the record the RecordRef is on, filters included; another table is refused.",
+        assumed: "A RecordRef (held by a Variant) assigned or passed to a Record of the same table gives a copy of the record the RecordRef is on, without its filters (pinned by ArRecordProbes.al:366); its key, view and the rest are assumed to be the ref's; another table is refused.",
         tests: "Approvals Mgmt.InformUserOnStatusChange (ShowSalesApprovalStatus(Variant)); 73 Tests-Workflow tests.",
         probe: "V := RecRef (a RecordRef on a filtered row); Rec := V and a Record parameter p(V): the fields, GetFilters, position and a later Modify; the same with a RecordRef of another table. Asked in corpus #643.",
     },

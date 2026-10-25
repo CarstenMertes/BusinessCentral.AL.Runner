@@ -583,6 +583,10 @@ pub struct PageState {
     /// The page reached a state whose behavior is not pinned: every later call on it or its parts except Close is refused
     /// with this reason.
     pub unpinned_state: Option<String>,
+    /// `RequestPage.Editable` and `RequestPage.LookupMode` of a request page, as its own code set them (al-vm reports.rs
+    /// `request_page_member`).
+    pub request_editable: bool,
+    pub request_lookup_mode: bool,
     /// With `unpinned_state`: Close is refused too.
     pub unpinned_close: bool,
     /// The row a new line was started below (`New()` on a stored row of a list): after the new row
@@ -735,6 +739,8 @@ impl PageState {
     pub fn closed(object: u32) -> PageState {
         PageState {
             object,
+            request_editable: true,
+            request_lookup_mode: false,
             open: false,
             ran: false,
             mode: PageMode::View,

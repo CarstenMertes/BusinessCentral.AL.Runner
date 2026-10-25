@@ -106,6 +106,15 @@ impl Session {
     ) -> Result<Value, Signal> {
         match id {
             ids::REPORT_QUIT_1 => self.report_quit_builtin(&running),
+            ids::REPORT_SHOWOUTPUT_1
+            | ids::REPORT_SHOWOUTPUT_2
+            | ids::REPORT_TOTALSCAUSEDBY_1
+            | ids::REPORT_CREATETOTALS_1
+            | ids::REPORT_CREATETOTALS_2
+            | ids::REPORT_NEWPAGE_1
+            | ids::REPORT_PAGENO_1
+            | ids::REPORT_PRINTONLYIFDETAIL_1
+            | ids::REPORT_PAPERSOURCE_1 => self.report_print_section_builtin(id, args, &running),
             ids::REPORT_SKIP_1 => self.report_flow_builtin(&running, Flow::Skip),
             ids::REPORT_BREAK_1 => self.report_flow_builtin(&running, Flow::Break),
             ids::REPORT_SETTABLEVIEW_1 => {
@@ -233,6 +242,11 @@ impl Session {
                         } else {
                             // As a statement: the missing-object error (report/lt-report-members-testrequestpage/P91Static.al:
                             // 127-128, :140-141, :153-154, ids 0 and 71999).
+                            if self.in_test_method_itself() {
+                                return unsupported(format!(
+                                    "Report.{kind}Layout of an id no report has, called by the test method itself (only from a try function is it pinned)"
+                                ));
+                            }
                             Err(self.missing_object("Report", n))
                         }
                     }
@@ -250,6 +264,11 @@ impl Session {
                     // P91Static.al:113-115, ids 0, 71999 and -1).
                     if let Some(why) = self.missing_may_be_skipped("Report", i64::from(*n)) {
                         return unsupported(why);
+                    }
+                    if self.in_test_method_itself() {
+                        return unsupported(
+                            "Report.DefaultLayout of an id no report has, called by the test method itself (only from a try function is it pinned)",
+                        );
                     }
                     return Err(self.missing_object("Report", i64::from(*n)));
                 };
@@ -463,6 +482,17 @@ impl Session {
                         "ObjectHasAlreadyBeenRun",
                     ));
                 }
+                // A variable whose RunModal ran to its end cannot RunModal again: the error, and nothing runs
+                // (report/lt-report-requestpage-query-members/P105TotArray.al:97-105). A Run after it is not pinned.
+                if self.report_run_modal_done_on(&inst) {
+                    if id == ids::REPORT_RUNMODAL_1 {
+                        return Err(crate::transactions::al_error_code(
+                            "The object has been run. Use the function CLEAR(Report).",
+                            "ObjectHasAlreadyBeenRun",
+                        ));
+                    }
+                    return unsupported("Report.Run on a report variable after its RunModal (not pinned)");
+                }
                 let schema = self.report_schema(&inst)?;
                 let window = Self::report_shows_page(&inst, &schema)?;
                 let result = if quit {
@@ -496,6 +526,10 @@ impl Session {
                 // instance when it ends ... RunModal keeps it", as Base Application's Reservation Worksheet relies on).
                 if id == ids::REPORT_RUN_1 && !self.report.rebind_after_run {
                     self.report_clear(&inst);
+                }
+                if id == ids::REPORT_RUNMODAL_1 && !quit && result.is_ok() {
+                    self.report.report_run_modal_done.retain(|w| w.strong_count() > 0);
+                    self.report.report_run_modal_done.push(Rc::downgrade(&inst));
                 }
                 result.map(|()| Value::Null)
             }
@@ -632,6 +666,14 @@ impl Session {
             ids::REPORT_RUNREQUESTPAGE_1 | ids::REPORT_RUNREQUESTPAGE_2 => {
                 let (inst, schema, seed) = if id == ids::REPORT_RUNREQUESTPAGE_1 {
                     let inst = self.report_instance(receiver, false)?.0;
+                    // After a RunModal of the variable: the error, and no page opens
+                    // (report/lt-report-requestpage/RptRequestPage.al:990-1009 UseRequestPageFalse_RunModalAndRunRequestPage).
+                    if self.report_run_modal_done_on(&inst) {
+                        return Err(crate::transactions::al_error_code(
+                            "The object has been run. Use the function CLEAR(Report).",
+                            "ObjectHasAlreadyBeenRun",
+                        ));
+                    }
                     let schema = self.report_schema(&inst)?;
                     (inst, schema, args.first())
                 } else {
@@ -1024,6 +1066,14 @@ impl Session {
                     "{id} of report {n}, which belongs to a dependency app and was not compiled (no code the workspace reaches uses it)"
                 ));
             }
+            // Run and RunModal raise the missing-object error, from the test method itself (naming Test Runner - Mgt,
+            // report/lt-report-members-testrequestpage/P91Run.al:117-139 Run_InvalidIds) and from a try function (naming the
+            // test codeunit, misc/W5MissingObject.al:49); Execute only from the test method itself is pinned (P91Run.al:154-165).
+            let pinned = matches!(id, ids::REPORT_RUN_3 | ids::REPORT_RUNMODAL_3)
+                || (id == ids::REPORT_EXECUTE_3 && self.in_test_method_itself());
+            if pinned {
+                return Err(self.missing_object("Report", i64::from(*n)));
+            }
             return unsupported(format!(
                 "{id} of id {n}, which no report declares (error text not pinned)"
             ));
@@ -1187,6 +1237,82 @@ impl Session {
 
     /// `CurrReport.Skip`, `Break` and `Quit` called straight from a report trigger: the trigger
     /// ends and the run reads the request (`report_trigger_call`).
+    /// `CurrReport.ShowOutput`, `TotalsCausedBy` and `CreateTotals` in a processing-only report, which prints no
+    /// section: ShowOutput reads No and ShowOutput(Boolean) changes nothing (report/lt-report-requestpage-query-members/
+    /// P105ShowOutput.al:94-130, in OnPreDataItem, OnAfterGetRecord and OnPostDataItem; report/lt-report-members-
+    /// testrequestpage/P91Inst.al:89-90 and :186 in OnPreReport), TotalsCausedBy is 0 (P91Inst.al:46, :51, :118, in
+    /// OnAfterGetRecord and OnPostDataItem; P105TotScalar.al:60), and CreateTotals in OnPreDataItem leaves the variables as
+    /// the triggers set them (P105TotScalar.al:105-150, P105TotArray.al:76-85, P91Inst.al:41). Another trigger, a report that
+    /// prints, and a ShowOutput(Boolean) whose result is used are not pinned and refused.
+    fn report_print_section_builtin(
+        &mut self,
+        id: al_ir::BuiltinId,
+        args: &[Value],
+        running: &Inst,
+    ) -> Result<Value, Signal> {
+        let object = running.borrow().object as usize;
+        let o = &self.engine.program.objects[object];
+        let name = match id {
+            ids::REPORT_SHOWOUTPUT_1 | ids::REPORT_SHOWOUTPUT_2 => "ShowOutput",
+            ids::REPORT_TOTALSCAUSEDBY_1 => "TotalsCausedBy",
+            ids::REPORT_NEWPAGE_1 => "NewPage",
+            ids::REPORT_PAGENO_1 => "PageNo",
+            ids::REPORT_PRINTONLYIFDETAIL_1 => "PrintOnlyIfDetail",
+            ids::REPORT_PAPERSOURCE_1 => "PaperSource",
+            _ => "CreateTotals",
+        };
+        let processing_only = o.report.as_ref().is_some_and(|r| r.processing_only);
+        let kind = match self.report.report_trigger {
+            Some((depth, kind)) if o.is_kind(al_ir::ObjKind::Report) && self.depth >= depth => Some(kind),
+            _ => None,
+        };
+        let setter = !args.is_empty() && !matches!(name, "CreateTotals" | "PaperSource");
+        let pinned = processing_only
+            && match (name, kind) {
+                ("ShowOutput", Some(TrigKind::Pre)) => !setter,
+                ("ShowOutput", Some(TrigKind::PreItem)) => true,
+                ("ShowOutput", Some(TrigKind::Row)) => true,
+                ("ShowOutput", Some(TrigKind::PostItem)) => !setter,
+                ("TotalsCausedBy", Some(TrigKind::Row | TrigKind::PostItem)) => true,
+                ("CreateTotals", Some(TrigKind::PreItem)) => true,
+                // NewPage changes nothing and PageNo reads 1 in OnAfterGetRecord (P91Inst.al:79-83, :186, :209-210, also on a
+                // second Run of the variable); PrintOnlyIfDetail reads No, and back what OnPreReport set (:89-94, :186).
+                ("NewPage", Some(TrigKind::Row)) => true,
+                // PaperSource(Bin) and PaperSource(Bin, Page) in OnPreDataItem change nothing, for bins 1, 2, 0 and -1
+                // (report/lt-report-requestpage-query-members/P105Paper.al:33-45, :86-121).
+                ("PaperSource", Some(TrigKind::PreItem)) => args.iter().all(|a| matches!(a, Value::Integer(_))),
+                ("PageNo", Some(TrigKind::Row)) => !setter,
+                ("PrintOnlyIfDetail", Some(TrigKind::Pre)) => {
+                    args.is_empty() || matches!(args.first(), Some(Value::Boolean(_)))
+                }
+                _ => false,
+            }
+            && !(setter && self.ret_used);
+        if !pinned {
+            return unsupported(format!(
+                "CurrReport.{name} {} (only in the triggers of a processing-only report where the corpus calls it is it pinned)",
+                if processing_only {
+                    "in this trigger"
+                } else {
+                    "in a report that prints"
+                }
+            ));
+        }
+        Ok(match name {
+            "ShowOutput" => Value::Boolean(false),
+            "TotalsCausedBy" => Value::Integer(0),
+            "PageNo" => Value::Integer(1),
+            "PrintOnlyIfDetail" => match args.first() {
+                Some(Value::Boolean(b)) => {
+                    self.report.print_only_if_detail = *b;
+                    Value::Null
+                }
+                _ => Value::Boolean(self.report.print_only_if_detail),
+            },
+            _ => Value::Null,
+        })
+    }
+
     fn report_flow_builtin(&mut self, running: &Inst, flow: Flow) -> Result<Value, Signal> {
         let object = running.borrow().object as usize;
         let on_report = {
@@ -1423,6 +1549,7 @@ impl Session {
     // ------------------------------------------------------------------ the run
 
     fn report_run(&mut self, inst: &Inst, schema: &Schema, entry: Entry, window: bool) -> Result<(), Signal> {
+        self.report.print_only_if_detail = false;
         // `window` says whether the request page opens: the instance's UseRequestPage, which falls
         // back on the report's property (record/TestTxModelReportRun.al:11, :60-61: a report with a
         // request page "defaults to true"), or a static call's RequestWindow. A report without a
@@ -1441,6 +1568,7 @@ impl Session {
         window: bool,
         enters: bool,
     ) -> Result<(), Signal> {
+        self.report.print_only_if_detail = false;
         // Only a SaveAs of a variable with a language or region is pinned (report/W3ReportObjectIdPreviewLanguage.al:893, :912).
         if let Some((_, language, region)) = self.variable_culture_of(inst) {
             if language.is_some() || region.is_some() {
@@ -2991,6 +3119,13 @@ impl Session {
         }
     }
 
+    fn report_run_modal_done_on(&self, inst: &Inst) -> bool {
+        self.report
+            .report_run_modal_done
+            .iter()
+            .any(|w| w.upgrade().is_some_and(|i| Rc::ptr_eq(&i, inst)))
+    }
+
     fn report_mark_executed(&mut self, inst: &Inst) {
         self.report.report_executed.retain(|w| w.strong_count() > 0);
         self.report.report_executed.push(Rc::downgrade(inst));
@@ -3143,6 +3278,71 @@ impl Session {
         }
         al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::RequestPageCaptionSet);
         Ok(Value::Null)
+    }
+
+    /// `RequestPage.Editable`, `LookupMode`, `ObjectId` and `Activate` from the code of an open request page
+    /// (report/lt-report-requestpage-query-members/P105RpMembers.al:44-75, from a control's OnValidate):
+    /// Editable reads Yes and back what was set (:117), LookupMode reads No and back what was set (:138), ObjectId is
+    /// `Page <report name>` with no argument or true and `Page <report id>` with false (:159), and Activate raises
+    /// `Unhandled UI: Page <report id>` (:181-182). While Editable is false or LookupMode true, what the page does is not
+    /// pinned: every later client call on it but Close is refused.
+    pub(crate) fn request_page_member(
+        &mut self,
+        id: al_ir::BuiltinId,
+        args: &[Value],
+        inst: &Inst,
+    ) -> Result<Value, Signal> {
+        let object = inst.borrow().object as usize;
+        let engine = self.engine.clone();
+        let o = &engine.program.objects[object];
+        let st = match o
+            .page
+            .as_ref()
+            .and_then(|p| inst.borrow().globals.get(p.curr_page_slot).cloned())
+        {
+            Some(Value::TestPage(st)) if st.borrow().open && o.report.is_some() => st,
+            _ => return unsupported(format!("{id} outside the code of an open request page (not pinned)")),
+        };
+        let report_id = self.object_id_of(object as u32);
+        const EDITABLE_OFF: &str = "a request page whose code set RequestPage.Editable(false) (not pinned)";
+        const LOOKUP_ON: &str = "a request page whose code set RequestPage.LookupMode(true) (not pinned)";
+        let mark = |st: &Rc<RefCell<al_builtins::value::PageState>>, on: bool, why: &str| {
+            let mut s = st.borrow_mut();
+            if on {
+                s.unpinned_state.get_or_insert_with(|| why.to_string());
+            } else if s.unpinned_state.as_deref() == Some(why) {
+                s.unpinned_state = None;
+            }
+        };
+        match id {
+            ids::REQUESTPAGE_EDITABLE_1 => match args.first() {
+                None => Ok(Value::Boolean(st.borrow().request_editable)),
+                Some(Value::Boolean(b)) => {
+                    st.borrow_mut().request_editable = *b;
+                    mark(&st, !*b, EDITABLE_OFF);
+                    Ok(Value::Null)
+                }
+                Some(other) => unsupported(format!("RequestPage.Editable with {}", other.describe())),
+            },
+            ids::REQUESTPAGE_LOOKUPMODE_1 => match args.first() {
+                None => Ok(Value::Boolean(st.borrow().request_lookup_mode)),
+                Some(Value::Boolean(b)) => {
+                    st.borrow_mut().request_lookup_mode = *b;
+                    mark(&st, *b, LOOKUP_ON);
+                    Ok(Value::Null)
+                }
+                Some(other) => unsupported(format!("RequestPage.LookupMode with {}", other.describe())),
+            },
+            ids::REQUESTPAGE_OBJECTID_1 => match args.first() {
+                None | Some(Value::Boolean(true)) => Ok(Value::Text(format!("Page {}", o.name).into())),
+                Some(Value::Boolean(false)) => Ok(Value::Text(format!("Page {report_id}").into())),
+                Some(other) => unsupported(format!("RequestPage.ObjectId with {}", other.describe())),
+            },
+            _ => Err(crate::transactions::al_error_code(
+                &format!("Unhandled UI: Page {report_id}"),
+                "ClientPageAbort:FormAbort",
+            )),
+        }
     }
 
     /// The request page of the report `inst` is an instance of, when its own OnOpenPage trigger is on the call stack.

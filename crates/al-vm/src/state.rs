@@ -218,6 +218,13 @@ pub(crate) struct ReportState {
     /// as the last error (report/lt-cj-report-leads/CjDataset.al:190-211).
     pub(crate) zero_date_view_failed: bool,
     pub(crate) report_executed: Vec<std::rc::Weak<RefCell<Instance>>>,
+    /// Report variables whose `RunModal` ran to its end: a second `RunModal` and a `RunRequestPage` on one raise
+    /// ObjectHasAlreadyBeenRun (see `reports.rs`, `REPORT_RUN_1 | REPORT_RUNMODAL_1`).
+    pub(crate) report_run_modal_done: Vec<std::rc::Weak<RefCell<Instance>>>,
+    /// `CurrReport.PrintOnlyIfDetail` of the running processing-only report: set by its setter, cleared when a run starts.
+    pub(crate) print_only_if_detail: bool,
+    /// The Blob buffer the last `Query.SaveAsCsv` wrote, and its length then (see `queries.rs`, `query_save_csv`).
+    pub(crate) csv_written: Option<(al_builtins::stream::BlobRef, usize)>,
     /// Report variables a `SaveAs` was called on: a second `SaveAs` on one whose first ended before it was marked
     /// executed is refused (what BC does then is not pinned).
     pub(crate) report_save_tried: Vec<std::rc::Weak<RefCell<Instance>>>,

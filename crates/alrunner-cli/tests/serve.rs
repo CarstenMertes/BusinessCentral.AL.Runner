@@ -1725,3 +1725,75 @@ fn a_summary_says_where_the_time_went_and_a_kept_baseline_does_not_carry_writes(
     s.send(json!({"command": "shutdown"}));
     assert_eq!(s.line(), json!({"status": "shutting down"}));
 }
+
+/// A dependency app (folder `dep`) with a SingleInstance codeunit, and an app under test with one of its own, a Writer
+/// test codeunit that sets session state of each kind and a Reader that fails unless it sees none of it.
+fn state_apps(root: &Path) -> (PathBuf, PathBuf) {
+    let dep = root.join("dep");
+    write(
+        &dep,
+        "app.json",
+        r#"{"id":"33333333-0000-0000-0000-000000000011","name":"State Dep","publisher":"Someone","version":"1.0.0.0","dependencies":[]}"#,
+    );
+    write(
+        &dep,
+        "src/Dep.al",
+        "codeunit 50720 \"Dep Single\" { SingleInstance = true; var V: Integer;
+    procedure SetV(N: Integer) begin V := N; end; procedure GetV(): Integer begin exit(V); end; }",
+    );
+    let main = root.join("main");
+    write(
+        &main,
+        "app.json",
+        r#"{"id":"33333333-0000-0000-0000-000000000012","name":"State Tests","publisher":"Test","version":"1.0.0.0","dependencies":[{"id":"33333333-0000-0000-0000-000000000011","name":"State Dep","publisher":"Someone","version":"1.0.0.0"}]}"#,
+    );
+    write(
+        &main,
+        "src/T.al",
+        "codeunit 50721 \"Own Single\" { SingleInstance = true; var V: Integer;
+    procedure SetV(N: Integer) begin V := N; end; procedure GetV(): Integer begin exit(V); end; }
+codeunit 50722 Writer { Subtype = Test;
+    [Test] procedure WritesState() var D: Codeunit \"Dep Single\"; O: Codeunit \"Own Single\"; begin
+        WorkDate(20010101D); D.SetV(7); O.SetV(8);
+        NumberSequence.Insert('STATE5862'); IsolatedStorage.Set('state5862', 'x'); end; }
+codeunit 50723 Reader { Subtype = Test;
+    [Test] procedure SeesNoState() var D: Codeunit \"Dep Single\"; O: Codeunit \"Own Single\"; begin
+        if WorkDate() = 20010101D then Error('WorkDate leaked');
+        if D.GetV() <> 0 then Error('dependency SingleInstance leaked');
+        if O.GetV() <> 0 then Error('SingleInstance leaked');
+        if NumberSequence.Exists('STATE5862') then Error('NumberSequence leaked');
+        if IsolatedStorage.Contains('state5862') then Error('IsolatedStorage leaked'); end; }\n",
+    );
+    (main, dep)
+}
+
+/// Al-runner issue 5862: each test codeunit starts from a new session over the post-install database, in every entry of
+/// a request and in every request: WorkDate, SingleInstance codeunits (also of a dependency app), NumberSequence and
+/// IsolatedStorage that an earlier codeunit set are gone, and a second Writer runs clean.
+#[test]
+fn every_entry_and_request_starts_without_the_state_an_earlier_one_set() {
+    let d = tempfile::tempdir().unwrap();
+    let (main, dep) = state_apps(d.path());
+    let dep = dep.to_string_lossy().to_string();
+    let mut s = Server::start(&["--no-download", "--no-test-data", "--dep", &dep]);
+    s.line();
+    let w = |id: &str| json!({"id": id, "test": "Codeunit50722."});
+    let r = |id: &str| json!({"id": id, "test": "Codeunit50723."});
+    let requests = [
+        vec![r("r")],
+        vec![w("w"), r("r")],
+        vec![r("r"), w("w")],
+        vec![w("w1"), r("r1"), w("w2"), r("r2"), r("r3")],
+        vec![r("r")],
+    ];
+    for entries in requests {
+        let n = entries.len();
+        s.send(json!({"command": "runTests", "sourcePaths": [main], "entries": entries}));
+        let lines = s.until_summary();
+        let tests: Vec<&Value> = lines.iter().filter(|l| l["type"] == "test").collect();
+        assert_eq!(tests.len(), n, "{lines:?}");
+        assert!(tests.iter().all(|t| t["status"] == "pass"), "{lines:?}");
+    }
+    s.send(json!({"command": "shutdown"}));
+    assert_eq!(s.line(), json!({"status": "shutting down"}));
+}

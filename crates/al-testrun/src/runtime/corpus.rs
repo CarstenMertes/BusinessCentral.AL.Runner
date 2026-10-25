@@ -1759,16 +1759,11 @@ fn take_kept_engines(
     }
     let reset = |mut engine: Arc<Engine>| -> Option<Arc<Engine>> {
         let e = Arc::get_mut(&mut engine)?;
+        // Every field a run sets, back to what `Engine::with_config` makes; then what `make_engine` sets.
+        e.reset_run_state();
         e.dotnet = dotnet.clone();
         e.test_data = opts.test_data.clone();
         e.skipped_apps = opts.skipped_dependencies.clone();
-        e.unseeded.clear();
-        e.demo_tables.clear();
-        e.company_refusal = None;
-        *e.resources_read.get_mut() = false;
-        if let Ok(o) = e.resource_overrides.get_mut() {
-            o.clear();
-        }
         Some(engine)
     };
     let install = reset(k.install);

@@ -398,6 +398,58 @@ impl Engine {
         })
     }
 
+    /// Puts back what a run sets on an engine after [`Engine::with_config`], so that a warm server can run its next
+    /// request on the engine of the last one (al-runner issue 5856) as on a new engine. Every field is named here: a new
+    /// field fails to compile until it is either reset or listed as worked out from the program and the config alone.
+    /// The .NET host is the caller's to set again (`dotnet`).
+    pub fn reset_run_state(&mut self) {
+        let Engine {
+            // Set by a run.
+            unseeded,
+            demo_tables,
+            company_refusal,
+            skipped_apps,
+            resource_overrides,
+            resources_read,
+            test_data,
+            // From the program and the config of `with_config` (and al-testrun's `global_triggers_find_unavailable`,
+            // which reads only the compile): the same for every run over this program.
+            program: _,
+            blocked: _,
+            tables: _,
+            events: _,
+            target: _,
+            dotnet: _,
+            platform_unseeded: _,
+            unevaluable_init: _,
+            table_facts: _,
+            object_facts: _,
+            field_facts: _,
+            facts: _,
+            exec: _,
+            codeunits: _,
+            // Caches that are worked out from the program on first use.
+            profile_seeds: _,
+            delete_subscribed: _,
+            positions_by_object: _,
+            served_tables: _,
+            derived: _,
+            install_facts: _,
+            // Kept: the listings shared under it depend on the program only (`platform::SharedListings`).
+            uid: _,
+        } = self;
+        unseeded.clear();
+        demo_tables.clear();
+        *company_refusal = None;
+        skipped_apps.clear();
+        match resource_overrides.get_mut() {
+            Ok(o) => o.clear(),
+            Err(e) => e.into_inner().clear(),
+        }
+        *resources_read.get_mut() = false;
+        *test_data = None;
+    }
+
     /// The first compiled codeunit with this id, in program order: the object `Codeunit.Run(Id)` runs. Found in an index
     /// built with the engine; the test runner runs codeunits by id around every test method (al-testrun runner_reset.rs).
     pub fn compiled_codeunit(&self, id: Option<u32>) -> Option<usize> {

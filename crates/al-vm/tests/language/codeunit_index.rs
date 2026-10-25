@@ -86,3 +86,55 @@ fn derived_data_is_made_once_per_engine_and_type() {
         .unwrap();
     assert_eq!(from_thread, 1);
 }
+
+/// `Engine::reset_run_state`: a warm server runs its next request on the engine of the last one (al-runner issue 5856).
+/// Every field a run sets goes back to what a new engine has; what comes from the program stays.
+#[test]
+fn a_kept_engine_is_reset_to_what_a_new_engine_has() {
+    use al_host::testdata::{TableError, TableProvider, TableRequest, TableRows, TestData};
+    use std::sync::Arc;
+    struct Empty;
+    impl TableProvider for Empty {
+        fn company(&self) -> &str {
+            "C"
+        }
+        fn source(&self) -> String {
+            "empty".into()
+        }
+        fn read(&self, _: &TableRequest) -> Result<Arc<TableRows>, TableError> {
+            Err(TableError::Absent)
+        }
+    }
+    let program = Program {
+        objects: vec![object(ObjKind::Codeunit, Some(50100), false)],
+        ..Program::default()
+    };
+    let fresh = Engine::new(program.clone(), Vec::new());
+    let mut engine = Engine::new(program, Vec::new());
+    let uid = engine.uid;
+    {
+        let e = Arc::get_mut(&mut engine).expect("not shared");
+        e.unseeded.insert(0);
+        e.demo_tables.insert(0);
+        e.company_refusal = Some("no company".into());
+        e.skipped_apps.push("`App` by Publisher".into());
+        e.resource_overrides
+            .write()
+            .unwrap()
+            .insert(0, Arc::new(vec![("a.txt".into(), b"x".to_vec())]));
+        e.resources_read.store(true, std::sync::atomic::Ordering::Relaxed);
+        e.test_data = Some(TestData::new(Arc::new(Empty)));
+        e.reset_run_state();
+    }
+    assert_eq!(engine.unseeded, fresh.unseeded);
+    assert_eq!(engine.demo_tables, fresh.demo_tables);
+    assert_eq!(engine.company_refusal, fresh.company_refusal);
+    assert_eq!(engine.skipped_apps, fresh.skipped_apps);
+    assert!(engine.resource_overrides.read().unwrap().is_empty());
+    assert!(!engine.resources_read.load(std::sync::atomic::Ordering::Relaxed));
+    assert!(engine.test_data.is_none());
+    // What comes from the program stays.
+    assert_eq!(engine.uid, uid);
+    assert_eq!(engine.compiled_codeunit(Some(50100)), fresh.compiled_codeunit(Some(50100)));
+    assert_eq!(engine.platform_unseeded, fresh.platform_unseeded);
+}

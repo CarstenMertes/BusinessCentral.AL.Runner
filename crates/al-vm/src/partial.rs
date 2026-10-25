@@ -172,6 +172,37 @@ impl Session {
     /// (`key_after_next_loaded_Name` Yes, `_Qty` No). A row that is gone, a key changed since the fetch, and a field whose
     /// state is unsure and whose value differs from the row's are not pinned.
     pub(crate) fn load_missing_fields(&mut self, rec: &Rec, read: Option<usize>) -> Result<(), Signal> {
+        self.load_missing_fields_of(rec, read, None)
+    }
+
+    /// A read of field `p`, which is not loaded, of a partial record whose row another variable deleted: the JustInTimeFieldLoad
+    /// error, naming the field, the table and the key (record/lt-load-fields-fetched/LoadFieldsFetched.al:232-268, a normal and a
+    /// table extension field). Pinned for a table whose primary key is one Integer field and whose caption is its name; `None`
+    /// otherwise.
+    fn jit_row_gone(&self, t: &TableDef, fields: &[Value], p: usize) -> Option<Signal> {
+        let [k] = t.keys[0][..] else { return None };
+        let Value::Integer(n) = fields[k] else { return None };
+        let obj = &self.engine.program.objects[t.object as usize];
+        let caption_is_name = obj
+            .properties
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case("Caption"))
+            .is_none_or(|(_, v)| v.trim().trim_matches('\'') == obj.name);
+        if !caption_is_name || self.field_caption(t, k) != t.fields[k].name {
+            return None;
+        }
+        Some(crate::transactions::al_error_code(
+            &format!(
+                "JIT loading of field(s): '{}' failed for table: '{}' identification values: '{}='{n}''",
+                t.fields[p].name, t.name, t.fields[k].name
+            ),
+            "JustInTimeFieldLoad",
+        ))
+    }
+
+    /// `load_missing_fields`, for the fields at `only` alone when it is given: they join the loaded fields and the others stay
+    /// as they are (`Record.LoadFields` on a partial record).
+    fn load_missing_fields_of(&mut self, rec: &Rec, read: Option<usize>, only: Option<&[usize]>) -> Result<(), Signal> {
         let (have, unsure, assigned, held, fetched) = {
             let r = rec.borrow();
             match &r.load.buffer {
@@ -205,11 +236,17 @@ impl Session {
             .get(&cx, &t, &pk)
             .map_err(|e| Signal::Unsupported(format!("{e}")))?;
         let Some(stored) = stored else {
+            if let Some(p) = read {
+                if let Some(e) = self.jit_row_gone(&t, &fields, p) {
+                    return Err(e);
+                }
+            }
             return unsupported("a load of the missing fields of a partial record whose row is gone (not pinned)");
         };
         let mut merged = fields;
         for p in 0..t.fields.len() {
-            if !t.fields[p].stored || have.contains(p) || assigned.contains(&p) {
+            if !t.fields[p].stored || have.contains(p) || assigned.contains(&p) || only.is_some_and(|o| !o.contains(&p))
+            {
                 continue;
             }
             // Changed by AL code since the fetch (Validate, TransferFields, Init, ...): kept, as an assignment is.
@@ -245,9 +282,19 @@ impl Session {
         let mut r = rec.borrow_mut();
         r.fields = merged;
         if let Some(b) = &mut r.load.buffer {
-            b.have = FieldSet::Of((0..t.fields.len()).collect());
-            b.unsure = FieldSet::Of(Vec::new());
-            b.missing_loaded = true;
+            match only {
+                Some(o) => {
+                    for &p in o {
+                        b.have.add(p);
+                        b.unsure.remove(p);
+                    }
+                }
+                None => {
+                    b.have = FieldSet::Of((0..t.fields.len()).collect());
+                    b.unsure = FieldSet::Of(Vec::new());
+                    b.missing_loaded = true;
+                }
+            }
         }
         if let (Some(p), Some(req)) = (read, &mut r.load.request) {
             if !req.contains(&p) {
@@ -441,7 +488,10 @@ impl Session {
     /// `Record.LoadFields(Fields)`: on a record that was never fetched it does not read the row (the buffer keeps
     /// what was assigned, the key stays as it is) and the function form answers false, with an existing and with a
     /// missing key; on a record that holds a whole fetched row it changes nothing (types/PYLoadFindThis.al, BC 27.5 and
-    /// 29.0). The answer on a fetched record and a record that holds a partial buffer are not pinned: refused.
+    /// 29.0), and the function form answers true, after Get, FindFirst and Find('-'), over values assigned since and when the row
+    /// was deleted meanwhile (record/lt-load-fields-fetched/LoadFieldsFetched.al:49-185). On a record that holds a partial
+    /// buffer it reads the fields asked for from the row and answers true (:104-132 P170_LoadFields_Function_AfterGetUnderSetLoadFields);
+    /// when one of them was assigned or changed since the fetch, what BC keeps is not pinned: refused.
     pub(crate) fn load_fields_row(&mut self, rec: &Rec, t: &TableDef, args: &[Value]) -> Result<Value, Signal> {
         let wanted = positions(args)?;
         let engine = self.engine.clone();
@@ -453,22 +503,34 @@ impl Session {
             return unsupported(format!("LoadFields of field position {p}, which is not a stored field"));
         }
         // A buffer that survives a Clear is for a later fetch of the same row, not a row the record holds.
-        if rec
-            .borrow()
-            .load
-            .buffer
-            .as_ref()
-            .is_some_and(|b| !b.cleared && !matches!(b.have, FieldSet::All))
-        {
-            return unsupported(
-                "LoadFields on a record that holds a partly fetched row: whether BC reads the missing fields, over values assigned since, is not pinned (docs/probes-needed.md)",
-            );
+        let partial = {
+            let r = rec.borrow();
+            match &r.load.buffer {
+                Some(b) if !b.cleared && !matches!(b.have, FieldSet::All) => {
+                    let changed = |p: usize| {
+                        b.assigned.contains(&p)
+                            || match b.fetched.0.as_deref().and_then(|f| f.get(p)) {
+                                Some(f) => !matches!(f, Value::Blob(_)) && !f.identical(&r.fields[p]),
+                                None => true,
+                            }
+                    };
+                    Some(r.load.partial && wanted.iter().all(|&p| b.have.contains(p) || !changed(p)))
+                }
+                _ => None,
+            }
+        };
+        match partial {
+            Some(true) => {
+                self.load_missing_fields_of(rec, None, Some(&wanted))?;
+                return Ok(Value::Boolean(true));
+            }
+            Some(false) => {
+                return unsupported(
+                    "LoadFields on a record that holds a partly fetched row: whether BC reads the missing fields, over values assigned since, is not pinned (docs/probes-needed.md)",
+                );
+            }
+            None => {}
         }
-        if self.ret_used && rec.borrow().position.is_some() {
-            return unsupported(
-                "LoadFields with its result used on a record that holds a fetched row: BC's answer is not pinned (docs/probes-needed.md)",
-            );
-        }
-        Ok(Value::Boolean(false))
+        Ok(Value::Boolean(rec.borrow().position.is_some()))
     }
 }

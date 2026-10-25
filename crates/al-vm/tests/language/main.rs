@@ -13,6 +13,7 @@ mod caption_setup_written;
 mod clear_all_temp_rows;
 mod clear_enum;
 mod code_compare;
+mod collections_old_value;
 mod codeunit_index;
 mod codeunit_run_variant_recordref;
 mod codeunit_this_run;

@@ -166,6 +166,41 @@ pub const REGISTRY: &[(&str, NativeFn)] = &[
             Ok(Value::List(Rc::new(RefCell::new(l[i..i + n].to_vec().into()))))
         })
     }),
+    // `Set(Index, NewValue, var OldValue)`: the item is replaced and OldValue gets what it held; an index outside the list
+    // raises ArgumentOutOfRange and leaves OldValue (misc/lt-open-overloads-collections-isolated/P107Collections.al:138-176,
+    // P107_ListSetOld; :178-195, P107_ListSetOldInteger). The Boolean result is not pinned.
+    ("List.Set#2", |c, r, a| {
+        refuse_result(c.ret_used(), "List.Set(Index, NewValue, var OldValue)")?;
+        let i = index(&a[0])?;
+        let new = a[1].clone();
+        let old = with_list(r, |l| match l.get_mut(i) {
+            Some(slot) => Ok(std::mem::replace(slot, new)),
+            None => out_of_range(),
+        })?;
+        a[2] = old;
+        Ok(Value::Null)
+    }),
+    // `GetRange(Index, Count, var Result)`: Result holds the items and nothing else, also when it is the list itself; the
+    // errors are those of the other form, and an error leaves Result (P107Collections.al:67-113, P107_ListGetRangeVar; :115-136,
+    // P107_ListGetRangeVarSelf). A range of no items that starts past the end, and the Boolean result, are not pinned.
+    ("List.GetRange#2", |c, r, a| {
+        refuse_result(c.ret_used(), "List.GetRange(Index, Count, var Result)")?;
+        let i = index(&a[0])?;
+        let n = count(&a[1])?;
+        let items = read_list(r, |l| {
+            if i + n > l.len() {
+                return range_past_end();
+            }
+            if n == 0 && i >= l.len() && i > 0 {
+                return Err(Signal::Unsupported(
+                    "List.GetRange of no items from an index past the end (not pinned)".into(),
+                ));
+            }
+            Ok(l[i..i + n].to_vec())
+        })?;
+        a[2] = Value::List(Rc::new(RefCell::new(items.into())));
+        Ok(Value::Null)
+    }),
     ("Dictionary.Add#1", |c, r, a| {
         let ret_used = c.ret_used();
         with_dict(r, |d| {
@@ -245,7 +280,34 @@ pub const REGISTRY: &[(&str, NativeFn)] = &[
             Ok(Value::Null)
         })
     }),
+    // `Set(Key, Value, var OldValue)`: an existing key gets the value and OldValue what it held; a missing key is added and
+    // OldValue is left (P107Collections.al:14-39, P107_DictionarySetOld; :41-64, P107_DictionarySetOldText). The Boolean result
+    // is not pinned.
+    ("Dictionary.Set#2", |c, r, a| {
+        refuse_result(c.ret_used(), "Dictionary.Set(Key, Value, var OldValue)")?;
+        let old = with_dict(r, |d| {
+            Ok(match d.iter_mut().find(|(k, _)| !matches!(k, Value::Null) && eq(k, &a[0])) {
+                Some((_, v)) => Some(std::mem::replace(v, a[1].clone())),
+                None => {
+                    dict_insert(d, a[0].clone(), a[1].clone());
+                    None
+                }
+            })
+        })?;
+        if let Some(old) = old {
+            a[2] = old;
+        }
+        Ok(Value::Null)
+    }),
 ];
+
+/// Refuses a use of the Boolean result of `what`, which no corpus test pins.
+fn refuse_result(ret_used: bool, what: &str) -> Result<(), Signal> {
+    if ret_used {
+        return Err(Signal::Unsupported(format!("the result of {what} (not pinned)")));
+    }
+    Ok(())
+}
 
 /// A freed slot of a dictionary: a null key and the sequence number of the removal (the free list of a .NET Dictionary is last in,
 /// first out).

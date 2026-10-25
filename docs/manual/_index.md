@@ -20,6 +20,7 @@ explains what a pass, a failure and "not run" each mean.
 ## Where to start
 
 - **[Getting started](getting-started.md)**: install it and run your tests.
+- **[Supported versions](versions.md)**: Business Central versions, platforms and release channels.
 - **[Writing tests](writing-tests.md)**: apps, test codeunits, selecting tests, isolation, test-first work.
 - **[Reading results](results.md)**: what you can trust, and how to find out why a test did not run.
 - **[Command line reference](cli-reference.md)**: every command and flag.

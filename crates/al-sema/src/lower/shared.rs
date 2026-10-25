@@ -361,10 +361,14 @@ pub(crate) fn lower_object<'a>(
                 // xmlport/lt-xmlport-bigtext/XmlPortBigText.al:54: `TextType = BigText` makes the variable a BigText.
                 ir::XmlNodeKind::Text
                     if n.section.properties().any(|p| {
-                        p.name().eq_ignore_ascii_case("TextType") && p.value_text().trim().eq_ignore_ascii_case("BigText")
+                        p.name().eq_ignore_ascii_case("TextType")
+                            && p.value_text().trim().eq_ignore_ascii_case("BigText")
                     }) =>
                 {
-                    (Ok(RtType::Library(al_builtins::library_kind::LibraryKind::BigText)), false)
+                    (
+                        Ok(RtType::Library(al_builtins::library_kind::LibraryKind::BigText)),
+                        false,
+                    )
                 }
                 ir::XmlNodeKind::Text | ir::XmlNodeKind::TextAttr => (Ok(RtType::Text(None)), false),
                 ir::XmlNodeKind::Table => (

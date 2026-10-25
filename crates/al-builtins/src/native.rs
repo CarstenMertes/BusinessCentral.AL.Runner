@@ -598,6 +598,7 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("Xmlport.TableSeparator#1", vm_only),
     ("Xmlport.TextEncoding#1", vm_only),
     ("Xmlport.Filename#1", vm_only),
+    ("Xmlport.ImportFile#1", vm_only),
     ("Xmlport.CurrentPath#1", vm_only),
     ("Xmlport.Break#1", vm_only),
     ("Xmlport.Skip#1", vm_only),

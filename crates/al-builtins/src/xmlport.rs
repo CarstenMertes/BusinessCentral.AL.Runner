@@ -63,6 +63,9 @@ pub enum ReadFailure {
     Unsupported(String),
 }
 
+/// The start of the `ReadFailure::Unsupported` text for a root element in a namespace; the local name follows.
+pub const ROOT_IN_NAMESPACE: &str = "a root element in a namespace: ";
+
 /// Reads the root element of `text`.
 pub fn parse(text: &str) -> Result<Elem, ReadFailure> {
     let text = text.strip_prefix('\u{feff}').unwrap_or(text);
@@ -313,7 +316,13 @@ mod tests {
             parse("<a xmlns=\"u\"><b/></a>"),
             Err(ReadFailure::Unsupported(_))
         ));
-        assert!(matches!(parse("<a xmlns=\"u\"/>"), Ok(e) if e.attr("xmlns") == Some("u")));
+        // A root element in a namespace is told apart for the port to report (al-vm xmlports.rs); an empty default namespace
+        // is none.
+        assert!(
+            matches!(parse("<a xmlns=\"u\"/>"), Err(ReadFailure::Unsupported(w)) if w == format!("{ROOT_IN_NAMESPACE}a"))
+        );
+        assert!(matches!(parse("<a xmlns=\"\"/>"), Ok(e) if e.attr("xmlns") == Some("")));
+        assert!(matches!(parse("<a><b xmlns=\"u\"/></a>"), Ok(_)));
     }
 
     #[test]

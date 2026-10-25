@@ -987,7 +987,9 @@ fn bt_get_sub_text(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> N
     // one past the end gives the empty text: xmlport/lt-xmlport-bigtext/XmlPortBigText.al:198 `1, 12` on an empty BigText,
     // StTBigText.al:167 no error). What a start further out gives is not pinned (StTBigText.al:169 pins only no error).
     if pos as usize > u.len() + 1 {
-        return unsupported("BigText.GetSubText from a position past the end of the text plus one (the result is not pinned)");
+        return unsupported(
+            "BigText.GetSubText from a position past the end of the text plus one (the result is not pinned)",
+        );
     }
     let from = pos as usize - 1;
     let to = given.map_or(u.len(), |len| (from + len as usize).min(u.len()));

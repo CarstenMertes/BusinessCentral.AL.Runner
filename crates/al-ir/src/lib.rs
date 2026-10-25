@@ -614,6 +614,9 @@ pub struct XmlPort {
     /// A `TextEncoding` property other than UTF8 was declared (its value is not kept).
     #[serde(default)]
     pub text_encoding_declared: bool,
+    /// `TextEncoding` of a VariableText port when it is MSDOS, WINDOWS or UTF16 (lower case); the export writes it.
+    #[serde(default)]
+    pub text_encoding: Option<String>,
     /// `FormatEvaluate = Xml`: values export and import in their XML forms. The default and
     /// `Legacy` use the display text (xmlport/TestXmlPortFormatEvaluateContracts.al).
     #[serde(default)]
@@ -626,6 +629,9 @@ pub struct XmlPort {
     /// (xmlport/lt-bj-xmlport-default-validation/BjXmlPortDefaultValidation.al:274-283).
     #[serde(default)]
     pub no_default_fields_validation: bool,
+    /// `PreserveWhiteSpace = true`: an Xml import keeps the white space around the value of a Text field element.
+    #[serde(default)]
+    pub preserve_whitespace: bool,
     /// Schema nodes in source order; `parent` makes the tree. Top-level nodes have no parent.
     pub nodes: Vec<XmlNode>,
     /// Global slots of the source `InStream` and destination `OutStream` set by

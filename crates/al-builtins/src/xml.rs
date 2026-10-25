@@ -4475,6 +4475,14 @@ pub(crate) fn read_tree(text: &str) -> Result<Result<crate::xmlport::Elem, Optio
         .into_iter()
         .find(|c| with(c, |d| matches!(d, XData::Element { .. })))
         .ok_or("a document without a root element")?;
+    // The import of a port without namespaces fails on a root element in a namespace (al-vm xmlports.rs, ROOT_IN_NAMESPACE).
+    let (local, ns) = with(&root, |d| match d {
+        XData::Element { local, ns, .. } => (local.clone(), ns.clone()),
+        _ => unreachable!("the root is an element"),
+    });
+    if !ns.is_empty() {
+        return Err(format!("{}{local}", crate::xmlport::ROOT_IN_NAMESPACE));
+    }
     convert(&root).map(Ok)
 }
 

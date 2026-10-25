@@ -285,6 +285,11 @@ pub fn parse_filter_with(
     ty: &crate::value::RtType,
     enums: &dyn Fn(u32) -> Vec<(i32, String)>,
 ) -> Result<FilterExpr, String> {
+    if matches!(ty, crate::value::RtType::Date) {
+        if let Some(e) = date_letter_filter(text.trim()) {
+            return e;
+        }
+    }
     // Three dots in a Date filter read as two (P81DateFilters.al:SetFilter_Date_InvalidTexts, `010126...020126`).
     let dots;
     let text = if matches!(ty, crate::value::RtType::Date)
@@ -833,6 +838,44 @@ pub fn key_cmp(a: &[Value], b: &[Value]) -> Ordering {
     a.len().cmp(&b.len())
 }
 
+/// A Date filter text that is one of the letters `M`, `D`, `CM` or `Y` alone, in an English session
+/// (record/lt-date-filter-letters-workdates/DateFilterLettersWorkDates.al, five work dates): `M` is the Monday of the week of the
+/// work date and `D` the work date; `CM` is the last day of the month of Today; `Y` runs from the work date to the end of its year
+/// when that is the year of Today (the work date 2026-01-01). `Y` in another year is refused: it gave `01/01/27..12/31/9999` for
+/// the work date 2030-05-15, which no rule the corpus pins explains.
+fn date_letter_filter(t: &str) -> Option<Result<FilterExpr, String>> {
+    if !matches!(t, "M" | "D" | "CM" | "Y") {
+        return None;
+    }
+    let c = DATE_CONTEXT.with(std::cell::Cell::get).filter(|c| c.language == 1033)?;
+    let date = |d: i32| Value::Date(d, false);
+    let (wy, _, _) = crate::format::civil_from_day(c.work_date);
+    Some(Ok(match t {
+        // 2024-01-01 was a Monday.
+        "M" => FilterExpr::Eq(date(
+            c.work_date - (c.work_date - crate::format::day_from_civil(2024, 1, 1)).rem_euclid(7),
+        )),
+        "D" => FilterExpr::Eq(date(c.work_date)),
+        "CM" => {
+            let (y, m, _) = crate::format::civil_from_day(c.today);
+            FilterExpr::Eq(date(crate::format::day_from_civil(
+                y,
+                m,
+                crate::iso::days_in_month(y, m),
+            )))
+        }
+        _ if crate::format::civil_from_day(c.today).0 == wy => FilterExpr::Range(
+            Some(date(c.work_date)),
+            Some(date(crate::format::day_from_civil(wy, 12, 31))),
+        ),
+        _ => {
+            return Some(Err(
+                "the Date filter letter `Y` with a work date outside the year of Today (not pinned)".to_string(),
+            ));
+        }
+    }))
+}
+
 /// The value of one Date filter text, or the error: `INVALID_DATE` and the text for a German session or an English text of a
 /// shape the corpus pins as invalid, a refusal otherwise.
 fn date_filter_value(t: &str) -> Result<Value, String> {
@@ -860,7 +903,17 @@ fn date_filter_value(t: &str) -> Result<Value, String> {
     }
     // The dotted spelling reads like the slashed one in German: `1.1.2027` is the first of January, `17.01.27` has no month 17.
     let slashed;
-    let text = if german && !t.contains('/') && t.matches('.').count() == 2 {
+    // In an English session `03.01.2020` reads as `03/01/2020` too (record/lt-record-read/RcAFilters.al:689, SetFilter_Decimal_Date_
+    // Boolean_Option_Enum `dateDotted`); pinned for two digits, two digits and four digits only.
+    let english_dotted = english && {
+        let p: Vec<&str> = t.split('.').collect();
+        p.len() == 3
+            && [2, 2, 4]
+                .iter()
+                .zip(&p)
+                .all(|(n, x)| x.len() == *n && x.bytes().all(|b| b.is_ascii_digit()))
+    };
+    let text = if (german && !t.contains('/') && t.matches('.').count() == 2) || english_dotted {
         slashed = t.replace('.', "/");
         slashed.as_str()
     } else {

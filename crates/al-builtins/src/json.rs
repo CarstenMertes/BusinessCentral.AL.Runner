@@ -1415,7 +1415,22 @@ fn array_index_of(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Re
         for (i, k) in kids.iter().enumerate() {
             let same = with_node(k, |n| match n {
                 JsonNode::Scalar(Scalar::Val(v)) => {
-                    if std::mem::discriminant(v) == std::mem::discriminant(needle) {
+                    // A Text against a Code element and the other way round: texts that differ also when the case is
+                    // ignored do not match (json/lt-json-typed-overloads/P101CodeLabel.al:115-120, `indexof_label` 1 and
+                    // `indexof_text10` 2 pass the Code "ABC" at 0). Texts that differ only in case, or are equal, are not pinned.
+                    let strings = matches!(
+                        (&*v, needle),
+                        (Value::Text(_), Value::Code(_)) | (Value::Code(_), Value::Text(_))
+                    );
+                    if strings {
+                        let (Some(x), Some(y)) = (crate::native::text_of(v), crate::native::text_of(needle)) else {
+                            return None;
+                        };
+                        if x.to_lowercase() == y.to_lowercase() {
+                            return None;
+                        }
+                        Some(false)
+                    } else if std::mem::discriminant(v) == std::mem::discriminant(needle) {
                         Some(crate::ops::compare(v, needle).is_ok_and(|o| o == std::cmp::Ordering::Equal))
                     } else {
                         None
@@ -1501,7 +1516,10 @@ fn read_from(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value], want: Opti
         let text = crate::stream::read_serialised_text(&mut a[0])?;
         // A stream whose first token is a string (what is left after a partial read of `{"a":2}`)
         // is refused by the token reader (streams/ProbeJsonAndInStreamBytes.al:ReadFrom_InStream_AfterPartialRead_ReadsTheRest).
-        if text.trim_start().starts_with('"') {
+        // A JsonToken reads a stream that holds one whole string as that value (json/lt-json-typed-overloads/P101Streams.al:166-167,
+        // `text_ok` Yes and `text_isvalue` Yes for `"text"`).
+        let whole_string_into_token = want.is_none() && c.ret_used() && parse(&text)?.is_some();
+        if text.trim_start().starts_with('"') && !whole_string_into_token {
             if c.ret_used() {
                 return unsupported(
                     "the result of ReadFrom(InStream) on a stream that starts with a string token (not pinned)",
@@ -2022,6 +2040,228 @@ fn select_token(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Resu
     Ok(Value::Boolean(true))
 }
 
+// ----------------------------------------------------------- SelectTokens
+
+/// One step of a `SelectTokens` path. Only the forms json/lt-json-selecttokens/SelectTokensList.al,
+/// json/lt-ay-json/AyJsonTokenSelectTokens.al and json/lt-dc-json-leads/DcJsonLeads.al:412-442 pin.
+enum ManySeg {
+    Key(String),
+    Index(i64),
+    /// `[*]` on an array.
+    ArrayWild,
+    /// `.*` on an object.
+    ObjectWild,
+    Slice(usize, usize),
+    Descent(String),
+    /// `[?(@.name > n)]` with a whole number n (SelectTokensList.al:265 `filter`, AyJsonTokenSelectTokens.al:62,
+    /// DcJsonLeads.al:422).
+    Greater(String, i64),
+}
+
+/// Why a `SelectTokens` path is not walked: the platform cannot read it (false and a last error), or it is not pinned.
+enum ManyErr {
+    Invalid,
+    Refused(&'static str),
+}
+
+fn parse_many(p: &str) -> Result<Vec<ManySeg>, ManyErr> {
+    // An indexer that is never closed is a path the platform cannot read: `$[`, `$.a[?(@.x`, `a..[`, `$.a.[`, `$[?(`
+    // (SelectTokensList.al:124-206), `$.a[` (AyJsonTokenSelectTokens.al:136), `order_line[` (DcJsonLeads.al:427).
+    if let Some(open) = p.rfind('[')
+        && !p[open..].contains(']')
+    {
+        return Err(ManyErr::Invalid);
+    }
+    let b = p.as_bytes();
+    let mut i = usize::from(b.first() == Some(&b'$'));
+    let mut segs = Vec::new();
+    while i < b.len() {
+        if b[i] == b'[' {
+            let close = p[i..].find(']').map(|c| c + i).ok_or(ManyErr::Invalid)?;
+            let inner = &p[i + 1..close];
+            if let Some(q) = inner.strip_prefix('\'').and_then(|s| s.strip_suffix('\'')) {
+                segs.push(ManySeg::Key(q.to_string()));
+            } else if let Ok(n) = inner.parse::<i64>() {
+                segs.push(ManySeg::Index(n));
+            } else if inner == "*" {
+                segs.push(ManySeg::ArrayWild);
+            } else if let Some((a, z)) = inner.split_once(':')
+                && let (Ok(a), Ok(z)) = (a.parse::<usize>(), z.parse::<usize>())
+            {
+                segs.push(ManySeg::Slice(a, z));
+            } else if let Some(f) = inner.strip_prefix("?(").and_then(|s| s.strip_suffix(')')) {
+                let Some((lhs, rhs)) = f.split_once('>') else {
+                    return Err(ManyErr::Refused(
+                        "SelectTokens filter that is not a > comparison (not pinned)",
+                    ));
+                };
+                let Some(name) = lhs.trim().strip_prefix("@.") else {
+                    return Err(ManyErr::Refused(
+                        "SelectTokens filter on something else than @.name (not pinned)",
+                    ));
+                };
+                if name.is_empty() || !name.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'_') {
+                    return Err(ManyErr::Refused(
+                        "SelectTokens filter on something else than @.name (not pinned)",
+                    ));
+                }
+                let rhs = rhs.trim();
+                // `$.a[?(@.p >)]`: no right operand (AyJsonTokenSelectTokens.al:137 `bad_filter`).
+                if rhs.is_empty() {
+                    return Err(ManyErr::Invalid);
+                }
+                let Ok(n) = rhs.parse::<i64>() else {
+                    return Err(ManyErr::Refused(
+                        "SelectTokens filter against something else than a whole number (not pinned)",
+                    ));
+                };
+                segs.push(ManySeg::Greater(name.to_string(), n));
+            } else {
+                return Err(ManyErr::Refused("SelectTokens indexer form not pinned by the corpus"));
+            }
+            i = close + 1;
+            continue;
+        }
+        let mut descent = false;
+        if b[i] == b'.' {
+            i += 1;
+            if b.get(i) == Some(&b'.') {
+                descent = true;
+                i += 1;
+            }
+        }
+        let s = i;
+        while i < b.len() && b[i] != b'.' && b[i] != b'[' {
+            i += 1;
+        }
+        let name = &p[s..i];
+        if name == "*" && !descent {
+            segs.push(ManySeg::ObjectWild);
+            continue;
+        }
+        if name.is_empty() || name.contains(['*', '?', '@', '(', ')', '\'', ']']) {
+            return Err(ManyErr::Refused("SelectTokens path form not pinned by the corpus"));
+        }
+        segs.push(match descent {
+            true => ManySeg::Descent(name.to_string()),
+            false => ManySeg::Key(name.to_string()),
+        });
+    }
+    Ok(segs)
+}
+
+/// The tokens one step selects from `h`, in document order.
+fn step_many(h: &Handle, seg: &ManySeg) -> Result<Vec<Handle>, Signal> {
+    if let ManySeg::Descent(name) = seg {
+        let mut out = Vec::new();
+        descendants_named(h, name, &mut out);
+        return Ok(out);
+    }
+    let refuse = |what: &str| unsupported::<Vec<Handle>>(format!("SelectTokens: {what} (not pinned)"));
+    let filter_kids: Option<Vec<Handle>> = with_node(h, |n| match n {
+        JsonNode::Array(kids) => Some(kids.clone()),
+        _ => None,
+    });
+    match seg {
+        ManySeg::Greater(name, limit) => {
+            let Some(kids) = filter_kids else {
+                return refuse("a filter on a token that is not an array");
+            };
+            let mut out = Vec::new();
+            for k in kids {
+                let field = with_node(&k, |n| match n {
+                    JsonNode::Object(f) => Ok(f.iter().find(|(e, _)| e == name).map(|(_, c)| c.clone())),
+                    _ => Err(()),
+                });
+                // An element without the name is left out (SelectTokensList.al:265 `{"x":30}`, AyJsonTokenSelectTokens.al:62
+                // `{"n":3}`).
+                let field = match field {
+                    Ok(Some(f)) => f,
+                    Ok(None) => continue,
+                    Err(()) => return refuse("a filter over an element that is not an object"),
+                };
+                let n = with_node(&field, |n| match n {
+                    JsonNode::Scalar(Scalar::Val(Value::Integer(v))) => Some(i64::from(*v)),
+                    JsonNode::Scalar(Scalar::Val(Value::BigInteger(v))) => Some(*v),
+                    _ => None,
+                });
+                match n {
+                    Some(v) if v > *limit => out.push(k),
+                    Some(_) => {}
+                    None => return refuse("a filter that compares something else than a whole number"),
+                }
+            }
+            Ok(out)
+        }
+        _ => with_node(h, |node| match (node, seg) {
+            (JsonNode::Object(kids), ManySeg::Key(k)) => {
+                Ok(kids.iter().filter(|(e, _)| e == k).map(|(_, c)| c.clone()).collect())
+            }
+            // A name on an array or a value selects nothing (SelectTokensList.al:46 `$[*].a` skips the array element
+            // `[{"a":4}]`; AyJsonTokenSelectTokens.al:117 `$.a` on the value 7).
+            (JsonNode::Array(_) | JsonNode::Scalar(_), ManySeg::Key(_)) => Ok(Vec::new()),
+            // An index past the end selects nothing (SelectTokensList.al:44 `$[9]`).
+            (JsonNode::Array(kids), ManySeg::Index(i)) if *i >= 0 => Ok(usize::try_from(*i)
+                .ok()
+                .and_then(|i| kids.get(i).cloned())
+                .into_iter()
+                .collect()),
+            (JsonNode::Array(kids), ManySeg::ArrayWild) => Ok(kids.clone()),
+            (JsonNode::Object(kids), ManySeg::ObjectWild) => Ok(kids.iter().map(|(_, c)| c.clone()).collect()),
+            // `[1:3]` and `[0:2]` inside the array (SelectTokensList.al:52, AyJsonTokenSelectTokens.al:104).
+            (JsonNode::Array(kids), ManySeg::Slice(a, z)) if a < z && *z <= kids.len() => Ok(kids[*a..*z].to_vec()),
+            _ => Err(Signal::Unsupported(
+                "SelectTokens: this step on this kind of token (not pinned)".into(),
+            )),
+        }),
+    }
+}
+
+/// `SelectTokens(Path, var List of [JsonToken])`: true and the list replaced by the matches, none included
+/// (SelectTokensList.al:61-72, the pre-filled list :92-95; AyJsonTokenSelectTokens.al:79-80). `''` and `$` select the token
+/// itself (SelectTokensList.al:157 `bad3`, AyJsonTokenSelectTokens.al:138 `empty`, :116 `value_root`). A path the platform
+/// cannot read answers false, leaves the list as it was and sets the last error "The requested operation cannot be performed
+/// in this context." (InvalidOperation) without raising it (:144 `unclosed_prefilled`). Only the used result is pinned.
+fn select_tokens(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Result<Value, Signal> {
+    let h = recv(r)?;
+    let Some(p) = crate::native::text_of(&a[0]) else {
+        return unsupported("SelectTokens path that is not text");
+    };
+    let Value::List(list) = &a[1] else {
+        return unsupported("SelectTokens into something else than a List of [JsonToken]");
+    };
+    if !c.ret_used() {
+        return unsupported("SelectTokens with the result unused (not pinned)");
+    }
+    let segs = match parse_many(&p) {
+        Ok(s) => s,
+        Err(ManyErr::Invalid) => {
+            c.set_last_error(crate::native::AlError {
+                message: "The requested operation cannot be performed in this context.".into(),
+                code: "InvalidOperation".into(),
+                ..Default::default()
+            });
+            return Ok(Value::Boolean(false));
+        }
+        Err(ManyErr::Refused(why)) => return unsupported(why),
+    };
+    let mut cur = vec![h];
+    for seg in &segs {
+        let mut next = Vec::new();
+        for t in &cur {
+            next.extend(step_many(t, seg)?);
+        }
+        cur = next;
+    }
+    let mut l = list.borrow_mut();
+    if l.read_only {
+        return unsupported("SelectTokens into a read-only list");
+    }
+    l.clear();
+    l.extend(cur.into_iter().map(|t| tagged("JsonToken", t)));
+    Ok(Value::Boolean(true))
+}
+
 // --------------------------------------------------------------- dispatch
 
 /// The implementation of one catalog overload, if the corpus pins enough of it.
@@ -2063,6 +2303,7 @@ pub fn native_for(sig: &Signature) -> Option<NativeFn> {
             "JsonObject.SelectToken" | "JsonArray.SelectToken" | "JsonValue.SelectToken" | "JsonToken.SelectToken",
             [_, _],
         ) => select_token,
+        ("JsonObject.SelectTokens" | "JsonArray.SelectTokens" | "JsonToken.SelectTokens", [_, _]) => select_tokens,
         ("JsonArray.Add", [_]) => array_add,
         ("JsonArray.Insert", [_, _]) => array_insert,
         ("JsonArray.Set", [_, _]) => array_set,

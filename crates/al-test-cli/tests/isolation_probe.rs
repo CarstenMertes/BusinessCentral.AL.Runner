@@ -45,7 +45,11 @@ fn real_bc(file: &str) -> Vec<oracle::XunitCase> {
 fn agree(rt: &CorpusRuntime, suite: &str, file: &str) {
     // The app has 49 test methods per runner since writer SD's runners 61304-61320 (corpus PR 735, al-runner issues
     // 5607/5609); BC's isolation oracle covers the eleven of the first probe codeunits.
-    assert_eq!(rt.cases_in(suite), 49, "the probe app runs 49 methods under {suite} isolation");
+    assert_eq!(
+        rt.cases_in(suite),
+        49,
+        "the probe app runs 49 methods under {suite} isolation"
+    );
     let bc = real_bc(file);
     assert_eq!(bc.len(), 11, "the oracle has eleven methods");
     for c in &bc {

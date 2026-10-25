@@ -1125,9 +1125,7 @@ fn typed_add(bag: &HeaderBag, name: &str, value: &str) -> Result<Option<Typed>, 
         }
         // Stored as a number: ` 5` and `05` read `5` (SeHeaderValues.al:SE_Shapes_Content); `-1` is refused.
         "content-length" => match v.parse::<u64>() {
-            Ok(n) if !v.is_empty() && v.chars().all(|c| c.is_ascii_digit()) => {
-                single(vec![n.to_string()])
-            }
+            Ok(n) if !v.is_empty() && v.chars().all(|c| c.is_ascii_digit()) => single(vec![n.to_string()]),
             _ => fail(),
         },
         "date" | "if-modified-since" | "if-unmodified-since" | "last-modified" | "expires" => match http_date(v)? {
@@ -1190,9 +1188,7 @@ fn uri_header(v: &str) -> Result<String, Signal> {
         });
         return match normalize_uri(v) {
             Ok(n) if n == v => Ok(n),
-            Ok(n) if simple.as_deref() == Some(n.as_str()) => {
-                Ok(n)
-            }
+            Ok(n) if simple.as_deref() == Some(n.as_str()) => Ok(n),
             _ => unsupported(format!(
                 "HttpHeaders.Add of the uri '{v}': its stored form is not measured"
             )),
@@ -1285,9 +1281,7 @@ fn typed_add_more(bag: &HeaderBag, name: &str, value: &str) -> Result<Option<Typ
             _ if existing => single_unmeasured(),
             _ if is_entity_tag(v) && v != "*" => one(v.to_string()),
             _ => match http_date(v)? {
-                Some(d) => {
-                    one(d)
-                }
+                Some(d) => one(d),
                 None => fail(),
             },
         },
@@ -1312,9 +1306,7 @@ fn typed_add_more(bag: &HeaderBag, name: &str, value: &str) -> Result<Option<Typ
             _ if existing => single_unmeasured(),
             _ if plain_number(v)? => one(v.to_string()),
             _ => match http_date(v)? {
-                Some(d) => {
-                    one(d)
-                }
+                Some(d) => one(d),
                 None => fail(),
             },
         },

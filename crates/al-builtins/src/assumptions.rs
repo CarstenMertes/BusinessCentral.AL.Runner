@@ -81,7 +81,7 @@ pub struct Info {
 /// The corpus pin an assumption waits for.
 #[derive(Debug, Clone, Copy)]
 pub struct Awaiting {
-    /// The al-runner issue number(s) the assumption serves.
+    /// The al-runner issue number(s) the assumption serves; empty for a writer's probe that serves no issue.
     pub issues: &'static [u32],
     /// The corpus test file(s) that will pin it, relative to the corpus root (`tests/al-language/...al`); for a test
     /// that will be added to a file already in the corpus, `<file>::<test procedure>`.
@@ -94,6 +94,9 @@ pub struct Awaiting {
 pub fn awaiting_text(w: &Awaiting) -> String {
     let issues: Vec<String> = w.issues.iter().map(u32::to_string).collect();
     let files: Vec<String> = w.files.iter().map(|f| format!("`{f}`")).collect();
+    if issues.is_empty() {
+        return format!("Awaiting since {}: corpus {}.", w.since, files.join(", "));
+    }
     format!(
         "Awaiting since {}: al-runner issue{} {}, corpus {}.",
         w.since,
@@ -223,12 +226,6 @@ registry! {
         assumed: "A SaveAs of a report whose selected rendering layout has Type = Custom raises the platform's CustomDocumentMergerEx with ObjectID, a ReportAction named after the format (SaveAsPdf, SaveAsWord, SaveAsExcel, SaveAsHtml), an EMPTY ObjectPayload, XmlData holding the Xml dataset SaveAs writes, LayoutData holding the layout file (read as UTF-8) and DocumentStream on the stream SaveAs was given (UTF-8); a subscriber that sets Success/IsHandled makes SaveAs answer true. A SaveAs no subscriber handles is refused.",
         tests: "handlers/TestReportLayoutByNameMergerCapture.al pins the subscriber's signature and the layout text; Pageworks (about 50 tests whose first refusal is SaveAs as Pdf).",
         probe: "A custom layout report saved as Pdf, Word, Excel and Html with a Base Application subscriber that records every argument: the ReportAction ordinals, the keys of ObjectPayload (layoutmimetype, layoutname, ...), the form of XmlData, the encoding of the streams, and SaveAs with no subscriber.",
-    },
-    CookieSetterResult => {
-        id: "cookie-setter-result",
-        assumed: "Cookie.Name(NewName) and Cookie.Value(NewValue), with the result used, answer the new text.",
-        tests: "platform/lt-xmlport-session-navapp-cookie/P94Cookie.al assigns the result to a Text it never reads (SetName_DoesNotTouchOtherMembers, Copy_AndClear).",
-        probe: "Format of the result of C.Name('n') and C.Value('v') on a cookie that had other values before. Asked in corpus #650.",
     },
     PageExpressionControlLiveReadAfterNextFilterActivate => {
         id: "page-expression-control-live-read-after-next-filter-activate",
@@ -397,21 +394,49 @@ registry! {
     },
     HttpHeadersAddUsedResult => {
         id: "http-headers-add-used-result",
-        assumed: "HttpHeaders.Add whose result is used answers false and leaves the last error as it was. (The false is pinned for refused values, names and collections by network/lt-ay-http/AyHeaderAddResult.al; the last error after it is not measured.)",
+        assumed: "HttpHeaders.Add whose result is used answers false and sets the last error to the header error (text and code) also for an empty name (InvalidHeader:Argument) and on the client's default headers. (Pinned on master for request, content and response headers: network/lt-ay-http/AyHeaderAddResult.al:499-543 PY_AddFalse_LastError_*; the empty name, the client headers and the `if not H.Add(..)` form are pinned by SE_AddFalse_* in corpus bump PR 737, writer SE, green on every measured major.)",
         tests: "Code that tests the result of HttpHeaders.Add and then reads GetLastErrorText.",
-        probe: "ClearLastError(); if not H.Add('Accept', 'json') then Message(GetLastErrorText()), and the same for an empty name and a content header on request headers.",
+        probe: "Done by writer SE (branch al-runtime-rs-staging-pub-se, corpus PR 737): remove this entry when the bump lands.",
+        awaiting: Awaiting {
+            issues: &[],
+            files: &[
+                "tests/al-language/network/lt-ay-http/AyHeaderAddResult.al::SE_AddFalse_LastError_EmptyName",
+                "tests/al-language/network/lt-ay-http/AyHeaderAddResult.al::SE_AddFalse_LastError_ClientHeaders",
+                "tests/al-language/network/lt-ay-http/AyHeaderAddResult.al::SE_AddFalse_LastError_IfNotForm",
+            ],
+            since: "2026-10-25",
+        },
     },
     HttpContentLengthAfterRead => {
         id: "http-content-length-after-read",
-        assumed: "ReadAs(Text) of a content adds a Content-Length header of the body's length to its headers, and the headers handed out before the read show it too. (PnE12HttpContent.al:WriteFromText_ThenReadAndHeaders reads 5 after WriteFrom('hello') and ReadAs; network/lt-ay-http/AyContentLength.al pins the header for headers taken after the read, none after ReadAs(InStream), and that a later WriteFrom('') or a body of the same length leaves it as it was; a body of another length is refused.)",
-        tests: "Code that reads a content and then its headers; ReadAs(InStream) is not covered.",
-        probe: "WriteFrom('hello'), GetHeaders, Contains('Content-Length') before and after ReadAs(Text) and ReadAs(InStream); WriteFrom a longer text after the read and read the header. Asked in corpus #650.",
+        assumed: "A Content-Length the headers of a content already hold stays as it is through ReadAs(Text) and WriteFrom, also when it was added by hand. (Pinned on master for one a read put there: network/lt-ay-http/AyContentLength.al PY_ContentLength_*; a hand-set value kept by a read is pinned by SE_ContentLength_AddedByHandBeforeRead in corpus bump PR 737, writer SE; a hand-set value then WriteFrom of a body of another length is not measured and follows the same rule.)",
+        tests: "Code that sets Content-Length by hand and then reads or rewrites the content.",
+        probe: "Done by writer SE (branch al-runtime-rs-staging-pub-se, corpus PR 737): remove this entry when the bump lands. Still wanted: Add('Content-Length', '3') then WriteFrom('a longer text') and GetValues.",
+        awaiting: Awaiting {
+            issues: &[],
+            files: &[
+                "tests/al-language/network/lt-ay-http/AyContentLength.al::SE_ContentLength_AddedByHandBeforeRead",
+                "tests/al-language/network/lt-ay-http/AyContentLength.al::SE_ContentLength_EmptyBody",
+            ],
+            since: "2026-10-25",
+        },
     },
     HttpHeaderRules => {
         id: "http-header-rules",
-        assumed: "HttpHeaders.Add checks a header the way the probes measured: the name is a token (empty: Argument, otherwise Format), the value has no line break, a content header is refused on request, response and client headers, and the typed header values are checked as the probes measured them (network/lt-ay-http/AyHeaderAddResult.al and the P87 files measured a few valid and invalid values of each); a value of another shape follows the same rule, and the headers .NET types that have no rule here (Via, Warning, TE, ...) and the typed headers on a collection the probes did not use are accepted as written.",
+        assumed: "HttpHeaders.Add follows the rules network/lt-se-header-values/SeHeaderValues.al (codeunit 89030, corpus bump PR 737, writer SE, same on every measured major) measured: a request-only name on response headers and a response-only name on request or client headers is stored as written; the client's default headers check like request headers; Accept-Charset, Accept-Language, TE, Pragma, Trailer, Upgrade, Via, Warning, Server and Proxy-Authenticate check their values; dates of the RFC 850, asctime, UTC and offset forms are stored as RFC 1123 GMT and a date in lower case is refused; If-Range and Retry-After take a date; Max-Forwards 007 reads 7, Content-Length 05 reads 5; a uri with an upper-case scheme or host or no path is stored in its normal form; Host with an empty port, Range with a suffix range, Content-Range `bytes */10` and Expect with a parameter are accepted, Range `bytes=x` is refused.",
         tests: "Every Microsoft or NP Retail test that builds a request with headers (Authorization, Accept, Content-Type, custom X- headers).",
-        probe: "network/lt-http/HttpHeaders.al covers the measured part; the case and the content-or-not of all 39 known names are pinned by network/lt-http-header-names-cache-control/HeaderNameCase*.al. Wanted: the value rules of the typed headers other than Cache-Control (Range, If-Match, Content-Disposition, Content-Encoding, Expires and the rest) on request, response and content headers; Cache-Control (directive order, values, merging) is pinned by CacheControl*.al. Asked in corpus #650.",
+        probe: "Done by writer SE (branch al-runtime-rs-staging-pub-se, corpus PR 737): remove this entry when the bump lands.",
+        awaiting: Awaiting {
+            issues: &[],
+            files: &["tests/al-language/network/lt-se-header-values/SeHeaderValues.al"],
+            since: "2026-10-25",
+        },
+    },
+    HttpTypedHeaderValueShapes => {
+        id: "http-typed-header-value-shapes",
+        assumed: "A value of a typed header (other than Cache-Control) in a shape no probe measured follows the rule of the shapes measured for that header (network/lt-ay-http/AyHeaderAddResult.al, the lt-http-header-rules/P87 files and lt-se-header-values/SeHeaderValues.al measured a few valid and invalid values of each); a name of the other kind of message the probes did not add is stored as written there, and one the probes did not add to the client's default headers checks there as on request headers.",
+        tests: "Every Microsoft or NP Retail test that builds a request with headers (Authorization, Accept, Content-Type, custom X- headers).",
+        probe: "More value shapes per typed header on request, response, content and client headers (lists, parameters, spacing, case, two-digit years, negative offsets), and the request-only names Accept-Charset, Accept-Encoding, Accept-Language, From, If-Modified-Since, If-None-Match, If-Range, If-Unmodified-Since, Proxy-Authorization and TE on response headers. Split from http-header-rules (2026-10-25).",
     },
     OpenNewSkipsOnFindRecord => {
         id: "open-new-skips-onfindrecord",
@@ -836,9 +861,8 @@ mod tests {
             }
             return out;
         };
-        if w.issues.is_empty() {
-            out.push(format!("{id}: `awaiting` names no al-runner issue"));
-        }
+        // An entry may await a corpus pin that serves no al-runner issue: a writer's probe of an unprobed assumption (corpus PR 737 for
+        // the HTTP entries, 2026-10-25). Its issues list is then empty.
         for n in named {
             if !w.issues.contains(n) {
                 out.push(format!(
@@ -888,7 +912,7 @@ mod tests {
             files: &["corpus/tests/x.al", "bgtasks/X.al"],
             since: "24.10.2026",
         };
-        assert_eq!(awaiting_problems("a", Some(&bad), &[]).len(), 4);
+        assert_eq!(awaiting_problems("a", Some(&bad), &[]).len(), 3);
     }
 
     /// The lines of `docs/probes-needed.md` outside the generated table that name the entry `id` (in backticks).

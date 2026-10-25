@@ -37,12 +37,18 @@ checks the build provenance.
 
 **With the .NET tool.** If you already work with .NET tools and do not want to set
 up mise or a script, the `MSDyn365BC.AL.Runner` NuGet package runs the same engine.
-It is a thin wrapper around the Rust binary, so it needs the .NET SDK and adds a
-small start-up overhead:
+It is a thin wrapper around the Rust binary: the binaries for Linux (x64), macOS
+(Apple silicon) and Windows (x64) are in the package, so nothing is downloaded on
+the first run. It needs the .NET SDK 8 or newer and adds a small start-up overhead.
+Version 3 is published as a prerelease until 3.0.0, so add `--prerelease`:
 
 ```bash
-dotnet tool install --global MSDyn365BC.AL.Runner
+dotnet tool install --global MSDyn365BC.AL.Runner --prerelease
 ```
+
+Without `--prerelease`, `dotnet tool install` and `dotnet tool update` still give
+2.12.0, the last version 2 release. Each numbered alpha is published to NuGet; the
+`edge` build is not.
 
 **Which build?** `edge` is rebuilt every night from the newest commit of `main`
 that passed CI. A numbered alpha (`3.0.0-alpha.N`) is released by hand. Use a
@@ -57,9 +63,10 @@ Windows, if SmartScreen still warns, choose "More info", then "Run anyway", or r
 **Two commands named `al-runner`.** The .NET tool installs a command with the same
 name. If you install both it and the standalone binary, the one found first on your
 `PATH` runs. The standalone binary prints a note on stderr when it finds another
-copy, and `al-runner --version` lists all copies. An old 2.x tool, which still runs
+copy, and `al-runner --version` lists all copies. Run through the .NET tool, it
+does not look, because the tool's own command would count as a copy. An old 2.x tool, which still runs
 the version 2 engine, is the case to watch for: update it with
-`dotnet tool update -g MSDyn365BC.AL.Runner`, or remove it with
+`dotnet tool update -g MSDyn365BC.AL.Runner --prerelease`, or remove it with
 `dotnet tool uninstall -g MSDyn365BC.AL.Runner`. Silence the note with
 `ALRUNNER_NO_PATH_NOTE=1`.
 

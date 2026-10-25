@@ -160,7 +160,8 @@ fn get_view_and_set_view_differ_on_an_unknown_name() {
     );
 }
 
-// :GetView_CaptionsFlag_RendersAnOptionFilterDifferently
+// :GetView_CaptionsFlag_RendersAnOptionFilterDifferently; without names the filter takes the numeric form `FieldN=1(...)`
+// (platform/lt-platform-members/PlTFilterPageBuilder.al:177-180 GetSetView_RoundTrip).
 #[test]
 fn use_names_spells_an_option_filter_as_a_name_or_an_ordinal() {
     assert_eq!(
@@ -171,7 +172,7 @@ fn use_names_spells_an_option_filter_as_a_name_or_an_ordinal() {
             B.AddField('Ref', Fld, 'Active');
             exit(B.GetView('Ref', true) + '|' + B.GetView('Ref', false));
         end;"),
-        "VERSION(1) SORTING(Entry No.) WHERE(Option Field=FILTER(Active))|VERSION(1) SORTING(Field1) WHERE(Field14=FILTER(2))"
+        "VERSION(1) SORTING(Entry No.) WHERE(Option Field=FILTER(Active))|VERSION(1) SORTING(Field1) WHERE(Field14=1(2))"
     );
 }
 

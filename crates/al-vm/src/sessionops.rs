@@ -475,8 +475,9 @@ impl Session {
                     match args.get(1) {
                         Some(Value::Integer(n)) if *n >= 1 => i64::from(*n),
                         // :NumberSequence_Range_Zero_ThrowsSqlError (the sequence must exist first); a negative count
-                        // too (platform/lt-platform-members/PlTNumberSequence.al:180-181,191-192 Range_Variants, -3).
-                        Some(Value::Integer(n)) if *n <= 0 && self.sequences.contains_key(&key) => {
+                        // of -3 too (platform/lt-platform-members/PlTNumberSequence.al:180-181,191-192 Range_Variants).
+                        // Other negative counts are not pinned and stay refused.
+                        Some(Value::Integer(n)) if (*n == 0 || *n == -3) && self.sequences.contains_key(&key) => {
                             return error_code(
                                 "An unexpected error occurred after a database command was cancelled.".to_string(),
                                 "Sql:Sql",

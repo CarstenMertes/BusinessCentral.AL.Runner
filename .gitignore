@@ -6,3 +6,7 @@ __pycache__/
 # Worktrees live inside the main checkout (CLAUDE.md, "Parallel work")
 /.worktrees/
 coverage.cobertura.xml
+# The .NET tool: binaries unpacked by packaging/dotnet-tool/pack.sh, and dotnet build output
+/packaging/dotnet-tool/native/
+/packaging/dotnet-tool/bin/
+/packaging/dotnet-tool/obj/

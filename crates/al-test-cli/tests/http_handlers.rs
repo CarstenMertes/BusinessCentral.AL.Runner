@@ -880,11 +880,11 @@ fn a_content_length_from_a_read_stays_after_writing_empty_text() {
     );
 }
 
-// After a read put a Content-Length in, a WriteFrom of another non-empty length leaves a value nothing pins: reading it is
-// refused; the rest of the content still runs (P87Content.al:RewriteKeepsHeader reads only the keys).
+// network/lt-ay-http/AyContentLength.al:PY_ContentLength_HandleTakenAfterReadThenRewrite: a Content-Length that a read put in
+// stays with its value (5) after a WriteFrom of a longer text, on the handle taken before and on a new one.
 #[test]
-fn a_content_length_after_a_rewrite_of_another_length_is_refused_when_read() {
-    let got = run_with(
+fn a_content_length_from_a_read_keeps_its_value_after_a_rewrite_of_another_length() {
+    all_pass(
         "",
         r#"
     [Test] procedure Other()
@@ -895,12 +895,9 @@ fn a_content_length_after_a_rewrite_of_another_length_is_refused_when_read() {
         C.WriteFrom('a longer text');
         C.GetHeaders(H);
         if not H.Contains('Content-Length') then Error('gone');
-        H.GetValues('Content-Length', Vals);
+        if not H.GetValues('Content-Length', Vals) then Error('no length');
+        if Vals.Get(1) <> '5' then Error('length %1', Vals.Get(1));
     end;"#,
-    );
-    assert!(
-        matches!(&got[0].1, Outcome::NotRun(w) if w.contains("Content-Length")),
-        "{got:?}"
     );
 }
 

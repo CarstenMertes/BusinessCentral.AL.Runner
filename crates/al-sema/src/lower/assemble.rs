@@ -994,6 +994,22 @@ pub(crate) fn lower_core(
             pieces[oi] = Some(lower_object(&shared, &local, &seq, oi, &mut line_cache));
         }
     }
+    // Two objects of one type with one id in one app (AL0264, `alcodes::duplicate_ids`; al-runner issue 5854) would
+    // have one key, and the link step refuses that. The program does not compile, so `al-runner test` runs none of it
+    // (al-runner issue 5602), but it must still lower to carry its compile errors: every declaration after the first
+    // is keyed by a name of its own instead of the id.
+    let mut first_of: HashMap<(usize, ObjKind, u32), usize> = HashMap::default();
+    for oi in crate::alcodes::duplicate_id_objects(ws) {
+        let o = &ws.objects[oi];
+        let Some(id) = o.id else { continue };
+        if *first_of.entry((o.app, o.kind, id)).or_insert(oi) == oi {
+            continue;
+        }
+        if let Some(p) = pieces[oi].as_mut().filter(|p| p.key.is_none()) {
+            p.object.id = None;
+            p.object.name = format!("{} (duplicate id {id}, object {oi})", p.object.name);
+        }
+    }
     let routine_keys = super::localize::RoutineKeys::new(
         ws,
         (0..n)

@@ -1939,7 +1939,7 @@ mod tests {
         let ms = |t: &str, n: i64| match duration(t, n) {
             Ok(Parsed::Value(Value::Duration(ms))) => Some(ms),
             Ok(Parsed::Rejected) => None,
-            other => panic!("{t}: {}", matches!(other, Err(_))),
+            other => panic!("{t}: {}", other.is_err()),
         };
         assert_eq!(ms("1500", 0), Some(1500 * 3_600_000));
         assert_eq!(ms("1.5", 0), Some(5_400_000));

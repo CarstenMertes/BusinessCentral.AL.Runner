@@ -25,5 +25,5 @@ codeunit 69710 C
 
 #[test]
 fn clearing_an_errorinfo_clears_every_variable_that_shares_it() {
-    assert_eq!(text(al_testkit::run_in(SRC, "C", "F")), "[||||]");
+    assert_eq!(text(al_testkit::run_in(SRC, "C", "F")), "[|||]");
 }

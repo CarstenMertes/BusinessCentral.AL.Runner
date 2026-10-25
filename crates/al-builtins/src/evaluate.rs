@@ -68,9 +68,11 @@ enum Parsed {
 /// - Format 0: the empty text is 0; a plain whole number counts hours (`1500` is 62 days 12 hours, `-1500`, numbers beyond an
 ///   Integer), and so does an unsigned decimal (`1.5` is 90 minutes). Otherwise terms of a number and a unit, in any order, with or
 ///   without a blank between them (`1h`, `2days 4hours`): the units spelled `day`, `days`, `d`, `D`, `hour`, `hours`, `h`, `HOUR`,
-///   `minute`, `minutes`, `min`, `m`, `second`, `seconds`, `sec`, `s`, `milliseconds`, `milli`, `millis`; a fraction of hours and of
-///   seconds (`1.5 hours`, `3.7 seconds`); a minus before a single hour term (`-1 hour`). Rejected: the same unit word twice
-///   (`1 hour 1 hour`), the words `mins`, `ms` and `week`, a fraction of milliseconds, and a text of lower-case letters only (`abc`).
+///   `minute`, `minutes`, `min`, `m`, `second`, `seconds`, `sec`, `s`, `millisecond`, `milliseconds`, `milli`, `millis`; a fraction of
+///   hours and of seconds (`1.5 hours`, `3.7 seconds`); a minus before a single hour or second term (`-1 hour`, `-1 second`). A plain
+///   number may have blanks around it (`  7 `). Rejected: the same unit word twice (`1 hour 1 hour`), the words `mins`, `ms`, `week`
+///   and `abc` (`12abc`), a fraction of milliseconds, a text of lower-case letters only (`abc`), a plus sign (`+5`), a comma or an
+///   exponent in a number (`1,5`, `1e3`) (errors/lt-ms-refusals-131/P131EvalScalars.al:144-226).
 /// - Formats 1 to 3: a plain unsigned whole number, read as with format 0.
 /// - Format 9: the form Format 9 gives (`P0DT1H30M0.0S`), unsigned. Rejected: the empty text, a text that starts with a digit or
 ///   with `-` and a digit, and a text of lower-case letters only.
@@ -137,15 +139,17 @@ fn duration(text: &str, number: i64) -> Result<Parsed, Signal> {
     if text.is_empty() {
         return Ok(Parsed::Value(Value::Duration(0)));
     }
-    if digits(text.strip_prefix('-').unwrap_or(text)) {
-        return hours(text);
+    let plain = text.trim_matches(' ');
+    if digits(plain.strip_prefix('-').unwrap_or(plain)) {
+        return hours(plain);
     }
-    if let Some((w, f)) = text.split_once('.') {
+    if let Some((w, f)) = plain.split_once('.') {
         if digits(w) && digits(f) {
-            return hours(text);
+            return hours(plain);
         }
     }
-    if lower_letters(text) {
+    let split_by = |c: char| plain.split_once(c).is_some_and(|(a, b)| digits(a) && digits(b));
+    if lower_letters(text) || plain.strip_prefix('+').is_some_and(digits) || split_by(',') || split_by('e') {
         return Ok(Parsed::Rejected);
     }
     let b = text.as_bytes();
@@ -198,8 +202,8 @@ fn duration(text: &str, number: i64) -> Result<Parsed, Signal> {
             "hour" | "hours" | "h" | "HOUR" => 3_600_000,
             "minute" | "minutes" | "min" | "m" => 60_000,
             "second" | "seconds" | "sec" | "s" => 1000,
-            "milliseconds" | "milli" | "millis" => 1,
-            "mins" | "ms" | "week" => {
+            "millisecond" | "milliseconds" | "milli" | "millis" => 1,
+            "mins" | "ms" | "week" | "abc" => {
                 rejected = true;
                 terms += 1;
                 continue;
@@ -224,7 +228,7 @@ fn duration(text: &str, number: i64) -> Result<Parsed, Signal> {
         terms += 1;
         total += n * Decimal::from(per);
     }
-    if negative && (terms > 1 || units.as_slice() != [3_600_000]) {
+    if negative && (terms > 1 || !matches!(units.as_slice(), [3_600_000 | 1000])) {
         return refuse();
     }
     if rejected {
@@ -1999,13 +2003,22 @@ mod tests {
         assert_eq!(ms("-1500", 9), None);
         assert_eq!(ms("2 days 3 h 4 min 5 sec 6 ms", 0), None);
         assert_eq!(ms("1500", 2), Some(1500 * 3_600_000));
+        // errors/lt-ms-refusals-131/P131EvalScalars.al:144-226.
+        assert_eq!(ms("  7 ", 0), Some(7 * 3_600_000));
+        for t in ["+5", "12abc", "0 ms", "1,5", "1e3"] {
+            assert_eq!(ms(t, 0), None, "{t}");
+        }
+        assert_eq!(ms("1 millisecond", 0), Some(1));
+        assert_eq!(ms("-1 second", 0), Some(-1000));
+        assert_eq!(ms("1 day 1 hour 1 minute 1 second 1 millisecond", 0), Some(90_061_001));
         // Forms no corpus test pins are refused.
         for (t, n) in [
             ("1 Hour", 0),
-            ("1 millisecond", 0),
             ("1.5 days", 0),
             ("1.5 minutes", 0),
             ("-1 minute", 0),
+            ("+5 hours", 0),
+            ("1;5", 0),
             ("-1 hour 2 minutes", 0),
             ("-1.5", 0),
             ("1 h 1 hour", 0),

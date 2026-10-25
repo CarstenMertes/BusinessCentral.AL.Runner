@@ -94,6 +94,106 @@ impl Session {
         unsupported(format!("the {which} action on {why} (not pinned)"))
     }
 
+    /// The moves and searches of a `TestRequestPage` whose request page has no SourceTable: it shows one set of
+    /// controls and no rows. `None` hands the call on to the page client.
+    /// report/lt-report-requestpage-query-members/P105RpNav.al:105-235: First is Yes; Last, Next and Previous are No;
+    /// GoToKey() is Yes; GoToKey(1) and GoToRecord(Row) raise. P105RpFind.al:121-252: FindFirstField of the value the
+    /// control holds is Yes, of another value No; FindNextField and FindPreviousField of the value it holds are No.
+    /// Not pinned and refused: a Find*Field whose result is not used, a FindNext/PreviousField of another value, a text
+    /// value with filter characters or one that differs from the control's only in case, GoToKey with more than one value.
+    pub(super) fn request_page_without_source_op(
+        &mut self,
+        st: &St,
+        name: al_builtins::page_op::PageMethod,
+        args: &mut [Value],
+    ) -> Option<Result<Value, Signal>> {
+        use al_builtins::page_op::PageMethod as M;
+        if !matches!(
+            name,
+            M::First
+                | M::Last
+                | M::Next
+                | M::Previous
+                | M::GoToKey
+                | M::GoToRecord
+                | M::FindFirstField
+                | M::FindNextField
+                | M::FindPreviousField
+        ) {
+            return None;
+        }
+        if let Err(e) = self.require_open(st) {
+            return Some(Err(e));
+        }
+        Some(match name {
+            M::First => Ok(Value::Boolean(true)),
+            M::Last | M::Next | M::Previous => Ok(Value::Boolean(false)),
+            M::GoToKey => match args.len() {
+                0 => Ok(Value::Boolean(true)),
+                1 => Err(error_code(
+                    "The number of arguments does not match the number of primary key fields.",
+                    "TestInvalidNumberOfKeyFieldValues",
+                )),
+                n => unsupported(format!(
+                    "TestRequestPage.GoToKey with {n} values on a request page without a SourceTable (only 0 and 1 are pinned)"
+                )),
+            },
+            M::GoToRecord => Err(error_code(
+                "The input record belongs to a table different from the one the page is based on.",
+                "TestSourceTableMismatch",
+            )),
+            how => self.request_find_field(st, how, args),
+        })
+    }
+
+    fn request_find_field(
+        &mut self,
+        st: &St,
+        how: al_builtins::page_op::PageMethod,
+        args: &mut [Value],
+    ) -> Result<Value, Signal> {
+        if !self.ret_used {
+            return unsupported(format!(
+                "TestRequestPage.{how} whose result is not used on a request page without a SourceTable (not pinned)"
+            ));
+        }
+        let Some(Value::TestControl(c)) = args.first() else {
+            return unsupported(format!("TestRequestPage.{how} without a control"));
+        };
+        let ControlTarget::Control(idx) = c.target else {
+            return unsupported(format!("TestRequestPage.{how} on a built-in control"));
+        };
+        let wanted = args.get(1).cloned().unwrap_or(Value::Null);
+        let here = self.control_value(st, idx)?;
+        let pinned_kind = matches!(
+            (&here, &wanted),
+            (Value::Text(_), Value::Text(_)) | (Value::Integer(_), Value::Integer(_))
+        );
+        if !pinned_kind {
+            return unsupported(format!(
+                "TestRequestPage.{how} of {} on a control that holds {} (only Text and Integer are pinned)",
+                wanted.describe(),
+                here.describe()
+            ));
+        }
+        if let (Value::Text(h), Value::Text(w)) = (&here, &wanted) {
+            let filter_chars = ['*', '?', '@', '|', '&', '<', '>', '=', '(', ')', '\''];
+            if w.contains(filter_chars) || w.contains("..") || (h != w && h.to_lowercase() == w.to_lowercase()) {
+                return unsupported(format!(
+                    "TestRequestPage.{how} of the text '{w}' (only a plain value is pinned)"
+                ));
+            }
+        }
+        let found = Self::variant_matches(&here, &wanted);
+        match how {
+            al_builtins::page_op::PageMethod::FindFirstField => Ok(Value::Boolean(found)),
+            _ if found => Ok(Value::Boolean(false)),
+            _ => unsupported(format!(
+                "TestRequestPage.{how} of a value the control does not hold (not pinned)"
+            )),
+        }
+    }
+
     /// Whether the request page's SourceTableView is the one shape the corpus pins: a SORTING that names the primary key and a
     /// WHERE of CONST conditions only (report/lt-y-request-page/YRequestPageTests.al:72-87, the request page's `Rec` then has
     /// neither the filter nor another key). Anything else is refused.

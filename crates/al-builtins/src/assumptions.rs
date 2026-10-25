@@ -705,15 +705,18 @@ mod tests {
     #[test]
     fn marks_are_collected_per_thread_and_cleared() {
         clear_hits();
-        assume(Assumption::QueryClosedAfterLastRow);
-        assume(Assumption::QueryClosedAfterLastRow);
+        assume(Assumption::ReadUncommittedReadOpensNoWriteTransaction);
+        assume(Assumption::ReadUncommittedReadOpensNoWriteTransaction);
         assume(Assumption::NextWholeDecimal);
         assert_eq!(
             take_hits(),
-            vec![Assumption::QueryClosedAfterLastRow, Assumption::NextWholeDecimal]
+            vec![
+                Assumption::ReadUncommittedReadOpensNoWriteTransaction,
+                Assumption::NextWholeDecimal
+            ]
         );
         assert!(take_hits().is_empty());
-        assume(Assumption::QueryClosedAfterLastRow);
+        assume(Assumption::ReadUncommittedReadOpensNoWriteTransaction);
         std::thread::spawn(|| assert!(take_hits().is_empty())).join().unwrap();
         clear_hits();
     }

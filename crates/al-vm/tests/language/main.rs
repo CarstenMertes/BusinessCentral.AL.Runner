@@ -44,6 +44,7 @@ mod guid_max_str_len;
 mod guid_text_compare;
 mod impact_trace;
 mod in_precedence;
+mod integer_to_text;
 mod interfaces;
 mod json_remove_statement;
 mod json_text_as_decimal;

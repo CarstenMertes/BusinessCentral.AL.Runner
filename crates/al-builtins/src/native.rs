@@ -700,14 +700,30 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("Record.SetAutoCalcFields#1", |c, r, a| {
         c.record(RecordOp::SetAutoCalcFields, r, a)
     }),
-    // record/PZFindDirections.al:106 pins `ToText` of 5, 20, 25 and 35. Whether a larger value gets a thousands separator is
-    // not pinned, so it is refused (docs/probes-needed.md "Integer.ToText").
-    ("Integer.ToText#1", |_, r, _| match r.as_deref() {
-        Some(Value::Integer(n)) if n.unsigned_abs() < 1000 => Ok(Value::Text(n.to_string().into())),
+    // record/PZFindDirections.al:106 pins `ToText` of 5, 20, 25 and 35. A larger value has no thousands separator in the
+    // languages 1033 (misc/lt-probe-requests-140/P140IntegerToText.al:25-66, P140_IntegerToText_Values: 1000, -1000, 1234,
+    // 1000000, the largest and the smallest Integer), 1031 and 1036 (:229-260, P140_ToText_UnderGlobalLanguage: 1234567). In
+    // another language it is not pinned, so it is refused (docs/probes-needed.md "Integer.ToText").
+    ("Integer.ToText#1", |c, r, _| match r.as_deref() {
+        Some(Value::Integer(n)) if n.unsigned_abs() < 1000 || matches!(c.language(), 1033 | 1031 | 1036) => {
+            Ok(Value::Text(n.to_string().into()))
+        }
         Some(Value::Integer(n)) => Err(Signal::Unsupported(format!(
             "Integer.ToText of {n}: whether the text has a thousands separator is not pinned (docs/probes-needed.md)"
         ))),
         other => Err(Signal::Unsupported(format!("Integer.ToText on {}", other.describe()))),
+    }),
+    // `BigInteger.ToText()` has no thousands separator in the language 1033 (P140IntegerToText.al:133-185,
+    // P140_BigIntegerToText: 0, 999, 1000, -1000, 1234, 1000000, 8589934591 and its negation). Another language is not pinned.
+    ("BigInteger.ToText#1", |c, r, _| match r.as_deref() {
+        Some(Value::BigInteger(n)) if n.unsigned_abs() < 1000 || c.language() == 1033 => {
+            Ok(Value::Text(n.to_string().into()))
+        }
+        Some(Value::BigInteger(n)) => Err(Signal::Unsupported(format!(
+            "BigInteger.ToText of {n} in language {}: whether the text has a thousands separator is not pinned",
+            c.language()
+        ))),
+        other => Err(Signal::Unsupported(format!("BigInteger.ToText on {}", other.describe()))),
     }),
     // `Date.ToText()` and `Boolean.ToText()` (Base Application's Customer Mgt. CalcLastPaymentInfo puts them in a Dictionary
     // of [Text, Text]): Format(value) with the default format, pinned by types/lt-conversions-hidden-parts-doctype/

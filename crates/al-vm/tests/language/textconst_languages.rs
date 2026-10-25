@@ -1,5 +1,6 @@
 //! A TextConst reads the text of the language in force, else its ENU text, else (with no ENU text) the text of its only
-//! language, or of DEU declared first (misc/lt-probe-requests-140/P140TextConstNoEnu.al, P140TextConstLang.al).
+//! language, or of DEU then FRA in 1033 (misc/lt-probe-requests-140/P140TextConstNoEnu.al, P140TextConstLang.al). Other
+//! languages than 1033, 1031 and 1036 are refused.
 
 use al_builtins::native::Signal;
 
@@ -46,12 +47,38 @@ fn a_textconst_reads_the_text_of_the_language_in_force() {
 
 #[test]
 fn a_textconst_whose_fallback_is_not_pinned_is_refused() {
-    // Without ENU and without the language in force, only one language or DEU declared first is pinned.
+    // Without ENU and without the language in force, only one language or DEU then FRA in 1033 is pinned.
     refused(&code(
         "var G: TextConst FRA = 'Bonjour', DEU = 'Hallo'; procedure F(): Text begin exit(G); end;",
     ));
     // A language code the runtime cannot map to a language id, read in a language it could stand for.
     refused(&code(
         "var G: TextConst ENU = 'Hello', NLD = 'Hallo'; procedure F(): Text begin GlobalLanguage(1043); exit(G); end;",
+    ));
+}
+
+#[test]
+fn a_textconst_read_in_a_language_no_test_pins_is_refused() {
+    // Every pinned read runs in 1033, 1031 or 1036 (P140TextConstLang.al, P140TextConstNoEnu.al): another language may
+    // fall back through its parent culture, so even an ENU text or a single text is not pinned there.
+    refused(&code(
+        "var G: TextConst ENU = 'Hello', DEU = 'Hallo'; procedure F(): Text begin GlobalLanguage(1030); exit(G); end;",
+    ));
+    refused(&code(
+        "var G: TextConst DEU = 'Hallo'; procedure F(): Text begin GlobalLanguage(2055); exit(G); end;",
+    ));
+}
+
+#[test]
+fn a_textconst_with_deu_first_and_a_language_other_than_fra_is_refused() {
+    // Only `DEU = .., FRA = ..` read where neither matches is pinned (P140TextConstNoEnu.al:23-71, `DeuFra` in 1033).
+    refused(&code(
+        "var G: TextConst DEU = 'Hallo', NLD = 'Hallo'; procedure F(): Text begin exit(G); end;",
+    ));
+    refused(&code(
+        "var G: TextConst DEU = 'Hallo', FRA = 'Bonjour', ITA = 'Ciao'; procedure F(): Text begin exit(G); end;",
+    ));
+    refused(&code(
+        "var G: TextConst DEU = 'Hallo', NLD = 'Hallo'; procedure F(): Text begin GlobalLanguage(1036); exit(G); end;",
     ));
 }

@@ -1837,8 +1837,11 @@ impl Session {
         .filter(|w| !w.is_empty());
         let given_text = what.is_some();
         let info_given = info.is_some();
-        let blank_value =
-            is_blank(&row[pos])? && matches!(row[pos], Value::Text(_) | Value::Code(_) | Value::Date(..) | Value::DateTime(_));
+        let blank_value = is_blank(&row[pos])?
+            && matches!(
+                row[pos],
+                Value::Text(_) | Value::Code(_) | Value::Date(..) | Value::DateTime(_)
+            );
         let full = match what.take() {
             Some(w) => format!("{} {w} in {} {key}.", self.field_caption(t, pos), self.caption(t)),
             None if blank_value => format!(

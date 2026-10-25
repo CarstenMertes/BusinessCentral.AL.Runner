@@ -203,7 +203,10 @@ fn the_text_forms_of_error_and_fielderror_answer_the_pinned_texts() {
     );
     assert_eq!(flag("FieldErrBlank"), "FieldError for unspecified value of LO Row.Name");
     // TestFieldOptionEnumExcludeFlag.al:83.
-    assert_eq!(flag("TestFieldZeroOption"), "Kind must not be Zero in LO Row: <redacted>");
+    assert_eq!(
+        flag("TestFieldZeroOption"),
+        "Kind must not be Zero in LO Row: <redacted>"
+    );
     // InsertDuplicateKeyExcludeFlag.al:68, :121.
     assert_eq!(
         flag("InsertDuplicate"),

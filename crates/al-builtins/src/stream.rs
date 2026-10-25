@@ -529,6 +529,9 @@ pub struct InState {
     /// The local that owned the stream's bytes went out of scope: only `Length`, `EOS` and `ReadText` are pinned afterwards
     /// (see [`owner_out_of_scope`]).
     pub owner_gone: bool,
+    /// A stream that was never created, handed to a `Report.*Layout` call that found no layout (see
+    /// [`mark_not_initialized`]): only `EOS` is pinned on it.
+    pub not_initialized: bool,
 }
 
 impl InState {
@@ -540,6 +543,7 @@ impl InState {
             hit_end: false,
             handed_to_content: false,
             owner_gone: false,
+            not_initialized: false,
         }
     }
 
@@ -551,6 +555,7 @@ impl InState {
             hit_end: false,
             handed_to_content: false,
             owner_gone: false,
+            not_initialized: false,
         }
     }
 
@@ -849,6 +854,38 @@ pub(crate) fn owner_out_of_scope(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut
     })
 }
 
+/// A `Report.RdlcLayout`, `WordLayout` or `ExcelLayout` call whose result is used found no layout: a stream that was never
+/// created stays so, and `EOS` of it then raises NotInitialized (see `in_eos_plain`). Answers false, and changes nothing, for a
+/// stream that was created (what the call does to it is not pinned).
+pub fn mark_not_initialized(v: &Value) -> bool {
+    let Value::Library(_, h) = v else {
+        return false;
+    };
+    let mut g = h.borrow_mut();
+    if !matches!(&*g, LibraryValue::Empty) {
+        return false;
+    }
+    let mut s = InState::snapshot(Vec::new(), Encoding::default());
+    s.not_initialized = true;
+    *g = LibraryValue::InStream(s);
+    true
+}
+
+/// A `Report.RdlcLayout` call as a statement on a report whose only layout is `DefaultLayout = RDLC` without a file: a stream
+/// that was never created becomes an empty one (report/lt-report-members-testrequestpage/P91Static.al:126 `eos=Yes`). Answers
+/// false, and changes nothing, for a stream that was created.
+pub fn create_empty_in(v: &Value) -> bool {
+    let Value::Library(_, h) = v else {
+        return false;
+    };
+    let mut g = h.borrow_mut();
+    if !matches!(&*g, LibraryValue::Empty) {
+        return false;
+    }
+    *g = LibraryValue::InStream(InState::snapshot(Vec::new(), Encoding::default()));
+    true
+}
+
 /// [`with_in`]; `handed_ok` lets a stream HttpContent.WriteFrom took through (only `EOS` reads it), `gone_ok` one whose
 /// owner went out of scope (only `Length`, `EOS` and `ReadText` read it).
 fn with_in_of<T>(
@@ -865,6 +902,9 @@ fn with_in_of<T>(
             }
             if s.handed_to_content && !handed_ok {
                 return unsupported("use of an InStream after HttpContent.WriteFrom took it (only EOS is pinned)");
+            }
+            if s.not_initialized {
+                return unsupported("use of an InStream a Report layout call left uncreated (only EOS is pinned)");
             }
             if s.owner_gone && !gone_ok {
                 return unsupported(
@@ -929,6 +969,13 @@ fn in_eos(ctx: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult 
 }
 
 fn in_eos_plain(r: Option<&mut Value>, _: &mut [Value]) -> NResult {
+    // EOS of a stream a Report layout call found no layout for: the variable was never initialized
+    // (report/lt-report-requestpage-query-members/P105LytRdlc.al:76, P105LytWord.al:76, P105LytExcel.al:76).
+    if let Some(Value::Library(_, h)) = r.as_deref()
+        && matches!(&*h.borrow(), LibraryValue::InStream(s) if s.not_initialized)
+    {
+        return Err(crate::xml::uninitialized("InStream"));
+    }
     // A stream HttpContent.WriteFrom took is not at its end (network/lt-db-http-leads/DbHttpContentLeads.al:310): its position
     // did not move.
     with_in_of(r, true, true, |s| Ok(Value::Boolean(s.pos >= s.len())))

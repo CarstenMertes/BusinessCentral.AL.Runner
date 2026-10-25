@@ -184,6 +184,60 @@ impl Session {
             // P175_DefaultLayout_PerReport; report/lt-y-report-props/YReportPropsTests.al:236 and YReportExt.al:152: the Word or
             // RDLC layout properties alone leave RDLC). Not pinned: a processing-only report that names a kind, a kind other than
             // RDLC, Word and Excel, a number no report declares.
+            // `DefaultLayout` on a report variable answers as the static form with its id (report/lt-report-requestpage-query-
+            // members/P105LytDefault.al:38-41, a processing-only report without layouts: `None`, twice). Whether it runs
+            // OnInitReport is not pinned: a report that declares one is refused.
+            ids::REPORT_DEFAULTLAYOUT_1 => {
+                let object = self.report_variable_object(&receiver, "DefaultLayout")?;
+                let id = self.object_id_of(object as u32);
+                self.report_builtin(ids::REPORT_DEFAULTLAYOUT_2, None, &[Value::Integer(id as i32)], running)
+            }
+            ids::REPORT_RDLCLAYOUT_1 | ids::REPORT_WORDLAYOUT_1 | ids::REPORT_EXCELLAYOUT_1 => {
+                let object = self.report_variable_object(&receiver, "layout")?;
+                let kind = match id {
+                    ids::REPORT_RDLCLAYOUT_1 => "RDLC",
+                    ids::REPORT_WORDLAYOUT_1 => "Word",
+                    _ => "Excel",
+                };
+                self.report_layout_stream(Some(object), kind, args.first())
+            }
+            ids::REPORT_RDLCLAYOUT_2 | ids::REPORT_WORDLAYOUT_2 | ids::REPORT_EXCELLAYOUT_2 => {
+                let kind = match id {
+                    ids::REPORT_RDLCLAYOUT_2 => "RDLC",
+                    ids::REPORT_WORDLAYOUT_2 => "Word",
+                    _ => "Excel",
+                };
+                let Some(Value::Integer(n)) = args.first() else {
+                    return unsupported(format!("Report.{kind}Layout with an id that is not an integer"));
+                };
+                let found = self.engine.program.objects.iter().position(|o| {
+                    (o.is_kind(al_ir::ObjKind::Report) || o.is_shell_of(al_ir::ObjKind::Report))
+                        && o.id == u32::try_from(*n).ok()
+                });
+                match found {
+                    Some(o) if self.engine.program.objects[o].is_shell_of(al_ir::ObjKind::Report) => {
+                        unsupported(format!(
+                            "Report.{kind}Layout of a report of a dependency that was not compiled (its layouts are not known)"
+                        ))
+                    }
+                    Some(o) => self.report_layout_stream(Some(o), kind, args.get(1)),
+                    None => {
+                        let n = i64::from(*n);
+                        if let Some(why) = self.missing_may_be_skipped("Report", n) {
+                            return unsupported(why);
+                        }
+                        if self.ret_used {
+                            // The result used: No, and nothing raises (P105LytRdlc.al:105, P105LytWord.al:105,
+                            // P105LytExcel.al:105, id 72399).
+                            Ok(Value::Boolean(false))
+                        } else {
+                            // As a statement: the missing-object error (report/lt-report-members-testrequestpage/P91Static.al:
+                            // 127-128, :140-141, :153-154, ids 0 and 71999).
+                            Err(self.missing_object("Report", n))
+                        }
+                    }
+                }
+            }
             ids::REPORT_DEFAULTLAYOUT_2 => {
                 let Some(Value::Integer(n)) = args.first() else {
                     return unsupported("Report.DefaultLayout with an id that is not an integer");
@@ -192,9 +246,12 @@ impl Session {
                     (o.is_kind(al_ir::ObjKind::Report) || o.is_shell_of(al_ir::ObjKind::Report))
                         && o.id == u32::try_from(*n).ok()
                 }) else {
-                    return unsupported(format!(
-                        "Report.DefaultLayout of id {n}, which no report declares (error text not pinned)"
-                    ));
+                    // The missing-object error, its result used or not (report/lt-report-members-testrequestpage/
+                    // P91Static.al:113-115, ids 0, 71999 and -1).
+                    if let Some(why) = self.missing_may_be_skipped("Report", i64::from(*n)) {
+                        return unsupported(why);
+                    }
+                    return Err(self.missing_object("Report", i64::from(*n)));
                 };
                 let prop = |name: &str| {
                     o.properties
@@ -724,6 +781,103 @@ impl Session {
         }
     }
 
+    /// The report object of a report variable for a method that reads the report's metadata. Whether the call runs
+    /// OnInitReport is not pinned: a report (or an extension of it) that declares one is refused.
+    fn report_variable_object(&self, receiver: &Option<Value>, what: &str) -> Result<usize, Signal> {
+        let Some(Value::Codeunit(rc)) = receiver else {
+            return unsupported(format!("Report.{what} on {}", receiver.describe()));
+        };
+        let object = rc.borrow().object as usize;
+        let Some(r) = self.engine.program.objects[object].report.as_ref() else {
+            return unsupported(format!("Report.{what} on an object that is not a report"));
+        };
+        if !rc.borrow().initialized && (r.on_init.is_some() || !r.extensions.is_empty()) {
+            return unsupported(format!(
+                "Report.{what} on a report variable before its first use, of a report with OnInitReport or a reportextension (whether it runs OnInitReport is not pinned)"
+            ));
+        }
+        Ok(object)
+    }
+
+    /// `Report.RdlcLayout`, `WordLayout` and `ExcelLayout` (static with an id that names a report, or on a variable) of a
+    /// report that declares no layout file: no rendering layout, none of the RDLCLayout, WordLayout and ExcelLayout
+    /// properties and no reportextension.
+    /// - The result used, on a processing-only report: No, and a stream that was never created stays so; EOS of it then
+    ///   raises NotInitialized (report/lt-report-requestpage-query-members/P105LytRdlc.al:63-92, P105LytWord.al,
+    ///   P105LytExcel.al: instance and static).
+    /// - As a statement on a processing-only report: ReportNoLayout for each kind (report/lt-report-members-testrequestpage/
+    ///   P91Static.al:126, :139, :152 `proconly`).
+    /// - As a statement on a report that is not processing-only and names `DefaultLayout = RDLC`: RdlcLayout gives an empty
+    ///   stream (:125 `nolayout eos=Yes`), WordLayout and ExcelLayout raise ReportNoLayout (:138, :151).
+    ///
+    /// Everything else (a report with a layout file, a stream that was created, another shape) is not pinned and refused.
+    fn report_layout_stream(
+        &mut self,
+        object: Option<usize>,
+        kind: &str,
+        stream: Option<&Value>,
+    ) -> Result<Value, Signal> {
+        let Some(object) = object else {
+            return unsupported(format!("Report.{kind}Layout without a report"));
+        };
+        let o = &self.engine.program.objects[object];
+        let Some(r) = o.report.as_ref() else {
+            return unsupported(format!("Report.{kind}Layout of an object that is not a report"));
+        };
+        let prop = |name: &str| {
+            o.properties
+                .iter()
+                .find(|(k, _)| k.eq_ignore_ascii_case(name))
+                .map(|(_, v)| v.trim().trim_matches('"').to_string())
+        };
+        let declares_file = !r.rendering_layouts.is_empty()
+            || !r.extensions.is_empty()
+            || ["RDLCLayout", "WordLayout", "ExcelLayout", "DefaultRenderingLayout"]
+                .iter()
+                .any(|p| prop(p).is_some());
+        if declares_file {
+            return unsupported(format!(
+                "Report.{kind}Layout of a report that declares a layout file or a reportextension (the layout stream is not pinned)"
+            ));
+        }
+        let Some(stream) = stream else {
+            return unsupported(format!("Report.{kind}Layout without a stream"));
+        };
+        let no_layout = || {
+            Err(crate::transactions::al_error_code(
+                "Exception of type 'Microsoft.Dynamics.Nav.Types.Exceptions.NavNCLReportNoLayoutException' was thrown.",
+                "ReportNoLayout",
+            ))
+        };
+        let default_rdlc = prop("DefaultLayout").is_some_and(|v| v.eq_ignore_ascii_case("RDLC"));
+        match (self.ret_used, r.processing_only) {
+            (true, true) if prop("DefaultLayout").is_none() => {
+                if !al_builtins::stream::mark_not_initialized(stream) {
+                    return unsupported(format!(
+                        "Report.{kind}Layout into a stream that was created (what it does to the stream is not pinned)"
+                    ));
+                }
+                Ok(Value::Boolean(false))
+            }
+            (false, true) if prop("DefaultLayout").is_none() => no_layout(),
+            (false, false) if default_rdlc => {
+                if kind != "RDLC" {
+                    return no_layout();
+                }
+                if !al_builtins::stream::create_empty_in(stream) {
+                    return unsupported(
+                        "Report.RdlcLayout into a stream that was created (what it does to the stream is not pinned)",
+                    );
+                }
+                Ok(Value::Boolean(true))
+            }
+            _ => unsupported(format!(
+                "Report.{kind}Layout of a report without a layout file{} (only a processing-only report, and as a statement one with DefaultLayout = RDLC, are pinned)",
+                if self.ret_used { ", its result used" } else { "" }
+            )),
+        }
+    }
+
     /// The instance of reportextension `ext` that belongs to report variable `base`: made at first use and kept
     /// with the variable, so the extension's globals and added data items keep their state across calls, `SaveAs`
     /// and `Execute`; a `Run` and a `Clear` drop it (reportext/W3RpExtProcedures.al:ExtensionProcedure_*).
@@ -761,7 +915,7 @@ impl Session {
     /// WordXmlPart_BothOverloads_ReportWithoutWordLayout and WordXmlPart_Content_IncludesTheColumns, BC 29.0):
     /// a report with only an RDLC layout answers a text that starts with `<` and holds the data item and
     /// column names and `urn:microsoft-dynamics-nav`, with either flag; an unknown report id fails with the code
-    /// AL:MetadataNotFound (its text is not pinned). The rest follows what the owner's Pageworks code reads
+    /// AL:MetadataNotFound and the missing-object text (P91Static.al:167-168). The rest follows what the owner's Pageworks code reads
     /// (a `NavWordReportXmlPart` root, a `Labels` block, nested data items, `ElementType` DataItem / Column
     /// with the flag): unprobed, docs/probes-needed.md "Report.WordXmlPart".
     fn report_word_xml_part(
@@ -787,7 +941,8 @@ impl Session {
                 if let Some(why) = self.missing_may_be_skipped("Report", n) {
                     return unsupported(why);
                 }
-                return Err(crate::transactions::al_error_code("", "AL:MetadataNotFound"));
+                // The missing-object error (report/lt-report-members-testrequestpage/P91Static.al:167-168, ids 0 and 71999).
+                return Err(self.missing_object("Report", n));
             }
             (1, self.report_by_number(id, args.first())?.1)
         } else {

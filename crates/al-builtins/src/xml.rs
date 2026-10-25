@@ -97,7 +97,7 @@ fn error(message: impl Into<String>, code: &str) -> Signal {
 
 /// `Microsoft.Dynamics.Nav.Runtime.NavXmlDocumentType variable not initialized.` (code NotInitialized): a variable nobody assigned,
 /// used where the type is known (xml/lt-xml-doctype-declaration/DocTypeErrors.al:Uninitialised_*).
-fn uninitialized(nav_type: &str) -> Signal {
+pub(crate) fn uninitialized(nav_type: &str) -> Signal {
     error(
         format!("Microsoft.Dynamics.Nav.Runtime.Nav{nav_type} variable not initialized."),
         "NotInitialized",

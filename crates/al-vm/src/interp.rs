@@ -317,7 +317,8 @@ impl Session {
     #[inline]
     pub(crate) fn char_at(t: &al_builtins::text::Txt, i: i64) -> Result<Value, Signal> {
         // types/TestProbeScalarContracts.al:TextChar_AssignByIndex: position 0 and below raise, the position after
-        // the last character reads as the character 0; further positions are not pinned.
+        // the last character reads as the character 0, and so does any position further (text/lt-text-instance/Index1.Codeunit.al:
+        // 33-40, 53-60: `T[7]` and `T[100]` of six characters, `E[1]` of an empty text).
         if i < 1 {
             return al_builtins::native::raise(
                 format!(
@@ -330,19 +331,13 @@ impl Session {
             // No copy of a long text for each character read.
             return match t.as_bytes().get(i as usize - 1) {
                 Some(u) => Ok(Value::Char(u16::from(*u))),
-                None if i as usize == t.len() + 1 => Ok(Value::Char(0)),
-                None => Err(Signal::Unsupported(
-                    "a text read more than one position past its length (not pinned)".into(),
-                )),
+                None => Ok(Value::Char(0)),
             };
         }
         let units: Vec<u16> = t.encode_utf16().collect();
         match units.get(i as usize - 1) {
             Some(u) => Ok(Value::Char(*u)),
-            None if i as usize == units.len() + 1 => Ok(Value::Char(0)),
-            None => Err(Signal::Unsupported(
-                "a text read more than one position past its length (not pinned)".into(),
-            )),
+            None => Ok(Value::Char(0)),
         }
     }
 

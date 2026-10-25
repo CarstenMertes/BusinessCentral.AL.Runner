@@ -134,7 +134,11 @@ fn canonical_template(template: &str) -> Option<String> {
         let canon = match known {
             Some(c) => {
                 let arg = arg.map(|a| {
-                    if *c == "Filler Character" {
+                    // A blank is a filler character of its own: `<Filler Character, >` pads with blanks (types/lt-scalars/
+                    // ScT70052.al:84,94).
+                    if *c == "Filler Character" && a == " " {
+                        a
+                    } else if *c == "Filler Character" {
                         a.trim_start()
                     } else {
                         a.trim()
@@ -209,6 +213,15 @@ pub fn format_with_field_places(
         && pieces
             .iter()
             .all(|(c, t)| !c || matches!(*t, "Integer Thousand" | "Hours24,2" | "Minutes,2"))
+    {
+        return Err(format!("{INVALID_FORMAT_MARK}{template}"));
+    }
+    // `<Integer,6><Filler Character,0>` on a Byte is the invalid-format error (types/lt-scalars/ScT70052.al:182,197).
+    if matches!(v, Value::Byte(_))
+        && pieces.iter().any(|(c, _)| *c)
+        && pieces
+            .iter()
+            .all(|(c, t)| !c || t.starts_with("Integer,") || *t == "Filler Character,0")
     {
         return Err(format!("{INVALID_FORMAT_MARK}{template}"));
     }
@@ -572,6 +585,10 @@ fn numeric_code(n: &Numeric, code: &str, v: &Value, ctx: &dyn FormatCtx) -> Resu
             None => grouped,
         });
     }
+    // `<Decimals>` on an Integer is the invalid-format error (types/lt-scalars/ScT70052.al:85,96 `af52`).
+    if code == "Decimals" && matches!(v, Value::Integer(_)) {
+        return Err(INVALID_FORMAT_MARK.to_string());
+    }
     if code == "Decimals" || code == "Decimals,0" {
         // Without a width: the decimals the value has (`5.5` shows `.5`, a whole number nothing).
         let frac = abs.fract().normalize();
@@ -583,6 +600,11 @@ fn numeric_code(n: &Numeric, code: &str, v: &Value, ctx: &dyn FormatCtx) -> Resu
         return Ok(frac.strip_prefix('0').map(str::to_string).unwrap_or_default());
     }
     if let Some(w) = width(code, "Decimals")? {
+        // `<Decimals,1>` of a value with decimals is one star (types/lt-scalars/ScT70051.al:105,115: 1234567.891 is
+        // `1234567*`); of a whole number it is not pinned.
+        if w == 1 && !abs.fract().is_zero() {
+            return Ok("*".into());
+        }
         if w < 2 {
             return refuse();
         }
@@ -824,13 +846,14 @@ fn code(v: &Value, code: &str, numeric: Option<&Numeric>, ctx: &dyn FormatCtx) -
         // A Time with an hour of 1 to 9 is padded with a space: 09:00 is ` 9` (misc/lt-probes-needed-2/PnBDateFormat.al:
         // PictureCodes_Numbers `hours24`). A DateTime keeps the zero (types/lt-datetime RoundTrip_AndFormatCodes,
         // codeunit 70120: `02:30:00`); midnight of a Time is not pinned and stays `00`.
-        ("Hours24,2", _, Some(ms)) if matches!(v, Value::Time(_)) && ms / 3_600_000 != 0 => {
-            format!("{:>2}", ms / 3_600_000)
-        }
+        // Midnight is ` 0` too (types/lt-variant-time-enum/VariantTextTimeEnumFilter.al:105,120).
+        ("Hours24,2", _, Some(ms)) if matches!(v, Value::Time(_)) => format!("{:>2}", ms / 3_600_000),
         ("Hours24,2", _, Some(ms)) => format!("{:02}", ms / 3_600_000),
         ("Hours24", _, Some(ms)) => format!("{}", ms / 3_600_000),
         // A minute below 10 without a width is not measured (Dates_CreateDateTimeRoundTrip shows 30).
         ("Minutes", _, Some(ms)) if ms / 60_000 % 60 >= 10 => format!("{}", ms / 60_000 % 60),
+        // On a Time a minute below 10 has no padding: `0`, `5`, `9` (VariantTextTimeEnumFilter.al:113-115,128-130).
+        ("Minutes", _, Some(ms)) if matches!(v, Value::Time(_)) => format!("{}", ms / 60_000 % 60),
         // The twelve-hour clock pads the hour with a space (:Format_PictureCodes).
         // On a DateTime it pads with a zero: 13:45 is `01` (types/lt-datetime/Format.al:420,430).
         ("Hours12,2", _, Some(ms)) if matches!(v, Value::DateTime(_)) => format!("{:02}", hour12(ms)),
@@ -947,13 +970,26 @@ fn iso_week(day: i32) -> i32 {
 fn code_name(base: &str, date: Option<(i32, u32, u32)>, day_no: Option<i32>, language: i32) -> Result<String, String> {
     // The month names follow `GlobalLanguage`: German is pinned (platform/lt-platform-members/PlTSession.al:
     // GlobalLanguage_SetAndRestore, `März`); another language than English and German is not.
-    if language != 1033 && !(language == 1031 && base == "Month Text") {
+    if language != 1033 && language != 1031 {
         return Err(format!("{base} in the language {language} (not pinned)"));
     }
+    let weekday = (day_no.unwrap_or(1) - 1).rem_euclid(7);
     Ok(match (base, date) {
         ("Month Text", Some((_, m, _))) if language == 1031 => MONTHS_DE[m as usize - 1].to_string(),
+        // German weekday names: Monday `Montag` and Thursday `Donnerstag` are pinned (types/lt-format-codes-textbuilder-pagerun-labels/
+        // P144DateTextWidth.al:165-180); the other days are not.
+        (_, Some(_)) if language == 1031 => match weekday {
+            0 => "Montag".to_string(),
+            3 => "Donnerstag".to_string(),
+            _ => {
+                return Err(format!(
+                    "{base} in the language {language} for weekday {} (not pinned)",
+                    weekday + 1
+                ));
+            }
+        },
         ("Month Text", Some((_, m, _))) => MONTHS[m as usize - 1].to_string(),
-        (_, Some(_)) => WEEKDAYS[((day_no.unwrap_or(1) - 1).rem_euclid(7)) as usize].to_string(),
+        (_, Some(_)) => WEEKDAYS[weekday as usize].to_string(),
         _ => String::new(),
     })
 }
@@ -1133,7 +1169,8 @@ mod tests {
         );
         assert_eq!(
             text(fmt(Value::Time(1), "<Hours24,2>:<Minutes,2>:<Seconds,2>")),
-            "00:00:00"
+            // types/lt-variant-time-enum/VariantTextTimeEnumFilter.al:105,120: midnight of a Time is ` 0`.
+            " 0:00:00"
         );
     }
 
@@ -1307,5 +1344,53 @@ mod tests {
             "    900007"
         );
         assert_eq!(text(fmt(tm.clone(), "<Filler Character,*><Hours12,4>")), "   9");
+    }
+    // types/lt-variant-time-enum/VariantTextTimeEnumFilter.al:101-135; types/lt-scalars/ScT70052.al:182,197.
+    #[test]
+    fn hours_and_minutes_of_a_time_and_codes_on_a_byte() {
+        let at = |h: i64, m: i64| Value::Time((h * 60 + m) * 60_000 + 1);
+        assert_eq!(text(fmt(at(0, 0), "<Hours24,2>")), " 0");
+        assert_eq!(text(fmt(at(12, 0), "<Minutes>")), "0");
+        assert_eq!(text(fmt(at(12, 5), "<Minutes>")), "5");
+        assert_eq!(text(fmt(at(12, 10), "<Minutes>")), "10");
+        let r = fmt(Value::Byte(152), "<Integer,6><Filler Character,0>");
+        assert!(
+            matches!(r, Err(Signal::Error(ref e)) if e.code == "InvalidFormatString"),
+            "{r:?}"
+        );
+    }
+    // P144DateTextWidth.al:165-180: German weekday names.
+    #[test]
+    fn german_weekday_names_that_are_pinned() {
+        use super::code_name;
+        let mon = day_from_civil(2027, 3, 15);
+        let tue = mon + 1;
+        assert_eq!(
+            code_name("Weekday Text", Some((2027, 3, 15)), Some(mon), 1031).unwrap(),
+            "Montag"
+        );
+        assert_eq!(
+            code_name("Weekday Text", Some((2027, 3, 18)), Some(mon + 3), 1031).unwrap(),
+            "Donnerstag"
+        );
+        assert!(code_name("Weekday Text", Some((2027, 3, 16)), Some(tue), 1031).is_err());
+    }
+    #[test]
+    fn decimals_of_width_one_on_a_value_with_decimals_is_a_star() {
+        // types/lt-scalars/ScT70051.al:105,115.
+        let d = Value::Decimal("1234567.891".parse().unwrap());
+        assert_eq!(text(fmt(d, "<Integer><Decimals,1>")), "1234567*");
+    }
+    #[test]
+    fn a_blank_filler_character_pads_with_blanks() {
+        // types/lt-scalars/ScT70052.al:83-84,93-94.
+        assert_eq!(
+            text(fmt(Value::Integer(1234567), "<Integer,10><Filler Character, >")),
+            "   1234567"
+        );
+        assert_eq!(
+            text(fmt(Value::Integer(1234567), "<Integer,10><Filler Character,0>")),
+            "0001234567"
+        );
     }
 }

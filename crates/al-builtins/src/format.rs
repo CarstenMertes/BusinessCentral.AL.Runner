@@ -410,6 +410,8 @@ pub fn format_value(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) 
         Value::Byte(b) if *b >= 0x80 && crate::stream::Encoding::MsDos.decode_pinned(&[*b]) => {
             crate::stream::Encoding::MsDos.decode(&[*b])
         }
+        // Byte 200 shows as `˜` (U+02DC) in every standard format that exists for it (types/lt-scalars/ScT70052.al:173-187).
+        Value::Byte(200) => "\u{02DC}".to_string(),
         // Kept, not pinned: a byte from 0x80 up whose character no corpus test pins shows as the Latin-1 character of its
         // code; json/TestJsonComplete.al:JsonObject_GetByte_ReturnsValue (Assert.AreEqual of Byte 200) passes through it.
         Value::Byte(b) => char::from(*b).to_string(),
@@ -1126,14 +1128,35 @@ fn unit_word(lang: i32, unit: usize, plural: bool) -> Option<String> {
         (1036, 1, false) => Some("heure".into()),
         (1036, 2, true) => Some("minutes".into()),
         (1036, 3, true) => Some("secondes".into()),
+        // types/lt-ax-text-format-dates/AxLanguageFormats.al:134-163: `1 Tag;2 Tage;2 Stunden;1 Minute;1 Sekunde;1 Millisekunde`
+        // and `1 jour;2 jours;2 heures;1 minute;1 seconde;1 milliseconde`.
+        (1031, 0, false) => Some("Tag".into()),
+        (1031, 0, true) => Some("Tage".into()),
+        (1031, 1, true) => Some("Stunden".into()),
+        (1031, 2, false) => Some("Minute".into()),
+        (1031, 3, false) => Some("Sekunde".into()),
+        (1031, 4, false) => Some("Millisekunde".into()),
+        (1036, 0, false) => Some("jour".into()),
+        (1036, 0, true) => Some("jours".into()),
+        (1036, 1, true) => Some("heures".into()),
+        (1036, 2, false) => Some("minute".into()),
+        (1036, 3, false) => Some("seconde".into()),
+        (1036, 4, false) => Some("milliseconde".into()),
         (1031 | 1036, ..) => None,
         _ => Some(format!("{}{}", DURATION_UNITS[unit].0, if plural { "s" } else { "" })),
     }
 }
 
 fn format_duration(ms: i64, standard: i32, lang: i32) -> Result<String, FormatFail> {
-    // A Duration beyond what a .NET TimeSpan holds (ticks of 100 ns in an Int64) raises (D_Duration.al:Duration_To_Integer_BeyondRange `af128`).
-    if ms.unsigned_abs() > (i64::MAX / 10_000) as u64 {
+    // A Duration of 9223372028264841218 ms raises the overflow (D_Duration.al:Duration_To_Integer_BeyondRange `af128`).
+    // Below that it formats: 922337203685478 ms, 3e15 ms and 5000000000 hours (types/lt-datetime/Evaluate.al:640-670;
+    // D_Duration.al:421-443 `big_number`). Between 1.8e16 ms and that value it is not pinned.
+    if ms.unsigned_abs() > 18_000_000_000_000_000 && ms.unsigned_abs() < 9_223_372_028_264_841_218 {
+        return Err(FormatFail::Unsupported(format!(
+            "Format of a Duration of {ms} ms (not pinned)"
+        )));
+    }
+    if ms.unsigned_abs() >= 9_223_372_028_264_841_218 {
         return Err(FormatFail::Error {
             message: "Arithmetic operation resulted in an overflow.".into(),
             code: "AL:Overflow".into(),
@@ -1179,6 +1202,59 @@ const MONTHS: [&str; 12] = [
     "December",
 ];
 
+// The month names of AxLanguageFormats.al:79-131 (formats 4 and 7 in German, French and Spanish).
+const MONTHS_DE: [&str; 12] = [
+    "Januar",
+    "Februar",
+    "März",
+    "April",
+    "Mai",
+    "Juni",
+    "Juli",
+    "August",
+    "September",
+    "Oktober",
+    "November",
+    "Dezember",
+];
+const MONTHS_DE_SHORT: [&str; 12] = [
+    "Jan.", "Feb.", "März", "Apr.", "Mai", "Juni", "Juli", "Aug.", "Sept.", "Okt.", "Nov.", "Dez.",
+];
+const MONTHS_FR: [&str; 12] = [
+    "janvier",
+    "février",
+    "mars",
+    "avril",
+    "mai",
+    "juin",
+    "juillet",
+    "août",
+    "septembre",
+    "octobre",
+    "novembre",
+    "décembre",
+];
+const MONTHS_FR_SHORT: [&str; 12] = [
+    "janv.", "févr.", "mars", "avr.", "mai", "juin", "juil.", "août", "sept.", "oct.", "nov.", "déc.",
+];
+const MONTHS_ES: [&str; 12] = [
+    "enero",
+    "febrero",
+    "marzo",
+    "abril",
+    "mayo",
+    "junio",
+    "julio",
+    "agosto",
+    "septiembre",
+    "octubre",
+    "noviembre",
+    "diciembre",
+];
+const MONTHS_ES_SHORT: [&str; 12] = [
+    "ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sept", "oct", "nov", "dic",
+];
+
 /// The standard formats of a Date, en-US (types/TestFormatEvaluateTextContracts.al:Format_Date_StandardFormats):
 /// 0 and 1 `mm/dd/yy`, 2 `mmddyyD`, 3 `yy/mm/dd`, 4 `March 5, 2024`, 5 `mmddyy`, 6 `yymmdd`,
 /// 7 `Mar 5, 2024`, 9 `yyyy-mm-dd`. Number 8 does not exist
@@ -1191,18 +1267,29 @@ fn format_date(day: i32, closing: bool, standard: i32, lang: i32) -> Result<Stri
     if closing && !matches!(standard, 0 | 1 | 2 | 9) {
         return Err(format!("Format of a closing date with standard format {standard} (not pinned)").into());
     }
-    // The month name of format 4 follows the language; only March is measured for German and French (P142ToTextLang.al:109
-    // `März 15, 2024`, :117 `mars 15, 2024`). Another month or language, and format 7, are refused.
-    let month = match (lang, m, standard) {
-        (1033, ..) => MONTHS[m as usize - 1],
-        (1031, 3, 4) => "März",
-        (1036, 3, 4) => "mars",
-        (_, _, 4 | 7) => {
+    // The month names of formats 4 and 7 follow the language: English, German, French and Spanish are pinned for every month
+    // (types/lt-ax-text-format-dates/AxLanguageFormats.al:52-132; P142ToTextLang.al:109,117). Another language is refused.
+    let month = match (lang, standard) {
+        (1033, _) => MONTHS[m as usize - 1],
+        (1031, 4) => MONTHS_DE[m as usize - 1],
+        (1031, 7) => MONTHS_DE_SHORT[m as usize - 1],
+        (1036, 4) => MONTHS_FR[m as usize - 1],
+        (1036, 7) => MONTHS_FR_SHORT[m as usize - 1],
+        (3082, 4) => MONTHS_ES[m as usize - 1],
+        (3082, 7) => MONTHS_ES_SHORT[m as usize - 1],
+        (_, 4 | 7) => {
             return Err(FormatFail::Unsupported(format!(
                 "Format {standard} of a Date in language {lang}, month {m}: the month name is not pinned (docs/probes-needed.md)"
             )));
         }
         _ => MONTHS[m as usize - 1],
+    };
+    let short = |month: &str| {
+        if lang == 1033 {
+            month[..3].to_string()
+        } else {
+            month.to_string()
+        }
     };
     Ok(match standard {
         // The year has two digits from 1931 to 2030 and four otherwise, so a text reads back into the same year
@@ -1215,7 +1302,7 @@ fn format_date(day: i32, closing: bool, standard: i32, lang: i32) -> Result<Stri
         4 => format!("{month} {d}, {y}"),
         5 => format!("{m:02}{d:02}{yy:02}"),
         6 => format!("{yy:02}{m:02}{d:02}"),
-        7 => format!("{} {d}, {y}", &month[..3]),
+        7 => format!("{} {d}, {y}", short(month)),
         9 => format!("{y:04}-{m:02}-{d:02}"),
         n => return Err(no_such_format(n, "Date")),
     })
@@ -1372,10 +1459,8 @@ mod tests {
         assert_eq!(format_value(&d, 0, 4, &L(1036)).unwrap(), "mars 15, 2024");
         assert_eq!(format_value(&d, 0, 0, &L(1036)).unwrap(), "03/15/24");
         let jan = Value::Date(day_from_civil(2024, 1, 15), false);
-        assert!(matches!(
-            format_value(&jan, 0, 4, &L(1031)),
-            Err(FormatFail::Unsupported(_))
-        ));
+        // types/lt-ax-text-format-dates/AxLanguageFormats.al:79.
+        assert_eq!(format_value(&jan, 0, 4, &L(1031)).unwrap(), "Januar 15, 2024");
         assert!(matches!(
             format_value(&d, 0, 4, &L(1030)),
             Err(FormatFail::Unsupported(_))
@@ -1390,8 +1475,13 @@ mod tests {
             "1 heure 2 minutes 3 secondes"
         );
         assert_eq!(format_value(&du, 0, 0, &L(1033)).unwrap(), "1 hour 2 minutes 3 seconds");
+        // AxLanguageFormats.al:151; the plural of a millisecond in German is not pinned.
+        assert_eq!(
+            format_value(&Value::Duration(86_400_000), 0, 0, &L(1031)).unwrap(),
+            "1 Tag"
+        );
         assert!(matches!(
-            format_value(&Value::Duration(86_400_000), 0, 0, &L(1031)),
+            format_value(&Value::Duration(2), 0, 0, &L(1031)),
             Err(FormatFail::Unsupported(_))
         ));
         assert_eq!(format_value(&Value::Boolean(false), 0, 0, &L(1036)).unwrap(), "Non");
@@ -1696,5 +1786,18 @@ mod tests {
         assert_eq!(f2(Value::Time(43_200_001)), "120000T");
         assert_eq!(f2(Value::Time(1)), "000000T");
         assert_eq!(f2(Value::Time(86_400_000)), "235959.999T");
+    }
+    // types/lt-ax-text-format-dates/AxLanguageFormats.al:52-163.
+    #[test]
+    fn month_names_and_duration_words_in_other_languages() {
+        use super::{day_from_civil, duration_format, format_date};
+        let sep = day_from_civil(2024, 9, 1);
+        let f = |lang, n| format_date(sep, false, n, lang).ok().unwrap();
+        assert_eq!(f(1031, 7), "Sept. 1, 2024");
+        assert_eq!(f(1036, 4), "septembre 1, 2024");
+        assert_eq!(f(3082, 7), "sept 1, 2024");
+        assert_eq!(f(1033, 7), "Sep 1, 2024");
+        assert_eq!(duration_format(172_800_000, false, 1031).ok().unwrap(), "2 Tage");
+        assert_eq!(duration_format(1, false, 1036).ok().unwrap(), "1 milliseconde");
     }
 }

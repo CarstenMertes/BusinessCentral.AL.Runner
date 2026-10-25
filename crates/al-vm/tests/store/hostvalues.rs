@@ -995,3 +995,34 @@ fn calcfields_of_a_blob_of_a_rolled_back_row_empties_the_blob() {
         "empty"
     );
 }
+
+#[test]
+fn random_of_a_decimal() {
+    // types/lt-aj-probes/AjScalars.al:375-433: a whole Decimal draws as that Integer, a fraction is the conversion error.
+    assert_eq!(text("D: Decimal;", "D := 1.0; exit(Format(Random(D)));"), "1");
+    match run("procedure F(): Text var D: Decimal; I: Integer; begin D := 2.5; I := Random(D); exit(''); end;") {
+        Err(Signal::Error(e)) => {
+            assert_eq!(e.code, "ConversionCast");
+            assert_eq!(
+                e.message,
+                "Overflow under conversion of Microsoft.Dynamics.Nav.Runtime.Decimal18 value 2.5 to System.Int32."
+            );
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn task_exists_until_it_is_cancelled() {
+    // types/lt-evaluate-format-lasterror-setview/P86TaskExists.al:22-140.
+    assert_eq!(
+        text(
+            "Id: Guid; E: Guid; S: Text;",
+            "Id := TaskScheduler.CreateTask(Codeunit::C, 0, false, CompanyName(), CreateDateTime(DMY2Date(1, 1, 2099), 120000T));
+             S := Format(TaskScheduler.TaskExists(Id)) + Format(TaskScheduler.TaskExists(E)) + Format(TaskScheduler.TaskExists(CreateGuid()));
+             S += Format(TaskScheduler.CancelTask(Id)) + Format(TaskScheduler.TaskExists(Id)) + Format(TaskScheduler.CancelTask(Id));
+             exit(S);"
+        ),
+        "YesNoNoYesNoNo"
+    );
+}

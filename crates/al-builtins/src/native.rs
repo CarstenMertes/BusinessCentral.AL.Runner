@@ -380,6 +380,10 @@ pub trait Ctx: FormatCtx {
     fn commit(&mut self) -> Result<(), Signal>;
     /// A new, unique Guid (from the host or a deterministic sequence, ADR-006).
     fn new_guid(&mut self) -> [u8; 16];
+    /// The tasks `TaskScheduler.CreateTask` made in this session and not cancelled: `None` when the context keeps none.
+    fn scheduled_tasks(&mut self) -> Option<&mut std::collections::HashSet<[u8; 16]>> {
+        None
+    }
     /// Whether the result of the builtin being called is used (`[Ok :=]` forms
     /// return false instead of raising when it is).
     fn ret_used(&self) -> bool {
@@ -513,16 +517,31 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     // CreateTask hands back a new task id (session/TestTaskSchedulerCloudBehavior.al:9-20 pins that
     // and nothing more). A task starts in a session of its own after the creating transaction
     // commits, which a test does not wait for, so the task is not run (docs/probes-needed.md).
-    ("TaskScheduler.CreateTask#1", |c, _, _| Ok(Value::Guid(c.new_guid()))),
-    ("TaskScheduler.CreateTask#2", |c, _, _| Ok(Value::Guid(c.new_guid()))),
+    ("TaskScheduler.CreateTask#1", |c, _, _| create_task(c)),
+    ("TaskScheduler.CreateTask#2", |c, _, _| create_task(c)),
     ("TaskScheduler.SetTaskReady#1", |_, _, _| {
         unsupported("TaskScheduler.SetTaskReady (not pinned)")
     }),
-    ("TaskScheduler.TaskExists#1", |_, _, _| {
-        unsupported("TaskScheduler.TaskExists (not pinned)")
+    // A task created in this session exists until it is cancelled; an id no task has, the empty one included, does not exist.
+    // CancelTask answers whether it cancelled a task (types/lt-evaluate-format-lasterror-setview/P86TaskExists.al:22-140, tasks
+    // created not ready or ready, with or without a failure codeunit, and cancelled in the same test).
+    ("TaskScheduler.TaskExists#1", |c, _, a| {
+        let Some(Value::Guid(id)) = a.first().cloned() else {
+            return unsupported("TaskScheduler.TaskExists of something else than a Guid");
+        };
+        match c.scheduled_tasks() {
+            Some(tasks) => Ok(Value::Boolean(tasks.contains(&id))),
+            None => unsupported("TaskScheduler.TaskExists in a context that keeps no tasks"),
+        }
     }),
-    ("TaskScheduler.CancelTask#1", |_, _, _| {
-        unsupported("TaskScheduler.CancelTask (not pinned)")
+    ("TaskScheduler.CancelTask#1", |c, _, a| {
+        let Some(Value::Guid(id)) = a.first().cloned() else {
+            return unsupported("TaskScheduler.CancelTask of something else than a Guid");
+        };
+        match c.scheduled_tasks() {
+            Some(tasks) => Ok(Value::Boolean(tasks.remove(&id))),
+            None => unsupported("TaskScheduler.CancelTask in a context that keeps no tasks"),
+        }
     }),
     ("Session.StartSession#1", start_session),
     ("Session.StartSession#2", start_session),
@@ -700,15 +719,24 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("Record.SetAutoCalcFields#1", |c, r, a| {
         c.record(RecordOp::SetAutoCalcFields, r, a)
     }),
-    // record/PZFindDirections.al:106 pins `ToText` of 5, 20, 25 and 35. Whether a larger value gets a thousands separator is
-    // not pinned, so it is refused (docs/probes-needed.md "Integer.ToText").
+    // `ToText` of an Integer, a BigInteger, a Guid and a Byte: no thousands separator (`1000`, `2147483647`, `-9223372036854775808`),
+    // a Guid with braces in upper case whatever the argument, a Byte as `Format` shows it (types/lt-totext-bigtext-codeunit-run/
+    // P93ScalarToText.al:180-300, P93Guid.al:28-102; record/PZFindDirections.al:106).
     ("Integer.ToText#1", |_, r, _| match r.as_deref() {
-        Some(Value::Integer(n)) if n.unsigned_abs() < 1000 => Ok(Value::Text(n.to_string().into())),
-        Some(Value::Integer(n)) => Err(Signal::Unsupported(format!(
-            "Integer.ToText of {n}: whether the text has a thousands separator is not pinned (docs/probes-needed.md)"
-        ))),
+        Some(Value::Integer(n)) => Ok(Value::Text(n.to_string().into())),
         other => Err(Signal::Unsupported(format!("Integer.ToText on {}", other.describe()))),
     }),
+    ("BigInteger.ToText#1", |_, r, _| match r.as_deref() {
+        Some(Value::BigInteger(n)) => Ok(Value::Text(n.to_string().into())),
+        other => Err(Signal::Unsupported(format!(
+            "BigInteger.ToText on {}",
+            other.describe()
+        ))),
+    }),
+    ("Guid.ToText#1", |_, r, _| guid_to_text(r)),
+    ("Guid.ToText#2", |_, r, _| guid_to_text(r)),
+    ("Byte.ToText#1", |c, r, _| byte_to_text(c, r)),
+    ("Byte.ToText#2", |c, r, _| byte_to_text(c, r)),
     // `Date.ToText()` and `Boolean.ToText()` (Base Application's Customer Mgt. CalcLastPaymentInfo puts them in a Dictionary
     // of [Text, Text]): Format(value) with the default format, pinned by types/lt-conversions-hidden-parts-doctype/
     // P142ToTextLang.al:P142_Date_Language and P142_Boolean_Language.
@@ -2499,6 +2527,34 @@ pub(crate) fn method_lower(s: &str) -> String {
 
 pub(crate) fn simple_lower(s: &str) -> String {
     s.chars().map(|c| c.to_lowercase().next().unwrap_or(c)).collect()
+}
+
+/// CreateTask hands back a new task id (session/TestTaskSchedulerCloudBehavior.al:9-20). A task starts in a session of its own
+/// after the creating transaction commits, which a test does not wait for, so the task is not run (docs/probes-needed.md); the
+/// session keeps its id for `TaskExists` and `CancelTask`.
+fn create_task(c: &mut dyn Ctx) -> Result<Value, Signal> {
+    let id = c.new_guid();
+    if let Some(tasks) = c.scheduled_tasks() {
+        tasks.insert(id);
+    }
+    Ok(Value::Guid(id))
+}
+
+fn guid_to_text(r: Option<&mut Value>) -> Result<Value, Signal> {
+    match r.as_deref() {
+        Some(Value::Guid(g)) => Ok(Value::Text(crate::format::format_guid(g).into())),
+        other => Err(Signal::Unsupported(format!("Guid.ToText on {}", other.describe()))),
+    }
+}
+
+fn byte_to_text(c: &mut dyn Ctx, r: Option<&mut Value>) -> Result<Value, Signal> {
+    match r.as_deref() {
+        Some(v @ Value::Byte(_)) => match crate::format::try_format(v, 0, 0, &*c) {
+            Ok(t) => Ok(Value::Text(t.into())),
+            Err(e) => Err(Signal::Unsupported(e)),
+        },
+        other => Err(Signal::Unsupported(format!("Byte.ToText on {}", other.describe()))),
+    }
 }
 
 fn primitive_to_text(c: &mut dyn Ctx, r: Option<&mut Value>, what: &str, a: &[Value]) -> Result<Value, Signal> {

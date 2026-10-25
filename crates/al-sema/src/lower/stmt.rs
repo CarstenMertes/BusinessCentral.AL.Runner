@@ -376,12 +376,12 @@ impl Lowerer<'_> {
                 f.name
             ));
         }
-        if captions.len() != names.len() {
-            return Err(format!(
-                "Format of option field {} whose OptionCaption has another number of entries than its members is not pinned",
-                f.name
-            ));
-        }
+        // A caption list shorter than the members shows the member names past its end, a longer one is cut to the members
+        // (an ordinal past the members shows its number): types/lt-format-option-field/FormatOptionFieldCaptions.al:82-177
+        // (`Uno,Dos` for One,Two,Three: `Three`; `Uno,Dos,Tres,Quatro` for One,Two: ordinal 2 is `2`).
+        let mut captions = captions;
+        captions.truncate(names.len());
+        captions.extend(names[captions.len()..].iter().cloned());
         Ok(ir::Expr::Convert(RtType::Option(captions), Box::new(value)))
     }
 

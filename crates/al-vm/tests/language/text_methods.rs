@@ -153,3 +153,159 @@ fn ensure_capacity_of_a_negative_number_answers_false_when_the_answer_is_used() 
         "No|No|16|ArgumentOutOfRange"
     );
 }
+
+#[test]
+fn remove_and_pad_outside_the_text_raise_the_dotnet_argument_errors() {
+    // text/lt-text-instance/Edit1.Codeunit.al:41-63, 216-330.
+    let src = r#"codeunit 50100 C {
+        procedure E(T: Text; S: Integer; N: Integer; Two: Boolean): Text var R: Text; begin
+            if Two then R := T.Remove(S, N) else R := T.Remove(S); exit(R); end;
+        procedure Err(T: Text; S: Integer; N: Integer; Two: Boolean): Text begin
+            asserterror E(T, S, N, Two); exit(GetLastErrorText() + '|' + GetLastErrorCode()); end;
+        procedure F(): Text var T: Text; begin
+            T := 'abcdef';
+            exit(E(T, 7, 0, false) + '#' + Err(T, 8, 0, false) + '#' + Err(T, 0, 0, false) + '#' + E(T, 7, 0, true) + '#'
+                + Err(T, 4, 4, true) + '#' + Err(T, 0, 1, true) + '#' + Err(T, 2, -1, true));
+        end;
+        procedure P(): Text var T: Text; begin T := 'ab'; asserterror T := T.PadLeft(-5);
+            exit(GetLastErrorText() + '|' + GetLastErrorCode()); end; }"#;
+    assert_eq!(
+        text(al_testkit::run_with(src, "C", "F", vec![]).map(|(v, _)| v)),
+        "abcdef#startIndex cannot be larger than length of string. (Parameter 'startIndex')|ArgumentOutOfRange#\
+         StartIndex cannot be less than 1. (Parameter 'startIndex')|ArgumentOutOfRange#abcdef#\
+         count ('4') must be less than or equal to '3'. (Parameter 'count')\\Actual value was 4.|ArgumentOutOfRange#\
+         startIndex ('-1') must be a non-negative value. (Parameter 'startIndex')\\Actual value was -1.|ArgumentOutOfRange#\
+         count ('-1') must be a non-negative value. (Parameter 'count')\\Actual value was -1.|ArgumentOutOfRange"
+    );
+    assert_eq!(
+        text(al_testkit::run_with(src, "C", "P", vec![]).map(|(v, _)| v)),
+        "totalWidth ('-5') must be a non-negative value. (Parameter 'totalWidth')\\Actual value was -5.|ArgumentOutOfRange"
+    );
+}
+
+#[test]
+fn text_builder_length_setter_replace_in_a_range_and_to_text_from_zero() {
+    // text/lt-label-textbuilder/TxCTextBuilderBasics.al:230-257; TxCTextBuilderEdit.al:235-330.
+    let src = r#"codeunit 50100 C { procedure F(): Text var TB: TextBuilder; S: Text; Z: Text; begin
+        TB.Append('abcdef'); TB.Length(3); S := TB.ToText(); TB.Length(5); Z := TB.ToText();
+        S += '|' + Format(StrLen(Z)) + '|' + Format(Z[4] = 0);
+        TB.Clear(); TB.Append('aXaXaXaX'); TB.Replace('X', '-', 2, 4); S += '|' + TB.ToText();
+        TB.Clear(); TB.Append('aXaXaXaX'); TB.Replace('aX', '-', 1, 4); S += '|' + TB.ToText();
+        asserterror TB.Replace('X', '-', 0, 2); S += '|' + GetLastErrorCode() + '|' + TB.ToText();
+        TB.Clear(); TB.Append('0123456789'); S += '|' + TB.ToText(0, 10);
+        exit(S); end; }"#;
+    assert_eq!(
+        text(al_testkit::run_with(src, "C", "F", vec![]).map(|(v, _)| v)),
+        "abc|5|Yes|a-a-aXaX|--aXaX|ArgumentOutOfRange|--aXaX|0123456789"
+    );
+}
+
+#[test]
+fn incstr_below_zero_and_padstr_ranges_raise() {
+    // text/lt-text-functions/IncStr.Codeunit.al:141-174; PadStr.Codeunit.al:37-73.
+    let src = r#"codeunit 50100 C { procedure F(): Text var S: Text; begin
+        asserterror S := IncStr('5', -6); S := GetLastErrorText() + '|' + GetLastErrorCode();
+        asserterror S += PadStr('abc', 6, 'xy'); S += '#' + GetLastErrorText();
+        asserterror S += PadStr('abc', -1); S += '#' + GetLastErrorText();
+        exit(S); end; }"#;
+    assert_eq!(
+        text(al_testkit::run_with(src, "C", "F", vec![]).map(|(v, _)| v)),
+        "The result of incrementing cannot be negative.|InvalidOperation#\
+         The value of PADSTR parameter 3 is outside of the permitted range. The current value is: 2. The permitted range is: from 1 to 1.#\
+         The value of PADSTR parameter 2 is outside of the permitted range. The current value is: -1. The permitted range is: from 0 to 2,147,483,647."
+    );
+}
+
+#[test]
+fn to_text_of_integers_guids_and_bytes() {
+    // types/lt-totext-bigtext-codeunit-run/P93ScalarToText.al:180-300, P93Guid.al:28-102.
+    let src = r#"codeunit 50100 C { procedure F(): Text var I: Integer; B: BigInteger; G: Guid; Y: Byte; begin
+        I := 1000; B := -9223372036854775807L; B := B - 1; Y := 65;
+        Evaluate(G, 'e6c0bda3-5b0a-4a7e-9a5e-0123456789ab');
+        exit(I.ToText() + '|' + B.ToText() + '|' + G.ToText() + '|' + G.ToText(false) + '|' + Y.ToText(true)); end; }"#;
+    assert_eq!(
+        text(al_testkit::run_with(src, "C", "F", vec![]).map(|(v, _)| v)),
+        "1000|-9223372036854775808|{E6C0BDA3-5B0A-4A7E-9A5E-0123456789AB}|{E6C0BDA3-5B0A-4A7E-9A5E-0123456789AB}|A"
+    );
+}
+
+#[test]
+fn evaluate_reads_a_guid_source_as_its_text() {
+    // types/lt-filter-enum-relation-duration-guid/E_Guid.al:224-311.
+    let src = r#"codeunit 50100 C { procedure F(): Text var G: Guid; G2: Guid; T: Text; Ok: Boolean; begin
+        Evaluate(G, '{ab12cd34-ef56-4a78-9b01-23456789abcd}'); Ok := Evaluate(T, G);
+        exit(Format(Ok) + '|' + T + '|' + Format(Evaluate(G2, G)) + '|' + Format(G2 = G)); end; }"#;
+    assert_eq!(
+        text(al_testkit::run_with(src, "C", "F", vec![]).map(|(v, _)| v)),
+        "Yes|{AB12CD34-EF56-4A78-9B01-23456789ABCD}|Yes|Yes"
+    );
+}
+
+#[test]
+fn format_of_an_option_field_whose_caption_list_is_shorter_or_longer() {
+    // types/lt-format-option-field/FormatOptionFieldCaptions.al:82-177.
+    let src = r#"table 50101 T { fields { field(1; Id; Integer) { }
+            field(4; Short; Option) { OptionMembers = One,Two,Three; OptionCaption = 'Uno,Dos'; }
+            field(5; Long; Option) { OptionMembers = One,Two; OptionCaption = 'Uno,Dos,Tres,Quatro'; } } keys { key(PK; Id) { } } }
+        codeunit 50100 C { procedure F(): Text var R: Record T; begin
+            R.Short := R.Short::Two; R.Long := R.Long::Two; S := Format(R.Short) + '|' + Format(R.Long);
+            R.Short := R.Short::Three; R.Long := 2; exit(S + '|' + Format(R.Short) + '|' + Format(R.Long)); end;
+        var S: Text; }"#;
+    assert_eq!(
+        text(al_testkit::run_with(src, "C", "F", vec![]).map(|(v, _)| v)),
+        "Dos|Dos|Three|2"
+    );
+}
+
+#[test]
+fn big_text_add_text_at_a_position_and_get_sub_text_bounds() {
+    // types/lt-totext-bigtext-codeunit-run/P93BigText.al:95-388.
+    let src = r#"codeunit 50100 C { procedure F(): Text var B: BigText; O: BigText; T: Text; S: Text; N: Integer; begin
+        B.AddText('abcdef'); B.AddText('XY', 3); B.GetSubText(T, 1); S := T;
+        B.AddText(B, 100); B.GetSubText(T, 1); S += '|' + T;
+        N := B.GetSubText(T, 17, 1); S += '|' + Format(N) + '[' + T + ']';
+        N := B.GetSubText(O, 2, 3); O.GetSubText(T, 1); S += '|' + Format(N) + T;
+        asserterror B.AddText('Z', 0); S += '|' + GetLastErrorCode();
+        asserterror N := B.GetSubText(T, 0); S += '|' + GetLastErrorText();
+        S += '|' + Format(B.TextPos('')); exit(S); end; }"#;
+    assert_eq!(
+        text(al_testkit::run_with(src, "C", "F", vec![]).map(|(v, _)| v)),
+        "abXYcdef|abXYcdefabXYcdef|0[]|3bXY|OutsidePermittedRange|The value of COPYSTR parameter 2 is outside of the permitted range. The current value is: 0. The permitted range is: from 1 to 2,147,483,647.|0"
+    );
+}
+
+#[test]
+fn a_text_read_past_its_end_is_the_character_zero() {
+    // text/lt-text-instance/Index1.Codeunit.al:33-40, 53-60.
+    let src = r#"codeunit 50100 C { procedure F(): Text var T: Text; E: Text; C: Char; begin
+        T := 'abcdef'; C := T[100]; exit(Format(C = 0) + Format(E[1] = 0)); end; }"#;
+    assert_eq!(
+        text(al_testkit::run_with(src, "C", "F", vec![]).map(|(v, _)| v)),
+        "YesYes"
+    );
+}
+
+#[test]
+fn last_index_of_the_empty_text_and_index_of_any_one_past_the_end() {
+    // text/lt-text-instance/Search1.Codeunit.al:418-487.
+    let src = r#"codeunit 50100 C { procedure F(): Text var T: Text; E: Text; L: List of [Char]; C: Char; begin
+        T := 'hello'; C := 'o'; L.Add(C);
+        exit(Format(E.LastIndexOf('', 0)) + Format(T.LastIndexOf('', 5)) + Format(T.LastIndexOf('', 6)) + Format(T.IndexOfAny(L, 6))); end; }"#;
+    assert_eq!(
+        text(al_testkit::run_with(src, "C", "F", vec![]).map(|(v, _)| v)),
+        "1660"
+    );
+}
+
+#[test]
+fn a_big_integer_in_a_set_of_integers_and_time_plus_a_long_duration() {
+    // types/lt-implicit-conversions/P79BigOption.al:401, 511-529; D_Duration.al:463-474.
+    let src = r#"codeunit 50100 C { procedure F(): Text var B: BigInteger; T: Time; D: Duration; S: Text; begin
+        B := 2; S := Format(B in [0, 1, 2]);
+        B := 4294967296L; asserterror S += Format(B in [0, 1, 2]); S += '|' + GetLastErrorText();
+        T := 100000T; D := 5000000000L; asserterror T := T + D; exit(S + '|' + GetLastErrorCode()); end; }"#;
+    assert_eq!(
+        text(al_testkit::run_with(src, "C", "F", vec![]).map(|(v, _)| v)),
+        "Yes|Overflow under conversion of System.Int64 value 4294967296 to System.Int32.|ConversionCast"
+    );
+}

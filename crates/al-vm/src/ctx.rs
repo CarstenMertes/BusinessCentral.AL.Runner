@@ -395,6 +395,9 @@ impl al_builtins::native::Ctx for Session {
     fn new_guid(&mut self) -> [u8; 16] {
         self.fresh_guid()
     }
+    fn scheduled_tasks(&mut self) -> Option<&mut std::collections::HashSet<[u8; 16]>> {
+        Some(&mut self.scheduled_tasks)
+    }
 }
 
 /// A version 4 Guid (RFC 4122) that is a pure function of the host seed and a counter, so every

@@ -1069,19 +1069,16 @@ impl Session {
                     // Break in OnAfterAssignVariable of a text element right below the root ends the import there and
                     // OnPostXmlPort runs; Quit ends it without OnPostXmlPort (xmlport/lt-ay-xmlport/AyXmlPortFlowTriggers.al:391
                     // Import_head_Break `pre1;head1;post;`, :417 Import_head_Quit `pre1;head1;`, no rows). Deeper it is not pinned.
-                    match Self::xp_flow(inst) {
-                        Some(f @ (Flow::Break | Flow::Quit)) => {
-                            if schema.node(node).parent.is_some() {
-                                return unsupported(
-                                    "Break or Quit in OnAfterAssignVariable of a text element below the root's children (not pinned)",
-                                );
-                            }
-                            if f == Flow::Break {
-                                Self::xp_clear_flow(inst);
-                            }
-                            return Ok(());
+                    if let Some(f @ (Flow::Break | Flow::Quit)) = Self::xp_flow(inst) {
+                        if schema.node(node).parent.is_some() {
+                            return unsupported(
+                                "Break or Quit in OnAfterAssignVariable of a text element below the root's children (not pinned)",
+                            );
                         }
-                        _ => {}
+                        if f == Flow::Break {
+                            Self::xp_clear_flow(inst);
+                        }
+                        return Ok(());
                     }
                 }
                 _ => return unsupported("XmlPort import of a field element outside a table element"),

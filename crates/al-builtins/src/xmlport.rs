@@ -322,7 +322,7 @@ mod tests {
             matches!(parse("<a xmlns=\"u\"/>"), Err(ReadFailure::Unsupported(w)) if w == format!("{ROOT_IN_NAMESPACE}a"))
         );
         assert!(matches!(parse("<a xmlns=\"\"/>"), Ok(e) if e.attr("xmlns") == Some("")));
-        assert!(matches!(parse("<a><b xmlns=\"u\"/></a>"), Ok(_)));
+        assert!(parse("<a><b xmlns=\"u\"/></a>").is_ok());
     }
 
     #[test]

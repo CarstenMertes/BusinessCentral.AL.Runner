@@ -31,6 +31,7 @@ explains what a pass, a failure and "not run" each mean.
 - **[Debugging](debugging.md)**: `al-runner debug`, breakpoints and stepping from an editor.
 - **[Impact analysis](impact.md)**: what an extension changes in other apps' tests.
 - **[What works and what is refused](what-works.md)**: the supported surface and the deliberate limits.
+- **[Roadmap](roadmap.md)**: what is deferred, experimental, not built yet or decided against.
 - **[Migrating from version 2](migrating-from-v2.md)**: command and flag changes.
 - **[Troubleshooting](troubleshooting.md)**: what common messages mean.
 

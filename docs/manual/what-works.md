@@ -103,8 +103,7 @@ a missing helper into an error, for CI. Arbitrary .NET that reaches the machine
 
 ## Not available yet
 
-- Watch mode. It was rejected for 3.0.0, because `serve` keeps the compile warm and `--affected` skips unaffected tests. See [Editor and tool integration](editor-tools.md).
-- The Legacy, IntegrationTest and Uncategorized lanes of `--recipe microsoft`. They need Microsoft's demo company, and building it is experimental and off by default.
-- Builds for platforms other than Linux x64, Windows x64 and macOS arm64.
+What is deferred, experimental, not built yet or decided against is listed in the
+[Roadmap](roadmap.md).
 
 If you hit a "not run" that none of this explains, see [Reading results](results.md).

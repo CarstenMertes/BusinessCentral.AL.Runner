@@ -38,6 +38,9 @@ impl Tasks {
     }
 }
 
+/// Table "Scheduled Task" (al-builtins platform.rs).
+const SCHEDULED_TASK: u32 = 2_000_000_175;
+
 fn unsupported<T>(what: impl Into<String>) -> Result<T, Signal> {
     Err(Signal::Unsupported(what.into()))
 }
@@ -70,6 +73,21 @@ impl Session {
             ));
         }
         Ok(Some(*g))
+    }
+
+    /// A read of the Scheduled Task table after this session created a task: the task's row is not written, and which
+    /// of its fields BC fills is pinned only by session/lt-cn-session-leads/CnSessionLeads.al:23-46
+    /// (CreateTask_ScheduledTaskUser), so the read is refused.
+    pub(crate) fn scheduled_task_read(&self, t: &al_data::TableDef, temporary: bool) -> Result<(), Signal> {
+        if temporary || (self.tasks.open.is_empty() && self.tasks.committed.is_empty()) {
+            return Ok(());
+        }
+        if self.engine.program.objects[t.object as usize].id == Some(SCHEDULED_TASK) {
+            return unsupported(
+                "a read of the Scheduled Task table after TaskScheduler.CreateTask (the task's row is not modelled)",
+            );
+        }
+        Ok(())
     }
 
     fn create_task(&mut self, args: &[Value]) -> Result<Value, Signal> {

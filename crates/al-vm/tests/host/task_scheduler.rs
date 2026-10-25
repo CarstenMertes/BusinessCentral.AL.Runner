@@ -4,6 +4,7 @@
 use al_builtins::native::Signal;
 
 const SRC: &str = r#"
+table 2000000175 "Scheduled Task" { fields { field(1; ID; Guid) { } } keys { key(PK; ID) { } } }
 codeunit 50100 "TS Target" { trigger OnRun() begin end; }
 codeunit 50101 "TS Probe"
 {
@@ -35,6 +36,15 @@ codeunit 50101 "TS Probe"
         exit(TaskScheduler.TaskExists(Id));
     end;
 
+    procedure ReadTaskRow(): Boolean
+    var
+        Task: Record "Scheduled Task";
+        Id: Guid;
+    begin
+        Id := TaskScheduler.CreateTask(Codeunit::"TS Target", 0, false);
+        exit(Task.Get(Id));
+    end;
+
     procedure UnknownCodeunit()
     begin
         TaskScheduler.CreateTask(99999999, 0, false);
@@ -46,6 +56,16 @@ codeunit 50101 "TS Probe"
 fn created_tasks_exist_until_cancelled() {
     let r = al_testkit::text(al_testkit::run_in(SRC, "TS Probe", "Flow"));
     assert_eq!(r, "NoYesYesYesYesYesNoNoNoNoNo");
+}
+
+// session/lt-cn-session-leads/CnSessionLeads.al:23-46 reads the task's row; the runtime writes none, so the read is refused.
+#[test]
+fn a_read_of_the_scheduled_task_table_after_create_task_is_refused() {
+    let r = al_testkit::run_in(SRC, "TS Probe", "ReadTaskRow");
+    assert!(
+        matches!(&r, Err(Signal::Unsupported(w)) if w.contains("Scheduled Task")),
+        "{r:?}"
+    );
 }
 
 #[test]

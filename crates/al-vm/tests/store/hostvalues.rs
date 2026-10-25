@@ -980,10 +980,14 @@ fn geturl_of_report_query_or_codeunit_with_a_record_is_empty_and_a_query_with_fi
         let r = call(&mut Session::with_host(engine, al_host::Host::deterministic()), oi, "F");
         assert!(matches!(&r, Ok(Value::Text(t)) if t.is_empty()), "{obj}: {r:?}");
     }
-    let body = "var R: Record \"ALT T\"; begin exit(GetUrl(ClientType::Web, 'C', ObjectType::Query, 9150, R, true)); end;";
+    let body =
+        "var R: Record \"ALT T\"; begin exit(GetUrl(ClientType::Web, 'C', ObjectType::Query, 9150, R, true)); end;";
     let (engine, oi) = compile(&format!("procedure F(): Text {body}"));
     let r = call(&mut Session::with_host(engine, al_host::Host::deterministic()), oi, "F");
-    assert!(matches!(&r, Err(Signal::Unsupported(w)) if w.contains("no query part")), "{r:?}");
+    assert!(
+        matches!(&r, Err(Signal::Unsupported(w)) if w.contains("no query part")),
+        "{r:?}"
+    );
 }
 
 // misc/lt-probes-needed-5/PnE08RecordMisc.al:TestField_Blob `af219`: an error inside ASSERTERROR rolls the Insert back, and a

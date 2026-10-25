@@ -344,6 +344,8 @@ impl Session {
                             | "CountApprox"
                             | "ReadIsolation"
                             | "FieldExist"
+                            // recordref/lt-recordref-fieldref-members/P92Counts.al:189-199 (Truncate_Unopened).
+                            | "Truncate"
                     )
                 }) =>
             {
@@ -943,6 +945,10 @@ impl Session {
             }
             "IsEmpty" | "Count" | "Init" | "Insert" | "Modify" | "Delete" | "DeleteAll" | "Find" | "FindFirst"
             | "FindLast" | "FindSet" | "Next" | "Reset" | "Rename" => self.record_op(record_method(method), &rec, args),
+            // As Record.Truncate: every row the filters select goes, with or without the argument
+            // (recordref/lt-recordref-fieldref-members/P92Counts.al:124-186, Truncate_Unfiltered, Truncate_WithFilter,
+            // Truncate_WithoutTriggerArgument).
+            "Truncate" => self.record_op(RecordOp::Truncate, &rec, args),
             "Field" => {
                 let no = int_arg(args, 0)?;
                 // BC 29 has the user-name FlowFields at 2000000005-8 (platform/fields.rs `USER_NAME_SYSTEM_FIELDS`); the

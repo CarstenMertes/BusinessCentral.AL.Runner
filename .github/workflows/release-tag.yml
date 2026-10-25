@@ -5,7 +5,10 @@ name: Release
 # creates a normal GitHub release (not a draft, not a pre-release) marked "latest", so that
 # `mise use github:aldevtools/BusinessCentral.AL.Runner` and `mise up` find it (owner decision 2026-10-20).
 # Assets: al-runner-<version>-<target>.tar.xz or .zip, SHA256SUMS, install.sh, install.ps1.
-# workflow_dispatch is a dry run: it builds and packages but creates no release.
+# The same binaries also go to nuget.org as the .NET tool MSDyn365BC.AL.Runner (packaging/dotnet-tool,
+# owner decision 2026-10-25), after the GitHub release. The edge build (edge.yml) does not publish it.
+# workflow_dispatch is a dry run: it builds, packages and smoke tests but creates no release and
+# pushes nothing to NuGet.
 
 on:
   push:
@@ -68,8 +71,60 @@ jobs:
       label: ${{ needs.plan.outputs.version }}
       sha: ${{ github.sha }}
 
-  release:
+  # The .NET tool: test the wrapper with a fake binary, then pack the release binaries.
+  nuget-pack:
     needs: [plan, package]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - uses: actions/download-artifact@v4
+        with:
+          name: packages
+          path: dist
+      - name: Test the wrapper
+        run: packaging/dotnet-tool/test.sh "$RUNNER_TEMP/wrapper-test"
+      - name: Pack
+        env:
+          VERSION: ${{ needs.plan.outputs.version }}
+        run: packaging/dotnet-tool/pack.sh "$VERSION" dist nupkg
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nupkg
+          path: nupkg/*.nupkg
+          if-no-files-found: error
+
+  # Install the package on each OS it carries a binary for and run the smoke test through it.
+  nuget-smoke:
+    needs: [plan, nuget-pack]
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-14]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - uses: actions/download-artifact@v4
+        with:
+          name: nupkg
+          path: nupkg
+      - name: Install the tool and run the smoke test
+        shell: bash
+        env:
+          VERSION: ${{ needs.plan.outputs.version }}
+        run: packaging/dotnet-tool/smoke.sh nupkg "$VERSION"
+
+  release:
+    needs: [plan, package, nuget-smoke]
     if: needs.plan.outputs.publish == 'true'
     runs-on: ubuntu-latest
     permissions:
@@ -115,3 +170,22 @@ jobs:
           # A normal release, marked latest. The commit list follows the fixed text (--generate-notes).
           gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --latest --generate-notes \
             --title "al-runner $VERSION" --notes-file notes.md
+
+  # After the GitHub release, so a failed release never leaves a package on NuGet without it.
+  # A version on nuget.org cannot be replaced: --skip-duplicate makes a re-run a no-op.
+  nuget-push:
+    needs: [plan, release]
+    if: needs.plan.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - uses: actions/download-artifact@v4
+        with:
+          name: nupkg
+          path: nupkg
+      - name: Push to NuGet
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+        run: dotnet nuget push nupkg/*.nupkg --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate

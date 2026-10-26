@@ -125,3 +125,23 @@ fn corpus_code_is_parsed_structurally_not_swallowed() {
     assert_eq!(nodes_blocks, kw_begins, "block nodes vs begin keywords");
     assert!(test_attrs > 4800, "only {test_attrs} [Test] attributes parsed");
 }
+
+/// A statement block never holds a type reference, also in a file that does not parse: the
+/// unresolved-reference scan of `al-sema` (`Workspace::unresolved_references_of`) does not enter
+/// blocks and relies on this.
+#[test]
+fn no_corpus_block_holds_a_type_reference() {
+    use al_syntax::SyntaxKind::*;
+    let syms = al_version::corpus_symbols(27);
+    let mut found = Vec::new();
+    for f in corpus_files() {
+        let src = std::fs::read_to_string(&f).unwrap();
+        let tree = al_syntax::parse(&src, &syms).syntax();
+        for b in tree.descendants().filter(|n| n.kind() == Block) {
+            if let Some(t) = b.descendants().find(|n| n.kind() == TypeRef) {
+                found.push(format!("{}: `{}`", f.display(), t.text()));
+            }
+        }
+    }
+    assert!(found.is_empty(), "type references inside blocks:\n{}", found.join("\n"));
+}

@@ -41,7 +41,7 @@ from the Actions tab (workflow_dispatch), or push `release` by hand:
 1. Check that CI is green on the `main` commit you want.
 2. `git fetch origin`
 3. `git push origin origin/main:refs/heads/release`
-4. CI runs on `release`. When it passes, the Edge workflow builds the three
+4. CI runs on `release`. When it passes, the Edge workflow builds the four
    targets, smoke tests them and replaces the `edge` assets.
 5. If the push is refused (not a fast-forward), see "Hotfix" below.
 
@@ -61,7 +61,7 @@ from the Actions tab (workflow_dispatch), or push `release` by hand:
    and `install.ps1`. The notes are a short fixed text plus the commit list.
 7. The same run packs the .NET tool `MSDyn365BC.AL.Runner` from the archives
    (`packaging/dotnet-tool/pack.sh`; the package carries the binaries for
-   linux-x64, osx-arm64 and win-x64), installs it on Linux, Windows and macOS and
+   linux-x64, linux-arm64, osx-arm64 and win-x64), installs it on Linux (x64 and arm64), Windows and macOS and
    runs the smoke test through it, all before the GitHub release. After the
    release it pushes the package to nuget.org with the repository secret
    `NUGET_API_KEY` (owner decision 2026-10-25). A version with a suffix such as

@@ -1,7 +1,7 @@
 name: Release
 
 # A numbered alpha: push a tag v3.* on a commit of the `release` branch (docs/releasing.md).
-# The workflow checks the tag, runs the CI checks, builds and smoke tests the three targets and
+# The workflow checks the tag, runs the CI checks, builds and smoke tests the four targets and
 # creates a normal GitHub release (not a draft, not a pre-release) marked "latest", so that
 # `mise use github:aldevtools/BusinessCentral.AL.Runner` and `mise up` find it (owner decision 2026-10-20).
 # Assets: al-runner-<version>-<target>.tar.xz or .zip, SHA256SUMS, install.sh, install.ps1.
@@ -105,7 +105,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-14]
+        os: [ubuntu-latest, ubuntu-24.04-arm, windows-latest, macos-14]
     steps:
       - uses: actions/checkout@v4
         with:

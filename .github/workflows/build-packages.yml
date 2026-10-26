@@ -1,6 +1,6 @@
 name: Build packages
 
-# Builds al-runner for the three alpha targets, smoke tests each binary, packages it and attests it.
+# Builds al-runner for the four alpha targets, smoke tests each binary, packages it and attests it.
 # Used by release-tag.yml (numbered alphas, and the dry run) and edge.yml (the rolling edge build).
 # The Windows binary is Authenticode-signed with Azure Trusted Signing before it is packaged; the
 # Linux and macOS binaries are not signed.
@@ -60,6 +60,10 @@ jobs:
             ext: tar.xz
             # musl's allocator is slow, so this build links mimalloc (ADR-016).
             features: --features mimalloc
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-24.04-arm
+            ext: tar.xz
+            features: --features mimalloc
           - target: x86_64-pc-windows-msvc
             os: windows-latest
             ext: zip
@@ -81,11 +85,11 @@ jobs:
         with:
           key: package-${{ matrix.target }}
       - name: Install the musl C compiler (for mimalloc)
-        if: matrix.target == 'x86_64-unknown-linux-musl'
+        if: endsWith(matrix.target, '-unknown-linux-musl')
         run: |
           sudo apt-get update
           sudo apt-get install -y musl-tools
-          echo "CC_x86_64_unknown_linux_musl=musl-gcc" >> "$GITHUB_ENV"
+          echo "CC_$(echo '${{ matrix.target }}' | tr '-' '_')=musl-gcc" >> "$GITHUB_ENV"
       - name: Build
         shell: bash
         run: cargo build --release --locked -p alrunner-cli --target ${{ matrix.target }} ${{ matrix.features }}

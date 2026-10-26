@@ -199,7 +199,7 @@ older.
 | ID | Feature | v2 reference | Status | AL Runner today |
 |---|---|---|---|---|
 | DIST-1 | `dotnet tool install -g MSDyn365BC.AL.Runner` | `README.md` | N/A | A self-contained binary with installers (`README.md`). No .NET needed except for the `DotNet` helper. |
-| DIST-2 | Windows, Linux (x64, arm64), macOS | `README.md` | Partial | Linux x64, Windows x64, macOS arm64. Missing: Linux arm64, macOS Intel, Windows arm64. |
+| DIST-2 | Windows, Linux (x64, arm64), macOS | `README.md` | Partial | Linux x64, Linux arm64, Windows x64, macOS arm64. Missing: macOS Intel, Windows arm64. |
 | DIST-3 | Linux needs no C compiler (prebuilt Win32 shim) | `README.md` | N/A | No shim. |
 | DIST-4 | One engine per BC minor inside the package | `AlRunner.csproj:255-290` | N/A | One binary for all BC versions (ADR-015). |
 | DIST-5 | Authenticode-signed binaries | `.github/workflows/publish.yml` (`sign-and-pack`) | Open | No signing and no macOS notarization. Releases carry SHA256SUMS and build provenance attestations. |

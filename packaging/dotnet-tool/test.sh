@@ -31,6 +31,7 @@ FAKE
 # The archives hold no execute bit for the fake, as NuGet would not keep it either.
 chmod 644 "$work/stage/al-runner"
 tar -C "$work/stage" -cJf "$work/dist/al-runner-$version-x86_64-unknown-linux-musl.tar.xz" ./al-runner
+tar -C "$work/stage" -cJf "$work/dist/al-runner-$version-aarch64-unknown-linux-musl.tar.xz" ./al-runner
 tar -C "$work/stage" -cJf "$work/dist/al-runner-$version-aarch64-apple-darwin.tar.xz" ./al-runner
 cp "$work/stage/al-runner" "$work/stage/al-runner.exe"
 (cd "$work/stage" && zip -q "$work/dist/al-runner-$version-x86_64-pc-windows-msvc.zip" al-runner.exe)

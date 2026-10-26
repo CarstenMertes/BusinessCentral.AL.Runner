@@ -767,8 +767,8 @@ fn with_string<T>(h: &Rc<RefCell<LibraryValue>>, f: impl FnOnce(&mut String) -> 
 /// that needs 1000; P144_Growth_BigAppendAtOnce: 40, 500, then 1000 for the 503 an AppendLine needs).
 fn grow_capacity(h: &Rc<RefCell<LibraryValue>>) {
     let (len, cap) = match &*h.borrow() {
-        LibraryValue::Text(s) => (Value::text_len(s) as i64, 16i64),
-        LibraryValue::TextCap(s, c) => (Value::text_len(s) as i64, i64::from(*c)),
+        LibraryValue::Text(s) => (text_len_over(s, 16), 16i64),
+        LibraryValue::TextCap(s, c) => (text_len_over(s, i64::from(*c)), i64::from(*c)),
         _ => return,
     };
     if len > cap {
@@ -776,6 +776,16 @@ fn grow_capacity(h: &Rc<RefCell<LibraryValue>>) {
         let s = with_string(h, std::mem::take);
         *h.borrow_mut() = LibraryValue::TextCap(s, new);
     }
+}
+
+/// The UTF-16 length of `s` (`Value::text_len`), or its byte length when that is at most `cap`: a text has no more UTF-16
+/// units than bytes, so it does not outgrow `cap` then, and the count (a walk of the whole text at every append) is not
+/// needed.
+fn text_len_over(s: &str, cap: i64) -> i64 {
+    if s.len() as i64 <= cap {
+        return s.len() as i64;
+    }
+    Value::text_len(s) as i64
 }
 
 fn tb_append(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {

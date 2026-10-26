@@ -405,6 +405,8 @@ pub(crate) struct TestBacking {
     /// (al-runtime issue 5856).
     program: Arc<al_ir::Program>,
     tables: Arc<[Option<Arc<TableDef>>]>,
+    /// `Engine::uid` of the engine whose program and tables these are.
+    engine_uid: u64,
     data: TestData,
     /// By table object: the table built from the restored rows, once per thread.
     cache: RefCell<HashMap<u32, Option<Rows>>>,
@@ -415,6 +417,7 @@ impl TestBacking {
         TestBacking {
             program: engine.program.clone(),
             tables: engine.tables.clone(),
+            engine_uid: engine.uid,
             data,
             cache: RefCell::default(),
         }
@@ -685,6 +688,12 @@ impl Backing for TestBacking {
         let built = self.load(object, t);
         self.cache.borrow_mut().insert(object, built.clone());
         built
+    }
+
+    /// The test data and the engine the rows are built for: the same pair builds the same rows. Neither number is
+    /// ever given to another test data or engine of the process.
+    fn identity(&self) -> Option<(u64, u64)> {
+        Some((self.data.id, self.engine_uid))
     }
 }
 

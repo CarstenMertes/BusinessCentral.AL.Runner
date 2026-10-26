@@ -49,18 +49,24 @@ pub(crate) enum ShownNote {
 /// Kinds of unpinned events (`PageState::shown_doubts`): a SetValue on a control of the page, or of its host; a GoToRecord of
 /// the host; First on the page itself; a read of a control (Editable, Enabled, AssertEquals, the As* methods); an action of
 /// the host whose code calls only `CurrPage.Update()` of the host; anything else.
-const DOUBT_SET_VALUE: u8 = 1;
-const DOUBT_HOST_SET_VALUE: u8 = 2;
-const DOUBT_GO_TO_RECORD: u8 = 4;
-const DOUBT_FIRST: u8 = 8;
-const DOUBT_READ: u8 = 16;
-const DOUBT_HOST_ACTION_UPDATE: u8 = 32;
-const DOUBT_OTHER: u8 = 64;
+const DOUBT_SET_VALUE: u16 = 1;
+const DOUBT_HOST_SET_VALUE: u16 = 2;
+const DOUBT_GO_TO_RECORD: u16 = 4;
+const DOUBT_FIRST: u16 = 8;
+const DOUBT_READ: u16 = 16;
+const DOUBT_HOST_ACTION_UPDATE: u16 = 32;
+const DOUBT_OTHER: u16 = 64;
 /// `TestPage.Next`, `TestPage.Filter`, a `TestFilter` call, `TestField.Activate` or `TestField.Caption`: a read of an expression the page does not keep is computed as
 /// it is now, under an assumption (module comment).
-const DOUBT_ASSUMED: u8 = 128;
+const DOUBT_ASSUMED: u16 = 128;
+/// TestField.Lookup through the control's own OnLookup trigger, on a page with no parts, whose code calls no `CurrPage` method
+/// but `CurrPage.Update(false)` of that page: a read of an expression the page does not keep is computed as it is now, under
+/// assumption testpage-lookup-update-false-refresh (al-runner issue 5843, corpus writer's probe
+/// pages/lt-sc-outside-pages/ScLookupGlobalRecordField.al: the picked value with and without the Update, the kept one after a
+/// cancel or a false answer; not on the pinned corpus yet).
+const DOUBT_LOOKUP: u16 = 256;
 /// The kinds after which a control of an expression the page does not keep is read as it is now (module comment).
-const DOUBT_KEPT: u8 =
+const DOUBT_KEPT: u16 =
     DOUBT_SET_VALUE | DOUBT_HOST_SET_VALUE | DOUBT_GO_TO_RECORD | DOUBT_FIRST | DOUBT_READ | DOUBT_HOST_ACTION_UPDATE;
 
 /// What a TestPage call does to the kept values of one page of its tree.
@@ -144,6 +150,18 @@ impl Session {
                     if on_control =>
                 {
                     DOUBT_READ
+                }
+                PageMethod::Lookup
+                    if on_root
+                        && tree.len() == 1
+                        && r.is_ok()
+                        && notes
+                            .iter()
+                            .all(|n| matches!(n, ShownNote::UpdateFalse(x) if *x == Rc::as_ptr(&root)))
+                        && matches!(target, Some(ControlTarget::Control(i))
+                            if page_of(&self.engine(), st).controls[*i].triggers.iter().any(|(n, _)| n == "onlookup")) =>
+                {
+                    DOUBT_LOOKUP
                 }
                 _ if method.recv() == PageRecv::TestFilter
                     || matches!(
@@ -333,12 +351,17 @@ impl Session {
             .map(|(_, v)| v.clone());
         let Some(kept) = kept else {
             let doubts = st.borrow().shown_doubts;
-            if doubts & !(DOUBT_KEPT | DOUBT_ASSUMED) != 0 {
+            if doubts & !(DOUBT_KEPT | DOUBT_ASSUMED | DOUBT_LOOKUP) != 0 {
                 return unsupported(format!(
                     "control {} shows an expression computed when it is read, after {}, whose refresh of the page is not pinned",
                     page_of(&self.engine(), st).controls[idx].name,
                     st.borrow().shown_doubt_call.unwrap_or("a call")
                 ));
+            }
+            if doubts & DOUBT_LOOKUP != 0 {
+                al_builtins::assumptions::assume(
+                    al_builtins::assumptions::Assumption::TestPageLookupUpdateFalseRefresh,
+                );
             }
             if doubts & DOUBT_ASSUMED != 0 {
                 al_builtins::assumptions::assume(

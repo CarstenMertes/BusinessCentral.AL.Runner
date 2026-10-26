@@ -635,6 +635,39 @@ registry! {
             since: "2026-10-25",
         },
     },
+    PageControlFieldArrayElementSource => {
+        id: "page-control-field-array-element-source",
+        assumed: "The Page Control Field row of a page's own control bound to an expression has the page's source table as TableNo, FieldNo 0 and SourceExpression the source as written, for three forms: an element of a page array with a number index (`Costs[1]`), a field of a page record variable (`OtherLine.Amount`) and an arithmetic expression (`Costs[1] + Costs[2]`). An undeclared Editable is `True` for the first two and `False` for the third; a declared one is its text. Text with a quote or irregular spacing, and every other expression, stay refused. Measured on the three supported majors by the corpus writer's probe (corpus branch al-runtime-rs-staging-pub-sc @2150ff97, cu 89002), from al-runner issue 5842.",
+        tests: "No Microsoft test: al-runner issue 5842 (1 test of a partner app).",
+        probe: "Written (record/TestPageControlFieldArraySource.al on al-runtime-rs-staging-pub-sc); remove this entry when the corpus bump brings it.",
+        awaiting: Awaiting {
+            issues: &[5842],
+            files: &["tests/al-language/record/TestPageControlFieldArraySource.al"],
+            since: "2026-10-25",
+        },
+    },
+    TestPageLookupUpdateFalseRefresh => {
+        id: "testpage-lookup-update-false-refresh",
+        assumed: "TestField.Lookup through a control's own OnLookup trigger, on a page with no parts, whose code calls no `CurrPage` method but `CurrPage.Update(false)` of that page, refreshes the page: a read of an expression control afterwards (`field(ResourceNo; Setting.\"Resource No.\")`) gives its value as it is now. That is the picked value when OnLookup answers true (with and without the Update in OnValidate), and the value kept when the modal page is cancelled or OnLookup sets Text and answers false. Measured on the three supported majors by the corpus writer's probe (corpus branch al-runtime-rs-staging-pub-sc @2150ff97, cu 89008), from al-runner issue 5843.",
+        tests: "No Microsoft test: al-runner issue 5843 (1 test of a partner app).",
+        probe: "Written (pages/lt-sc-outside-pages/ScLookupGlobalRecordField.al on al-runtime-rs-staging-pub-sc); remove this entry when the corpus bump brings it.",
+        awaiting: Awaiting {
+            issues: &[5843],
+            files: &["tests/al-language/pages/lt-sc-outside-pages/ScLookupGlobalRecordField.al"],
+            since: "2026-10-25",
+        },
+    },
+    DrilldownMarkedOnlyUpdateRefresh => {
+        id: "drilldown-marked-only-update-refresh",
+        assumed: "A field's OnDrillDown that turns MarkedOnly on for Rec (after setting marks) on a list without OnFindRecord and OnNextRecord: with `CurrPage.Update(false)` the page shows only the marked rows, also when it declares OnAfterGetRecord or OnAfterGetCurrRecord (First/Next walk the marked rows, GoToRecord of an unmarked row answers false); without the Update a page without those triggers still shows every row of the view (First/Next list both rows, GoToRecord of the unmarked row answers true) until it closes; another TestPage call before that is refused. Measured on the three supported majors by the corpus writer's probe (corpus branch al-runtime-rs-staging-pub-sc @2150ff97, cu 89016), from al-runner issue 5844.",
+        tests: "No Microsoft test: al-runner issue 5844 (1 test of a partner app).",
+        probe: "Written (pages/lt-sc-outside-pages/ScDrillDownMarkedOnly.al on al-runtime-rs-staging-pub-sc); remove this entry when the corpus bump brings it. Not in it, so refused: no Update on a page with the row triggers (every TestPage call but Close), other TestPage calls before Close.",
+        awaiting: Awaiting {
+            issues: &[5844],
+            files: &["tests/al-language/pages/lt-sc-outside-pages/ScDrillDownMarkedOnly.al"],
+            since: "2026-10-25",
+        },
+    },
     RunnerTestIsolation => {
         id: "runner-test-isolation",
         assumed: "What a test runner codeunit's TestIsolation does for a whole run (al-runner --isolation test and --isolation disabled, a corpus runner without the property). Function: each test is rolled back to the state after OnRun, a Commit() inside it included, and so are an IsolatedStorage.Set of a new key and a NumberSequence.Insert; AutoIncrement and row versions are not reset. Disabled (and a runner without the property): nothing is rolled back but a failed test's writes since its last Commit(); the later test codeunits, in id order, see the rest; StartSession starts a session (refused here). RequiredTestIsolation has no effect under a runner. Measured by corpus writer SD on Windows containers of every supported BC major (identical) with the isolation probe app under four runners (branch al-runtime-rs-staging-pub-sd, commit 95c66e62, corpus PR 735); the corpus nightly does not run runners 61304 and 61305 yet.",

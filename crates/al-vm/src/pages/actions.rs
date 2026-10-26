@@ -135,6 +135,7 @@ impl Session {
             }
         };
         st.borrow_mut().refresh = false;
+        let marked_only_before = !self.has_source(st) || self.page_rec(st).borrow().marked_only;
         let result = if method == PageMethod::Lookup {
             // OnLookup(var Text): Boolean. The text it writes back replaces the field's value, and
             // the Boolean says whether the user picked anything (corpus
@@ -185,6 +186,7 @@ impl Session {
             st.borrow_mut().refresh = false;
         }
         let v = result?;
+        self.drilldown_marked_only_refresh(st, method, marked_only_before);
         // The client refreshes the page after an AssistEdit trigger: OnAfterGetRecord runs again
         // (pages/lt-page-runtime/P82Lookups.al:AssistEdit_Trigger, `OnAssistEdit;OnAfterGetRecord(L1)`). A DrillDown and a Lookup are not pinned to.
         // The row is not read again: a field the trigger set on the record stays (pages/lt-page-editability-width-lookups/
@@ -208,6 +210,97 @@ impl Session {
         }
         self.run_refresh(st)?;
         Ok(v)
+    }
+
+    /// After an OnDrillDown that turned MarkedOnly on for Rec and called `CurrPage.Update(false)`, a list with OnAfterGetRecord or
+    /// OnAfterGetCurrRecord drops the rows it held, so its moves read the marked rows from the table, as a list without those
+    /// triggers does (al-runner issue 5844, the reporter's run on real BC; not pinned by the corpus yet).
+    fn drilldown_marked_only_refresh(&mut self, st: &St, method: PageMethod, marked_only_before: bool) {
+        let shape = {
+            let s = st.borrow();
+            method == PageMethod::DrillDown && s.open && s.host.is_none() && s.parts.is_empty() && !s.draft
+        };
+        if !shape
+            || marked_only_before
+            || !self.has_source(st)
+            || !self.page_rec(st).borrow().marked_only
+            || !self.is_list(st)
+            || self.declares(st, "onfindrecord")
+            || self.declares(st, "onnextrecord")
+        {
+            return;
+        }
+        let row_triggers = self.declares(st, "onaftergetrecord") || self.declares(st, "onaftergetcurrrecord");
+        let update_false = {
+            let s = st.borrow();
+            s.refresh && s.refresh_by_update && s.refresh_update_false
+        };
+        // Without CurrPage.Update the page keeps showing the rows without MarkedOnly (`marked_only_unshown_call`). Pinned for a
+        // page without the row triggers only (corpus pages/lt-sc-outside-pages/ScDrillDownMarkedOnly.al:422
+        // DrilldownWithoutUpdateListAndGoTo); with them the later TestPage calls are refused.
+        if !st.borrow().refresh {
+            if row_triggers {
+                st.borrow_mut().marked_only_unpinned = true;
+            } else {
+                st.borrow_mut().marked_only_unshown = true;
+            }
+            return;
+        }
+        if !update_false || !row_triggers || st.borrow().window.is_empty() {
+            return;
+        }
+        al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::DrilldownMarkedOnlyUpdateRefresh);
+        let mut s = st.borrow_mut();
+        s.window.clear();
+        s.window_from_start = false;
+        s.window_top_unread = false;
+    }
+
+    /// After an OnDrillDown that turned MarkedOnly on for Rec without `CurrPage.Update`, on a list without OnFindRecord,
+    /// OnNextRecord and the row triggers: the client still shows the rows of the view without MarkedOnly, so First, Next and
+    /// GoToRecord walk them (al-runner issue 5844, corpus writer's probe pages/lt-sc-outside-pages/ScDrillDownMarkedOnly.al
+    /// DrilldownWithoutUpdateListAndGoTo `listed=[ 10 20] goto20=Yes`; not on the pinned corpus yet). Close ends it; any
+    /// other TestPage call before that is not pinned and is refused.
+    pub(super) fn marked_only_unshown_call(
+        &mut self,
+        method: al_builtins::page_op::PageOp,
+        st: &St,
+        f: impl FnOnce(&mut Self) -> Result<Value, Signal>,
+    ) -> Result<Value, Signal> {
+        use al_builtins::page_op::PageOp;
+        if st.borrow().marked_only_unpinned {
+            if method == PageOp::TestPageClose {
+                st.borrow_mut().marked_only_unpinned = false;
+                return f(self);
+            }
+            return unsupported(format!(
+                "{method} after an OnDrillDown turned MarkedOnly on without CurrPage.Update on a page with OnAfterGetRecord or \
+                 OnAfterGetCurrRecord (what the page shows then is not pinned)"
+            ));
+        }
+        if !st.borrow().marked_only_unshown {
+            return f(self);
+        }
+        match method {
+            PageOp::TestPageClose => {
+                st.borrow_mut().marked_only_unshown = false;
+                f(self)
+            }
+            PageOp::TestFieldValue => f(self),
+            PageOp::TestPageFirst | PageOp::TestPageNext | PageOp::TestPageGoToRecord => {
+                al_builtins::assumptions::assume(
+                    al_builtins::assumptions::Assumption::DrilldownMarkedOnlyUpdateRefresh,
+                );
+                let rec = self.page_rec(st);
+                rec.borrow_mut().marked_only = false;
+                let r = f(self);
+                rec.borrow_mut().marked_only = true;
+                r
+            }
+            _ => unsupported(format!(
+                "{method} after an OnDrillDown turned MarkedOnly on without CurrPage.Update (what the page shows then is not pinned)"
+            )),
+        }
     }
 
     /// `Lookup()` on a control with no OnLookup trigger of its own: the source table field's

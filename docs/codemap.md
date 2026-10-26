@@ -203,6 +203,7 @@ al-deps        dependency apps: .alpackages, Microsoft artifact feed, cache, pac
 - `lib.rs` (16): Crate root of the AL syntax: lexer, parser, tree, AST views.
 - `parser.rs` (352): Parser infrastructure and the parse entry points. Entry: `parse` 32, `parse_with_cache` 45, `Parse` 20.
 - `preprocessor.rs` (287): Token-level preprocessor (#if and friends). Entry: `preprocess` 23.
+- `splice.rs` (219): Adds the routines the compiler generates (page expressions) to a parsed file without parsing the file again. Entry: `splice_routines` 23.
 - `scan.rs` (497): A cheap declaration scan: objects, ids, subscribers, without a tree (used for dependency apps). Entry: `scan` 127, `ScannedObject` 29, `ScannedSubscriber` 53.
 - `syntax_kind.rs` (177): Every token and node kind. Entry: `SyntaxKind` 7, `AlLanguage` 155, `SyntaxNode` 169, `SyntaxToken` 170.
 
@@ -417,7 +418,7 @@ functions or methods; the file is in the module list above.
 
 1. `lower::compile_apps_with` -> `compile_with_roots`.
 2. `Workspace::load_apps` (al-sema/workspace.rs): workspace apps are parsed (`parse_file`, in parallel,
-   `pages::expand_ranges` first for page expressions); dependency apps are only scanned (`scanned_file` ->
+   `pages::expand_or_parse` first for page expressions, which splices the generated routines into the first parse); dependency apps are only scanned (`scanned_file` ->
    `al_syntax::scan::scan`) and parsed later on demand (`Workspace::green`). Then `index_extensions_and_subscribers`
    and `resolve_references`.
 3. `members::build`: fields (extensions merged), enum values, procedure signatures.

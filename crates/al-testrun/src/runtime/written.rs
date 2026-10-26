@@ -13,6 +13,7 @@ use super::*;
 use al_builtins::value::RtType;
 use al_ir::{Arg, Const, Expr, ObjKind, Place, Stmt};
 use std::collections::HashMap;
+use std::sync::OnceLock;
 
 /// Session state that lasts from one test of a codeunit to the next, as bits of [`ReachFacts::state_reads`] and
 /// [`ReachFacts::state_writes`].
@@ -59,6 +60,8 @@ pub(crate) mod state {
 /// What [`Walk::entered`] notes besides the bits of [`ops`].
 const EVENTS: u8 = 1 << 6;
 const RUN: u8 = 1 << 7;
+/// What [`Walk::entered`] notes for a table already in [`ReachFacts::touched`] (a table is an object).
+const TOUCHED: u8 = 1 << 5;
 
 /// Record operations that run table triggers (the mapping of `al_sema` `check/demand.rs`).
 mod ops {
@@ -191,6 +194,11 @@ pub(crate) struct ReachIndex {
     subscribers: HashMap<usize, Vec<(usize, usize)>>,
     /// The subscribers of the `Global Triggers` codeunit, which fire on database writes.
     global_triggers: Vec<(usize, usize)>,
+    /// Per object and routine: its [`Summary`], recorded at the first walk that visits it. It depends on the program
+    /// and on the event registry the index is built from, which every walk on the index is given.
+    summaries: Vec<Box<[OnceLock<Box<Summary>>]>>,
+    /// Per object, the number of routines of the objects before it, and the total at the end: a walk's routine bits.
+    first_routine: Vec<usize>,
 }
 
 impl ReachIndex {
@@ -234,12 +242,38 @@ impl ReachIndex {
         }
         global_triggers.sort_unstable();
         global_triggers.dedup();
+        let summaries = objs
+            .iter()
+            .map(|o| o.routines.iter().map(|_| OnceLock::new()).collect())
+            .collect();
+        let mut first_routine = Vec::with_capacity(objs.len() + 1);
+        let mut total = 0;
+        for o in objs {
+            first_routine.push(total);
+            total += o.routines.len();
+        }
+        first_routine.push(total);
         ReachIndex {
             by_id,
             extensions,
             subscribers,
             global_triggers,
+            summaries,
+            first_routine,
         }
+    }
+
+    /// The [`Summary`] of routine `r` of `o`, recorded on first use; `None` for a routine the index does not know of
+    /// (none: the program does not change under an engine).
+    fn summary(&self, events: &al_vm::events::Registry, lowered: &Lowered, o: usize, r: usize) -> Option<&Summary> {
+        let cell = self.summaries.get(o)?.get(r)?;
+        Some(cell.get_or_init(|| Box::new(Rec::record(events, lowered, self, o, r))))
+    }
+
+    /// How many routines have a recorded [`Summary`].
+    #[cfg(test)]
+    fn recorded(&self) -> usize {
+        self.summaries.iter().flatten().filter(|c| c.get().is_some()).count()
     }
 }
 
@@ -278,16 +312,7 @@ pub(crate) fn routines_facts(
     index: &ReachIndex,
     routines: &[(usize, usize)],
 ) -> ReachFacts {
-    let mut walk = Walk {
-        events,
-        lowered,
-        index,
-        out: ReachFacts::default(),
-        seen: BTreeSet::new(),
-        entered: BTreeSet::new(),
-        stack: Vec::new(),
-        global_triggers: false,
-    };
+    let mut walk = Walk::new(events, lowered, index);
     for &(o, r) in routines {
         walk.routine(o, r);
     }
@@ -302,21 +327,13 @@ fn walk_reach(
     routine: usize,
     stop_at_unknown: bool,
 ) -> ReachFacts {
-    let mut walk = Walk {
-        events,
-        lowered,
-        index,
-        out: ReachFacts::default(),
-        seen: BTreeSet::new(),
-        entered: BTreeSet::new(),
-        stack: vec![(object, routine)],
-        global_triggers: false,
-    };
+    let mut walk = Walk::new(events, lowered, index);
+    walk.stack.push((object, routine));
     while let Some((o, r)) = walk.stack.pop() {
         if stop_at_unknown && walk.out.unknown.is_some() {
             break;
         }
-        if walk.seen.insert((o, r)) {
+        if walk.first_visit(o, r) {
             walk.routine(o, r);
         }
     }
@@ -328,14 +345,69 @@ struct Walk<'a> {
     lowered: &'a Lowered,
     index: &'a ReachIndex,
     out: ReachFacts,
-    seen: BTreeSet<(usize, usize)>,
-    /// (object, what) already pushed: [`EVENTS`], [`RUN`] or a bit of [`ops`].
-    entered: BTreeSet<(usize, u8)>,
+    /// The routines visited, one bit per routine at [`ReachIndex::first_routine`] of its object plus its number.
+    seen: Vec<u64>,
+    /// Per object, what is already pushed: [`EVENTS`], [`RUN`] and the bits of [`ops`].
+    entered: Vec<u8>,
+    /// What [`Walk::seen`] and [`Walk::entered`] hold for objects the index does not know of (none: the program
+    /// does not change under an engine).
+    seen_beyond: BTreeSet<(usize, usize)>,
+    entered_beyond: BTreeSet<(usize, u8)>,
     stack: Vec<(usize, usize)>,
     global_triggers: bool,
 }
 
-impl Walk<'_> {
+impl<'a> Walk<'a> {
+    fn new(events: &'a al_vm::events::Registry, lowered: &'a Lowered, index: &'a ReachIndex) -> Walk<'a> {
+        let routines = index.first_routine.last().copied().unwrap_or(0);
+        Walk {
+            events,
+            lowered,
+            index,
+            out: ReachFacts::default(),
+            seen: vec![0; routines.div_ceil(64)],
+            entered: vec![0; index.first_routine.len().saturating_sub(1)],
+            seen_beyond: BTreeSet::new(),
+            entered_beyond: BTreeSet::new(),
+            stack: Vec::new(),
+            global_triggers: false,
+        }
+    }
+
+    /// Notes routine `r` of `o` as visited; whether it was not before.
+    fn first_visit(&mut self, o: usize, r: usize) -> bool {
+        let first = &self.index.first_routine;
+        match first.get(o) {
+            Some(&base) if o + 1 < first.len() && base + r < first[o + 1] => {
+                let i = base + r;
+                let (word, bit) = (i / 64, 1u64 << (i % 64));
+                let new = self.seen[word] & bit == 0;
+                self.seen[word] |= bit;
+                new
+            }
+            _ => self.seen_beyond.insert((o, r)),
+        }
+    }
+
+    /// Table `t` is in the reach.
+    fn touch(&mut self, t: u32) {
+        if self.enter(t as usize, TOUCHED) {
+            self.out.touched.insert(t);
+        }
+    }
+
+    /// Notes `what` ([`EVENTS`], [`RUN`] or a bit of [`ops`]) of object `o` as entered; whether it was not before.
+    fn enter(&mut self, o: usize, what: u8) -> bool {
+        match self.entered.get_mut(o) {
+            Some(bits) => {
+                let new = *bits & what == 0;
+                *bits |= what;
+                new
+            }
+            None => self.entered_beyond.insert((o, what)),
+        }
+    }
+
     /// Part of the reach is not known: a refused routine or construct (owner's priority, coordinator's decision
     /// 2026-10-19: it counts as "may change anything"), or a run by an id known only at run time.
     fn unknown(&mut self, why: impl FnOnce() -> String) {
@@ -347,7 +419,7 @@ impl Walk<'_> {
     /// The subscribers of the events of object `o` and of its extensions (a table's events fire whether or not its
     /// triggers run).
     fn events(&mut self, o: usize) {
-        if !self.entered.insert((o, EVENTS)) {
+        if !self.enter(o, EVENTS) {
             return;
         }
         if let Some(subs) = self.index.subscribers.get(&o) {
@@ -371,7 +443,7 @@ impl Walk<'_> {
         let lowered = self.lowered;
         let objs = &lowered.program.objects;
         for bit in [ops::INSERT, ops::MODIFY, ops::DELETE, ops::RENAME, ops::VALIDATE] {
-            if ops & bit == 0 || !self.entered.insert((t, bit)) {
+            if ops & bit == 0 || !self.enter(t, bit) {
                 continue;
             }
             for o in std::iter::once(t).chain(self.extensions_of(t)) {
@@ -402,7 +474,7 @@ impl Walk<'_> {
     /// What running object `o` reaches: a codeunit's `OnRun`, every routine of a page (and its source table's
     /// triggers), the triggers of a report or xmlport, with their extensions and the subscribers of their events.
     fn run_object(&mut self, o: usize) {
-        if !self.entered.insert((o, RUN)) {
+        if !self.enter(o, RUN) {
             return;
         }
         let lowered = self.lowered;
@@ -431,17 +503,11 @@ impl Walk<'_> {
             }
         }
         if let Some(query) = &obj.query {
-            self.out.touched.extend(query.items.iter().map(|i| i.table as u32));
+            for i in &query.items {
+                self.touch(i.table as u32);
+            }
         }
         self.events(o);
-    }
-
-    /// The object of `kind` with id `id`, run; unknown when there is none.
-    fn enter_by_id(&mut self, kind: ObjKind, id: i32) {
-        match u32::try_from(id).ok().and_then(|id| self.index.by_id.get(&(kind, id))) {
-            Some(&o) => self.run_object(o),
-            None => self.unknown(|| format!("runs {kind} {id}, which is not in the program")),
-        }
     }
 
     fn note_table_write(&mut self, table: Option<u32>) {
@@ -455,6 +521,161 @@ impl Walk<'_> {
         if !self.global_triggers {
             self.global_triggers = true;
             self.stack.extend(self.index.global_triggers.iter().copied());
+        }
+    }
+
+    /// Routine `r` of `o`, from its [`Summary`] (recorded at its first visit by any walk on this index): its own facts,
+    /// then its steps in the order the body takes them, so the walk pushes and enters exactly what a walk of the body
+    /// would.
+    fn routine(&mut self, o: usize, r: usize) {
+        let index = self.index;
+        let fresh;
+        let s = match index.summary(self.events, self.lowered, o, r) {
+            Some(s) => s,
+            None => {
+                fresh = Rec::record(self.events, self.lowered, index, o, r);
+                &fresh
+            }
+        };
+        for &t in &s.touched {
+            self.touch(t);
+        }
+        self.out.globals_read.extend(s.globals_read.iter().copied());
+        self.out.globals_written.extend(s.globals_written.iter().copied());
+        self.out.state_reads |= s.state_reads;
+        self.out.state_writes |= s.state_writes;
+        for step in &s.steps {
+            match step {
+                Step::Push(a, b) => self.stack.extend_from_slice(&s.pushes[*a as usize..*b as usize]),
+                Step::Unknown(why) => {
+                    if self.out.unknown.is_none() {
+                        self.out.unknown = Some(why.to_string());
+                    }
+                }
+                Step::Events(t) => self.events(*t),
+                Step::TableOps(t, ops) => self.table_ops(*t, *ops),
+                Step::Run(x) => self.run_object(*x),
+                Step::Write(t) => self.note_table_write(*t),
+            }
+        }
+    }
+}
+
+/// What routine `r` of `o` adds to every walk that visits it, recorded once per routine (the body is the costly part
+/// of a walk: tests of a codeunit share most of their reach). The facts its body names hold whatever the walk entered
+/// before; the steps whose effect depends on that (pushing the triggers of a table, the subscribers of an object, the
+/// routines of an object run) are kept in body order and taken again by each walk.
+#[derive(Default)]
+pub(crate) struct Summary {
+    touched: Vec<u32>,
+    globals_read: Vec<(usize, usize)>,
+    globals_written: Vec<(usize, usize)>,
+    state_reads: u16,
+    state_writes: u16,
+    steps: Vec<Step>,
+    /// The routines [`Step::Push`] pushes, by range.
+    pushes: Vec<(usize, usize)>,
+}
+
+#[derive(PartialEq)]
+enum Step {
+    /// Push `pushes[a..b]`.
+    Push(u32, u32),
+    /// Part of the reach is not known, for this reason (cut to 160 characters). Only the routine's first is kept: once
+    /// it is taken the walk's reason is set.
+    Unknown(Box<str>),
+    /// [`Walk::events`].
+    Events(usize),
+    /// [`Walk::table_ops`].
+    TableOps(usize, u8),
+    /// [`Walk::run_object`].
+    Run(usize),
+    /// [`Walk::note_table_write`].
+    Write(Option<u32>),
+}
+
+/// Records a routine's [`Summary`]: the analysis of its body, with the steps that depend on the walk deferred.
+struct Rec<'a> {
+    events: &'a al_vm::events::Registry,
+    lowered: &'a Lowered,
+    index: &'a ReachIndex,
+    /// The facts the body names; only the fields [`Summary`] keeps are set.
+    out: ReachFacts,
+    summary: Summary,
+    unknown: bool,
+}
+
+impl Rec<'_> {
+    fn record(events: &al_vm::events::Registry, lowered: &Lowered, index: &ReachIndex, o: usize, r: usize) -> Summary {
+        let mut rec = Rec {
+            events,
+            lowered,
+            index,
+            out: ReachFacts::default(),
+            summary: Summary::default(),
+            unknown: false,
+        };
+        rec.routine(o, r);
+        let Rec { out, mut summary, .. } = rec;
+        summary.touched = out.touched.into_iter().collect();
+        summary.globals_read = out.globals_read.into_iter().collect();
+        summary.globals_written = out.globals_written.into_iter().collect();
+        summary.state_reads = out.state_reads;
+        summary.state_writes = out.state_writes;
+        summary.steps.shrink_to_fit();
+        summary.pushes.shrink_to_fit();
+        summary
+    }
+
+    /// A step that depends on the walk. One the routine already took is left out: what a walk entered stays entered,
+    /// so taking it again changes nothing (a routine names the tables of its object's globals once per slot).
+    fn step(&mut self, step: Step) {
+        if matches!(step, Step::Push(..) | Step::Unknown(_)) || !self.summary.steps.contains(&step) {
+            self.summary.steps.push(step);
+        }
+    }
+
+    fn push(&mut self, routines: impl IntoIterator<Item = (usize, usize)>) {
+        let a = self.summary.pushes.len() as u32;
+        self.summary.pushes.extend(routines);
+        let b = self.summary.pushes.len() as u32;
+        if a == b {
+            return;
+        }
+        match self.summary.steps.last_mut() {
+            Some(Step::Push(_, end)) if *end == a => *end = b,
+            _ => self.step(Step::Push(a, b)),
+        }
+    }
+
+    fn unknown(&mut self, why: impl FnOnce() -> String) {
+        if !self.unknown {
+            self.unknown = true;
+            self.step(Step::Unknown(why().chars().take(160).collect::<String>().into()));
+        }
+    }
+
+    fn events(&mut self, o: usize) {
+        self.step(Step::Events(o));
+    }
+
+    fn table_ops(&mut self, t: usize, ops: u8) {
+        self.step(Step::TableOps(t, ops));
+    }
+
+    fn run_object(&mut self, o: usize) {
+        self.step(Step::Run(o));
+    }
+
+    fn note_table_write(&mut self, table: Option<u32>) {
+        self.step(Step::Write(table));
+    }
+
+    /// The object of `kind` with id `id`, run; unknown when there is none.
+    fn enter_by_id(&mut self, kind: ObjKind, id: i32) {
+        match u32::try_from(id).ok().and_then(|id| self.index.by_id.get(&(kind, id))) {
+            Some(&o) => self.run_object(o),
+            None => self.unknown(|| format!("runs {kind} {id}, which is not in the program")),
         }
     }
 
@@ -478,7 +699,7 @@ impl Walk<'_> {
                 .into_iter()
                 .flatten()
             {
-                self.stack.push((sub.object, sub.routine));
+                self.push([(sub.object, sub.routine)]);
             }
         }
         for s in rt.locals.iter().chain(&obj.globals) {
@@ -517,7 +738,9 @@ impl Walk<'_> {
         }
         self.places(o, &rt.body);
         al_ir::types::for_each_expr_post(&rt.body, &mut |e| self.expr(o, r, e));
-        lowered.calls_into(o, r, &mut self.stack);
+        let mut calls = Vec::new();
+        lowered.calls_into(o, r, &mut calls);
+        self.push(calls);
     }
 
     /// The global of a codeunit a place names, as (object, slot).
@@ -900,4 +1123,69 @@ pub(crate) fn settled_flags(lowered: &Lowered, object: usize) -> Vec<(usize, boo
         .filter_map(|(g, v)| Some((g, v?)))
         .filter(|(g, _)| matches!(obj.globals.get(*g).map(|s| &s.ty), Some(RtType::Boolean)))
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn lowered(src: &str) -> Lowered {
+        al_sema::lower::compile(
+            vec![al_sema::workspace::AppSource {
+                id: "a".into(),
+                name: "a".into(),
+                dependencies: vec![],
+                files: vec![("f.al".into(), src.into())],
+            }],
+            &Default::default(),
+        )
+        .1
+    }
+
+    fn routine(l: &Lowered, object: &str, name: &str) -> (usize, usize) {
+        let o = l.program.objects.iter().position(|o| o.name == object).unwrap();
+        let r = l.program.objects[o]
+            .routines
+            .iter()
+            .position(|r| r.name == name)
+            .unwrap();
+        (o, r)
+    }
+
+    const SRC: &str = "
+        table 50100 T { fields { field(1; K; Integer) { } }
+            trigger OnInsert() var F: Codeunit Flag; begin F.SetIt(); end; }
+        codeunit 50101 Flag { SingleInstance = true; var Hit: Boolean;
+            procedure SetIt() begin Hit := true; end; }
+        codeunit 50102 Helper {
+            procedure H() var R: Record T; begin R.Insert(true); end; }
+        codeunit 50103 Tests { Subtype = Test;
+            [Test] procedure A() var R: Record T; Hp: Codeunit Helper; begin R.Insert(true); Hp.H(); end;
+            [Test] procedure B() var Hp: Codeunit Helper; begin Hp.H(); end; }";
+
+    // A routine's summary is recorded once and taken again by later walks; what depends on the walk (here the insert
+    // trigger, which the first walk had already entered before it reached the helper) is still entered by each walk.
+    #[test]
+    fn a_later_walk_takes_the_recorded_summary_and_still_enters_the_triggers() {
+        let l = lowered(SRC);
+        let events = al_vm::events::Registry::build(&l.program);
+        let (o, a) = routine(&l, "Tests", "A");
+        let (_, b) = routine(&l, "Tests", "B");
+        let warm = ReachIndex::new(&events, &l);
+        let fa = reach_facts(&events, &l, &warm, o, a);
+        let recorded = warm.recorded();
+        let fb = reach_facts(&events, &l, &warm, o, b);
+        // Only B itself is new: the helper, the trigger and SetIt were recorded by A's walk.
+        assert_eq!(warm.recorded(), recorded + 1);
+        let flag = routine(&l, "Flag", "SetIt").0;
+        assert!(fb.globals_written.iter().any(|&(fo, _)| fo == flag), "{fb:?}");
+        // The same facts as walks on an index that recorded nothing yet.
+        let cold = |r| format!("{:?}", reach_facts(&events, &l, &ReachIndex::new(&events, &l), o, r));
+        assert_eq!(format!("{fa:?}"), cold(a));
+        assert_eq!(format!("{fb:?}"), cold(b));
+        assert_eq!(
+            format!("{fb:?}"),
+            format!("{:?}", reach_facts(&events, &l, &warm, o, b))
+        );
+    }
 }

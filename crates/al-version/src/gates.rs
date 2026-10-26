@@ -56,6 +56,10 @@ pub enum Gate {
     /// `RecordRef.IsDirty` exists from BC 28; the corpus probe is compiled only from BC 28
     /// (recordref/lt-recordref-isdirty-edges/RecordRefIsDirtyEdges.al, corpus bump 22). Not consumed yet.
     RecordRefIsDirtyFrom28,
+    /// `GetLastErrorText(true)` after a Find of an empty table (`table is empty`, `does not exist` of `Find('=')`) is probed
+    /// only from BC 28: the corpus test is guarded with `#if BC28PLUS` (error-handling/lt-last-error-text-forms/
+    /// FindEmptyTableExcludeFlag.al:76). BC 27 keeps the refusal.
+    EmptyTableFindExcludeFlagFrom28,
     /// The platform table "Custom Report Layout" (table 2000000233) has two more columns from BC 29,
     /// "Header Part Name" and "Theme Part Name" (Text[300]); before, it ends at "App ID"
     /// (platform/lt-platform-tables/PtCloudTables.al, corpus bump 22). Not consumed yet.
@@ -243,6 +247,7 @@ impl Gate {
         Gate::QueryAggregateOverBigInteger,
         Gate::PartLineBeforeHostKeyFrom28,
         Gate::RecordRefIsDirtyFrom28,
+        Gate::EmptyTableFindExcludeFlagFrom28,
         Gate::ReportLayoutSelectionPartNamesFrom29,
         Gate::ReportPartNamePropertiesFrom29,
         Gate::GetTextArgumentEvaluateErrorFrom28,
@@ -331,6 +336,7 @@ impl Gate {
             | Gate::FileDownloadWithoutClientFrom28
             | Gate::GetTextArgumentEvaluateErrorFrom28
             | Gate::RecordRefIsDirtyFrom28
+            | Gate::EmptyTableFindExcludeFlagFrom28
             | Gate::PartLineBeforeHostKeyFrom28
             | Gate::RequestPageExtensionRecordTriggerOrderFrom28
             | Gate::OptionFieldRefSetEvaluateErrorFrom28
@@ -500,6 +506,10 @@ impl Gate {
                     lines: "103,109,115,150,155",
                 },
             ],
+            Gate::EmptyTableFindExcludeFlagFrom28 => &[Evidence {
+                file: "error-handling/lt-last-error-text-forms/FindEmptyTableExcludeFlag.al",
+                lines: "76",
+            }],
             Gate::RecordRefIsDirtyFrom28 => &[
                 Evidence {
                     file: "record/lt-as-records/AsGetTableIsDirty.al",

@@ -1792,6 +1792,13 @@ fn evaluate_with_max(
                     "Evaluate",
                 ),
                 (Some(1031), _) => unsupported(format!("the Evaluate error of {ty} in German (not pinned)")),
+                // The flag hides the text (errors/lt-last-error-and-events/P70_02LastErrFlag.al:Flag_EvaluateAndOverflow
+                // `eval_int|true`, `eval_int_var|true`); for the other types it is not pinned.
+                (_, "Integer") => crate::native::raise_redacted(
+                    format!("The value \"{text}\" can't be evaluated into type {ty}."),
+                    "Evaluate",
+                    "The value \"<redacted>\" can't be evaluated into type Integer.",
+                ),
                 _ => crate::native::raise(
                     format!("The value \"{text}\" can't be evaluated into type {ty}."),
                     "Evaluate",
@@ -1808,13 +1815,15 @@ fn evaluate_with_max(
                         .all(|b| b.is_ascii_digit() || matches!(b, b'-' | b'.' | b'/'))) =>
         {
             // In German (misc/lt-system-functions/EvalLastError.al:463-481, BT_Evaluate_DottedDate_Language1031). Another
-            // language is not pinned.
+            // language is not pinned. The flag hides the text in English (P70_02LastErrFlag.al:Flag_EvaluateAndOverflow
+            // `eval_date|true`); its German text is not pinned.
             match c.language() {
-                1033 => crate::native::raise(
+                1033 => crate::native::raise_redacted(
                     format!(
                         "The format of the Date '{text}' does not match your device's date settings.\\\\Make sure that the day, month, and year are in the correct order and use the correct separator (such as - or /). Alternatively, you can always use the format 'yyyy-mm-dd'."
                     ),
                     "Evaluate",
+                    "The format of the Date '<redacted>' does not match your device's date settings.\\\\Make sure that the day, month, and year are in the correct order and use the correct separator (such as - or /). Alternatively, you can always use the format 'yyyy-mm-dd'.",
                 ),
                 1031 => crate::native::raise(
                     format!(

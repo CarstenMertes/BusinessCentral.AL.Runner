@@ -212,6 +212,14 @@ impl Session {
             && !self.declares(st, "onnextrecord")
             && (self.declares(st, "onaftergetrecord") || self.declares(st, "onaftergetcurrrecord"))
         {
+            // On a List page the refresh is not pinned: P82Lookups.al pins it on a card, and on a list page BC logs no
+            // OnAfterGetRecord after the trigger (errors/lt-ms-refusals-129/P129CallstackPageControls.al:252, no
+            // `assistedit 2`) under conditions this runtime does not tell apart yet.
+            if self.engine.object_facts[st.borrow().object as usize].page_type == Some(al_ir::PageType::List) {
+                return unsupported(
+                    "TestField.AssistEdit on a List page that declares OnAfterGetRecord: whether the page is refreshed afterwards is not pinned",
+                );
+            }
             let r = (|| {
                 self.populate_current(st)?;
                 self.page_trigger(st, "onaftergetcurrrecord", vec![])?;

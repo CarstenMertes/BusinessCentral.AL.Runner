@@ -1223,7 +1223,17 @@ impl Workspace {
         for i in obj.implements_parts() {
             check(ObjKind::Interface, &i, header_off);
         }
-        for t in node.descendants().filter_map(ast::TypeRef::cast) {
+        // A statement block holds no type reference: the grammar of statements and expressions
+        // (al-syntax grammar/statements.rs, grammar/expressions.rs) never parses one, only declarations do.
+        // Blocks are most of the tree, so they are not entered; the order of the rest is unchanged.
+        let mut walk = node.preorder();
+        while let Some(ev) = walk.next() {
+            let rowan::WalkEvent::Enter(n) = ev else { continue };
+            if n.kind() == al_syntax::SyntaxKind::Block {
+                walk.skip_subtree();
+                continue;
+            }
+            let Some(t) = ast::TypeRef::cast(n) else { continue };
             if let Some(kind) = ObjKind::from_type_name(&t.type_name()) {
                 let parts = t.object_name_parts();
                 if !parts.is_empty() {

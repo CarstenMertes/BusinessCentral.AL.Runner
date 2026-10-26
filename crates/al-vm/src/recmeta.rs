@@ -902,6 +902,9 @@ impl Session {
                 if Rc::ptr_eq(src, rec) {
                     return Ok(Value::Null);
                 }
+                if crate::records::media_key_marked(src) {
+                    return unsupported(format!("Copy of a record {}", crate::records::MEDIA_KEY));
+                }
                 let s = src.borrow().clone();
                 // Copy takes the fields, filters and key but does not move the target to the source's company
                 // (record/TestChangeCompanyFiltersCopyDeleteContracts.al:117-121).

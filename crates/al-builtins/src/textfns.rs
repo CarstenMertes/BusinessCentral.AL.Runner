@@ -929,11 +929,33 @@ fn tb_replace(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResul
     Ok(Value::Boolean(true))
 }
 
+/// `AddText(Text [, Position])`: a position from 1 to one past the end inserts there (streams/StTBigText.al:AddTextAtPosition
+/// `insert-mid`, `insert-start`, `insert-end`); 0 and -1 raise the INSSTR range error (:AddTextPositionErrors `pos0`, `neg`).
+/// A position further out (no error there, but where the text goes is not observed) and other values below 1 are not pinned.
 fn bt_add_text(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
-    if a.len() > 1 {
-        return unsupported("BigText.AddText at a position (not pinned)");
-    }
     let (h, t) = (string_of(r)?, text(a, 0)?);
+    if a.len() > 1 {
+        let pos = int(a, 1)?;
+        if pos == 0 || pos == -1 {
+            return crate::native::raise(
+                format!(
+                    "The value of INSSTR parameter 3 is outside of the permitted range. The current value is: {pos}. The permitted range is: from 1 to 2,147,483,647."
+                ),
+                "OutsidePermittedRange",
+            );
+        }
+        let u = with_string(&h, |s| u16s(s));
+        if pos < 1 || pos as usize > u.len() + 1 {
+            return unsupported("BigText.AddText at a position outside the text (not pinned)");
+        }
+        let at = pos as usize - 1;
+        let mut out = u[..at].to_vec();
+        out.extend(u16s(&t));
+        out.extend_from_slice(&u[at..]);
+        let joined = from_u16(&out);
+        with_string(&h, |s| *s = joined);
+        return Ok(Value::Null);
+    }
     with_string(&h, |s| s.push_str(&t));
     Ok(Value::Null)
 }
@@ -964,8 +986,9 @@ fn bt_length(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> NResult
 fn bt_text_pos(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
     let h = string_of(r)?;
     let (hay, needle) = (with_string(&h, |s| u16s(s)), u16s(&text(a, 0)?));
+    // An empty text is not found, in an empty BigText and in one with text (streams/StTBigText.al:39 `textpos-empty`, :198 `empty`).
     if needle.is_empty() {
-        return unsupported("BigText.TextPos of an empty text (not pinned)");
+        return Ok(Value::Integer(0));
     }
     Ok(Value::Integer(find(&hay, &needle, 0).map_or(0, |p| p as i32 + 1)))
 }
@@ -980,9 +1003,34 @@ fn bt_get_sub_text(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> N
     } else {
         u.len() as i64 - pos + 1
     };
-    if pos < 1 || len < 0 || (pos as usize - 1) + len as usize > u.len() {
-        return unsupported("BigText.GetSubText outside the text (error text not pinned)");
+    // A position below 1 and a negative length raise the COPYSTR range errors (streams/StTBigText.al:GetSubTextErrors `pos0`,
+    // `neg-pos` -3, `neg-len` -1). Values of a thousand and more would show group separators: not pinned.
+    if pos < 1 && len < 0 {
+        return unsupported(
+            "BigText.GetSubText with a bad position and a bad length (which error comes first is not pinned)",
+        );
     }
+    if (-999..1).contains(&pos) {
+        return crate::native::raise(
+            format!(
+                "The value of COPYSTR parameter 2 is outside of the permitted range. The current value is: {pos}. The permitted range is: from 1 to 2,147,483,647."
+            ),
+            "OutsidePermittedRange",
+        );
+    }
+    if (-999..0).contains(&len) {
+        return crate::native::raise(
+            format!(
+                "The value of COPYSTR parameter 3 is outside of the permitted range. The current value is: {len}. The permitted range is: from 0 to 2,147,483,647."
+            ),
+            "OutsidePermittedRange",
+        );
+    }
+    if pos < 1 || len < 0 || pos as usize > u.len() {
+        return unsupported("BigText.GetSubText outside the text (not pinned)");
+    }
+    // A length past the end takes the rest (:GetSubTextForms `n-8-100` 3).
+    let len = len.min(u.len() as i64 - pos + 1);
     let from = pos as usize - 1;
     a[0] = Value::Text(from_u16(&u[from..from + len as usize]).into());
     Ok(Value::Integer(len as i32))

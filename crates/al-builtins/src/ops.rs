@@ -585,12 +585,19 @@ fn variant_text_decimal(text: &str) -> Option<Result<Decimal, ()>> {
 fn convert_rare(v: Value, t: &RtType) -> Result<Value, Signal> {
     match (&v, t) {
         (Value::Date(n, false), RtType::DateTime) if *n >= 0 => Ok(date_to_datetime(*n)),
-        // A RecordRef a Variant holds, into a record of its own table: the record with the RecordRef's row and filters, a copy
+        // A RecordRef a Variant holds, into a record of its own table: the record with the RecordRef's row, a copy
         // (Base Application's Approvals Mgmt.InformUserOnStatusChange passes its Variant to a `Record "Sales Header"` parameter;
         // 73 Tests-Workflow tests; assumption recordref-into-record). Another table is not pinned.
         (Value::Library(_, h), RtType::Record(table, _)) => {
             let copy = match &*h.borrow() {
-                LibraryValue::RecordRef(rec) if rec.borrow().table == *table => Some(rec.borrow().clone()),
+                // Without the ref's filters: a Record parameter gets the row and no filters (record/lt-ar-records/
+                // ArRecordProbes.al:366 VariantRecordRef_PassedToRecordParameter `3|r3||4`); an assignment takes the fields only
+                // (:333 VariantRecordRef_AssignedToRecord `filters` empty, `count` 4).
+                LibraryValue::RecordRef(rec) if rec.borrow().table == *table => Some({
+                    let mut st = rec.borrow().clone();
+                    st.filters.clear();
+                    st
+                }),
                 _ => None,
             };
             match copy {

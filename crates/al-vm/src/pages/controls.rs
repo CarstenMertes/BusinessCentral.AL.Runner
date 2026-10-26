@@ -1012,6 +1012,14 @@ impl Session {
                     self.last_error = *e;
                     return Ok(Value::Null);
                 }
+                // `RequestPage.Activate` in a request page control's OnValidate aborts the page: the error reaches the test as it
+                // is, not as a validation error (report/lt-report-requestpage-query-members/P105RpMembers.al:171-184).
+                if e.code == "ClientPageAbort:FormAbort"
+                    && self.is_request_page(st)
+                    && e.message.starts_with("Unhandled UI: Page ")
+                {
+                    return Err(Signal::Error(e));
+                }
                 if e.message.is_empty() {
                     return unsupported(
                         "an error with an empty text out of a table field's OnValidate during TestPage SetValue (what the test client does with it is not pinned)",

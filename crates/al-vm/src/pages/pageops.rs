@@ -485,6 +485,13 @@ impl Session {
     }
 
     pub(super) fn test_page_op_inner(&mut self, method: PageOp, st: &St, args: &mut [Value]) -> Result<Value, Signal> {
+        if method.recv() == PageRecv::TestPage
+            && self.is_request_page(st)
+            && !self.has_source(st)
+            && let Some(r) = self.request_page_without_source_op(st, method.method(), args)
+        {
+            return r;
+        }
         match method.method() {
             // `TestPart.Visible` / `.Enabled` read the part control of the host: a part that is
             // reachable at all is visible (corpus testpart/TestTestPart.al:TestPart_Visible_*).

@@ -9,7 +9,10 @@ impl Session {
         self.refuse_read_only_part(st, "New()")?;
         let engine = self.engine();
         let object = st.borrow().object as usize;
-        let insert_denied = flag_denied(&engine, object, "InsertAllowed")?;
+        // A request page without a SourceTable denies New() as InsertAllowed = false does
+        // (report/lt-report-requestpage-query-members/P105RpNav.al:174 P105_New).
+        let insert_denied =
+            flag_denied(&engine, object, "InsertAllowed")? || (self.is_request_page(st) && !self.has_source(st));
         // A request page is pinned only where InsertAllowed is false: the error names the report and `Id = 0`
         // (report/lt-y-request-page/YRequestPageTests.al:161). Which row a new line gets and whether the request page writes the
         // row it leaves are not pinned (the AutoSplitKey cases of the same file go by rules the corpus does not settle).

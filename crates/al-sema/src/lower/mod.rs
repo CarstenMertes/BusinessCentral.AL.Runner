@@ -445,7 +445,10 @@ fn is_property_setter(receiver: &str, name: &str) -> bool {
             | ("Record" | "RecordRef", "ReadIsolation" | "SecurityFiltering")
             | ("Record", "FilterGroup" | "Ascending" | "Mark" | "MarkedOnly")
             | ("RecordRef", "FilterGroup")
-            | ("Report", "UseRequestPage" | "Language" | "FormatRegion")
+            | (
+                "Report",
+                "UseRequestPage" | "Language" | "FormatRegion" | "PrintOnlyIfDetail"
+            )
             | ("System", "WorkDate")
             | ("HttpRequestMessage", "Method" | "Content")
             | (

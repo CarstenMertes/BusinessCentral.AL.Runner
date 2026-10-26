@@ -21,6 +21,7 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 /// What the baseline run leaves.
+#[derive(Clone)]
 pub struct BaselineRun {
     pub baseline: Baseline,
     /// Tables the roots that did not run (or stopped early) would have written rows to (a record

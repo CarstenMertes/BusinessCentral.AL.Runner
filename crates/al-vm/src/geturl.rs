@@ -23,17 +23,20 @@ fn member(v: Option<&Value>) -> Option<String> {
     }
 }
 
-/// Percent-encodes `s` for a query value. Letters, digits, `.` and `-` stay; a space, `& ' / % # ? * | < > =` and
-/// non-ASCII characters (UTF-8) are encoded with capital hex digits (GetUrlCompany.al:67-77, GetUrlBookmarkFilter.al:
-/// filter_*). Any other character is not pinned and is refused.
+/// Percent-encodes `s` for a query value. Letters, digits, `-`, `.`, `_` and `~` stay; every other printable ASCII
+/// character but the backtick, and non-ASCII characters (UTF-8), are encoded with capital hex digits
+/// (GetUrlCompany.al:67-77, GetUrlBookmarkFilter.al: filter_*, platform/lt-t-geturl/TGetUrl.al:310-329
+/// GetUrl_Web_CompanyCharacters and TGetUrl.al:356-364 GetUrl_Web_FilterCharacters). The backtick and control characters
+/// are not pinned and are refused.
 fn encode(s: &str) -> Result<String, Signal> {
     let mut out = String::new();
     for c in s.chars() {
-        if c.is_ascii_alphanumeric() || c == '.' || c == '-' {
+        if c.is_ascii_alphanumeric() || "-._~".contains(c) {
             out.push(c);
-        } else if c.is_ascii() && !" &'/%#?*|<>=".contains(c) {
+        } else if c == '`' || c.is_ascii_control() {
             return unsupported(format!(
-                "GetUrl with the character `{c}` in a company or filter text: only letters, digits, . - and the characters of the pinned probes are built"
+                "GetUrl with the character `{}` in a company or filter text: only letters, digits, . - and the characters of the pinned probes are built",
+                c.escape_default()
             ));
         } else {
             let mut b = [0u8; 4];
@@ -77,6 +80,25 @@ fn record_arg(v: Option<&Value>) -> Result<Rec, Signal> {
             }))),
         },
         other => unsupported(format!("GetUrl with record {}", other.describe())),
+    }
+}
+
+/// The company of a Phone, Tablet, Desktop, Background, Management or NAS address: letters, digits, space and `.` are
+/// pinned (`My Company`, `LTP109CO` and the corpus company `CRONUS International Ltd.`, see `get_url_mobile`).
+fn mobile_company(v: &Value) -> Result<(), Signal> {
+    match v {
+        Value::Text(t) | Value::Code(t)
+            if !t.has_marker()
+                && t.as_str()
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == ' ' || c == '.') =>
+        {
+            Ok(())
+        }
+        other => unsupported(format!(
+            "GetUrl of this client type with company {} (only letters, digits, space and . are pinned)",
+            other.describe()
+        )),
     }
 }
 
@@ -141,16 +163,84 @@ impl Session {
     }
     /// `GetUrl(ClientType, Company, ObjectType, ObjectId, Record|RecordRef, UseFilters, Layout)`: `args` is the call's arguments.
     pub(crate) fn get_url(&mut self, args: &[Value]) -> Result<Value, Signal> {
-        if member(args.first()).as_deref() == Some("Default") {
-            return self.get_url_default(args);
+        match member(args.first()).as_deref() {
+            // Windows gives the same text as Default for every form TGetUrl.al pins (GetUrl_ClientWindows,
+            // TGetUrl.al:233-240, against GetUrl_ClientDefault, TGetUrl.al:203-210; also
+            // lt-system-database-onprem/PGetUrl.al:71,75).
+            Some("Default") | Some("Windows") => return self.get_url_default(args),
+            Some("Phone") | Some("Tablet") | Some("Desktop") => return self.get_url_mobile(args),
+            // Background, Management and NAS have no address: the empty text, alone and with a company
+            // (GetUrlCtBackground.al:69-73, GetUrlCtManagement.al:69-73, GetUrlCtNAS.al:69-73, all with
+            // CompanyName() or the empty company). With an object the value is not pinned (PGetUrl.al:102-103 pins
+            // only that there is no error).
+            Some("Background") | Some("Management") | Some("NAS") if args.len() <= 2 => {
+                if let Some(company) = args.get(1) {
+                    mobile_company(company)?;
+                }
+                return Ok(Value::Text("".into()));
+            }
+            Some("Web") => {}
+            _ => {
+                return unsupported(format!(
+                    "GetUrl({}; the call had {} arguments): only ClientType::Web, Default, Windows, Phone, Tablet and Desktop are built, and Background, Management and NAS without an object (the other forms are not pinned)",
+                    args.first().describe(),
+                    args.len()
+                ));
+            }
         }
-        if member(args.first()).as_deref() != Some("Web") {
+        self.get_url_web(args)
+    }
+
+    /// `GetUrl(ClientType::Phone | Tablet | Desktop, ...)`: the scheme `ms-dynamicsnav`, the web address after `http://`
+    /// without a trailing slash, then the query of the web form directly after it (no `/` before the `?`). Pinned by
+    /// platform/lt-t-geturl/TGetUrl.al:248-255, 263-270, 278-285 (alone, a company, the empty company, page 21, report
+    /// 69367, a page with a record and UseFilters false), lt-system-database-members/GetUrlCtMain.al:111-115, 153-157,
+    /// 195-199 (CompanyName()) and lt-system-database-onprem/PGetUrl.al:68-73 (a company and page 99999). Every other form
+    /// is refused.
+    fn get_url_mobile(&mut self, args: &[Value]) -> Result<Value, Signal> {
+        if let Some(company) = args.get(1) {
+            mobile_company(company)?;
+        }
+        let pinned_form = match args.len() {
+            1 | 2 => true,
+            4 => {
+                matches!(member(args.get(2)).as_deref(), Some("Page") | Some("Report"))
+                    && matches!(args.get(3), Some(Value::Integer(n)) if *n > 0)
+            }
+            6 => {
+                member(args.get(2)).as_deref() == Some("Page")
+                    && matches!(args.get(3), Some(Value::Integer(n)) if *n > 0)
+                    && matches!(args.get(5), Some(Value::Boolean(false)))
+            }
+            _ => false,
+        };
+        if !pinned_form {
             return unsupported(format!(
-                "GetUrl({}; the call had {} arguments): only ClientType::Web is built (the host part of the other client types is not pinned)",
+                "GetUrl({}; the call had {} arguments): for Phone, Tablet and Desktop only a company, a page or report with a positive id, and a page with a record and UseFilters false are pinned",
                 args.first().describe(),
                 args.len()
             ));
         }
+        let base = self.host.identity.server_base_url();
+        let Some(rest) = base.strip_prefix("http://") else {
+            return unsupported(format!(
+                "GetUrl(ClientType::Phone, Tablet or Desktop) with the server address {base}: only an http address is pinned"
+            ));
+        };
+        let rest = rest.trim_end_matches('/').to_string();
+        let web = match self.get_url_web(args)? {
+            Value::Text(t) => t.as_str().to_string(),
+            other => return unsupported(format!("GetUrl result {}", other.describe())),
+        };
+        let query = match web.find("/?") {
+            Some(at) => web[at + 1..].to_string(),
+            None => String::new(),
+        };
+        Ok(Value::Text(format!("ms-dynamicsnav://{rest}{query}").into()))
+    }
+
+    /// The `ClientType::Web` form.
+    fn get_url_web(&mut self, args: &[Value]) -> Result<Value, Signal> {
         al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::GetUrlWebBaseAddress);
         let base = self.host.identity.server_base_url();
         let company = match args.get(1) {
@@ -173,8 +263,13 @@ impl Session {
                 Some("Report") => "report",
                 Some("Table") => "table",
                 Some("Query") => "query",
-                // codeunits and XMLports have no web client address (GetUrlObjects.al:64,67)
+                // codeunits and XMLports have no web client address (GetUrlObjects.al:64,67); a codeunit with a record
+                // and UseFilters false neither (TGetUrl.al:385,388,397).
                 Some("Codeunit") | Some("XMLport") | Some("XmlPort") if args.len() == 4 => {
+                    return Ok(Value::Text("".into()));
+                }
+                Some("Codeunit") if args.len() == 6 && matches!(args.get(5), Some(Value::Boolean(false))) => {
+                    record_arg(args.get(4))?;
                     return Ok(Value::Text("".into()));
                 }
                 other => {
@@ -193,11 +288,19 @@ impl Session {
                 // the report and query forms are pinned only to have no '?', GetUrlBookmarkFilter.al:`report`, `query`).
                 let rec = record_arg(args.get(4))?;
                 if key == "report" || key == "query" {
-                    // GetUrlBookmarkFilter.al:`report`, `query` pin only that the result has no query part
-                    // ('?'); the value itself (empty text or the bare address) is not pinned.
-                    return unsupported(format!(
-                        "GetUrl of a {key} with a record: only \"no query part\" is pinned, not the value"
-                    ));
+                    // A report or a query with a record has no address: the empty text (TGetUrl.al:383-384,386-387,
+                    // 389-394 GetUrl_Web_ReportQueryCodeunitWithRecord: a report with UseFilters false and true, with
+                    // and without filters on the record; a query with UseFilters false). Other forms are not pinned.
+                    let pinned = matches!(
+                        (key, args.len(), args.get(5)),
+                        ("report", 6, Some(Value::Boolean(_))) | ("query", 6, Some(Value::Boolean(false)))
+                    );
+                    if !pinned {
+                        return unsupported(format!(
+                            "GetUrl of a {key} with a record: only \"no query part\" is pinned, not the value"
+                        ));
+                    }
+                    return Ok(Value::Text("".into()));
                 }
                 if key != "page" {
                     return Ok(Value::Text("".into()));
@@ -282,8 +385,9 @@ impl Session {
             }
             return Ok(Some(format!("filter={}", encode(&parts.join(" AND "))?)));
         }
-        // The bookmark: the table number, then the primary key fields. Only a key of one Code[20] field, one Integer
-        // field, or a Code[20] and an Integer field (in that order) is pinned.
+        // The bookmark: the table number, then the primary key fields. Only a key of one Code[10], Code[20] or Code[50]
+        // field, one Integer field, a Code[20] and an Integer field (in that order), or two Code[20] fields is pinned
+        // (TGetUrl.al:439-447 GetUrl_Web_BookmarkOfCodeKeys for Code[10], Code[50] and two Code[20]).
         let table_id = match self.engine.program.objects[t.object as usize].id {
             Some(id) => id,
             None => return unsupported("GetUrl bookmark of a table without an id"),
@@ -295,13 +399,17 @@ impl Session {
         let shape: Vec<&RtType> = key.iter().map(|&p| &t.fields[p].ty).collect();
         let ok = matches!(
             shape.as_slice(),
-            [RtType::Code(Some(20))] | [RtType::Integer] | [RtType::Code(Some(20)), RtType::Integer]
+            [RtType::Code(Some(10 | 20 | 50))]
+                | [RtType::Integer]
+                | [RtType::Code(Some(20)), RtType::Integer]
+                | [RtType::Code(Some(20)), RtType::Code(Some(20))]
         );
         if !ok {
             return unsupported(
-                "GetUrl bookmark of a primary key other than Code[20], Integer, or Code[20] and Integer (not pinned)",
+                "GetUrl bookmark of a primary key other than Code[10], Code[20], Code[50], Integer, Code[20] and Integer, or two Code[20] (not pinned)",
             );
         }
+        let two_codes = key.len() == 2 && matches!(shape[1], RtType::Code(_));
         for &p in key.iter() {
             match &r.fields[p] {
                 Value::Code(c) => {
@@ -309,13 +417,12 @@ impl Session {
                     if !s.is_ascii() {
                         return unsupported("GetUrl bookmark of a Code value with a non-ASCII character (not pinned)");
                     }
-                    if s.is_empty() && key.len() > 1 {
+                    if s.is_empty() && key.len() > 1 && !two_codes {
                         return unsupported("GetUrl bookmark of an empty Code in a two-field key (not pinned)");
                     }
-                    data.extend_from_slice(&[0x02, 0x7b]);
-                    if !s.is_empty() {
-                        data.push(0xff);
-                    }
+                    // A non-empty Code is marked 0xff, an empty one 0x00 (TGetUrl.al:446-447 `two second empty`,
+                    // `two first empty`).
+                    data.extend_from_slice(&[0x02, 0x7b, if s.is_empty() { 0x00 } else { 0xff }]);
                     for b in s.bytes() {
                         data.extend_from_slice(&[b, 0]);
                     }

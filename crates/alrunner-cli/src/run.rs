@@ -579,6 +579,66 @@ pub struct WarmCtx {
     pub report: Option<Report>,
     /// Whether the last run used the compile of an earlier request.
     pub used: Option<al_testrun::runtime::WarmUse>,
+    /// Where the last run spent its time (the `timings` of the serve summary, al-runner issue 5856).
+    pub timings: Option<RequestTimings>,
+    /// The dependency apps of the last request, for the next one that would read the same (al-runner issue 5856).
+    pub dependencies: Option<KeptDependencies>,
+}
+
+/// The dependency apps a warm server read for a request ([`WarmCtx::dependencies`]).
+pub struct KeptDependencies {
+    /// The request's apps and options that chose them.
+    key: String,
+    /// The files they were chosen from and read from, as they were then ([`file_stamps`]).
+    stamps: Vec<(PathBuf, Option<(u64, std::time::SystemTime)>)>,
+    deps: Arc<deps::Dependencies>,
+}
+
+/// The length and modification time of each entry of the folders `search` and of each file of `read`: another
+/// package in a folder, or a package changed, changes them.
+fn file_stamps(search: &[PathBuf], read: &[PathBuf]) -> Vec<(PathBuf, Option<(u64, std::time::SystemTime)>)> {
+    let stamp = |p: &Path| {
+        std::fs::metadata(p)
+            .ok()
+            .and_then(|m| Some((m.len(), m.modified().ok()?)))
+    };
+    let mut out: Vec<(PathBuf, Option<(u64, std::time::SystemTime)>)> = Vec::new();
+    for dir in search {
+        out.push((dir.clone(), stamp(dir)));
+        if let Ok(rd) = std::fs::read_dir(dir) {
+            let mut entries: Vec<PathBuf> = rd.filter_map(|e| e.ok().map(|e| e.path())).collect();
+            entries.sort();
+            out.extend(entries.into_iter().map(|p| {
+                let s = stamp(&p);
+                (p, s)
+            }));
+        }
+    }
+    out.extend(read.iter().map(|p| (p.clone(), stamp(p))));
+    out
+}
+
+/// Where a server request spent its time, by phase (al-runner issue 5856).
+#[derive(Debug, Clone, Default)]
+pub struct RequestTimings {
+    /// Before the compile: the options, the apps' sources, the dependency packages, the test data.
+    pub setup: std::time::Duration,
+    /// Finding the kept compile, updating it, or compiling again.
+    pub compile: std::time::Duration,
+    /// Building the engine the tests run on from the compiled program, or setting up a kept one.
+    pub engine: std::time::Duration,
+    /// The request ran on the engines an earlier request over the same compile kept.
+    pub engine_kept: bool,
+    /// Setting up the install baseline: running the install code, or reading it.
+    pub baseline: std::time::Duration,
+    /// `ran`, `cache` or `kept` (`Phases::baseline_source`); `None`: no baseline.
+    pub baseline_source: Option<&'static str>,
+    /// Running the test codeunits, every pass.
+    pub tests: std::time::Duration,
+    /// Building the coverage document.
+    pub coverage: std::time::Duration,
+    /// Per pass (one per entry of the request): the threads' baseline copy and the pass's wall time.
+    pub passes: Vec<al_testrun::runtime::PassTime>,
 }
 
 /// One entry of a server request (`WarmCtx::entries`).
@@ -1020,15 +1080,46 @@ fn test_inner(
     // The text of a package's files is left unread: a run whose tests reach nothing in it never needs it.
     // ALRUNNER_EAGER_SOURCES=1 reads it at once, as before (the other side of the differential check).
     let lazy_sources = std::env::var_os("ALRUNNER_EAGER_SOURCES").is_none();
-    let dependencies = deps::load_project_with(
-        &project,
-        &workspace,
-        &search,
-        Some(&provision),
-        a.bc_version.as_deref(),
-        true,
-        lazy_sources,
-    )?;
+    // A warm server reads the dependency apps once and uses them while what chose them is the same: the request's
+    // apps and options, the files of the search folders and the packages read (al-runner issue 5856).
+    let deps_key = warm.is_some().then(|| {
+        format!(
+            "{project:?} {workspace:?} {search:?} {:?} {} {:?} {:?} {:?} {:?} {lazy_sources}",
+            provision.cache_dir,
+            provision.download,
+            provision.query,
+            provision.local_artifacts,
+            provision.country,
+            a.bc_version,
+        )
+    });
+    let kept_deps = warm
+        .as_deref()
+        .and_then(|w| w.dependencies.as_ref())
+        .filter(|k| Some(&k.key) == deps_key.as_ref() && k.stamps == file_stamps(&search, &k.deps.paths))
+        .map(|k| k.deps.clone());
+    let dependencies: Arc<deps::Dependencies> = match kept_deps {
+        Some(d) => d,
+        None => {
+            let d = Arc::new(deps::load_project_with(
+                &project,
+                &workspace,
+                &search,
+                Some(&provision),
+                a.bc_version.as_deref(),
+                true,
+                lazy_sources,
+            )?);
+            if let (Some(w), Some(key)) = (warm.as_deref_mut(), deps_key) {
+                w.dependencies = Some(KeptDependencies {
+                    key,
+                    stamps: file_stamps(&search, &d.paths),
+                    deps: d.clone(),
+                });
+            }
+            d
+        }
+    };
     if let Some(d) = &debug {
         let written = al_deps::cache::cache_root_from_env(a.cache_dir.as_deref()).join("debug-sources");
         *d.sources.lock().unwrap_or_else(|e| e.into_inner()) =
@@ -1938,6 +2029,7 @@ fn test_inner(
     }
 
     let mut coverage_doc: Option<String> = None;
+    let coverage_started = std::time::Instant::now();
     // An impact run counts statements for its own report and writes no coverage file.
     if a.coverage && collect.is_none() {
         let cwd = std::env::current_dir().unwrap_or_default();
@@ -1969,6 +2061,7 @@ fn test_inner(
             write_file(path, doc)?;
         }
     }
+    let coverage_time = coverage_started.elapsed();
     let total_time = started.elapsed();
     if let Some(path) = &a.junit {
         let mut with_skipped: Vec<&TestResult> = results.iter().copied().chain(&skipped_results).collect();
@@ -2101,6 +2194,17 @@ fn test_inner(
         })
     );
     if let Some(w) = warm {
+        w.timings = Some(RequestTimings {
+            setup: load_time,
+            compile: p.warm_compile.unwrap_or(p.compile),
+            engine: p.engine,
+            engine_kept: p.engine_kept,
+            baseline: p.baseline,
+            baseline_source: p.baseline_source,
+            tests: p.tests,
+            coverage: coverage_time,
+            passes: p.passes.clone(),
+        });
         w.report = Some(Report {
             doc: serde_json::from_str(&crate::affected::with_selection(
                 output::json_tdd(&results, code, total_time.as_secs_f64(), tdd_stubs),

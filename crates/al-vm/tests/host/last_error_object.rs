@@ -208,24 +208,46 @@ fn before_any_error_is_refused_but_after_clear_is_null() {
     assert_eq!(cleared, "Yes");
 }
 
-/// An error raised in a helper of OnRun has stack frames no probe shows: ToString and Format mark the assumption.
-/// (An error raised in OnRun itself has the three frames GetLastErrorObjectKinds.al:ToString_DialogException_Lines pins.)
+/// An error raised in a procedure without parameters of the codeunit whose OnRun calls it: the frames
+/// AzLastErrorObject.al:180 ToString_NestedProcedure pins (`Codeunit<id>.Nested()`, OnRunAsync, DoRunAsync; no ALError frame).
 #[test]
-fn to_string_and_format_mark_the_stack_frame_assumption() {
+fn to_string_of_an_error_in_a_helper_of_on_run_has_the_pinned_frames() {
+    for body in ["exit(Exc.ToString());", "exit(Format(Exc));"] {
+        let r = text(run(&format!(
+            "procedure F(): Text var T: Codeunit \"LEO Thrower\"; Exc: DotNet LeoExc; begin T.SetMode(9); if T.Run() then exit('ran'); Exc := GetLastErrorObject(); {body} end;"
+        )));
+        assert_eq!(
+            r,
+            format!(
+                "{DIALOG}: boom from helper\n   at Microsoft.Dynamics.Nav.BusinessApplication.Codeunit50161.Helper()\n   at Microsoft.Dynamics.Nav.BusinessApplication.Codeunit50161.OnRunAsync(INavRecordHandle \u{3b5}rec)\n   at Microsoft.Dynamics.Nav.Runtime.NavCodeunit.DoRunAsync(DataError errorLevel, NavRecord record)"
+            ),
+            "{body}"
+        );
+    }
+}
+
+/// A trace no corpus test pins (here an error caught by a TryFunction): BC writes .NET frames, which the runtime does not
+/// produce; the AL frames it writes instead mark the assumption `exception-tostring-stack-frames`. The pinned shapes do not.
+#[test]
+fn to_string_of_a_trace_that_is_not_pinned_marks_the_assumption() {
     use al_builtins::assumptions::{Assumption, take_hits};
     for body in ["exit(Exc.ToString());", "exit(Format(Exc));"] {
         take_hits();
         let r = text(run(&format!(
-            "procedure F(): Text var T: Codeunit \"LEO Thrower\"; Exc: DotNet LeoExc; begin T.SetMode(9); if T.Run() then exit('ran'); Exc := GetLastErrorObject(); {body} end;"
+            "procedure F(): Text var T: Codeunit \"LEO Thrower\"; Exc: DotNet LeoExc; begin if T.TryRaise() then exit('ran'); Exc := GetLastErrorObject(); {body} end;"
         )));
-        assert!(r.starts_with(DIALOG), "{r}");
+        assert!(r.starts_with(&format!("{DIALOG}: boom from try\n   at ")), "{r}");
         assert!(
             take_hits().contains(&Assumption::ExceptionToStringStackFrames),
             "{body}"
         );
+        take_hits();
+        let _ = text(run(&format!(
+            "procedure F(): Text var T: Codeunit \"LEO Thrower\"; Exc: DotNet LeoExc; begin T.SetMode(9); if T.Run() then exit('ran'); Exc := GetLastErrorObject(); {body} end;"
+        )));
+        assert!(
+            !take_hits().contains(&Assumption::ExceptionToStringStackFrames),
+            "{body}"
+        );
     }
-    // The members whose text is pinned do not mark it.
-    take_hits();
-    let _ = after_run(1);
-    assert!(!take_hits().contains(&Assumption::ExceptionToStringStackFrames));
 }

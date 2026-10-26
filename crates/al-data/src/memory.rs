@@ -120,6 +120,20 @@ enum Band {
 /// Tables with fewer rows than this are walked in a secondary key by looking at every row.
 const INDEX_MIN_ROWS: usize = 64;
 
+/// Per table and key, the orders the store and its clones built, the one used last first.
+type OrderCache = std::collections::HashMap<(Slot, usize), Vec<OrderEntry>>;
+
+/// How many orders of one key of one table the shared cache keeps (`MemStore::order_cache`).
+const ORDERS_PER_KEY: usize = 4;
+
+/// The last stamp handed out, in the whole process: a stamp names one state of one table in every store.
+static STAMPS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// A stamp no store has used yet.
+fn next_stamp() -> u64 {
+    STAMPS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1
+}
+
 #[derive(Clone, Default)]
 pub struct MemStore {
     tables: Tables,
@@ -133,12 +147,16 @@ pub struct MemStore {
     /// equal stamps mean the same rows in the same places in every key.
     shapes: crate::pmap::PMap<Slot, u64>,
     committed_shapes: crate::pmap::PMap<Slot, u64>,
-    /// The primary keys of a big table in the order of one of its other keys, as of a shape stamp.
-    order_cache: std::cell::RefCell<std::collections::HashMap<(Slot, usize), OrderEntry>>,
+    /// The primary keys of a big table in the order of one of its other keys, as of a shape stamp. Shared by the clones
+    /// of the store, so a session restored to a snapshot finds the orders built since the snapshot was taken (al-runner
+    /// issue 5884: each test session asks for the last G/L entry by Posting Date). Safe to share because a stamp is
+    /// handed out once in the whole process (`next_stamp`): two clones that write never get the same stamp for
+    /// different rows. A store given another backing gets a cache of its own (`with_backing`).
+    order_cache: std::rc::Rc<std::cell::RefCell<OrderCache>>,
     /// The rows that pass one set of filters, in the order of one key, for scans whose filters bound the leading
     /// fields of another key (see `alt_next`).
     alt_cache: std::cell::RefCell<std::collections::HashMap<(Slot, usize, String), AltEntry>>,
-    /// Handed out by writes; never goes back, so a stamp is never reused.
+    /// The stamp of the store's last write (`next_stamp`); never goes back, so a stamp is never reused.
     counter: u64,
     /// Tables that have no stored rows (ADR-019).
     virtuals: Option<std::rc::Rc<dyn VirtualTables>>,
@@ -490,7 +508,8 @@ impl MemStore {
     pub fn with_backing(mut self, b: std::rc::Rc<dyn Backing>) -> MemStore {
         self.backing = Some(b);
         self.alt_cache.borrow_mut().clear();
-        self.order_cache.borrow_mut().clear();
+        // The clones of the store keep the old backing and its orders.
+        self.order_cache = Default::default();
         self
     }
 
@@ -697,7 +716,7 @@ impl MemStore {
         for t in tables {
             let slot: Slot = (std::sync::Arc::from(t.company.as_str()), t.object);
             let table: Table = t.rows.into_iter().map(|(k, r)| (Key(k), r)).collect();
-            s.counter += 1;
+            s.counter = next_stamp();
             s.versions.insert(slot.clone(), s.counter);
             s.shapes.insert(slot.clone(), s.counter);
             s.tables.insert(slot, table);
@@ -759,7 +778,7 @@ impl MemStore {
             .collect();
         for slot in doomed {
             self.tables.remove(&slot);
-            self.counter += 1;
+            self.counter = next_stamp();
             self.versions.insert(slot.clone(), self.counter);
             self.shapes.insert(slot, self.counter);
         }
@@ -778,10 +797,10 @@ impl MemStore {
             if let Some(table) = self.tables.remove(&slot) {
                 let target: Slot = (std::sync::Arc::from(new), slot.1);
                 self.tables.insert(target.clone(), table);
-                self.counter += 1;
+                self.counter = next_stamp();
                 self.versions.insert(slot.clone(), self.counter);
                 self.shapes.insert(slot, self.counter);
-                self.counter += 1;
+                self.counter = next_stamp();
                 self.versions.insert(target.clone(), self.counter);
                 self.shapes.insert(target, self.counter);
             }
@@ -798,7 +817,7 @@ impl MemStore {
     }
 
     fn touch(&mut self, cx: &AccessContext, t: &TableDef) {
-        self.counter += 1;
+        self.counter = next_stamp();
         self.versions.insert(slot(cx, t), self.counter);
     }
 
@@ -825,16 +844,23 @@ impl MemStore {
     fn order_of(&self, slot: &Slot, key: usize, t: &TableDef, table: &Table) -> std::rc::Rc<Vec<Key>> {
         let shape = self.shapes.get(slot).copied().unwrap_or(0);
         let ck = (slot.clone(), key);
-        if let Some(e) = self.order_cache.borrow().get(&ck) {
-            if e.shape == shape && e.rows == table.len() && e.fields == t.keys[key] {
-                return e.order.clone();
+        let fits = |e: &OrderEntry| e.shape == shape && e.rows == table.len() && e.fields == t.keys[key];
+        if let Some(kept) = self.order_cache.borrow_mut().get_mut(&ck) {
+            if let Some(i) = kept.iter().position(fits) {
+                // The order used last goes first, so the snapshot's order stays while sessions write.
+                kept[..=i].rotate_right(1);
+                return kept[0].order.clone();
             }
         }
+        ORDER_BUILDS.with(|n| n.set(n.get() + 1));
         let mut rows: Vec<(&Key, &Row)> = table.iter().collect();
         rows.sort_by(|a, b| cmp_rows(t, key, a.1, b.1));
         let order = std::rc::Rc::new(rows.into_iter().map(|(k, _)| k.clone()).collect::<Vec<_>>());
-        self.order_cache.borrow_mut().insert(
-            ck,
+        // The orders of each key used last: the snapshot's and those of the latest writes.
+        let mut cache = self.order_cache.borrow_mut();
+        let kept = cache.entry(ck).or_default();
+        kept.insert(
+            0,
             OrderEntry {
                 shape,
                 rows: table.len(),
@@ -842,6 +868,7 @@ impl MemStore {
                 order: order.clone(),
             },
         );
+        kept.truncate(ORDERS_PER_KEY);
         order
     }
 
@@ -1057,6 +1084,13 @@ impl MemStore {
 
 thread_local! {
     static STORE_OPS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    /// How many times a store of this thread sorted a table into the order of one of its keys (`order_of`).
+    static ORDER_BUILDS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// How many times a store of this thread sorted a table into the order of a key other than the primary key.
+pub fn order_builds() -> u64 {
+    ORDER_BUILDS.with(|n| n.get())
 }
 
 /// One more operation on a store of this thread.
@@ -2087,6 +2121,130 @@ mod tests {
             after_write,
             "a table the store holds is not read from the backing again"
         );
+    }
+
+    /// The last row in key 1 (`Group`, `Amount`), as a FindLast in a secondary key asks it.
+    fn last_in_key_1(s: &MemStore) -> Option<String> {
+        let (t, cx) = (crate::contract::table(), crate::contract::cx("C"));
+        let scan = Scan {
+            key: 1,
+            filters: &[],
+            ascending: false,
+            after: None,
+        };
+        s.next(&cx, &t, &scan).unwrap().map(|r| format!("{:?}", r[0]))
+    }
+
+    fn big_store() -> MemStore {
+        let (t, cx) = (crate::contract::table(), crate::contract::cx("C"));
+        let mut s = MemStore::default();
+        for i in 0..200 {
+            s.insert(&cx, &t, crate::contract::row(&format!("{i:04}"), i, i % 7))
+                .unwrap();
+        }
+        s.commit();
+        s
+    }
+
+    // Al-runner issue 5884: every test session starts from the same snapshot of the company and asks Base Application's
+    // login code for the last G/L entry by Posting Date. The order of the table in that key is built once, not once per
+    // session: a store restored to a snapshot keeps the orders its clones built for the same content.
+    #[test]
+    fn a_restored_snapshot_keeps_the_order_built_in_another_key() {
+        let mut s = big_store();
+        let snap = s.snapshot();
+        let before = order_builds();
+        assert_eq!(last_in_key_1(&s).as_deref(), Some("Code(\"0195\")"));
+        s.restore(snap.clone());
+        assert_eq!(last_in_key_1(&s).as_deref(), Some("Code(\"0195\")"));
+        let mut other = snap.clone();
+        assert_eq!(last_in_key_1(&other).as_deref(), Some("Code(\"0195\")"));
+        assert_eq!(
+            order_builds() - before,
+            1,
+            "the order of key 1 is built once for the same rows"
+        );
+        // A write in one clone changes its order and not the order of the snapshot or of the other clones.
+        let (t, cx) = (crate::contract::table(), crate::contract::cx("C"));
+        other.insert(&cx, &t, crate::contract::row("X", 1000, 6)).unwrap();
+        assert_eq!(last_in_key_1(&other).as_deref(), Some("Code(\"X\")"));
+        assert_eq!(last_in_key_1(&s).as_deref(), Some("Code(\"0195\")"));
+        s.restore(snap);
+        assert_eq!(last_in_key_1(&s).as_deref(), Some("Code(\"0195\")"));
+    }
+
+    #[test]
+    fn sessions_that_write_between_the_reads_of_the_snapshot_keep_its_order() {
+        let (t, cx) = (crate::contract::table(), crate::contract::cx("C"));
+        let snap = big_store();
+        let before = order_builds();
+        for i in 0..10 {
+            // A session opens on the snapshot, reads, writes and reads again.
+            let mut s = snap.clone();
+            assert_eq!(last_in_key_1(&s).as_deref(), Some("Code(\"0195\")"));
+            s.insert(&cx, &t, crate::contract::row(&format!("W{i}"), 1000, 6))
+                .unwrap();
+            assert_eq!(last_in_key_1(&s), Some(format!("Code(\"W{i}\")")));
+        }
+        assert_eq!(
+            order_builds() - before,
+            11,
+            "the snapshot's order once, then one per session's write"
+        );
+    }
+
+    #[test]
+    fn two_clones_that_write_different_rows_each_see_their_own_order() {
+        let (t, cx) = (crate::contract::table(), crate::contract::cx("C"));
+        let snap = big_store();
+        let mut a = snap.clone();
+        let mut b = snap.clone();
+        a.insert(&cx, &t, crate::contract::row("A", 1000, 6)).unwrap();
+        b.insert(&cx, &t, crate::contract::row("B", 1000, 6)).unwrap();
+        assert_eq!(last_in_key_1(&a).as_deref(), Some("Code(\"A\")"));
+        assert_eq!(last_in_key_1(&b).as_deref(), Some("Code(\"B\")"));
+        // A modify that moves a row in key 1, in each clone the other way.
+        let mut a2 = snap.clone();
+        let mut b2 = snap.clone();
+        a2.modify(&cx, &t, crate::contract::row("0001", 2000, 6)).unwrap();
+        b2.modify(&cx, &t, crate::contract::row("0002", 2000, 6)).unwrap();
+        assert_eq!(last_in_key_1(&a2).as_deref(), Some("Code(\"0001\")"));
+        assert_eq!(last_in_key_1(&b2).as_deref(), Some("Code(\"0002\")"));
+    }
+
+    /// 201 rows of table 7 in company `C`, the last in key 1 named `last`.
+    struct ManyRows {
+        last: &'static str,
+    }
+
+    impl Backing for ManyRows {
+        fn company(&self) -> &str {
+            "C"
+        }
+        fn rows(&self, company: &str, object: u32) -> Option<Rows> {
+            if company != "C" || object != 7 {
+                return None;
+            }
+            let t = crate::contract::table();
+            let mut rows: Vec<Row> = (0..200)
+                .map(|i| crate::contract::row(&format!("{i:04}"), i, i % 7))
+                .collect();
+            rows.push(crate::contract::row(self.last, 1000, 6));
+            Rows::from_rows(&t, rows).ok()
+        }
+    }
+
+    #[test]
+    fn stores_over_different_backings_do_not_share_an_order() {
+        let a = MemStore::default().with_backing(std::rc::Rc::new(ManyRows { last: "A" }));
+        let b = a.clone().with_backing(std::rc::Rc::new(ManyRows { last: "B" }));
+        let before = order_builds();
+        assert_eq!(last_in_key_1(&a).as_deref(), Some("Code(\"A\")"));
+        assert_eq!(last_in_key_1(&b).as_deref(), Some("Code(\"B\")"));
+        let mut again = a.clone();
+        again.restore(a.snapshot());
+        assert_eq!(last_in_key_1(&again).as_deref(), Some("Code(\"A\")"));
+        assert_eq!(order_builds() - before, 2, "one order per backing");
     }
 
     #[test]

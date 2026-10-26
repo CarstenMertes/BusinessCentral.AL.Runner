@@ -182,6 +182,9 @@ impl Session {
         if id == ids::SYSTEM_GETDOTNETTYPE_1 {
             return self.get_dotnet_type(args);
         }
+        if let Some(answer) = self.task_scheduler_op(id, args) {
+            return answer;
+        }
         // A tainted value whose number is the runtime's model (sqlcount.rs, issue 5580).
         if id == ids::SESSIONINFORMATION_SQLSTATEMENTSEXECUTED_1 {
             return Ok(self.sql.read(al_builtins::value::SqlCounter::Statements, self.commits));
@@ -471,8 +474,10 @@ impl Session {
                 let count = if method == "Range" {
                     match args.get(1) {
                         Some(Value::Integer(n)) if *n >= 1 => i64::from(*n),
-                        // :NumberSequence_Range_Zero_ThrowsSqlError (the sequence must exist first).
-                        Some(Value::Integer(0)) if self.sequences.contains_key(&key) => {
+                        // :NumberSequence_Range_Zero_ThrowsSqlError (the sequence must exist first); a negative count
+                        // of -3 too (platform/lt-platform-members/PlTNumberSequence.al:180-181,191-192 Range_Variants).
+                        // Other negative counts are not pinned and stay refused.
+                        Some(Value::Integer(n)) if (*n == 0 || *n == -3) && self.sequences.contains_key(&key) => {
                             return error_code(
                                 "An unexpected error occurred after a database command was cancelled.".to_string(),
                                 "Sql:Sql",
@@ -497,6 +502,16 @@ impl Session {
                 };
                 let last = first.and_then(|f| s.increment.checked_mul(count - 1).and_then(|d| f.checked_add(d)));
                 let (Some(first), Some(last)) = (first, last) else {
+                    // A Next past the BigInteger range raises the SQL error and the sequence is gone afterwards
+                    // (PlTNumberSequence.al:372-394 UpperLimit_NoCycle, :397-414 LowerLimit_Descending, :416-432
+                    // LargeIncrement_NoCycle). A Range past it is not pinned.
+                    if method == "Next" {
+                        self.sequences.remove(&key);
+                        return error_code(
+                            "An unexpected error occurred after a database command was cancelled.".to_string(),
+                            "Sql:Sql",
+                        );
+                    }
                     return unsupported("a number sequence past the BigInteger range (error not pinned)");
                 };
                 s.last = Some(last);

@@ -92,6 +92,11 @@ impl Lowerer<'_> {
         };
         let slot = crate::base_access::slot_of(&ast, items, name)
             .ok_or_else(|| format!("`{name}` has no slot in the {noun} it extends"))?;
+        if decl.type_ref().as_ref().and_then(textconst_languages).is_some() {
+            return Err(format!(
+                "`{name}`: a TextConst of the {noun} it extends with texts in several languages (not lowered)"
+            ));
+        }
         let label = decl.type_ref().as_ref().and_then(label_text);
         Ok((slot, ty, label))
     }
@@ -482,6 +487,17 @@ impl Lowerer<'_> {
                     // one-character literals compares as a Char (`'K' in ['a' .. 'z']` is No:
                     // types/lt-expression-operators-literals/ExpressionBinaryOperators.al:288, :303). Another literal on the left of a
                     // range is not pinned.
+                    // A BigInteger on the left of a set of Integers converts to an Integer, so one beyond the Integer range raises
+                    // the conversion error (types/lt-implicit-conversions/P79BigOption.al:401, 511-529 Compare_InSet,
+                    // `Big in [0, 1, 2]`). A set with other elements is compared as it is.
+                    if matches!(self.ty_of(&kids[0]), Ty::BigInteger)
+                        && set.children().count() > 0
+                        && set
+                            .children()
+                            .all(|e| e.kind() != SyntaxKind::RangeExpr && matches!(self.ty_of(&e), Ty::Integer))
+                    {
+                        l = self.convert_to(&Ty::Integer, &Ty::BigInteger, l)?;
+                    }
                     let ranged = set.children().any(|e| e.kind() == SyntaxKind::RangeExpr);
                     if ranged && is_string_literal(&kids[0]) {
                         let ends: Vec<SyntaxNode> = set
@@ -713,6 +729,12 @@ impl Lowerer<'_> {
                     }),
                     _ => Err("`this.<variable of the base>` in this extension (what BC raises is not pinned)".into()),
                 },
+                Some(Res::Local(name)) if self.local_textconst_languages.contains_key(&name) => {
+                    textconst_read(&self.local_textconst_languages[&name])
+                }
+                Some(Res::Global(name)) if self.global_textconst_languages.contains_key(&name) => {
+                    textconst_read(&self.global_textconst_languages[&name])
+                }
                 Some(Res::Local(name)) if self.local_labels.contains_key(&name) => {
                     let text = self.local_labels[&name].clone();
                     let plain = self.local_textconsts.contains(&name) || self.local_locked_labels.contains(&name);
@@ -974,4 +996,23 @@ pub(crate) fn is_string_literal(node: &SyntaxNode) -> bool {
             .children_with_tokens()
             .filter_map(|e| e.into_token())
             .any(|t| t.kind() == SyntaxKind::StringLit)
+}
+
+/// A read of a TextConst whose text depends on the language in force: `System.TextConstText#1` with its language codes and
+/// texts in declaration order, which picks the text when it runs (misc/lt-probe-requests-140/P140TextConstLang.al).
+fn textconst_read(texts: &[(String, String)]) -> L<ir::Expr> {
+    Ok(ir::Expr::Builtin {
+        id: super::call::builtin_id("System.TextConstText#1")?,
+        receiver: None,
+        args: texts
+            .iter()
+            .flat_map(|(lang, text)| {
+                [
+                    ir::Arg::Value(ir::Expr::Const(ir::Const::Text(lang.clone()))),
+                    ir::Arg::Value(ir::Expr::Const(ir::Const::Text(text.clone()))),
+                ]
+            })
+            .collect(),
+        ret_used: true,
+    })
 }

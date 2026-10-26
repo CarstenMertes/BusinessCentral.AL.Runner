@@ -67,6 +67,7 @@ pub const REGISTRY: &[(&str, NativeFn)] = forward![
     "RecordRef.WritePermission#1",
     "RecordRef.CountApprox#1",
     "RecordRef.ReadIsolation#1",
+    "RecordRef.Truncate#1",
     "RecordRef.SetLoadFields#1",
     "RecordRef.AddLoadFields#1",
     "RecordRef.AreFieldsLoaded#1",

@@ -10,6 +10,21 @@ use std::path::{Path, PathBuf};
 /// `(file suffix, the trimmed source line, why the debug format is fine here)`.
 const KEPT: &[(&str, &str, &str)] = &[
     (
+        "al-testrun/src/runtime/corpus.rs",
+        r#""{:?} {:p}","#,
+        "the identity of a kept test-data backing, compared for equality between serve requests, never shown",
+    ),
+    (
+        "al-testrun/src/runtime/corpus.rs",
+        r#""target={target:?} dotnet={} test_data={:?} skipped={:?}","#,
+        "the key of the engines kept between serve requests, compared for equality, never shown",
+    ),
+    (
+        "alrunner-cli/src/run.rs",
+        r#""{project:?} {workspace:?} {search:?} {:?} {} {:?} {:?} {:?} {:?} {lazy_sources}","#,
+        "the key of the dependencies kept between serve requests, compared for equality, never shown",
+    ),
+    (
         "al-vm/src/pages/open.rs",
         r#"Ok(Some((r.key, r.ascending, format!("{:?}", r.filters), pk)))"#,
         "the filters of a page's Rec before and after OnOpenPage, compared for equality, never shown",

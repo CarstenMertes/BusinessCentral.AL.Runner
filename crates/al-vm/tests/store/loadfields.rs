@@ -312,16 +312,22 @@ fn load_fields_as_a_statement_without_a_row_raises_nothing() {
 }
 
 #[test]
-fn load_fields_with_its_result_used_on_a_fetched_record_is_refused() {
-    // Pinned for a record never fetched (false); what BC answers for a fetched one is not
-    // (docs/probes-needed.md). The statement form on a fetched record changes nothing.
+fn load_fields_with_its_result_used_on_a_fetched_record_answers_true() {
+    // Pinned for a record never fetched (false) and for a whole fetched row (true, nothing changes):
+    // record/lt-load-fields-fetched/LoadFieldsFetched.al:56-63 (`load_name` Yes, `load_all` Yes). The statement
+    // form on a fetched record changes nothing. A FlowField is not a stored field: that shape is not pinned, refused.
     let missing = text("", "b := Rec.LoadFields(Rec.Name); exit(Format(b));");
     assert_eq!(missing.unwrap(), "No");
     let fetched = text(
         "",
-        &format!("{SEED} Rec.Get(1); b := Rec.LoadFields(Rec.Name); exit('ran');"),
+        &format!("{SEED} Rec.Get(1); b := Rec.LoadFields(Rec.Name); exit(Format(b) + Rec.Name);"),
     );
-    assert!(matches!(fetched, Err(Signal::Unsupported(_))), "{fetched:?}");
+    assert_eq!(fetched.unwrap(), "Yesalpha");
+    let flow = text(
+        "",
+        &format!("{SEED} Rec.Get(1); b := Rec.LoadFields(Rec.Cnt); exit('ran');"),
+    );
+    assert!(matches!(flow, Err(Signal::Unsupported(_))), "{flow:?}");
     let statement = text(
         "",
         &format!("{SEED} Rec.Get(1); Rec.LoadFields(Rec.Name); exit(Rec.Name);"),

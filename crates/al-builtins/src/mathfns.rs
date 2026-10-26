@@ -60,6 +60,15 @@ fn round(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
             "1"
         } else if precision == Decimal::from(-1000) && duration {
             "1,000"
+        } else if precision > Decimal::NEGATIVE_ONE && !duration {
+            // -0.1 shows 0.1 (misc/lt-probes-needed-2/PnBDateFormat.al:387-407, Round_Precision `precisionNegative`).
+            return crate::native::raise(
+                format!(
+                    "The value of ROUND parameter 2 is outside of the permitted range. The current value is: {}. The permitted range is: from 1 to 2,147,483,647.",
+                    (-precision).normalize()
+                ),
+                "OutsidePermittedRange",
+            );
         } else {
             return unsupported("Round with a Precision below -1 (not pinned)");
         };

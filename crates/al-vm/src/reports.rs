@@ -106,6 +106,15 @@ impl Session {
     ) -> Result<Value, Signal> {
         match id {
             ids::REPORT_QUIT_1 => self.report_quit_builtin(&running),
+            ids::REPORT_SHOWOUTPUT_1
+            | ids::REPORT_SHOWOUTPUT_2
+            | ids::REPORT_TOTALSCAUSEDBY_1
+            | ids::REPORT_CREATETOTALS_1
+            | ids::REPORT_CREATETOTALS_2
+            | ids::REPORT_NEWPAGE_1
+            | ids::REPORT_PAGENO_1
+            | ids::REPORT_PRINTONLYIFDETAIL_1
+            | ids::REPORT_PAPERSOURCE_1 => self.report_print_section_builtin(id, args, &running),
             ids::REPORT_SKIP_1 => self.report_flow_builtin(&running, Flow::Skip),
             ids::REPORT_BREAK_1 => self.report_flow_builtin(&running, Flow::Break),
             ids::REPORT_SETTABLEVIEW_1 => {
@@ -184,6 +193,65 @@ impl Session {
             // P175_DefaultLayout_PerReport; report/lt-y-report-props/YReportPropsTests.al:236 and YReportExt.al:152: the Word or
             // RDLC layout properties alone leave RDLC). Not pinned: a processing-only report that names a kind, a kind other than
             // RDLC, Word and Excel, a number no report declares.
+            // `DefaultLayout` on a report variable answers as the static form with its id (report/lt-report-requestpage-query-
+            // members/P105LytDefault.al:38-41, a processing-only report without layouts: `None`, twice). Whether it runs
+            // OnInitReport is not pinned: a report that declares one is refused.
+            ids::REPORT_DEFAULTLAYOUT_1 => {
+                let object = self.report_variable_object(&receiver, "DefaultLayout")?;
+                let id = self.object_id_of(object as u32);
+                self.report_builtin(ids::REPORT_DEFAULTLAYOUT_2, None, &[Value::Integer(id as i32)], running)
+            }
+            ids::REPORT_RDLCLAYOUT_1 | ids::REPORT_WORDLAYOUT_1 | ids::REPORT_EXCELLAYOUT_1 => {
+                let object = self.report_variable_object(&receiver, "layout")?;
+                let kind = match id {
+                    ids::REPORT_RDLCLAYOUT_1 => "RDLC",
+                    ids::REPORT_WORDLAYOUT_1 => "Word",
+                    _ => "Excel",
+                };
+                self.report_layout_stream(Some(object), kind, args.first())
+            }
+            ids::REPORT_RDLCLAYOUT_2 | ids::REPORT_WORDLAYOUT_2 | ids::REPORT_EXCELLAYOUT_2 => {
+                let kind = match id {
+                    ids::REPORT_RDLCLAYOUT_2 => "RDLC",
+                    ids::REPORT_WORDLAYOUT_2 => "Word",
+                    _ => "Excel",
+                };
+                let Some(Value::Integer(n)) = args.first() else {
+                    return unsupported(format!("Report.{kind}Layout with an id that is not an integer"));
+                };
+                let found = self.engine.program.objects.iter().position(|o| {
+                    (o.is_kind(al_ir::ObjKind::Report) || o.is_shell_of(al_ir::ObjKind::Report))
+                        && o.id == u32::try_from(*n).ok()
+                });
+                match found {
+                    Some(o) if self.engine.program.objects[o].is_shell_of(al_ir::ObjKind::Report) => {
+                        unsupported(format!(
+                            "Report.{kind}Layout of a report of a dependency that was not compiled (its layouts are not known)"
+                        ))
+                    }
+                    Some(o) => self.report_layout_stream(Some(o), kind, args.get(1)),
+                    None => {
+                        let n = i64::from(*n);
+                        if let Some(why) = self.missing_may_be_skipped("Report", n) {
+                            return unsupported(why);
+                        }
+                        if self.ret_used {
+                            // The result used: No, and nothing raises (P105LytRdlc.al:105, P105LytWord.al:105,
+                            // P105LytExcel.al:105, id 72399).
+                            Ok(Value::Boolean(false))
+                        } else {
+                            // As a statement: the missing-object error (report/lt-report-members-testrequestpage/P91Static.al:
+                            // 127-128, :140-141, :153-154, ids 0 and 71999).
+                            if self.tx.try_depth == 0 {
+                                return unsupported(format!(
+                                    "Report.{kind}Layout of an id no report has, called outside a try function (only from a try function is it pinned)"
+                                ));
+                            }
+                            Err(self.missing_object("Report", n))
+                        }
+                    }
+                }
+            }
             ids::REPORT_DEFAULTLAYOUT_2 => {
                 let Some(Value::Integer(n)) = args.first() else {
                     return unsupported("Report.DefaultLayout with an id that is not an integer");
@@ -192,9 +260,17 @@ impl Session {
                     (o.is_kind(al_ir::ObjKind::Report) || o.is_shell_of(al_ir::ObjKind::Report))
                         && o.id == u32::try_from(*n).ok()
                 }) else {
-                    return unsupported(format!(
-                        "Report.DefaultLayout of id {n}, which no report declares (error text not pinned)"
-                    ));
+                    // The missing-object error, its result used or not (report/lt-report-members-testrequestpage/
+                    // P91Static.al:113-115, ids 0, 71999 and -1).
+                    if let Some(why) = self.missing_may_be_skipped("Report", i64::from(*n)) {
+                        return unsupported(why);
+                    }
+                    if self.tx.try_depth == 0 {
+                        return unsupported(
+                            "Report.DefaultLayout of an id no report has, called outside a try function (only from a try function is it pinned)",
+                        );
+                    }
+                    return Err(self.missing_object("Report", i64::from(*n)));
                 };
                 let prop = |name: &str| {
                     o.properties
@@ -406,6 +482,17 @@ impl Session {
                         "ObjectHasAlreadyBeenRun",
                     ));
                 }
+                // A variable whose RunModal ran to its end cannot RunModal again: the error, and nothing runs
+                // (report/lt-report-requestpage-query-members/P105TotArray.al:97-105). A Run after it is not pinned.
+                if self.report_run_modal_done_on(&inst) {
+                    if id == ids::REPORT_RUNMODAL_1 {
+                        return Err(crate::transactions::al_error_code(
+                            "The object has been run. Use the function CLEAR(Report).",
+                            "ObjectHasAlreadyBeenRun",
+                        ));
+                    }
+                    return unsupported("Report.Run on a report variable after its RunModal (not pinned)");
+                }
                 let schema = self.report_schema(&inst)?;
                 let window = Self::report_shows_page(&inst, &schema)?;
                 let result = if quit {
@@ -439,6 +526,10 @@ impl Session {
                 // instance when it ends ... RunModal keeps it", as Base Application's Reservation Worksheet relies on).
                 if id == ids::REPORT_RUN_1 && !self.report.rebind_after_run {
                     self.report_clear(&inst);
+                }
+                if id == ids::REPORT_RUNMODAL_1 && !quit && result.is_ok() {
+                    self.report.report_run_modal_done.retain(|w| w.strong_count() > 0);
+                    self.report.report_run_modal_done.push(Rc::downgrade(&inst));
                 }
                 result.map(|()| Value::Null)
             }
@@ -575,6 +666,14 @@ impl Session {
             ids::REPORT_RUNREQUESTPAGE_1 | ids::REPORT_RUNREQUESTPAGE_2 => {
                 let (inst, schema, seed) = if id == ids::REPORT_RUNREQUESTPAGE_1 {
                     let inst = self.report_instance(receiver, false)?.0;
+                    // After a RunModal of the variable: the error, and no page opens
+                    // (report/lt-report-requestpage/RptRequestPage.al:990-1009 UseRequestPageFalse_RunModalAndRunRequestPage).
+                    if self.report_run_modal_done_on(&inst) {
+                        return Err(crate::transactions::al_error_code(
+                            "The object has been run. Use the function CLEAR(Report).",
+                            "ObjectHasAlreadyBeenRun",
+                        ));
+                    }
                     let schema = self.report_schema(&inst)?;
                     (inst, schema, args.first())
                 } else {
@@ -724,6 +823,103 @@ impl Session {
         }
     }
 
+    /// The report object of a report variable for a method that reads the report's metadata. Whether the call runs
+    /// OnInitReport is not pinned: a report (or an extension of it) that declares one is refused.
+    fn report_variable_object(&self, receiver: &Option<Value>, what: &str) -> Result<usize, Signal> {
+        let Some(Value::Codeunit(rc)) = receiver else {
+            return unsupported(format!("Report.{what} on {}", receiver.describe()));
+        };
+        let object = rc.borrow().object as usize;
+        let Some(r) = self.engine.program.objects[object].report.as_ref() else {
+            return unsupported(format!("Report.{what} on an object that is not a report"));
+        };
+        if !rc.borrow().initialized && (r.on_init.is_some() || !r.extensions.is_empty()) {
+            return unsupported(format!(
+                "Report.{what} on a report variable before its first use, of a report with OnInitReport or a reportextension (whether it runs OnInitReport is not pinned)"
+            ));
+        }
+        Ok(object)
+    }
+
+    /// `Report.RdlcLayout`, `WordLayout` and `ExcelLayout` (static with an id that names a report, or on a variable) of a
+    /// report that declares no layout file: no rendering layout, none of the RDLCLayout, WordLayout and ExcelLayout
+    /// properties and no reportextension.
+    /// - The result used, on a processing-only report: No, and a stream that was never created stays so; EOS of it then
+    ///   raises NotInitialized (report/lt-report-requestpage-query-members/P105LytRdlc.al:63-92, P105LytWord.al,
+    ///   P105LytExcel.al: instance and static).
+    /// - As a statement on a processing-only report: ReportNoLayout for each kind (report/lt-report-members-testrequestpage/
+    ///   P91Static.al:126, :139, :152 `proconly`).
+    /// - As a statement on a report that is not processing-only and names `DefaultLayout = RDLC`: RdlcLayout gives an empty
+    ///   stream (:125 `nolayout eos=Yes`), WordLayout and ExcelLayout raise ReportNoLayout (:138, :151).
+    ///
+    /// Everything else (a report with a layout file, a stream that was created, another shape) is not pinned and refused.
+    fn report_layout_stream(
+        &mut self,
+        object: Option<usize>,
+        kind: &str,
+        stream: Option<&Value>,
+    ) -> Result<Value, Signal> {
+        let Some(object) = object else {
+            return unsupported(format!("Report.{kind}Layout without a report"));
+        };
+        let o = &self.engine.program.objects[object];
+        let Some(r) = o.report.as_ref() else {
+            return unsupported(format!("Report.{kind}Layout of an object that is not a report"));
+        };
+        let prop = |name: &str| {
+            o.properties
+                .iter()
+                .find(|(k, _)| k.eq_ignore_ascii_case(name))
+                .map(|(_, v)| v.trim().trim_matches('"').to_string())
+        };
+        let declares_file = !r.rendering_layouts.is_empty()
+            || !r.extensions.is_empty()
+            || ["RDLCLayout", "WordLayout", "ExcelLayout", "DefaultRenderingLayout"]
+                .iter()
+                .any(|p| prop(p).is_some());
+        if declares_file {
+            return unsupported(format!(
+                "Report.{kind}Layout of a report that declares a layout file or a reportextension (the layout stream is not pinned)"
+            ));
+        }
+        let Some(stream) = stream else {
+            return unsupported(format!("Report.{kind}Layout without a stream"));
+        };
+        let no_layout = || {
+            Err(crate::transactions::al_error_code(
+                "Exception of type 'Microsoft.Dynamics.Nav.Types.Exceptions.NavNCLReportNoLayoutException' was thrown.",
+                "ReportNoLayout",
+            ))
+        };
+        let default_rdlc = prop("DefaultLayout").is_some_and(|v| v.eq_ignore_ascii_case("RDLC"));
+        match (self.ret_used, r.processing_only) {
+            (true, true) if prop("DefaultLayout").is_none() => {
+                if !al_builtins::stream::mark_not_initialized(stream) {
+                    return unsupported(format!(
+                        "Report.{kind}Layout into a stream that was created (what it does to the stream is not pinned)"
+                    ));
+                }
+                Ok(Value::Boolean(false))
+            }
+            (false, true) if prop("DefaultLayout").is_none() => no_layout(),
+            (false, false) if default_rdlc => {
+                if kind != "RDLC" {
+                    return no_layout();
+                }
+                if !al_builtins::stream::create_empty_in(stream) {
+                    return unsupported(
+                        "Report.RdlcLayout into a stream that was created (what it does to the stream is not pinned)",
+                    );
+                }
+                Ok(Value::Boolean(true))
+            }
+            _ => unsupported(format!(
+                "Report.{kind}Layout of a report without a layout file{} (only a processing-only report, and as a statement one with DefaultLayout = RDLC, are pinned)",
+                if self.ret_used { ", its result used" } else { "" }
+            )),
+        }
+    }
+
     /// The instance of reportextension `ext` that belongs to report variable `base`: made at first use and kept
     /// with the variable, so the extension's globals and added data items keep their state across calls, `SaveAs`
     /// and `Execute`; a `Run` and a `Clear` drop it (reportext/W3RpExtProcedures.al:ExtensionProcedure_*).
@@ -761,7 +957,7 @@ impl Session {
     /// WordXmlPart_BothOverloads_ReportWithoutWordLayout and WordXmlPart_Content_IncludesTheColumns, BC 29.0):
     /// a report with only an RDLC layout answers a text that starts with `<` and holds the data item and
     /// column names and `urn:microsoft-dynamics-nav`, with either flag; an unknown report id fails with the code
-    /// AL:MetadataNotFound (its text is not pinned). The rest follows what the owner's Pageworks code reads
+    /// AL:MetadataNotFound and the missing-object text (P91Static.al:167-168). The rest follows what the owner's Pageworks code reads
     /// (a `NavWordReportXmlPart` root, a `Labels` block, nested data items, `ElementType` DataItem / Column
     /// with the flag): unprobed, docs/probes-needed.md "Report.WordXmlPart".
     fn report_word_xml_part(
@@ -787,7 +983,14 @@ impl Session {
                 if let Some(why) = self.missing_may_be_skipped("Report", n) {
                     return unsupported(why);
                 }
-                return Err(crate::transactions::al_error_code("", "AL:MetadataNotFound"));
+                // The missing-object error (report/lt-report-members-testrequestpage/P91Static.al:167-168, ids 0 and 71999).
+                // Only from a try function is it pinned: which object the text names elsewhere is not.
+                if self.tx.try_depth == 0 {
+                    return unsupported(
+                        "Report.WordXmlPart of an id no report has, called outside a try function (only from a try function is it pinned)",
+                    );
+                }
+                return Err(self.missing_object("Report", n));
             }
             (1, self.report_by_number(id, args.first())?.1)
         } else {
@@ -868,6 +1071,14 @@ impl Session {
                 return unsupported(format!(
                     "{id} of report {n}, which belongs to a dependency app and was not compiled (no code the workspace reaches uses it)"
                 ));
+            }
+            // Run and RunModal raise the missing-object error, from the test method itself (naming Test Runner - Mgt,
+            // report/lt-report-members-testrequestpage/P91Run.al:117-139 Run_InvalidIds) and from a try function (naming the
+            // test codeunit, misc/W5MissingObject.al:49); Execute only from the test method itself is pinned (P91Run.al:154-165).
+            let pinned = matches!(id, ids::REPORT_RUN_3 | ids::REPORT_RUNMODAL_3)
+                || (id == ids::REPORT_EXECUTE_3 && self.in_test_method_itself());
+            if pinned {
+                return Err(self.missing_object("Report", i64::from(*n)));
             }
             return unsupported(format!(
                 "{id} of id {n}, which no report declares (error text not pinned)"
@@ -1032,6 +1243,82 @@ impl Session {
 
     /// `CurrReport.Skip`, `Break` and `Quit` called straight from a report trigger: the trigger
     /// ends and the run reads the request (`report_trigger_call`).
+    /// `CurrReport.ShowOutput`, `TotalsCausedBy` and `CreateTotals` in a processing-only report, which prints no
+    /// section: ShowOutput reads No and ShowOutput(Boolean) changes nothing (report/lt-report-requestpage-query-members/
+    /// P105ShowOutput.al:94-130, in OnPreDataItem, OnAfterGetRecord and OnPostDataItem; report/lt-report-members-
+    /// testrequestpage/P91Inst.al:89-90 and :186 in OnPreReport), TotalsCausedBy is 0 (P91Inst.al:46, :51, :118, in
+    /// OnAfterGetRecord and OnPostDataItem; P105TotScalar.al:60), and CreateTotals in OnPreDataItem leaves the variables as
+    /// the triggers set them (P105TotScalar.al:105-150, P105TotArray.al:76-85, P91Inst.al:41). Another trigger, a report that
+    /// prints, and a ShowOutput(Boolean) whose result is used are not pinned and refused.
+    fn report_print_section_builtin(
+        &mut self,
+        id: al_ir::BuiltinId,
+        args: &[Value],
+        running: &Inst,
+    ) -> Result<Value, Signal> {
+        let object = running.borrow().object as usize;
+        let o = &self.engine.program.objects[object];
+        let name = match id {
+            ids::REPORT_SHOWOUTPUT_1 | ids::REPORT_SHOWOUTPUT_2 => "ShowOutput",
+            ids::REPORT_TOTALSCAUSEDBY_1 => "TotalsCausedBy",
+            ids::REPORT_NEWPAGE_1 => "NewPage",
+            ids::REPORT_PAGENO_1 => "PageNo",
+            ids::REPORT_PRINTONLYIFDETAIL_1 => "PrintOnlyIfDetail",
+            ids::REPORT_PAPERSOURCE_1 => "PaperSource",
+            _ => "CreateTotals",
+        };
+        let processing_only = o.report.as_ref().is_some_and(|r| r.processing_only);
+        let kind = match self.report.report_trigger {
+            Some((depth, kind)) if o.is_kind(al_ir::ObjKind::Report) && self.depth >= depth => Some(kind),
+            _ => None,
+        };
+        let setter = !args.is_empty() && !matches!(name, "CreateTotals" | "PaperSource");
+        let pinned = processing_only
+            && match (name, kind) {
+                ("ShowOutput", Some(TrigKind::Pre)) => !setter,
+                ("ShowOutput", Some(TrigKind::PreItem)) => true,
+                ("ShowOutput", Some(TrigKind::Row)) => true,
+                ("ShowOutput", Some(TrigKind::PostItem)) => !setter,
+                ("TotalsCausedBy", Some(TrigKind::Row | TrigKind::PostItem)) => true,
+                ("CreateTotals", Some(TrigKind::PreItem)) => true,
+                // NewPage changes nothing and PageNo reads 1 in OnAfterGetRecord (P91Inst.al:79-83, :186, :209-210, also on a
+                // second Run of the variable); PrintOnlyIfDetail reads No, and back what OnPreReport set (:89-94, :186).
+                ("NewPage", Some(TrigKind::Row)) => true,
+                // PaperSource(Bin) and PaperSource(Bin, Page) in OnPreDataItem change nothing, for bins 1, 2, 0 and -1
+                // (report/lt-report-requestpage-query-members/P105Paper.al:33-45, :86-121).
+                ("PaperSource", Some(TrigKind::PreItem)) => args.iter().all(|a| matches!(a, Value::Integer(_))),
+                ("PageNo", Some(TrigKind::Row)) => !setter,
+                ("PrintOnlyIfDetail", Some(TrigKind::Pre)) => {
+                    args.is_empty() || matches!(args.first(), Some(Value::Boolean(_)))
+                }
+                _ => false,
+            }
+            && !(setter && self.ret_used);
+        if !pinned {
+            return unsupported(format!(
+                "CurrReport.{name} {} (only in the triggers of a processing-only report where the corpus calls it is it pinned)",
+                if processing_only {
+                    "in this trigger"
+                } else {
+                    "in a report that prints"
+                }
+            ));
+        }
+        Ok(match name {
+            "ShowOutput" => Value::Boolean(false),
+            "TotalsCausedBy" => Value::Integer(0),
+            "PageNo" => Value::Integer(1),
+            "PrintOnlyIfDetail" => match args.first() {
+                Some(Value::Boolean(b)) => {
+                    self.report.print_only_if_detail = *b;
+                    Value::Null
+                }
+                _ => Value::Boolean(self.report.print_only_if_detail),
+            },
+            _ => Value::Null,
+        })
+    }
+
     fn report_flow_builtin(&mut self, running: &Inst, flow: Flow) -> Result<Value, Signal> {
         let object = running.borrow().object as usize;
         let on_report = {
@@ -1268,6 +1555,7 @@ impl Session {
     // ------------------------------------------------------------------ the run
 
     fn report_run(&mut self, inst: &Inst, schema: &Schema, entry: Entry, window: bool) -> Result<(), Signal> {
+        self.report.print_only_if_detail = false;
         // `window` says whether the request page opens: the instance's UseRequestPage, which falls
         // back on the report's property (record/TestTxModelReportRun.al:11, :60-61: a report with a
         // request page "defaults to true"), or a static call's RequestWindow. A report without a
@@ -1286,6 +1574,7 @@ impl Session {
         window: bool,
         enters: bool,
     ) -> Result<(), Signal> {
+        self.report.print_only_if_detail = false;
         // Only a SaveAs of a variable with a language or region is pinned (report/W3ReportObjectIdPreviewLanguage.al:893, :912).
         if let Some((_, language, region)) = self.variable_culture_of(inst) {
             if language.is_some() || region.is_some() {
@@ -1941,14 +2230,10 @@ impl Session {
         'rows: while more {
             iterations += 1;
             // The CalcFields property: the listed FlowFields of the row, before its triggers. Pinned for one field of a
-            // top-level item (misc/lt-probes-needed-8/PnH3Link.al:CalcFields_Property_CalculatesTheFlowField); a nested
-            // item or a list of several fields is the same on an assumption.
+            // top-level item (misc/lt-probes-needed-8/PnH3Link.al:CalcFields_Property_CalculatesTheFlowField) and for two
+            // fields of a nested item a report extension adds (report/lt-aq/AqTests.al:184 CalcFields_ExtensionDataItem_Values);
+            // a listed field that is not a FlowField fails the run (AqTests.al:197 CalcFields_NormalField_Run).
             if !item.calc_fields.is_empty() {
-                if item.parent.is_some() || item.calc_fields.len() > 1 {
-                    al_builtins::assumptions::assume(
-                        al_builtins::assumptions::Assumption::ReportItemCalcFieldsNestedOrList,
-                    );
-                }
                 self.calc_fields(&rec, &item.calc_fields)?;
             }
             if run.dataset {
@@ -2836,6 +3121,13 @@ impl Session {
         }
     }
 
+    fn report_run_modal_done_on(&self, inst: &Inst) -> bool {
+        self.report
+            .report_run_modal_done
+            .iter()
+            .any(|w| w.upgrade().is_some_and(|i| Rc::ptr_eq(&i, inst)))
+    }
+
     fn report_mark_executed(&mut self, inst: &Inst) {
         self.report.report_executed.retain(|w| w.strong_count() > 0);
         self.report.report_executed.push(Rc::downgrade(inst));
@@ -2988,6 +3280,71 @@ impl Session {
         }
         al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::RequestPageCaptionSet);
         Ok(Value::Null)
+    }
+
+    /// `RequestPage.Editable`, `LookupMode`, `ObjectId` and `Activate` from the code of an open request page
+    /// (report/lt-report-requestpage-query-members/P105RpMembers.al:44-75, from a control's OnValidate):
+    /// Editable reads Yes and back what was set (:117), LookupMode reads No and back what was set (:138), ObjectId is
+    /// `Page <report name>` with no argument or true and `Page <report id>` with false (:159), and Activate raises
+    /// `Unhandled UI: Page <report id>` (:181-182). While Editable is false or LookupMode true, what the page does is not
+    /// pinned: every later client call on it but Close is refused.
+    pub(crate) fn request_page_member(
+        &mut self,
+        id: al_ir::BuiltinId,
+        args: &[Value],
+        inst: &Inst,
+    ) -> Result<Value, Signal> {
+        let object = inst.borrow().object as usize;
+        let engine = self.engine.clone();
+        let o = &engine.program.objects[object];
+        let st = match o
+            .page
+            .as_ref()
+            .and_then(|p| inst.borrow().globals.get(p.curr_page_slot).cloned())
+        {
+            Some(Value::TestPage(st)) if st.borrow().open && o.report.is_some() => st,
+            _ => return unsupported(format!("{id} outside the code of an open request page (not pinned)")),
+        };
+        let report_id = self.object_id_of(object as u32);
+        const EDITABLE_OFF: &str = "a request page whose code set RequestPage.Editable(false) (not pinned)";
+        const LOOKUP_ON: &str = "a request page whose code set RequestPage.LookupMode(true) (not pinned)";
+        let mark = |st: &Rc<RefCell<al_builtins::value::PageState>>, on: bool, why: &str| {
+            let mut s = st.borrow_mut();
+            if on {
+                s.unpinned_state.get_or_insert_with(|| why.to_string());
+            } else if s.unpinned_state.as_deref() == Some(why) {
+                s.unpinned_state = None;
+            }
+        };
+        match id {
+            ids::REQUESTPAGE_EDITABLE_1 => match args.first() {
+                None => Ok(Value::Boolean(st.borrow().request_editable)),
+                Some(Value::Boolean(b)) => {
+                    st.borrow_mut().request_editable = *b;
+                    mark(&st, !*b, EDITABLE_OFF);
+                    Ok(Value::Null)
+                }
+                Some(other) => unsupported(format!("RequestPage.Editable with {}", other.describe())),
+            },
+            ids::REQUESTPAGE_LOOKUPMODE_1 => match args.first() {
+                None => Ok(Value::Boolean(st.borrow().request_lookup_mode)),
+                Some(Value::Boolean(b)) => {
+                    st.borrow_mut().request_lookup_mode = *b;
+                    mark(&st, *b, LOOKUP_ON);
+                    Ok(Value::Null)
+                }
+                Some(other) => unsupported(format!("RequestPage.LookupMode with {}", other.describe())),
+            },
+            ids::REQUESTPAGE_OBJECTID_1 => match args.first() {
+                None | Some(Value::Boolean(true)) => Ok(Value::Text(format!("Page {}", o.name).into())),
+                Some(Value::Boolean(false)) => Ok(Value::Text(format!("Page {report_id}").into())),
+                Some(other) => unsupported(format!("RequestPage.ObjectId with {}", other.describe())),
+            },
+            _ => Err(crate::transactions::al_error_code(
+                &format!("Unhandled UI: Page {report_id}"),
+                "ClientPageAbort:FormAbort",
+            )),
+        }
     }
 
     /// The request page of the report `inst` is an instance of, when its own OnOpenPage trigger is on the call stack.

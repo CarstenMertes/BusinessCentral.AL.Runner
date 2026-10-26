@@ -29,10 +29,11 @@ fn arg_error(message: String) -> Signal {
     }))
 }
 
+/// The index error of `Name`, code ArgumentOutOfRange (platform/lt-platform-members/PlTFilterPageBuilder.al:130-137).
 fn al_error(message: String) -> Signal {
     Signal::Error(Box::new(AlError {
         message,
-        code: String::new(),
+        code: "ArgumentOutOfRange".into(),
         call_stack: String::new(),
         ..Default::default()
     }))
@@ -111,7 +112,9 @@ impl Session {
             }
             ids::FILTERPAGEBUILDER_PAGECAPTION_1 => match args.first() {
                 Some(v) => {
-                    state_of(&cell)?.caption = Some(text(std::slice::from_ref(v), 0)?);
+                    // The empty caption reads as the default again (PlTFilterPageBuilder.al:149-150,156 `empty`).
+                    let caption = text(std::slice::from_ref(v), 0)?;
+                    state_of(&cell)?.caption = (!caption.is_empty()).then_some(caption);
                     Ok(Value::Null)
                 }
                 None => Ok(Value::Text(
@@ -139,9 +142,9 @@ impl Session {
                             );
                         }
                         let Some(table) = self.table_object(i64::from(*no)) else {
-                            return unsupported(format!(
-                                "FilterPageBuilder.AddTable of table {no}, which no table declares (error text not pinned)"
-                            ));
+                            // The missing-object error (platform/lt-platform-members/PlTFilterPageBuilder.al:101-110
+                            // AddTable_Errors, the caller scrubbed).
+                            return Err(self.missing_object("Table", i64::from(*no)));
                         };
                         let Value::Record(rec) = self.default_value(&RtType::Record(table as u32, false)) else {
                             return unsupported("a record buffer for FilterPageBuilder.AddTable");
@@ -193,6 +196,29 @@ impl Session {
                     }
                 }
             }
+            // AddFieldNo: the field by its number, as AddField with that field (PlTFilterPageBuilder.al:242-260
+            // AddFieldNo_Variants: without a filter, with a filter, the view after). An unknown control or field number
+            // is not pinned.
+            ids::FILTERPAGEBUILDER_ADDFIELDNO_1 => {
+                let name = text(args, 0)?;
+                let Some(control) = self.filter_control(&cell, &name)? else {
+                    return unsupported("FilterPageBuilder.AddFieldNo of an unknown control (not pinned)");
+                };
+                let Some(Value::Integer(no)) = args.get(1) else {
+                    return unsupported(format!("FilterPageBuilder.AddFieldNo with {}", args.get(1).describe()));
+                };
+                let t = self.table(&control.record)?;
+                let Some(pos) = t.fields.iter().position(|f| i64::from(f.id) == i64::from(*no)) else {
+                    return unsupported(format!(
+                        "FilterPageBuilder.AddFieldNo of field {no}, which the table lacks (not pinned)"
+                    ));
+                };
+                if let Some(filter) = args.get(2) {
+                    let filter = text(std::slice::from_ref(filter), 0)?;
+                    self.add_filter_page_field_filter(&control, pos, &filter)?;
+                }
+                Ok(Value::Boolean(true))
+            }
             ids::FILTERPAGEBUILDER_ADDFIELD_1 | ids::FILTERPAGEBUILDER_ADDFIELD_2 => {
                 let name = text(args, 0)?;
                 let Some(control) = self.filter_control(&cell, &name)? else {
@@ -215,19 +241,7 @@ impl Session {
                 };
                 if let Some(filter) = args.get(2) {
                     let filter = text(std::slice::from_ref(filter), 0)?;
-                    let t = self.table(&control.record)?;
-                    let ty = t.fields[pos].ty.clone();
-                    let expr = self
-                        .parse_filter_text(&filter, &ty)
-                        .map_err(|e| Signal::Unsupported(format!("FilterPageBuilder.AddField: {e}")))?;
-                    let mut r = control.record.borrow_mut();
-                    let group = r.filter_group;
-                    r.filters.retain(|f| !(f.field == pos && f.group == group));
-                    r.filters.push(FieldFilter {
-                        field: pos,
-                        expr,
-                        group,
-                    });
+                    self.add_filter_page_field_filter(&control, pos, &filter)?;
                 }
                 Ok(Value::Boolean(true))
             }
@@ -245,7 +259,10 @@ impl Session {
                         // :GetView_CaptionsFlag_RendersAnOptionFilterDifferently
                         // The view starts with `VERSION(1) ` like a Record's (filterpage/W3FilterPageBuilder.al:
                         // AddRecord_CopiesTheFiltersOfTheRecord, BC 27.5 and 29.0).
-                        self.get_view_with(&c.record, &t, use_names, !use_names, false)
+                        // Without names the view takes the numeric form of a record's: `Field1=1(1..3)`, `ORDER(1)`
+                        // (platform/lt-platform-members/PlTFilterPageBuilder.al:177-180 GetSetView_RoundTrip, :199
+                        // AddRecord_WithFilters; handlers/lt-az-handlers/AzHandlerTests.al:269).
+                        self.get_view_with(&c.record, &t, use_names, !use_names, true)
                             .map(|v| Value::Text(format!("VERSION(1) {v}").into()))
                     }
                 }
@@ -274,6 +291,29 @@ impl Session {
             }
             _ => unsupported(format!("FilterPageBuilder.{}", id.method())),
         }
+    }
+
+    /// The filter AddField or AddFieldNo sets on the control's field at `pos`.
+    fn add_filter_page_field_filter(
+        &mut self,
+        control: &FilterControl,
+        pos: usize,
+        filter: &str,
+    ) -> Result<(), Signal> {
+        let t = self.table(&control.record)?;
+        let ty = t.fields[pos].ty.clone();
+        let expr = self
+            .parse_filter_text(filter, &ty)
+            .map_err(|e| Signal::Unsupported(format!("FilterPageBuilder.AddField: {e}")))?;
+        let mut r = control.record.borrow_mut();
+        let group = r.filter_group;
+        r.filters.retain(|f| !(f.field == pos && f.group == group));
+        r.filters.push(FieldFilter {
+            field: pos,
+            expr,
+            group,
+        });
+        Ok(())
     }
 
     fn filter_control(&self, cell: &Lib, name: &str) -> Result<Option<FilterControl>, Signal> {

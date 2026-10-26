@@ -230,7 +230,7 @@ page 62326 "PM Never Ran Host" { PageType = Card; SourceTable = "PM Row"; layout
   procedure Reach(): Text begin CurrPage.Sub.PAGE.Mark(); exit('reached'); end; }
 page 62325 "PM Empty Class" { PageType = Card; SourceTable = "PM Row"; layout { area(Content) { field("No."; Rec."No.") { CaptionClass = '3,'; } } } }
 page 62322 "PM Selection Own Update" { PageType = Card; SourceTable = "PM Row"; layout { area(Content) { field("No."; Rec."No.") { } } }
-  procedure UseAfterClose() begin CurrPage.Update(false); end; }
+  procedure UseAfterClose() begin CurrPage.Update(true); end; }
 page 62327 "PM Editable Flag" { PageType = Card; SourceTable = "PM Row";
   layout { area(Content) { field("No."; Rec."No.") { } field(Descr; Rec.Descr) { trigger OnValidate() begin Flag := Rec.Descr = ''; end; } field(Other; Rec.Rank) { Editable = not Flag; } } }
   var Flag: Boolean; }
@@ -775,7 +775,7 @@ fn a_page_declaring_selection_routines_opens() {
 }
 
 #[test]
-fn reaching_set_selection_filter_or_get_record_is_refused() {
+fn set_selection_filter_of_a_page_that_never_ran_runs_and_get_record_is_refused() {
     let o = outcomes(&format!(
         "{HELPERS}
         [Test]
@@ -783,10 +783,9 @@ fn reaching_set_selection_filter_or_get_record_is_refused() {
         [Test]
         procedure Gets() var P: Page \"PM Selection\"; R: Record \"PM Row\"; begin P.Picked(R); end;"
     ));
-    assert!(
-        matches!(&o[0].1, Outcome::NotRun(why) if why.contains("SetSelectionFilter")),
-        "{o:?}"
-    );
+    // A Page variable that never ran and has no OnInit filters the record on its blank key (pages/lt-page-runtime/P82PageVar.al:86,
+    // pages/lt-bl-unopened-currpage/UnopenedCurrPage.al:159).
+    assert!(matches!(&o[0].1, Outcome::Pass), "{o:?}");
     assert!(
         matches!(&o[1].1, Outcome::NotRun(why) if why.contains("GetRecord")),
         "{o:?}"
@@ -1030,7 +1029,8 @@ fn current_page_update_inside_a_procedure_of_a_hidden_part_does_nothing() {
 }
 
 // A procedure of a `Page` variable that uses `CurrPage` after the page closed is refused, not failed with the TestPage error
-// (Posted Sales Document Lines.CopyLineToDoc after RunModal: 35 Tests-ERM, SCM and SMB tests).
+// (Posted Sales Document Lines.CopyLineToDoc after RunModal: 35 Tests-ERM, SCM and SMB tests). `Update(false)` there is pinned
+// to do nothing (pages/lt-closed-page-variable-currpage/ClosedPageVariableCurrPageUpdate.al:70); `Update(true)` is not.
 #[test]
 fn a_page_variable_procedure_using_curr_page_after_the_page_closed_is_refused_not_failed() {
     let o = outcomes(&format!(

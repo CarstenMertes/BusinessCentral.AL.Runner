@@ -193,20 +193,28 @@ fn what_the_corpus_does_not_pin_is_refused() {
             "{body}: {r:?}"
         );
     };
-    // A MediaSet that already has members.
-    refused(
-        format!(
-            "Rec.Code := 'R2'; Rec.Insert(); {} Rec.Images.ImportStream(ins, 'a'); {} Rec.Images.ImportStream(ins, 'b'); exit('');",
-            feed("Rec", "x"),
-            feed("Rec", "y")
-        ),
-        "already has members",
+    // A MediaSet that already has members takes another (streams/StTMedia.al:MediaSetImportTwiceAdds `count` 2).
+    let body = format!(
+        "Rec.Code := 'R2'; Rec.Insert(); {} Rec.Images.ImportStream(ins, 'a'); {} Rec.Images.ImportStream(ins, 'b'); exit(Format(Rec.Images.Count()));",
+        feed("Rec", "x"),
+        feed("Rec", "y")
     );
-    // An item index outside the set; exporting an empty field.
+    assert_eq!(text("", &body).unwrap(), "2");
+    // An item index past the members of an empty set raises (streams/StTMedia.al:MediaSetEmpty `item1`); a negative one is not
+    // pinned.
+    let r = text(
+        "",
+        "Rec.Code := 'R3'; Rec.Insert(); id := Rec.Images.Item(1); exit('');",
+    );
+    assert!(
+        matches!(&r, Err(Signal::Error(e)) if e.message == "Argument was out of range: index."),
+        "{r:?}"
+    );
     refused(
-        "Rec.Code := 'R3'; Rec.Insert(); id := Rec.Images.Item(1); exit('');".into(),
+        "Rec.Code := 'R3'; Rec.Insert(); id := Rec.Images.Item(-1); exit('');".into(),
         "outside the set",
     );
+    // Exporting an empty field.
     refused(
         "Rec.Code := 'R4'; Rec.Insert(); Rec.Picture.ExportStream(outs); exit('');".into(),
         "empty field",

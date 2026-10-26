@@ -550,20 +550,7 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     // False in a test: measured on real BC by session/TestEnvironmentUserTenantContracts.al:238
     // (Assert.IsFalse(TaskScheduler.CanCreateTask())).
     ("TaskScheduler.CanCreateTask#1", |_, _, _| Ok(Value::Boolean(false))),
-    // CreateTask hands back a new task id (session/TestTaskSchedulerCloudBehavior.al:9-20 pins that
-    // and nothing more). A task starts in a session of its own after the creating transaction
-    // commits, which a test does not wait for, so the task is not run (docs/probes-needed.md).
-    ("TaskScheduler.CreateTask#1", |c, _, _| Ok(Value::Guid(c.new_guid()))),
-    ("TaskScheduler.CreateTask#2", |c, _, _| Ok(Value::Guid(c.new_guid()))),
-    ("TaskScheduler.SetTaskReady#1", |_, _, _| {
-        unsupported("TaskScheduler.SetTaskReady (not pinned)")
-    }),
-    ("TaskScheduler.TaskExists#1", |_, _, _| {
-        unsupported("TaskScheduler.TaskExists (not pinned)")
-    }),
-    ("TaskScheduler.CancelTask#1", |_, _, _| {
-        unsupported("TaskScheduler.CancelTask (not pinned)")
-    }),
+    // CreateTask, TaskExists, CancelTask and SetTaskReady keep the session's tasks: `Ctx::session_op` (al-vm tasks.rs).
     ("Session.StartSession#1", start_session),
     ("Session.StartSession#2", start_session),
     ("Session.StartSession#3", start_session),
@@ -677,7 +664,18 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("Report.Preview#1", vm_only),
     ("RequestPage.Update#1", vm_only),
     ("RequestPage.Caption#1", vm_only),
+    ("RequestPage.Editable#1", vm_only),
+    ("RequestPage.LookupMode#1", vm_only),
+    ("RequestPage.ObjectId#1", vm_only),
+    ("RequestPage.Activate#1", vm_only),
+    ("Report.DefaultLayout#1", vm_only),
     ("Report.DefaultLayout#2", vm_only),
+    ("Report.RDLCLayout#1", vm_only),
+    ("Report.RdlcLayout#2", vm_only),
+    ("Report.WordLayout#1", vm_only),
+    ("Report.WordLayout#2", vm_only),
+    ("Report.ExcelLayout#1", vm_only),
+    ("Report.ExcelLayout#2", vm_only),
     ("Report.Language#1", vm_only),
     ("Report.FormatRegion#1", vm_only),
     // SaveAs with a stream runs the report and writes its dataset (al-vm reports.rs); SaveAs to a file
@@ -695,6 +693,15 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("Report.SaveAsHtml#1", vm_only),
     ("Report.SaveAsHtml#2", vm_only),
     ("Report.Quit#1", vm_only),
+    ("Report.ShowOutput#1", vm_only),
+    ("Report.ShowOutput#2", vm_only),
+    ("Report.TotalsCausedBy#1", vm_only),
+    ("Report.NewPage#1", vm_only),
+    ("Report.PageNo#1", vm_only),
+    ("Report.PrintOnlyIfDetail#1", vm_only),
+    ("Report.PaperSource#1", vm_only),
+    ("Report.CreateTotals#1", vm_only),
+    ("Report.CreateTotals#2", vm_only),
     ("Report.Skip#1", vm_only),
     ("Report.Break#1", vm_only),
     ("System.CreateGuid#1", |c, _, _| Ok(Value::Guid(c.new_guid()))),
@@ -740,15 +747,24 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("Record.SetAutoCalcFields#1", |c, r, a| {
         c.record(RecordOp::SetAutoCalcFields, r, a)
     }),
-    // record/PZFindDirections.al:106 pins `ToText` of 5, 20, 25 and 35. Whether a larger value gets a thousands separator is
-    // not pinned, so it is refused (docs/probes-needed.md "Integer.ToText").
+    // `ToText` of an Integer, a BigInteger, a Guid and a Byte: no thousands separator (`1000`, `2147483647`, `-9223372036854775808`),
+    // a Guid with braces in upper case whatever the argument, a Byte as `Format` shows it (types/lt-totext-bigtext-codeunit-run/
+    // P93ScalarToText.al:180-300, P93Guid.al:28-102; record/PZFindDirections.al:106).
     ("Integer.ToText#1", |_, r, _| match r.as_deref() {
-        Some(Value::Integer(n)) if n.unsigned_abs() < 1000 => Ok(Value::Text(n.to_string().into())),
-        Some(Value::Integer(n)) => Err(Signal::Unsupported(format!(
-            "Integer.ToText of {n}: whether the text has a thousands separator is not pinned (docs/probes-needed.md)"
-        ))),
+        Some(Value::Integer(n)) => Ok(Value::Text(n.to_string().into())),
         other => Err(Signal::Unsupported(format!("Integer.ToText on {}", other.describe()))),
     }),
+    ("BigInteger.ToText#1", |_, r, _| match r.as_deref() {
+        Some(Value::BigInteger(n)) => Ok(Value::Text(n.to_string().into())),
+        other => Err(Signal::Unsupported(format!(
+            "BigInteger.ToText on {}",
+            other.describe()
+        ))),
+    }),
+    ("Guid.ToText#1", |_, r, _| guid_to_text(r)),
+    ("Guid.ToText#2", |_, r, _| guid_to_text(r)),
+    ("Byte.ToText#1", |c, r, _| byte_to_text(c, r)),
+    ("Byte.ToText#2", |c, r, _| byte_to_text(c, r)),
     // `Date.ToText()` and `Boolean.ToText()` (Base Application's Customer Mgt. CalcLastPaymentInfo puts them in a Dictionary
     // of [Text, Text]): Format(value) with the default format, pinned by types/lt-conversions-hidden-parts-doctype/
     // P142ToTextLang.al:P142_Date_Language and P142_Boolean_Language.
@@ -819,6 +835,8 @@ const REGISTRY: &[(&str, NativeFn)] = &[
         }
         unsupported("System.TranslatedText with other arguments than a value, an app id and a text")
     }),
+    // A TextConst whose text depends on the language in force (language code, text, ... in declaration order).
+    ("System.TextConstText#1", |c, _, a| textconst_text(c.language(), a)),
     // An interface assigned from another interface variable: one that holds no implementation raises
     // (codeunit/lt-enums-interfaces/OjT71047.al:250-251, Uninitialized_AssignedFromUninitialized `af224`).
     ("Interface.AssertAssigned#1", |_, _, a| match a.first() {
@@ -964,6 +982,7 @@ pub const INVENTED_IDS: &[&str] = &[
     "Text.MaxStrLenOfVarParameter#1",
     "InStream.OwnerOutOfScope#1",
     "System.TranslatedText#1",
+    "System.TextConstText#1",
 ];
 
 /// Every name that gets a [`BuiltinId`]: the catalog's overloads of every version, the registered natives
@@ -2204,6 +2223,50 @@ fn strsubstno(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> R
     Ok(Value::Text(substitute_fields(&template, &args[1..], ctx)?.into()))
 }
 
+/// The text a TextConst reads in language `language`, from its language codes and texts `args` in declaration order:
+/// - the text of the language in force (misc/lt-probe-requests-140/P140TextConstLang.al:20-56, P140_ReadAsText_Deu: `DeuFra`
+///   reads 'Hallo' in 1031; :58-91, P140_ReadAsText_Fra: 'Bonjour' in 1036; :163-191, BM_TextConst_Methods: an ENU and DEU
+///   TextConst reads its DEU text in 1031);
+/// - else the ENU text (P140TextConstLang.al:58-91: `EnuEmptyDeu` reads '' in 1036; types/lt-variant/VaTTextConst.al:
+///   TextConst_To_Text_Basics);
+/// - else the text of its only language (P140TextConstNoEnu.al:23-71, P140_ReadAsText_DefaultLanguage: `OnlyFra` reads
+///   'Seulement'; P140TextConstLang.al:20-56: `OnlyFra` in 1031);
+/// - else, measured only for `DEU = .., FRA = ..` read in 1033, the DEU text (P140TextConstNoEnu.al:23-71: `DeuFra` reads
+///   'Hallo'). Whether BC takes the first, the alphabetically first or the DEU text is not pinned, so other code lists are
+///   refused (docs/probes-needed.md "TextConst").
+///
+/// Every pinned read runs in 1033, 1031 or 1036, the languages of the codes ENU, DEU and FRA. A read in any other language is
+/// refused: it may fall back through a parent culture, so not even its ENU text or a single text is pinned there.
+fn textconst_text(language: i32, args: &[Value]) -> Result<Value, Signal> {
+    const KNOWN: [(&str, i32); 3] = [("ENU", 1033), ("DEU", 1031), ("FRA", 1036)];
+    if !KNOWN.iter().any(|(_, id)| *id == language) {
+        return unsupported(&format!(
+            "a TextConst read in language {language}: only 1033, 1031 and 1036 are pinned (docs/probes-needed.md \"TextConst\")"
+        ));
+    }
+    let mut texts = Vec::new();
+    for pair in args.chunks(2) {
+        let [Value::Text(code), Value::Text(text)] = pair else {
+            return unsupported("System.TextConstText with arguments other than pairs of a language code and a text");
+        };
+        texts.push((code.to_string(), text.clone()));
+    }
+    let id = |code: &str| KNOWN.iter().find(|(c, _)| *c == code).map(|(_, id)| *id);
+    if let Some((_, t)) = texts.iter().find(|(c, _)| id(c) == Some(language)) {
+        return Ok(Value::Text(t.clone()));
+    }
+    if let Some((_, t)) = texts.iter().find(|(c, _)| c == "ENU") {
+        return Ok(Value::Text(t.clone()));
+    }
+    match texts.as_slice() {
+        [(_, t)] => Ok(Value::Text(t.clone())),
+        [(deu, t), (fra, _)] if language == 1033 && deu == "DEU" && fra == "FRA" => Ok(Value::Text(t.clone())),
+        _ => unsupported(
+            "a TextConst with no text in the language in force and no ENU text, other than one text or DEU then FRA: which of its texts BC reads is not pinned (docs/probes-needed.md)",
+        ),
+    }
+}
+
 /// `UpperCase` and `LowerCase` follow `GlobalLanguage` for Turkish (1055) and Azerbaijani (1068): `i` becomes the dotted `İ` and `I`
 /// the dotless `ı`; every other letter maps as in the default language, and Greek (1032), German (1031) and Lithuanian (1063) map as
 /// the default too (text/lt-text-functions/CaseConv.Codeunit.al:145-180, LT_BU_CaseConv_TurkishGreekLanguage; :218-276,
@@ -2402,12 +2465,30 @@ fn clear(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result
         // A cleared stream is one that was never created again (streams/TestProbeStreamContracts.al:RecordAssign_CopiesBlobBytes).
         // A cleared SecretText is an empty one and a copy taken before keeps its content
         // (fieldref/lt-fieldref-testfield-types/SystemClearArraySecret.al:69-90, errorinfo/lt-errnotif/EnTSecret.al:15-26).
+        // A cleared ModuleInfo reads as one nobody filled (platform/lt-platform-members/PlTNavApp.al:69-81).
+        // A cleared BigText is empty (streams/StTBigText.al:ClearBigText `len-after-clear` 0, `len-after-add` 1).
         // A cleared HttpClient is a new one: no base address, the default timeout, no default headers; the next call
         // starts it fresh (network/lt-http-relative-request/HttpRelativeRequestPath.al:NewClient clears, then sets the base address).
+        // A cleared ErrorInfo is a fresh one, and so is every variable assigned from it, which shares it: `Error` of it raises ''
+        // with code Dialog (misc/lt-system-functions/ErrorMessage.al:184-206), its SystemId is the empty Guid
+        // (errorinfo/lt-bc-errorinfo-systemid/BcErrorInfoSystemId.al:55-66), TestField given it raises the plain text
+        // (record/lt-testfield-value-types/RecordTestFieldGroupA.al:59-72), and `B := A; Clear(A)` empties B's Message too
+        // (errorinfo Copy_Semantics, codeunit 73026).
+        Value::Library(name, cell) if name.as_str() == "ErrorInfo" => {
+            *cell.borrow_mut() = crate::value::LibraryValue::Empty;
+            return Ok(Value::Null);
+        }
         Value::Library(name, _)
             if matches!(
                 name.as_str(),
-                "OutStream" | "InStream" | "FileUpload" | "HttpClient" | "HttpHeaders" | "SecretText"
+                "OutStream"
+                    | "InStream"
+                    | "FileUpload"
+                    | "HttpClient"
+                    | "HttpHeaders"
+                    | "SecretText"
+                    | "ModuleInfo"
+                    | "BigText"
             ) =>
         {
             Value::Library(
@@ -2575,6 +2656,23 @@ pub(crate) fn method_lower(s: &str) -> String {
 
 pub(crate) fn simple_lower(s: &str) -> String {
     s.chars().map(|c| c.to_lowercase().next().unwrap_or(c)).collect()
+}
+
+fn guid_to_text(r: Option<&mut Value>) -> Result<Value, Signal> {
+    match r.as_deref() {
+        Some(Value::Guid(g)) => Ok(Value::Text(crate::format::format_guid(g).into())),
+        other => Err(Signal::Unsupported(format!("Guid.ToText on {}", other.describe()))),
+    }
+}
+
+fn byte_to_text(c: &mut dyn Ctx, r: Option<&mut Value>) -> Result<Value, Signal> {
+    match r.as_deref() {
+        Some(v @ Value::Byte(_)) => match crate::format::try_format(v, 0, 0, &*c) {
+            Ok(t) => Ok(Value::Text(t.into())),
+            Err(e) => Err(Signal::Unsupported(e)),
+        },
+        other => Err(Signal::Unsupported(format!("Byte.ToText on {}", other.describe()))),
+    }
 }
 
 fn primitive_to_text(c: &mut dyn Ctx, r: Option<&mut Value>, what: &str, a: &[Value]) -> Result<Value, Signal> {
@@ -2795,6 +2893,7 @@ pub(crate) mod tests {
             "Variant.IntoOption#1",
             "InStream.OwnerOutOfScope#1",
             "System.TranslatedText#1",
+            "System.TextConstText#1",
         ];
         for id in registered_ids().into_iter().filter(|id| !derived.contains(id)) {
             assert!(ids.iter().any(|i| i == id), "{id} is not a catalog overload id");

@@ -90,6 +90,16 @@ impl Session {
                 (a @ Value::Library(al_builtins::library_kind::LibraryKind::Notification, _), false) => a,
                 // An unknown event argument a subscriber passes on to its own event stays unknown (see `call_inner`).
                 (a @ Value::Unknown(_), false) => a,
+                // A Variant holding a RecordRef for a Record parameter, as for a procedure (`record_ref_into_record_param`).
+                (Value::Library(name, h), false)
+                    if name.eq_ignore_ascii_case("RecordRef")
+                        && matches!(r.locals[i].ty, al_builtins::value::RtType::Record(..)) =>
+                {
+                    let al_builtins::value::RtType::Record(table, _) = &r.locals[i].ty else {
+                        unreachable!()
+                    };
+                    self.record_ref_into_record_param(&h, *table)?
+                }
                 (a, _) => ops::convert(a, &r.locals[i].ty)?,
             });
         }

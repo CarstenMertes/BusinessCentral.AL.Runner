@@ -128,7 +128,13 @@ fn vm_class(id: al_builtins::builtin_id::BuiltinId) -> bool {
     class != Class::Other && class != Class::InStreamRead
         || matches!(
             id,
-            ids::REQUESTPAGE_UPDATE_1 | ids::REQUESTPAGE_CAPTION_1 | ids::DATABASE_ISINWRITETRANSACTION_1
+            ids::REQUESTPAGE_UPDATE_1
+                | ids::REQUESTPAGE_CAPTION_1
+                | ids::REQUESTPAGE_EDITABLE_1
+                | ids::REQUESTPAGE_LOOKUPMODE_1
+                | ids::REQUESTPAGE_OBJECTID_1
+                | ids::REQUESTPAGE_ACTIVATE_1
+                | ids::DATABASE_ISINWRITETRANSACTION_1
         )
 }
 

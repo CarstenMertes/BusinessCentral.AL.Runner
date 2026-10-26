@@ -150,6 +150,31 @@ impl Session {
         if method == "SaveAsCsvStatic" {
             return self.query_save_csv_static(args);
         }
+        // `Query.SaveAsXml(Number, OutStream)` of an id no query has: No, and nothing raises
+        // (report/lt-report-requestpage-query-members/P105QryXml.al:163-177). The file it writes for a query is not pinned
+        // (that test file only observes it): refused.
+        if method == "SaveAsXmlStatic" {
+            let known = match args.first() {
+                Some(Value::Integer(id)) => self
+                    .engine
+                    .program
+                    .objects
+                    .iter()
+                    .any(|o| o.is_kind(al_ir::ObjKind::Query) && o.id == u32::try_from(*id).ok()),
+                _ => return unsupported("Query.SaveAsXml with an id that is not an integer"),
+            };
+            if known || !self.ret_used {
+                return unsupported(
+                    "Query.SaveAsXml(Number, OutStream) of a query, or with the answer dropped (not pinned)",
+                );
+            }
+            if let Some(Value::Integer(id)) = args.first()
+                && let Some(why) = self.missing_may_be_skipped("Query", i64::from(*id))
+            {
+                return unsupported(why);
+            }
+            return Ok(Value::Boolean(false));
+        }
         let qs: Qs = match recv {
             Some(Value::Query(q)) => q.clone(),
             other => return unsupported(format!("Query.{method} on {}", other.describe())),
@@ -194,12 +219,12 @@ impl Session {
                 if qs.borrow().run.as_ref().is_some_and(|r| r.started) {
                     // After a filter changed mid-read it runs again with the new filters
                     // (misc/lt-probes-needed-1/PnAQueryOpenRead.al:125-170, SetRangeAndOpenAfterRead: `next-entry` 4).
-                    // After the last row (with or without a filter set since) it runs again too: not pinned
-                    // (assumption query-closed-after-last-row).
+                    // After the last row (with or without a SetRange or SetFilter since) it runs again too,
+                    // with the new filters (query/lt-query-read-to-end/QueryReadToEnd.al:88,130,172:
+                    // SetRange_AfterLastRow_ThenOpenAndRead, SetFilter_AfterLastRow_ThenOpenAndRead,
+                    // Open_Twice_AfterLastRow).
                     let filters_changed = qs.borrow().run.as_ref().is_some_and(|r| r.filters_changed);
-                    if Self::query_read_to_the_end(&qs) {
-                        al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::QueryClosedAfterLastRow);
-                    } else if !filters_changed {
+                    if !Self::query_read_to_the_end(&qs) && !filters_changed {
                         return unsupported("Open on a query that is already open and was read from (not pinned)");
                     }
                     qs.borrow_mut().run = None;
@@ -490,9 +515,21 @@ impl Session {
         top: i32,
         args: &[Value],
     ) -> Result<Value, Signal> {
-        if args.len() > 1 {
-            return unsupported("Query.SaveAsCsv with a format or a format argument (not pinned)");
-        }
+        // Format 0 answers No and writes nothing; formats 1 and 2 with an empty FormatArgument write the default file, and
+        // format 1 with a one-character FormatArgument separates the values with it
+        // (report/lt-report-requestpage-query-members/P105QryCsv.al:49-155, :250-268). Other formats and arguments, format 0
+        // with the answer dropped, and a separator that a value contains, are not pinned.
+        let sep = match (args.get(1), args.get(2)) {
+            (None, _) => ",".to_string(),
+            (Some(Value::Integer(0)), Some(Value::Text(t))) if t.is_empty() && self.ret_used => {
+                return Ok(Value::Boolean(false));
+            }
+            (Some(Value::Integer(1 | 2)), Some(Value::Text(t))) if t.is_empty() => ",".to_string(),
+            (Some(Value::Integer(1)), Some(Value::Text(t))) if t.chars().count() == 1 && t.as_str() != "\"" => {
+                t.to_string()
+            }
+            _ => return unsupported("Query.SaveAsCsv with this format or format argument (not pinned)"),
+        };
         let Some(Value::Library(_, h)) = args.first() else {
             return unsupported(format!("Query.SaveAsCsv with {}", args.first().describe()));
         };
@@ -530,6 +567,19 @@ impl Session {
         }) {
             return unsupported("Query.SaveAsCsv of a text beyond ASCII (not pinned)");
         }
+        let clash = |s: &str| s.contains(sep.as_str()) || s.contains(',') || s.contains('"');
+        if sep != ","
+            && (cols.iter().any(|&c| clash(&def.columns[c].name))
+                || rows.iter().any(|r| {
+                    r.columns
+                        .iter()
+                        .any(|v| matches!(v, Value::Text(s) | Value::Code(s) if clash(s)))
+                }))
+        {
+            return unsupported(
+                "Query.SaveAsCsv with a separator, and a value or name that holds it, a comma or a quote (not pinned)",
+            );
+        }
         let mut out = String::new();
         let quote = |s: &str| {
             if s.contains(',') || s.contains('"') {
@@ -543,7 +593,7 @@ impl Session {
                 .iter()
                 .map(|&c| quote(&def.columns[c].name))
                 .collect::<Vec<_>>()
-                .join(","),
+                .join(&sep),
         );
         out.push_str("\r\n");
         for r in rows.iter().take(if top > 0 { top as usize } else { usize::MAX }) {
@@ -558,10 +608,29 @@ impl Session {
                     _ => String::new(),
                 })
                 .collect();
-            out.push_str(&cells.join(","));
+            out.push_str(&cells.join(&sep));
             out.push_str("\r\n");
         }
+        // A second SaveAsCsv into the stream a SaveAsCsv wrote, with nothing written between them: the file is the second one
+        // (report/lt-report-requestpage-query-members/P105QryCsv.al:290-316, a longer second file). Whether a shorter one
+        // leaves the end of the first, and a SaveAsCsv after other writes, are not pinned.
+        let (pos, len) = {
+            let b = blob.borrow();
+            (b.write_pos, b.bytes.len())
+        };
+        if pos > 0 {
+            let after_csv =
+                matches!(&self.report.csv_written, Some((b, l)) if std::sync::Arc::ptr_eq(b, &blob) && *l == len);
+            if !after_csv || out.len() < len {
+                return unsupported(
+                    "Query.SaveAsCsv into a stream that holds bytes already (only a longer file after another SaveAsCsv is pinned)",
+                );
+            }
+            blob.borrow_mut().write_pos = 0;
+        }
         al_builtins::stream::write_bytes(&blob, out.as_bytes());
+        let len = blob.borrow().bytes.len();
+        self.report.csv_written = Some((blob.clone(), len));
         Ok(Value::Boolean(true))
     }
 
@@ -1088,9 +1157,8 @@ impl Session {
             }
             let item = &def.items[c.item];
             let field = c.field.expect("a column over a field");
-            if matches!(c.ty, RtType::Library(al_builtins::library_kind::LibraryKind::RecordId)) {
-                al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::QueryColumnRecordId);
-            }
+            // A column over a RecordId field returns the stored RecordId and groups and orders by it like the field
+            // (query/lt-az-query/AzQueryTests.al:212 RecordIdColumn_GroupAndOrderBy).
             let row = &self.filled(item.table, &joined[c.item]);
             let schema = &engine.program.objects[item.table].table.as_ref().expect("table").fields[field];
             let mut v = if schema.stored {

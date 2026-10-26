@@ -129,15 +129,6 @@ fn enumerable_fields(s: &Session, t: &TableDef) -> Vec<usize> {
     // A platform table lists its primary key fields first: Active Session is `2, 3, 1, 4, ...` and Time Zone
     // `3, 1, 2` (session/W6SessionTimeZone.al:ColumnNames_*, BC 27.5 and 29.0). The order of a table of an app
     // is by number, as before.
-    if t.fields.first().is_some_and(|_| {
-        s.engine.program.objects[t.object as usize]
-            .id
-            .is_some_and(|id| id >= SYSTEM_FIELD_BASE)
-    }) {
-        let key = &t.keys[0];
-        v.sort_by_key(|&i| (key.iter().position(|&k| k == i).unwrap_or(usize::MAX), t.fields[i].id));
-        return v;
-    }
     // The FlowFields come after the other fields: Custom Report Layout lists 1, 2, 4, ..., 15 and then its FlowField 3
     // (metadata/lt-custom-report-layout-columns/CustomReportLayoutColumns.al:33-44). The FlowFilters come between the normal
     // fields and the FlowFields (the same file, PW_FieldIndex_FlowFilterAmongNormalFields: `1, 3, 5, 7, 20`, then `2, 6`, then `4, 8`).
@@ -146,6 +137,23 @@ fn enumerable_fields(s: &Session, t: &TableDef) -> Vec<usize> {
         Some(c) if c.trim().eq_ignore_ascii_case("FlowFilter") => 1,
         _ => 0,
     };
+    // The FlowFields of a platform table come last there too: Permission lists 1, 3, 4, 6-11, then its FlowFields 2, 5, 12;
+    // Metadata Permission 1, 2, 4, 5, 7-12, 14, then 3, 6, 13, 15 (permissions/W6PermissionColumns.al:180-181).
+    if t.fields.first().is_some_and(|_| {
+        s.engine.program.objects[t.object as usize]
+            .id
+            .is_some_and(|id| id >= SYSTEM_FIELD_BASE)
+    }) {
+        let key = &t.keys[0];
+        v.sort_by_key(|&i| {
+            (
+                key.iter().position(|&k| k == i).unwrap_or(usize::MAX),
+                class(i) == 2,
+                t.fields[i].id,
+            )
+        });
+        return v;
+    }
     if v.iter().any(|&i| class(i) > 0) {
         v.sort_by_key(|&i| (class(i), t.fields[i].id));
     }
@@ -719,6 +727,9 @@ impl Session {
             // A ref that was never opened takes its table from the record (Assert.RecordIsEmpty does this).
             "GetTable" => {
                 let from_variant = std::mem::take(&mut self.get_table_from_variant);
+                if matches!(args.first(), Some(Value::Record(src)) if crate::records::media_key_marked(src)) {
+                    return unsupported(format!("RecordRef.GetTable of a record {}", crate::records::MEDIA_KEY));
+                }
                 let src = match args.first() {
                     // Through a Variant the record keeps its filters and loses its ChangeCompany
                     // (types/lt-cw-variant-leads/CwVariantChangeCompany.al:CW_Variant_KeepsOrDropsChangeCompany `variant to recordref`,
@@ -731,13 +742,19 @@ impl Session {
                         return Ok(Value::Null);
                     }
                     Some(Value::Record(src)) => src.clone(),
-                    // A RecordRef as the source (Microsoft's Gen. Jnl.-Post Preview): the same copy of its record.
-                    Some(Value::Library(_, other)) => match &*other.borrow() {
-                        LibraryValue::RecordRef(r) => {
-                            al_builtins::assumptions::assume(
-                                al_builtins::assumptions::Assumption::RecordRefGetTableOfRecordRef,
-                            );
-                            r.clone()
+                    // A RecordRef as the source (only through a Variant: B.GetTable(A) does not compile, must-not-compile
+                    // case 1140): a copy of its table, buffer, filters and current row, not shared afterwards
+                    // (record/lt-as-records/AsRecRefGetTable.al:35-106). A ref that is not open is a Conversion error and
+                    // leaves the target unopened (AsRecRefGetTable.al:110 FromNotOpen).
+                    Some(Value::Library(name, other)) => match &*other.borrow() {
+                        LibraryValue::RecordRef(r) => r.clone(),
+                        LibraryValue::Empty if name.eq_ignore_ascii_case("RecordRef") && from_variant => {
+                            return Err(Signal::Error(Box::new(AlError {
+                                message: "Unable to convert from Microsoft.Dynamics.Nav.Runtime.NavRecordRef to Microsoft.Dynamics.Nav.Runtime.INavRecordHandle.".into(),
+                                code: "Conversion".into(),
+                                call_stack: String::new(),
+                                ..Default::default()
+                            })));
                         }
                         _ => return unsupported("RecordRef.GetTable of a RecordRef that is not open"),
                     },
@@ -1341,9 +1358,8 @@ impl Session {
             // error for a field that is not a FlowField (record/TestCalcFieldsFieldClass.Codeunit.al);
             // whether FieldRef.CalcField says the same is not pinned, so it is refused.
             "CalcField" => {
-                // A Blob is accepted by Record.CalcFields (record/TestCalcFieldsFieldClass.Codeunit.al), and Temp Blob Impl.FromFieldRef
-                // calls CalcField on every Blob it reads; FieldRef.CalcField of a Blob goes the same way (assumption
-                // fieldref-calcfield-of-a-blob).
+                // FieldRef.CalcField of a Blob of a row read without CalcFields loads the blob, as Record.CalcFields
+                // does (record/lt-as-records/AsFieldRefCalcField.al:41 Blob_ReadWithoutCalcFields_ThenCalcField).
                 let blob = self.engine.program.objects[t.object as usize]
                     .table
                     .as_ref()
@@ -1353,9 +1369,6 @@ impl Session {
                             RtType::Library(al_builtins::library_kind::LibraryKind::Blob)
                         )
                     });
-                if blob {
-                    al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::FieldRefCalcFieldOfABlob);
-                }
                 let stored = !blob
                     && self.engine.program.objects[t.object as usize]
                         .table
@@ -1460,6 +1473,8 @@ impl Session {
                 RtType::Guid => Ok(Value::Integer(16)),
                 RtType::BigInteger | RtType::Duration | RtType::DateTime => Ok(Value::Integer(8)),
                 RtType::Library(al_builtins::library_kind::LibraryKind::Blob) => Ok(Value::Integer(8)),
+                // The Security Filter columns of Permission and Metadata Permission (permissions/W6PermissionColumns.al:82,119).
+                RtType::Library(k) if k.as_str() == "TableFilter" => Ok(Value::Integer(504)),
                 other => unsupported(format!("FieldRef.Length of a {} field", other.describe())),
             },
             "SetRange" | "SetFilter" => {

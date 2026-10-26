@@ -20,7 +20,7 @@
 use crate::describe::Describe;
 use crate::native::{Ctx, NativeFn, Signal};
 use crate::signature::Signature;
-use crate::stream::{BlobRef, Encoding, InState, new_blob, write_bytes};
+use crate::stream::{BlobRef, Encoding, InState, write_bytes};
 use crate::value::{LibraryValue, Value};
 
 type Out = Result<Value, Signal>;
@@ -47,7 +47,7 @@ impl Default for FileState {
     fn default() -> FileState {
         FileState {
             name: String::new(),
-            blob: new_blob(),
+            blob: file_blob(),
             text_mode: false,
             write_mode: false,
             enc: Encoding::default(),
@@ -151,7 +151,7 @@ fn create(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
     }
     with_file(r, |s| {
         s.name = name;
-        s.blob = new_blob();
+        s.blob = file_blob();
         s.enc = enc;
         s.open = true;
         s.writable = true;
@@ -178,7 +178,7 @@ fn open(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
         },
     };
     with_file(r, |s| {
-        let blob = new_blob();
+        let blob = file_blob();
         blob.borrow_mut().bytes = bytes;
         if let Some(mark) = carried {
             crate::stream::mark_carried(&blob, mark);
@@ -208,7 +208,7 @@ fn create_temp(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
     let name = c.fs_temp_name();
     with_file(r, |s| {
         s.name = name;
-        s.blob = new_blob();
+        s.blob = file_blob();
         s.enc = enc;
         s.open = true;
         s.writable = true;
@@ -470,4 +470,11 @@ pub fn native_for(sig: &Signature) -> Option<NativeFn> {
         _ => return None,
     };
     Some(f)
+}
+
+/// A buffer that holds a file's content (see `BlobBuf::file`).
+fn file_blob() -> BlobRef {
+    let b = crate::stream::new_blob();
+    b.borrow_mut().file = true;
+    b
 }

@@ -25,6 +25,7 @@ mod np_blockers;
 mod option_init_ordinal;
 mod record_builtins;
 mod record_is_dirty;
+mod record_ref_into_record;
 mod recordref;
 mod records;
 mod relation_option_blank_const;

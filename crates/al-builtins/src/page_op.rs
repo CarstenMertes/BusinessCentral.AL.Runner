@@ -191,6 +191,7 @@ impl std::fmt::Display for PageMethod {
 /// A page method with its receiver.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PageOp {
+    PageActivate,
     PageCancelBackgroundTask,
     PageCaption,
     PageClose,
@@ -300,7 +301,8 @@ pub enum PageOp {
 }
 
 impl PageOp {
-    pub const ALL: [PageOp; 106] = [
+    pub const ALL: [PageOp; 107] = [
+        PageOp::PageActivate,
         PageOp::PageCancelBackgroundTask,
         PageOp::PageCaption,
         PageOp::PageClose,
@@ -413,6 +415,7 @@ impl PageOp {
         match self {
             PageOp::PageCancelBackgroundTask => PageRecv::Page,
             PageOp::PageCaption => PageRecv::Page,
+            PageOp::PageActivate => PageRecv::Page,
             PageOp::PageClose => PageRecv::Page,
             PageOp::PageEditable => PageRecv::Page,
             PageOp::PageEnqueueBackgroundTask => PageRecv::Page,
@@ -524,6 +527,7 @@ impl PageOp {
         match self {
             PageOp::PageCancelBackgroundTask => PageMethod::CancelBackgroundTask,
             PageOp::PageCaption => PageMethod::Caption,
+            PageOp::PageActivate => PageMethod::Activate,
             PageOp::PageClose => PageMethod::Close,
             PageOp::PageEditable => PageMethod::Editable,
             PageOp::PageEnqueueBackgroundTask => PageMethod::EnqueueBackgroundTask,
@@ -636,6 +640,7 @@ impl PageOp {
         match self {
             PageOp::PageCancelBackgroundTask => "Page.CancelBackgroundTask",
             PageOp::PageCaption => "Page.Caption",
+            PageOp::PageActivate => "Page.Activate",
             PageOp::PageClose => "Page.Close",
             PageOp::PageEditable => "Page.Editable",
             PageOp::PageEnqueueBackgroundTask => "Page.EnqueueBackgroundTask",

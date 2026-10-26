@@ -149,35 +149,17 @@ registry! {
         tests: "Item Tracking Lines (InsertRecord inserts into the page's temporary source, ValidateAndInsert answers false); Tests-Manufacturing PostProductionJournalUsingLotItemTracking and the item tracking tests that set a lot and a quantity.",
         probe: "A page with OnInsertRecord { Rec.Insert(); exit(false) } and OnModifyRecord { Rec.Modify(); exit(false) }: OpenNew, set the key, set a second field, OK; read the row and count the trigger calls. Asked in corpus #641.",
     },
-    QueryClosedAfterLastRow => {
-        id: "query-closed-after-last-row",
-        assumed: "Open on a query whose Read has returned false after its last row runs the query again, with the filters set since then (a SetRange or SetFilter there is pinned: it takes the filter and a Read before the next Open raises, errors/lt-ms-refusals-131/P131QuerySetRangeAfterRead.al:154-170).",
-        tests: "Workflow Step Instance.SetTableRelationValues (one query variable, filtered and opened once per table relation); 190 Tests-Workflow tests (2026-10-19).",
-        probe: "Open a query, Read to false, SetRange on a column, Open and Read again (no asserterror in between, it rolls back the rows); the same without the SetRange; Open twice after the last row. Asked in corpus #651.",
-    },
     XmlportExportsFlowfieldCalculated => {
         id: "xmlport-exports-flowfield-calculated",
         assumed: "An XmlPort field element or attribute bound to a FlowField exports the calculated value, as if CalcFields had run on the row. (An Xml import skips a Lookup, Sum or Count FlowField element: pinned by xmlport/lt-ay-xmlport/AyXmlPortLookupFlowField.al and XmlPortFlowFieldSumCount.al.)",
         tests: "Import / Export Workflow (\"Workflow Step Argument\".\"Response Option Group\", a Lookup FlowField); 76 Tests-Workflow tests.",
         probe: "An export-only XmlPort with a fieldelement over a Sum FlowField and over a Lookup FlowField of a row with children: the exported text with and without a CalcFields on the row before; an import of the same element. Asked in corpus #650.",
     },
-    RecordRefIntoRecord => {
-        id: "recordref-into-record",
-        assumed: "A RecordRef (held by a Variant) assigned or passed to a Record of the same table gives a copy of the record the RecordRef is on, filters included; another table is refused.",
-        tests: "Approvals Mgmt.InformUserOnStatusChange (ShowSalesApprovalStatus(Variant)); 73 Tests-Workflow tests.",
-        probe: "V := RecRef (a RecordRef on a filtered row); Rec := V and a Record parameter p(V): the fields, GetFilters, position and a later Modify; the same with a RecordRef of another table. Asked in corpus #643.",
-    },
     NavUserAccountHelperIsDelegatedUser => {
         id: "nav-user-account-helper-is-delegated-user",
         assumed: "DotNet NavUserAccountHelper.IsDelegatedUser() answers false for the test session user (the member is in no corpus test; the plan-based Azure AD User Management.IsUserDelegated is false in session/TestEnvironmentUserTenantContracts.al:245).",
         tests: "Azure AD Graph User Impl.IsUserDelegated, reached by 165 Microsoft tests (for example Suggest Price Lines UT T202_NotificationActionFixOpensJobQueueEntryCard).",
         probe: "A DotNet NavUserAccountHelper variable in a test session: IsDelegatedUser(), IsUserDelegatedAdmin(); and Codeunit \"Azure AD Graph User\".IsUserDelegated().",
-    },
-    FieldRefCalcFieldOfABlob => {
-        id: "fieldref-calcfield-of-a-blob",
-        assumed: "FieldRef.CalcField on a Blob field is accepted and loads the blob, as Record.CalcFields does (record/TestCalcFieldsFieldClass.Codeunit.al); on another stored field it stays refused.",
-        tests: "Temp Blob Impl.FromFieldRef (FieldRef.CalcField on each Blob it reads); 14 Tests-SCM-Manufacturing tests (Demand Forecast Card).",
-        probe: "A FieldRef on a Blob field of a stored row read without CalcFields: CalcField() then Value and HasValue; the same on a Code field (the error text) and on a FlowField. Asked in corpus #644.",
     },
     EvaluateRecordIdCompositeKey => {
         id: "evaluate-recordid-composite-key",
@@ -262,6 +244,15 @@ registry! {
         assumed: "A Guid passed where a function wants a Text is its text form {XXXXXXXX-...}, as in an assignment. Pinned for CopyStr, StrLen, UpperCase, LowerCase, StrPos and Notification.SetData (types/lt-guid-as-text-argument/GuidAsTextArgument.al); every other Text parameter is assumed alike.",
         tests: "Match General Jnl Lines UT (CopyStr(CreateGuid(), 1, 50)); 61 Tests-General Journal tests. Error Message Handler.ShowNotification (Notification.SetData with a Guid); 27 Tests-ERM tests.",
         probe: "A Guid passed to other Text parameters: StrSubstNo('%1', ...) as the format, DelStr, PadStr, ConvertStr, IncStr, SelectStr, Text.Contains.",
+        note: "Confirmed by writer SG on corpus bump PR 738 (branch al-runtime-rs-staging-pub-sg 37b221b7, green on every supported BC major): every one of those functions and a procedure's Text and Code parameter see the upper-case text form; a Text[10] parameter raises StringLengthExceeded. Remove this entry when that bump lands.",
+        awaiting: Awaiting {
+            issues: &[5586],
+            files: &[
+                "tests/al-language/types/lt-guid-as-text-argument/GuidAsTextArgument.al::Guid_AsTextArgument_MoreStringFunctions",
+                "tests/al-language/types/lt-guid-as-text-argument/GuidAsTextArgument.al::Guid_AsTextArgument_ProcedureParameters",
+            ],
+            since: "2026-10-25",
+        },
     },
     FeatureKeyEnabledModify => {
         id: "feature-key-enabled-modify",
@@ -274,18 +265,6 @@ registry! {
         assumed: "Modify on a Feature Key row that was read and not changed (Enabled set to the value it has) succeeds and changes nothing.",
         tests: "Tests-ERM Initialize (`FeatureKey.Enabled := FeatureKey.Enabled::None; FeatureKey.Modify()` for ReminderTermsCommunicationTexts): 243 tests.",
         probe: "FindFirst, Modify() with nothing changed; Enabled := Enabled then Modify; Enabled changed then Modify, then Get again and read Enabled; after a rollback. Asked in corpus #648.",
-    },
-    QueryColumnRecordId => {
-        id: "query-column-record-id",
-        assumed: "A query column over a RecordId field returns the stored RecordId, groups and orders by it like the field, and cannot carry a Method, a ColumnFilter or ReverseSign (refused).",
-        tests: "Base Application's \"Workflow Instance\" query (column Record_ID), opened by Workflow Step Instance.SetTableRelationValues and Approvals Mgmt.; 142 Tests-Workflow tests.",
-        probe: "A query with a column over a RecordId field of a table with rows: Open, Read, Format of the column, grouping and OrderBy on it, SetFilter on the column, SaveAsCsv. Asked in corpus #651.",
-    },
-    RecordRefGetTableOfRecordRef => {
-        id: "recordref-gettable-of-recordref",
-        assumed: "RecordRef.GetTable(OtherRecordRef) makes the ref a copy of the other ref's record: table, buffer, filters and current row, not shared afterwards.",
-        tests: "Tests-ERM SalesInvoiceTryPreview and the other posting preview tests (Gen. Jnl.-Post Preview): about 30 tests.",
-        probe: "B.GetTable(A) with A open on a table with a filter and a found row; change A, read B; with A not open; with B open on another table. Asked in corpus #644.",
     },
     RequestPageCaptionSet => {
         id: "request-page-caption-set",
@@ -383,12 +362,6 @@ registry! {
         tests: "Microsoft's Production BOM page (part ProdBOMLine: SubPageLink \"Version Code\" = const('')), opened by SCM Manufacturing 7.0 CalculateProdOrderWithSKUWithRoutingAndProdBOMNo and about 10 more Tests-SCM-Manufacturing tests.",
         probe: "A part page with SubPageLink F = const('') and another with F = filter(''), over rows with blank and non-blank F: which rows show; the same for RunPageLink. Asked in corpus #641.",
     },
-    DurationDividedByDecimal => {
-        id: "duration-divided-by-decimal",
-        assumed: "A Duration divided by a Decimal counts the Duration as its milliseconds and answers a Decimal (no whole-millisecond requirement, unlike the pinned division by an Integer).",
-        tests: "Microsoft's Calculate Routing Line CalcDuration (Time difference / CalendarMgt.TimeFactor): Tests-SCM-Manufacturing, SCM Production Journal CheckAllocatedCapacityTimeCalculation and about 20 more.",
-        probe: "D: Duration := 26820000 and 30000; X := D / Dec60000 into a Decimal; Format(D / Dec60000); a Decimal divisor that is zero. Asked in corpus #649.",
-    },
     DateToDateTime => {
         id: "date-to-datetime-is-midnight",
         assumed: "A Date assigned or converted to a DateTime is that day at midnight; the blank Date is the blank DateTime.",
@@ -397,21 +370,15 @@ registry! {
     },
     BooleanToTextAsFormat => {
         id: "boolean-to-text-as-format",
-        assumed: "A Boolean given where a Text or Code is expected (Record.Get(Boolean) on a Code key) converts as Format writes it: Yes or No, upper case for a Code.",
-        tests: "Item Tracking Code Get(Serial) in the SCM kitting tests; about 90 tests of the Tests-SCM-Assembly bucket.",
-        probe: "Get(true) on a table with a Code[10] key holding the rows 'Yes' and 'YES' and '1'; assign a Boolean to a Text and a Code variable. Asked in corpus #649.",
+        assumed: "A Boolean given where a Text is expected (Record.Get(Boolean) on a Text key) converts as Format writes it: Yes or No. The Code case is pinned (types/lt-ax-text-format-dates/AxEvaluateText.al:348 GetTrue_CodeKey_Yes: YES).",
+        tests: "Corpus baseline cases 74885 AssertEquals_TextControl_NumbersAndText and 70974 P189_FldRefMismatch_OnTextField (refusing the Text case loses them). Item Tracking Code Get(Serial) in the SCM kitting tests; about 90 tests of the Tests-SCM-Assembly bucket.",
+        probe: "Get(true) and Get(false) on a table with a Text[10] key holding the rows 'Yes', 'YES', 'No' and '1'. Asked in corpus #649 (the Code key half is pinned).",
     },
     FormatCodeSpelling => {
         id: "format-code-spelling",
         assumed: "In a Format string `Filler Char` stands for `Filler Character`. (Any case of the other code names, and blanks after the comma, are pinned by types/lt-format-codes-textbuilder-pagerun-labels/P144FormatCodes.al.)",
         tests: "The Data Exchange tests' GetNodeID (`<Integer,4><Filler Char,0>`, about 30 tests).",
         probe: "Format(5, 0, '<Integer,4><Filler Char,0>') next to '<Integer,4><Filler Character,0>', for an Integer, a Decimal and a Text. Asked in corpus #649.",
-    },
-    DateTimeDateTimeMethods => {
-        id: "datetime-date-time-methods",
-        assumed: "The instance methods DateTime.Date() and DateTime.Time() give what DT2Date and DT2Time give, the undefined DateTime included. (DT2Date and DT2Time are pinned by text/TestProbeTextDateFormatContracts.al:Dates_DateTime_DT2DateTime.)",
-        tests: "About 975 Tests-ERM, Tests-SCM and Tests-General Journal tests (Library - Random and Library - Utility date and time helpers).",
-        probe: "Dt.Date() and Dt.Time() for a set DateTime and for 0DT, next to DT2Date(Dt) and DT2Time(Dt). Asked in corpus #649.",
     },
     ReportViewOverStoredRequestFilters => {
         id: "report-view-over-stored-request-filters",
@@ -483,23 +450,12 @@ registry! {
         tests: "Library - Service.CreateServiceOrderHeaderUsingPage (Service Order Subform: key Document Type, Document No., Line No.; the relation of Document No. filters on Document Type). Kept because refusing it costs 7 corpus baseline cases (handlers/TestPageActionRunPageView.al 67007, misc/lt-probes-needed-7/PnGRefresh.al 70177).",
         probe: "A part whose source table's key is (Type, Document No., Line No.), SourceTableView where(Type = const(B)), SubPageLink Document No. = field(No.), the relation of Document No. filtering on Type and an OnValidate of Document No. that reads Type: open the host on a header of Type B and A, New(), read the draft line and what the OnValidate saw.",
     },
-    DeleteAllMarkedOnly => {
-        id: "delete-all-marked-only",
-        assumed: "Record.DeleteAll with MarkedOnly(true) deletes the marked rows that pass the filters and no other row, like Find, Next, Count and ModifyAll work on the marked set; with triggers and events as a DeleteAll with a filter.",
-        tests: "Post Inventory Cost to G/L (PostValueEntryToGL.MarkedOnly(true); DeleteAll() in OnPostDataItem, then CapValueEntryLoop Gets the capacity entries left): SCM Kitting D3 Part 2 and SCM Costing Batch, and every test that posts inventory cost with the report.",
-        probe: "Mark two of three rows, MarkedOnly(true), DeleteAll: which rows remain; the same with a filter that excludes a marked row, and DeleteAll(true) with an OnDelete trigger. Asked in corpus #644.",
-    },
     GroupedQueryTiesInGroupingOrder => {
         id: "grouped-query-ties-in-grouping-order",
         assumed: "Groups of an aggregated query that tie on every OrderBy column are read in the order of the query's grouping columns (column declaration order, each ascending).",
         tests: "Create Pick's CalcQtyInWhseEntries (OrderBy Block_Movement, ten grouping columns): SCM Extend Warehouse CheckItemAvailabilityWhenCreatingPickAndExistReservedQtyForProdOrder and the tests that create a pick for a directed put-away location; about 77 Tests-SCM tests.",
         probe: "An aggregated query with an OrderBy on a column most groups share and several grouping columns, rows inserted in non-key order: the order of the tied groups on Read. Asked in corpus #651.",
-    },
-    ReportItemCalcFieldsNestedOrList => {
-        id: "report-dataitem-calcfields-nested-or-list",
-        assumed: "The CalcFields property of a report data item that is nested under another item, or that lists several fields, calculates every listed FlowField of each row before the row's triggers, as for a top-level item with one field (pinned by misc/lt-probes-needed-8/PnH3Link.al).",
-        tests: "Get Inbound Source Documents (CalcFields = \"Put-away Qty.\", \"Put-away Qty. (Base)\" on Posted Whse. Receipt Line): about 32 Tests-SCM tests.",
-        probe: "A report with a nested item that has CalcFields = A, B (two FlowFields), and a reportextension-added item with CalcFields: the values in OnAfterGetRecord; one name that is not a FlowField. Asked in corpus #646.",
+        note: "Confirmed by writer SG on corpus bump PR 738 (branch al-runtime-rs-staging-pub-sg 37b221b7, green on every supported BC major): query/lt-az-query/AzQueryTests.al SG_OrderByTies_GroupingSubThenCat, _GroupingCatThenSub, _DescendingKind, _DescendingSum. No al-runner issue, so no `awaiting` field: remove this entry when that bump lands.",
     },
     TableRelationSeveralWhereNonKey => {
         id: "table-relation-several-where-non-key",
@@ -539,9 +495,9 @@ registry! {
     },
     ExceptionToStringStackFrames => {
         id: "exception-tostring-stack-frames",
-        assumed: "ToString and Format of the exception GetLastErrorObject answers: the lines after the first are the AL frames of the error (or one line saying they are not tracked); BC writes .NET server frames. Only the first line `<class>: <message>` and the `   at ` marker are pinned.",
-        tests: "Microsoft tests that read ToString or Format of a last-error exception.",
-        probe: "Format(GetLastErrorObject()) after Error('x') in a codeunit run from a test: every line,. Asked in corpus #652.",
+        assumed: "ToString and Format of the exception GetLastErrorObject answers, for a trace the corpus does not pin (an error caught by a TryFunction or asserterror, a record-not-found or division error, a dialog error raised deeper than one procedure below a Codeunit.Run's OnRun): the lines after the first are the AL frames of the error. BC writes .NET frames there (pinned shapes: GetLastErrorObjectKinds.al:384, AzLastErrorObject.al:180, :199), so a read of those lines would differ; only the first line and the `   at ` marker are pinned (GetLastErrorObject.al:85-87). Kept for the four baseline cases that read only those.",
+        tests: "Corpus baseline cases 61471 GetLastErrorObject_AfterErrorInTryFunction, _AfterErrorInAsserterror, _AfterGetWithoutRow, _AfterDivisionByZero (onprem-dotnet suite; refusing them loses them). Microsoft tests that read ToString or Format of a last-error exception.",
+        probe: "Format(GetLastErrorObject()) split into lines after Error('x') caught by a TryFunction, by asserterror, after Get of a missing row and after a division by zero, each on every supported BC major: every line. Asked in corpus #652.",
     },
     PageOpenCaptionClassExpressions => {
         id: "page-open-caption-class-expressions",
@@ -566,12 +522,6 @@ registry! {
         assumed: "On a page whose ModifyAllowed is false, a Blob of Rec that no stream wrote since it was read (also after a CalcFields loaded it) is no change of the row, so the page saves nothing after an action or a SetValue: pinned for a List (pages/lt-outside-worksheet/RmReadOnlyBlob.al:316-:470); assumed for any other page type.",
         tests: "Tests-ERM Edit Posted Documents (codeunit 134658) PostedServiceInvoiceUpdateSetValuesOK and PostedServiceInvoiceUpdateSetValuesCancel (Posted Serv. Inv. - Update); they pass in Microsoft's CI.",
         probe: "RmReadOnlyBlob.al's table under a Card with ModifyAllowed = false (Editable true and false): a no-change action and a SetValue on another control, then Close: the log of OnModifyRecord and the table's OnModify.",
-    },
-    ListOtherKeyOtherMoves => {
-        id: "list-other-key-other-moves",
-        assumed: "A plain list (no OnFindRecord or OnNextRecord, with OnAfterGetRecord and OnAfterGetCurrRecord) that opened in a key other than the primary key reads each row once more at the open and at Next and Previous (pinned: pages/lt-qr-onopenpage-moves-rec/QrMovedTests.al:345 QR_List_OpenView_SetCurrentKeyGet and the QS_Key*_List_* tests from :856). GoToKey and GoToRecord over a view the client holds whole read once more at each step of their scan (pinned: pages/lt-outside-worksheet/RmInitValueKey.al:231 RM_List_OpenEdit `goto log`). Assumed: First, Last, GoToKey and GoToRecord over a longer view, and a refill of its rows while Rec stays in that key and order read as in the primary key, without the extra read; so does the open of such a list whose view has one row or more rows than a window holds (unless OnOpenPage left Rec on a row other than the first: refused).",
-        tests: "Corpus baseline case 67990 PrecompiledHostLinkedPartShowsTheRowTheViewExcluded (handlers/TestPartSubPageViewPrecompiled.al:71): GoToRecord on Microsoft's G/L Account Categories page, a list in a key other than the primary key; it passes on real BC and does not observe the reads. Tests-ERM O365 Correct Sales Invoice (CancelInvoiceActionInvisibleOnCancelledPostedSalesInvoiceList, TestListPageActionCorrectInvoice) and Payments using Creditor Number (ApplyPurchInvWithCreditorInfoManual, UpdateVendorLedgerEntriesCreditorNoNumericOnlyDisabled) open such lists; they pass in Microsoft's CI.",
-        probe: "A list with SourceTableView = sorting(Name) and OnAfterGetRecord/OnAfterGetCurrRecord logging, opened with OpenView: the log of First, Last, GoToKey and GoToRecord, and of a CurrPage.Update, compared with the same page in the primary key.",
     },
     RunnerPermissionSetsGrantAll => {
         id: "runner-permission-sets-grant-all",
@@ -674,6 +624,12 @@ registry! {
             since: "2026-10-25",
         },
     },
+    FormatWeekCodeIso => {
+        id: "format-week-code-iso",
+        assumed: "`<Week>` and `<Week,2>` of a Date give the ISO 8601 week number (weeks start on Monday, week 1 holds the year's first Thursday) for every week, and `<Weekday>` the ISO day number, Monday 1 to Sunday 7. Pinned are the weeks 1, 3, 10, 19, 28, 40, 52 and 53 at year boundaries and mid-year (types/lt-format-week-code/FormatWeekCodeIso.al:21-123, types/lt-datetime/DateFuncs.al:415-427) and the days 3 and 7 (DateFuncs.al:415,425; FormatWeekCodeIso.al:121,128); a Format of another week or day is a flagged pass.",
+        tests: "No Microsoft test: the rule generalizes the pinned weeks (review of al-runner PR 5864).",
+        probe: "`<Week>`, `<Week,2>` and `<Weekday>` of one date in every ISO week of 2021 (53 dates) and of the seven days of one week.",
+    },
     TestCodeunitOnRunRows => {
         id: "test-codeunit-onrun-rows",
         assumed: "How the runner reports the OnRun trigger of a test codeunit. From the gate TestCodeunitOnRunRowFrom28 on: a declared OnRun gets a row 'OnRun' of its own, failed with the error's text when it raises (and then the test methods have no rows), else passed. Before that gate: a codeunit whose OnRun raises has no rows at all. Measured by corpus writer RL in the corpus CI (the three supported majors on Linux, probe commit c69419f6 on branch al-runtime-rs-staging-rl, codeunit/lt-outside-onrun-error/RlOnRunError.al); not a green corpus case, because the probe codeunit fails the corpus CI by design.",
@@ -682,6 +638,58 @@ registry! {
         awaiting: Awaiting {
             issues: &[5748],
             files: &["tests/al-language/codeunit/lt-outside-onrun-error/RlOnRunError.al"],
+            since: "2026-10-25",
+        },
+    },
+    PageControlFieldArrayElementSource => {
+        id: "page-control-field-array-element-source",
+        assumed: "The Page Control Field row of a page's own control bound to an expression has the page's source table as TableNo, FieldNo 0 and SourceExpression the source as written, for three forms: an element of a page array with a number index (`Costs[1]`), a field of a page record variable (`OtherLine.Amount`) and an arithmetic expression (`Costs[1] + Costs[2]`). An undeclared Editable is `True` for the first two and `False` for the third; a declared one is its text. Text with a quote or irregular spacing, and every other expression, stay refused. Measured on the three supported majors by the corpus writer's probe (corpus branch al-runtime-rs-staging-pub-sc @2150ff97, cu 89002), from al-runner issue 5842.",
+        tests: "No Microsoft test: al-runner issue 5842 (1 test of a partner app).",
+        probe: "Written (record/TestPageControlFieldArraySource.al on al-runtime-rs-staging-pub-sc); remove this entry when the corpus bump brings it.",
+        awaiting: Awaiting {
+            issues: &[5842],
+            files: &["tests/al-language/record/TestPageControlFieldArraySource.al"],
+            since: "2026-10-25",
+        },
+    },
+    TestPageLookupUpdateFalseRefresh => {
+        id: "testpage-lookup-update-false-refresh",
+        assumed: "TestField.Lookup through a control's own OnLookup trigger, on a page with no parts, whose code calls no `CurrPage` method but `CurrPage.Update(false)` of that page, refreshes the page: a read of an expression control afterwards (`field(ResourceNo; Setting.\"Resource No.\")`) gives its value as it is now. That is the picked value when OnLookup answers true (with and without the Update in OnValidate), and the value kept when the modal page is cancelled or OnLookup sets Text and answers false. Measured on the three supported majors by the corpus writer's probe (corpus branch al-runtime-rs-staging-pub-sc @2150ff97, cu 89008), from al-runner issue 5843.",
+        tests: "No Microsoft test: al-runner issue 5843 (1 test of a partner app).",
+        probe: "Written (pages/lt-sc-outside-pages/ScLookupGlobalRecordField.al on al-runtime-rs-staging-pub-sc); remove this entry when the corpus bump brings it.",
+        awaiting: Awaiting {
+            issues: &[5843],
+            files: &["tests/al-language/pages/lt-sc-outside-pages/ScLookupGlobalRecordField.al"],
+            since: "2026-10-25",
+        },
+    },
+    DrilldownMarkedOnlyUpdateRefresh => {
+        id: "drilldown-marked-only-update-refresh",
+        assumed: "A field's OnDrillDown that turns MarkedOnly on for Rec (after setting marks) on a list without OnFindRecord and OnNextRecord: with `CurrPage.Update(false)` the page shows only the marked rows, also when it declares OnAfterGetRecord or OnAfterGetCurrRecord (First/Next walk the marked rows, GoToRecord of an unmarked row answers false); without the Update a page without those triggers still shows every row of the view (First/Next list both rows, GoToRecord of the unmarked row answers true) until it closes; another TestPage call before that is refused. Measured on the three supported majors by the corpus writer's probe (corpus branch al-runtime-rs-staging-pub-sc @2150ff97, cu 89016), from al-runner issue 5844.",
+        tests: "No Microsoft test: al-runner issue 5844 (1 test of a partner app).",
+        probe: "Written (pages/lt-sc-outside-pages/ScDrillDownMarkedOnly.al on al-runtime-rs-staging-pub-sc); remove this entry when the corpus bump brings it. Not in it, so refused: no Update on a page with the row triggers (every TestPage call but Close), other TestPage calls before Close.",
+        awaiting: Awaiting {
+            issues: &[5844],
+            files: &["tests/al-language/pages/lt-sc-outside-pages/ScDrillDownMarkedOnly.al"],
+            since: "2026-10-25",
+        },
+    },
+    RunnerTestIsolation => {
+        id: "runner-test-isolation",
+        assumed: "What a test runner codeunit's TestIsolation does for a whole run (al-runner --isolation test and --isolation disabled, a corpus runner without the property). Function: each test is rolled back to the state after OnRun, a Commit() inside it included, and so are an IsolatedStorage.Set of a new key and a NumberSequence.Insert; AutoIncrement and row versions are not reset. Disabled (and a runner without the property): nothing is rolled back but a failed test's writes since its last Commit(); the later test codeunits, in id order, see the rest; StartSession starts a session (refused here). RequiredTestIsolation has no effect under a runner. Measured by corpus writer SD on Windows containers of every supported BC major (identical) with the isolation probe app under four runners (branch al-runtime-rs-staging-pub-sd, commit 95c66e62, corpus PR 735); the corpus nightly does not run runners 61304 and 61305 yet.",
+        tests: "No Microsoft test: al-runner issues 5607 (Commit under --isolation test) and 5609 (--isolation disabled).",
+        probe: "The isolation probe app of corpus PR 735 (codeunits 61302-61320) under runners 61300, 61301, 61304 and 61305 in the corpus Windows nightly, with its JUnit files in oracle/.",
+        awaiting: Awaiting {
+            issues: &[5607, 5609],
+            files: &[
+                "tests/al-language-isolation-probe/src/SdIsolCommitError.Codeunit.al",
+                "tests/al-language-isolation-probe/src/SdIsolCommitReader.Codeunit.al",
+                "tests/al-language-isolation-probe/src/IsolProbeWriter.Codeunit.al",
+                "tests/al-language-isolation-probe/src/IsolProbeReader.Codeunit.al",
+                "tests/al-language-isolation-probe/src/IsolProbeCommit.Codeunit.al",
+                "tests/al-language-isolation-probe/src/IsolProbeAfterRollback.Codeunit.al",
+                "tests/al-language-isolation-probe/src/SdIsolStartSession.Codeunit.al",
+            ],
             since: "2026-10-25",
         },
     },
@@ -780,15 +788,18 @@ mod tests {
     #[test]
     fn marks_are_collected_per_thread_and_cleared() {
         clear_hits();
-        assume(Assumption::QueryClosedAfterLastRow);
-        assume(Assumption::QueryClosedAfterLastRow);
+        assume(Assumption::ReadUncommittedReadOpensNoWriteTransaction);
+        assume(Assumption::ReadUncommittedReadOpensNoWriteTransaction);
         assume(Assumption::NextWholeDecimal);
         assert_eq!(
             take_hits(),
-            vec![Assumption::QueryClosedAfterLastRow, Assumption::NextWholeDecimal]
+            vec![
+                Assumption::ReadUncommittedReadOpensNoWriteTransaction,
+                Assumption::NextWholeDecimal
+            ]
         );
         assert!(take_hits().is_empty());
-        assume(Assumption::QueryClosedAfterLastRow);
+        assume(Assumption::ReadUncommittedReadOpensNoWriteTransaction);
         std::thread::spawn(|| assert!(take_hits().is_empty())).join().unwrap();
         clear_hits();
     }

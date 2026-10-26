@@ -42,6 +42,27 @@ pub const LOGIN_MANAGEMENT: u32 = 40;
 /// The procedure of [`LOGIN_MANAGEMENT`] the test session's start calls.
 pub const LOGIN_WORK_DATE: &str = "GetDefaultWorkDate";
 
+/// The roots of [`LOGIN_WORK_DATE`] in the dependency apps of `ws`: (object, start of the routine's syntax). Empty when no
+/// dependency has a usable codeunit [`LOGIN_MANAGEMENT`] with that procedure.
+pub fn login_work_date_roots(ws: &Workspace) -> Vec<(usize, usize)> {
+    let mut out = Vec::new();
+    for (i, o) in ws.objects.iter().enumerate() {
+        if o.kind == ObjKind::Codeunit
+            && o.id == Some(LOGIN_MANAGEMENT)
+            && o.name.eq_ignore_ascii_case("LogInManagement")
+            && ws.is_dependency(i)
+            && ws.usable(i)
+        {
+            for r in ast::routines_in(ws.object_ast(i).syntax()) {
+                if !r.is_trigger() && r.name().eq_ignore_ascii_case(LOGIN_WORK_DATE) {
+                    out.push((i, usize::from(r.syntax().text_range().start())));
+                }
+            }
+        }
+    }
+    out
+}
+
 /// An object nothing in the compile refers to.
 pub const NONE: u8 = 0;
 /// Lowered, with its routines stubbed.
@@ -446,20 +467,8 @@ impl Checker<'_> {
         if self.demand.borrow().is_none() {
             return;
         }
-        for i in 0..self.ws.objects.len() {
-            let o = &self.ws.objects[i];
-            if o.kind == ObjKind::Codeunit
-                && o.id == Some(LOGIN_MANAGEMENT)
-                && o.name.eq_ignore_ascii_case("LogInManagement")
-                && self.ws.is_dependency(i)
-                && self.ws.usable(i)
-            {
-                for r in self.routines_of(i).iter() {
-                    if !r.is_trigger() && r.name().eq_ignore_ascii_case(LOGIN_WORK_DATE) {
-                        self.reach(i, usize::from(r.syntax().text_range().start()));
-                    }
-                }
-            }
+        for (i, start) in login_work_date_roots(self.ws) {
+            self.reach(i, start);
         }
     }
 

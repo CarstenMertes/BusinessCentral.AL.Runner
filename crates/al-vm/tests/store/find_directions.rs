@@ -120,13 +120,10 @@ fn every_direction_text_gives_what_the_corpus_pins_for_record_and_recordref() {
 
 #[test]
 fn integer_to_text_is_the_digits_for_the_values_the_corpus_uses() {
-    // record/PZFindDirections.al:106 (`StartId.ToText()` for 5, 20, 25 and 35). A larger value has no thousands separator in
-    // 1033 (misc/lt-probe-requests-140/P140IntegerToText.al); in another language it is refused.
-    let src = "codeunit 50100 C { procedure F(): Text var N: Integer; begin N := 25; exit(N.ToText() + (-7).ToText()); end; procedure G(): Text var N: Integer; begin N := 1234; GlobalLanguage(1043); exit(N.ToText()); end; }";
+    // record/PZFindDirections.al:106 (`StartId.ToText()` for 5, 20, 25 and 35); no thousands separator
+    // (types/lt-totext-bigtext-codeunit-run/P93ScalarToText.al:219-255: 1000 and 2147483647).
+    let src = "codeunit 50100 C { procedure F(): Text var N: Integer; begin N := 25; exit(N.ToText() + (-7).ToText()); end; procedure G(): Text var N: Integer; begin N := 1234; exit(N.ToText()); end; }";
     let mut b = Built::from_source(src);
     assert_eq!(text(b.run_in("C", "F")), "25-7");
-    assert!(matches!(
-        b.run_in("C", "G"),
-        Err(al_builtins::native::Signal::Unsupported(_))
-    ));
+    assert_eq!(text(b.run_in("C", "G")), "1234");
 }

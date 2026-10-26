@@ -165,7 +165,7 @@ mod tests {
     fn markdown_counts_flagged_passes_inside_the_passed_number() {
         let marks = |c: &CaseId| {
             if c.name == "a" {
-                vec![Assumption::QueryClosedAfterLastRow]
+                vec![Assumption::TextDigitsToInteger]
             } else {
                 Vec::new()
             }
@@ -182,7 +182,7 @@ mod tests {
         let marks = |c: &CaseId| {
             if c.name == "a" {
                 vec![
-                    Assumption::QueryClosedAfterLastRow,
+                    Assumption::TextDigitsToInteger,
                     Assumption::CodeCoverageSnapshotWhileLogging,
                 ]
             } else {
@@ -191,7 +191,9 @@ mod tests {
         };
         let xml = junit_with(&oracle(), &outcome, &|_| 0.0, &marks, None);
         assert!(
-            xml.contains(r#"<property name="assumptions" value="query-closed-after-last-row,code-coverage-snapshot-while-logging" />"#),
+            xml.contains(
+                r#"<property name="assumptions" value="text-digits-to-integer,code-coverage-snapshot-while-logging" />"#
+            ),
             "{xml}"
         );
         // The same cases pass and fail as without the property.

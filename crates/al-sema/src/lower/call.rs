@@ -185,6 +185,15 @@ impl Lowerer<'_> {
                             out.push(ir::Arg::Value(value));
                             continue;
                         }
+                        // A Variant handed to a by-value Record parameter goes in as it is too: the binding gives a RecordRef of
+                        // another table the ObjectDefinitionChanged error, where an assignment raises NotSupportedOperation
+                        // (record/lt-ar-records/ArRecordProbes.al:410-436 SG_VariantRecordRef_OtherTable_AssignAndParameter `param`;
+                        // al-vm `record_ref_into_record_param`). A Record is a Record of any table there as before. For a
+                        // TryFunction callee the conversion stays at the call: whether it runs inside the try is not pinned.
+                        if !try_call && matches!(p.ty, Ty::Record { .. }) && matches!(self.ty_ref(a), Ty::Variant) {
+                            out.push(ir::Arg::Value(value));
+                            continue;
+                        }
                         // A Notification handed to a by-value parameter is the caller's own (the binding in al-vm lib.rs shares it too): no copy.
                         let is_notification =
                             |t: &Ty| matches!(t, Ty::Builtin(n) if n.eq_ignore_ascii_case("notification"));
@@ -195,11 +204,15 @@ impl Lowerer<'_> {
                         self.refuse_textconst_into_variant(&p.ty, a)?;
                         // A Text or Code handed to a by-value Text or Code parameter of a TryFunction is converted by the callee's
                         // binding, inside the try: a text too long for a Code[20] parameter makes the TryFunction answer false
-                        // (text/lt-text-functions/TextAssign.Codeunit.al:240-281, LT_BU_TextAssign_LongTextToCode20Parameter). The other
-                        // types keep the conversion at the call: whether theirs runs inside the try is not pinned.
+                        // (text/lt-text-functions/TextAssign.Codeunit.al:240-281, LT_BU_TextAssign_LongTextToCode20Parameter). A Decimal or
+                        // a BigInteger handed to an Integer parameter too: 2.5 and 3000000000 make it answer false with the conversion
+                        // error (TextAssign.Codeunit.al:292-358 PYC_TryFunction_NumberArgumentConversion; types/lt-implicit-conversions/
+                        // P79Enums.al:53-118 FromInteger_WithBigIntegerArgument). The other types keep the conversion at the call:
+                        // whether theirs runs inside the try is not pinned.
                         if try_call
-                            && matches!(p.ty, Ty::Text(_) | Ty::Code(_))
-                            && matches!(self.ty_ref(a), Ty::Text(_) | Ty::Code(_))
+                            && ((matches!(p.ty, Ty::Text(_) | Ty::Code(_))
+                                && matches!(self.ty_ref(a), Ty::Text(_) | Ty::Code(_)))
+                                || (matches!(p.ty, Ty::Integer) && matches!(self.ty_ref(a), Ty::Decimal | Ty::BigInteger)))
                         {
                             out.push(ir::Arg::Value(value));
                             continue;

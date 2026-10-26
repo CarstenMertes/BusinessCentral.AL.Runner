@@ -380,12 +380,12 @@ impl Lowerer<'_> {
                 f.name
             ));
         }
-        if captions.len() != names.len() {
-            return Err(format!(
-                "Format of option field {} whose OptionCaption has another number of entries than its members is not pinned",
-                f.name
-            ));
-        }
+        // A caption list shorter than the members shows the member names past its end, a longer one is cut to the members
+        // (an ordinal past the members shows its number): types/lt-format-option-field/FormatOptionFieldCaptions.al:82-177
+        // (`Uno,Dos` for One,Two,Three: `Three`; `Uno,Dos,Tres,Quatro` for One,Two: ordinal 2 is `2`).
+        let mut captions = captions;
+        captions.truncate(names.len());
+        captions.extend(names[captions.len()..].iter().cloned());
         Ok(ir::Expr::Convert(RtType::Option(captions), Box::new(value)))
     }
 
@@ -616,8 +616,9 @@ impl Lowerer<'_> {
         };
         let expr = prop("AutoFormatExpression")?;
         // A constant currency code is pinned for an amount and a unit amount (SaUnitAmountSubst.al `A1Lit`, `A2Lit`: the
-        // currency's places); a blank text keeps its fixed places (`decimal_field_places`).
-        let constant_code = matches!(prop("AutoFormatType").as_deref(), Some("1" | "2")) && expr.len() > 2;
+        // currency's places), and for types 4 and 5 with a code that is no currency (types/lt-ax-text-format-dates/
+        // AxFillerBuilderAutoFormat.al:193-260, checked when it runs); a blank text keeps its fixed places (`decimal_field_places`).
+        let constant_code = matches!(prop("AutoFormatType").as_deref(), Some("1" | "2" | "4" | "5")) && expr.len() > 2;
         if expr.starts_with('\'') && !constant_code {
             return None;
         }

@@ -763,7 +763,7 @@ impl Session {
             }
             // A last-error exception: Format is ToString (GetLastErrorObject.al:85).
             DotNetKind::Internal { type_name, .. } if last_error::is_exception(type_name) => {
-                last_error::exception_text(o)
+                last_error::exception_text(self, o)
             }
             DotNetKind::Internal { type_name, .. } => unsupported(format!("Format of a runtime-provided {type_name}")),
             DotNetKind::Host { handle, clr_type } => {

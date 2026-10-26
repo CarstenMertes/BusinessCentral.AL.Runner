@@ -155,6 +155,11 @@ fn create(ctx: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
             }
         }
         s.record_id = Some(id);
+        // The SystemId is the record's (errorinfo/lt-bc-errorinfo-systemid/BcErrorInfoSystemId.al:69-99), which is not read here:
+        // a read of it is refused.
+        s.system_id = Some(Value::Unknown(std::sync::Arc::from(
+            "the SystemId of an ErrorInfo created with a record (the record's SystemId is not carried over yet)",
+        )));
     } else if a.get(2).is_some() {
         return unsupported("ErrorInfo.Create with a record argument that is not a record");
     }

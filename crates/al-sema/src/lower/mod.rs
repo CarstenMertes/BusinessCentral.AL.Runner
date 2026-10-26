@@ -456,6 +456,12 @@ fn is_property_setter(receiver: &str, name: &str) -> bool {
             | ("File", "TextMode" | "WriteMode")
             | ("DataTransfer", "UpdateAuditFields")
             | ("XmlReadOptions" | "XmlWriteOptions", "PreserveWhitespace")
+            // `S.Company := ''` (platform/lt-platform-members/PlTSessionSettings.al:103-131 Properties_EdgeValues,
+            // SettingsAreCopies).
+            | (
+                "SessionSettings",
+                "Company" | "LanguageId" | "LocaleId" | "ProfileId" | "ProfileAppId" | "ProfileSystemScope" | "TimeZone"
+            )
     )
 }
 

@@ -1,8 +1,7 @@
 //! TestField.Lookup on a header control bound to a field of a global record of the page, whose OnLookup sets Text and
 //! returns true and whose OnValidate saves the record and calls `CurrPage.Update(false)`: the control then reads the
 //! picked value and the record holds it (al-runner issue 5843, the reporter's run on real BC 29.0.54011.55407, 2/2 tests).
-//! The read after the Lookup rests on assumption testpage-lookup-update-false-refresh until the corpus bump brings the
-//! writer's probe (pages/lt-sc-outside-pages/ScLookupGlobalRecordField.al, run in outside_sc_pins.rs).
+//! The read after the Lookup is pinned by pages/lt-sc-outside-pages/ScLookupGlobalRecordField.al (run in outside_sc_pins.rs).
 
 use al_test_cli::report::Outcome;
 

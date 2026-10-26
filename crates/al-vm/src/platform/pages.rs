@@ -486,10 +486,9 @@ pub(super) fn page_control_field_rows(p: &Providers, t: &TableDef) -> Vec<Entry>
             sequence += 1;
             match control_row(&c, o, src, ctl, t, &mut r) {
                 Ok(false) => out.push(Entry::ok(r)),
-                // A row of an expression-bound control (`Control::expr_source`): a read that returns it marks the assumption.
-                Ok(true) => out.push(
-                    Entry::ok(r).assuming(al_builtins::assumptions::Assumption::PageControlFieldArrayElementSource),
-                ),
+                // A row of an expression-bound control (`Control::expr_source`), pinned by
+                // record/TestPageControlFieldArraySource.al (codeunit 89002).
+                Ok(true) => out.push(Entry::ok(r)),
                 Err(why) => {
                     let mut k = blank.row();
                     k[pos(t, 1)] = Value::Integer(id as i32);

@@ -320,7 +320,7 @@ pub fn plain_name(text: &str) -> Option<String> {
 }
 
 /// `Name[1]`, a plain name and a number index with no space, as (name, the text as written); `None` for any other text
-/// (assumption page-control-field-array-element-source pins this one form).
+/// (record/TestPageControlFieldArraySource.al pins this one form).
 pub fn array_element(text: &str) -> Option<(String, String)> {
     let t = text.trim();
     let (name, rest) = t.split_once('[')?;
@@ -338,7 +338,7 @@ pub fn plain_spacing(text: &str) -> bool {
 }
 
 /// Text with a `+`, `-`, `*` or `/` between spaces outside quotes and brackets (`Costs[1] + Costs[2]`): an arithmetic expression
-/// (assumption page-control-field-array-element-source).
+/// (record/TestPageControlFieldArraySource.al, ExpressionControlRow).
 pub fn arithmetic(text: &str) -> bool {
     let t = text.trim();
     let (mut depth, mut quoted, mut prev) = (0i32, false, ' ');

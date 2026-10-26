@@ -1724,6 +1724,14 @@ impl CorpusRuntime {
             .unwrap_or_default()
     }
 
+    /// How many test methods the run named `suite` reported.
+    pub fn cases_in(&self, suite: &str) -> usize {
+        self.suites
+            .iter()
+            .position(|s| s == suite)
+            .map_or(0, |si| self.outcomes.keys().filter(|k| k.0 == si).count())
+    }
+
     /// The outcome of `case` in the run named `suite` (the first run has the empty name).
     pub fn outcome_in(&self, suite: &str, case: &CaseId) -> Outcome {
         self.suites

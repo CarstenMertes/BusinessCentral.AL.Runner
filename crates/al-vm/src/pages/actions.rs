@@ -269,7 +269,7 @@ impl Session {
         if !update_false || !row_triggers || st.borrow().window.is_empty() {
             return;
         }
-        al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::DrilldownMarkedOnlyUpdateRefresh);
+        // Pinned: pages/lt-sc-outside-pages/ScDrillDownMarkedOnly.al (codeunit 89016).
         let mut s = st.borrow_mut();
         s.window.clear();
         s.window_from_start = false;
@@ -279,7 +279,7 @@ impl Session {
     /// After an OnDrillDown that turned MarkedOnly on for Rec without `CurrPage.Update`, on a list without OnFindRecord,
     /// OnNextRecord and the row triggers: the client still shows the rows of the view without MarkedOnly, so First, Next and
     /// GoToRecord walk them (al-runner issue 5844, corpus writer's probe pages/lt-sc-outside-pages/ScDrillDownMarkedOnly.al
-    /// DrilldownWithoutUpdateListAndGoTo `listed=[ 10 20] goto20=Yes`; not on the pinned corpus yet). Close ends it; any
+    /// DrilldownWithoutUpdateListAndGoTo `listed=[ 10 20] goto20=Yes`). Close ends it; any
     /// other TestPage call before that is not pinned and is refused.
     pub(super) fn marked_only_unshown_call(
         &mut self,
@@ -308,9 +308,6 @@ impl Session {
             }
             PageOp::TestFieldValue => f(self),
             PageOp::TestPageFirst | PageOp::TestPageNext | PageOp::TestPageGoToRecord => {
-                al_builtins::assumptions::assume(
-                    al_builtins::assumptions::Assumption::DrilldownMarkedOnlyUpdateRefresh,
-                );
                 let rec = self.page_rec(st);
                 rec.borrow_mut().marked_only = false;
                 let r = f(self);

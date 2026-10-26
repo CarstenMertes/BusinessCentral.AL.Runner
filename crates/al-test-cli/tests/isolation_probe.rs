@@ -43,8 +43,15 @@ fn real_bc(file: &str) -> Vec<oracle::XunitCase> {
 }
 
 fn agree(rt: &CorpusRuntime, suite: &str, file: &str) {
+    // The app has 49 test methods per runner since writer SD's runners 61304-61320 (corpus PR 735, al-runner issues
+    // 5607/5609); BC's isolation oracle covers the eleven of the first probe codeunits.
+    assert_eq!(
+        rt.cases_in(suite),
+        49,
+        "the probe app runs 49 methods under {suite} isolation"
+    );
     let bc = real_bc(file);
-    assert_eq!(bc.len(), 11, "the probe has eleven methods");
+    assert_eq!(bc.len(), 11, "the oracle has eleven methods");
     for c in &bc {
         let ours = rt.outcome_in(suite, &c.case.id);
         match (&c.message, &ours) {
@@ -78,9 +85,8 @@ fn under_codeunit_isolation_t5_fails_with_bcs_message_and_every_method_ends_as_i
     assert!(matches!(t5, Outcome::Fail(_)), "{t5:?}");
 }
 
-/// The isolation probe app of corpus PR 735 (not in the pinned corpus yet) under all four of its runners, against the
-/// JUnit files corpus writer SD measured on Windows containers (registered assumption `runner-test-isolation`). Local
-/// only, until the nightly measures runners 61304 and 61305:
+/// The isolation probe app (pinned since corpus bump 72-78) under all four of its runners, against the JUnit files corpus
+/// writer SD measured on Windows containers. Local only, until the nightly measures runners 61304 and 61305:
 /// `AL_ISOLATION_PROBE_APP=<corpus-sd>/tests/al-language-isolation-probe AL_ISOLATION_PROBE_ORACLE=<dir of
 /// junit-isolation-<version>-<runner>.xml> [AL_ISOLATION_PROBE_VERSION=28.5] cargo test -p al-test-cli --test
 /// isolation_probe -- --ignored --nocapture`. A case real BC passed must pass and one it failed must fail; a case not run

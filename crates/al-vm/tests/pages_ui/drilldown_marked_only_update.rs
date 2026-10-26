@@ -1,9 +1,7 @@
 //! A field's OnDrillDown sets marks and MarkedOnly on Rec and calls `CurrPage.Update(false)`: the page then lists only the
 //! marked row, whether or not the page declares OnAfterGetRecord and OnAfterGetCurrRecord (al-runner issue 5844, the
-//! reporter's run on real BC 29.0.54011.55407, 4/4 tests). Registered assumption drilldown-marked-only-update-refresh until the
-//! corpus pins it.
+//! reporter's run on real BC 29.0.54011.55407, 4/4 tests). Pinned by pages/lt-sc-outside-pages/ScDrillDownMarkedOnly.al.
 
-use al_builtins::assumptions::{Assumption, clear_hits, take_hits};
 use al_testkit::{Built, boolean, text};
 
 fn page(id: u32, triggers: &str) -> String {
@@ -165,9 +163,7 @@ codeunit 50135 T
 #[test]
 fn a_page_with_both_get_record_triggers_lists_only_the_marked_row_after_the_drilldown() {
     let mut b = Built::from_source(&src());
-    clear_hits();
     assert!(!boolean(b.run_in("T", "GoTo50131")));
-    assert!(take_hits().contains(&Assumption::DrilldownMarkedOnlyUpdateRefresh));
     assert_eq!(text(b.run_in("T", "List50131")), " 10");
 }
 

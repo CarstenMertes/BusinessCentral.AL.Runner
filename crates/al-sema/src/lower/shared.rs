@@ -1196,10 +1196,6 @@ pub(crate) fn var_attribute_names(v: &ast::VarDecl) -> Vec<String> {
         .collect()
 }
 
-/// The text properties of `obj` (its controls, fields, columns and actions included) whose text is longer than their
-/// `MaxLength`, as refusal reasons. Only a `Caption` and a Label are pinned (they are cut: record/lt-u-table-field-props/
-/// UTableTextSearch.al:41-44, text/lt-label-textbuilder/TxCLabel.al:282); on any other property whether BC cuts the text is
-/// not pinned, so the object that holds it is refused where it is used.
 /// [`over_max_length`] of object `oi`, without a walk of its properties when its file names no `MaxLength` at all (nearly
 /// every file): only a `MaxLength` attribute makes a text over its MaxLength, and the file's text holds the object's.
 pub(crate) fn over_max_length_of(ws: &crate::workspace::Workspace, oi: usize) -> Vec<String> {
@@ -1209,6 +1205,10 @@ pub(crate) fn over_max_length_of(ws: &crate::workspace::Workspace, oi: usize) ->
     over_max_length(&ws.object_ast(oi))
 }
 
+/// The text properties of `obj` (its controls, fields, columns and actions included) whose text is longer than their
+/// `MaxLength`, as refusal reasons. Only a `Caption` and a Label are pinned (they are cut: record/lt-u-table-field-props/
+/// UTableTextSearch.al:41-44, text/lt-label-textbuilder/TxCLabel.al:282); on any other property whether BC cuts the text is
+/// not pinned, so the object that holds it is refused where it is used.
 pub(crate) fn over_max_length(obj: &ast::Object) -> Vec<String> {
     obj.syntax()
         .descendants()

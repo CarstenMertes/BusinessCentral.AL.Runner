@@ -652,7 +652,6 @@ impl Workspace {
             .map_or(&[], Vec::as_slice)
     }
 
-    /// The text of file `fi` as it was given: for a file of a lazy dependency app, read now (once).
     /// Whether the text of file `fi` names `MaxLength` anywhere, in any case. Searched once per file.
     pub fn names_max_length(&self, fi: usize) -> bool {
         *self.files[fi].max_length.get_or_init(|| {
@@ -663,6 +662,7 @@ impl Workspace {
         })
     }
 
+    /// The text of file `fi` as it was given: for a file of a lazy dependency app, read now (once).
     pub fn text(&self, fi: usize) -> &str {
         let f = &self.files[fi];
         match &self.loaders[f.app] {

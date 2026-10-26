@@ -143,24 +143,81 @@ impl Session {
 
     /// `MakeIntFilter` and `MakeTimeFilter`: a filter text of one word of letters (`abc`) that does not read is asked about as
     /// `MakeDateFilter` asks about a piece: once (m1), again with a changed text that does not read (m2), and the text a
-    /// subscriber repairs is parsed instead (m3) (events/lt-platform-triggers/PtObserve.al:Bad_Int, Bad_Time). Whether BC raises
-    /// the event for another text that does not evaluate (`1..x`, `1.5`, `*`) is not pinned: with a subscriber present it is
-    /// refused rather than answered with the evaluate error (docs/probes-needed.md).
+    /// subscriber repairs is parsed instead (m3) (events/lt-platform-triggers/PtObserve.al:Bad_Int, Bad_Time).
+    ///
+    /// A range or two alternatives (`1..x`, `x|1`, `abc..xyz`) ask about the piece that does not read, by the same rule, and
+    /// only about it: the whole text is not asked about after a failure (unlike `MakeDateFilter`). A repaired piece goes back
+    /// into the text, and the next piece that does not read is asked about in turn. `MakeIntFilter` is also asked about `1.5`
+    /// and `1 2` (events/lt-bd-filter-events/BdFilterEvents.al:BdFilter_Int_1 to _4 and _8, BdFilter_Time_1 and _2).
+    /// Whether BC raises the event for another text that does not evaluate (`*`, a word with hyphens, other filter syntax) is
+    /// not pinned: with a subscriber present it is refused rather than answered with the evaluate error (docs/probes-needed.md).
     pub(crate) fn repair_word_filter_text(
         &mut self,
         event: &'static str,
         param: &str,
         text: &str,
-        reads: &dyn Fn(&str) -> bool,
+        failing: &str,
+        parse: &dyn Fn(&str) -> Result<(), String>,
     ) -> Result<Option<String>, Signal> {
         let t = text.trim();
-        if !al_builtins::filter::letters_only(t) {
-            return Err(Signal::Unsupported(format!(
+        let refuse = || {
+            Err(Signal::Unsupported(format!(
                 "SetFilter of `{t}`, which does not evaluate, with {} subscribers (whether BC raises the event for it is not pinned)",
                 event_name(event)
-            )));
+            )))
+        };
+        let pinned_piece = |p: &str| {
+            al_builtins::filter::letters_only(p)
+                || (event == "makeintfilter"
+                    && (p.split_once('.').is_some_and(|(a, b)| {
+                        [a, b]
+                            .iter()
+                            .all(|x| !x.is_empty() && x.bytes().all(|c| c.is_ascii_digit()))
+                    }) || al_builtins::filter::spaced_number(p)))
+        };
+        if t.contains("...") || t.chars().any(|c| "&<>=@*?'\"()%".contains(c)) {
+            return refuse();
         }
-        self.repair_piece(event, param, t, reads)
+        let sep = match (t.matches("..").count(), t.matches('|').count()) {
+            (0, 0) => "",
+            (1, 0) => "..",
+            (0, 1) => "|",
+            _ => return refuse(),
+        };
+        let mut pieces: Vec<String> = if sep.is_empty() {
+            vec![t.to_string()]
+        } else {
+            t.split(sep).map(|p| p.trim().to_string()).collect()
+        };
+        let mut failing = failing.to_string();
+        let mut repaired = false;
+        for _ in 0..pieces.len() {
+            let Some(i) = pieces.iter().position(|p| *p == failing) else {
+                return refuse();
+            };
+            if !pinned_piece(&failing) {
+                return refuse();
+            }
+            let reads = |p: &str| parse(p).is_ok();
+            let Some(new) = self.repair_piece(event, param, &failing, &reads)? else {
+                // A failure after an earlier piece was repaired: which text BC's error names is not pinned.
+                if repaired {
+                    return refuse();
+                }
+                return Ok(None);
+            };
+            repaired = true;
+            pieces[i] = new;
+            let rebuilt = pieces.join(sep);
+            match parse(&rebuilt) {
+                Ok(()) => return Ok(Some(rebuilt)),
+                Err(e) => match al_builtins::filter::not_evaluated_value(&e) {
+                    Some(next) => failing = next.to_string(),
+                    None => return refuse(),
+                },
+            }
+        }
+        refuse()
     }
 }
 

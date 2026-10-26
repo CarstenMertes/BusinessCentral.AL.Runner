@@ -187,13 +187,9 @@ fn last_index_of(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NRe
     let len = if ascii { st.len() } else { u16s(&st).len() };
     // On an empty text a start index of 0 or 1 finds nothing, and the empty text at 1
     // (text/lt-text-instance/Search1.Codeunit.al:351,353,355: `E.LastIndexOf('', 1) = 1`, `('a', 1) = 0`, `('a', 0) = 0`,
-    // no error). `E.LastIndexOf('', 0)` is not pinned.
+    // no error), and `E.LastIndexOf('', 0)` is 1 too (Search1.Codeunit.al:466-487 PW_LastIndexOf_EmptyValue_StartZero).
     if len == 0 && a.len() > 1 && matches!(int(a, 1)?, 0 | 1) {
-        return match (sb.is_empty(), int(a, 1)?) {
-            (false, _) => Ok(Value::Integer(0)),
-            (true, 1) => Ok(Value::Integer(1)),
-            _ => unsupported("LastIndexOf('', 0) on an empty text (not pinned)"),
-        };
+        return Ok(Value::Integer(if sb.is_empty() { 1 } else { 0 }));
     }
     let start = if a.len() > 1 {
         let n = int(a, 1)?;
@@ -206,8 +202,12 @@ fn last_index_of(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NRe
     } else {
         len + 1
     };
+    // With a start index the empty text is found one past it, but never past the end: `'hello'.LastIndexOf('', 5)` and `('', 6)`
+    // are both 6 (Search1.Codeunit.al:473-484).
     if sb.is_empty() {
-        return Ok(Value::Integer(start as i32 + if a.len() > 1 { 1 } else { 0 }));
+        return Ok(Value::Integer(
+            if a.len() > 1 { (start + 1).min(len + 1) } else { start } as i32,
+        ));
     }
     let limit = start.min(len);
     // Text of ASCII only is searched where it lies, with no copy of it.
@@ -227,6 +227,10 @@ fn index_of_any(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NRes
     // (types/lt-variant-is-text-streams/LTP89TextConst.al:IndexOfAny_Overloads). A start outside the text is not pinned.
     let from = if a.len() > 1 {
         let n = int(a, 1)?;
+        // One past the end finds nothing and raises nothing (text/lt-text-instance/Search1.Codeunit.al:418-443 `any_start12`).
+        if n >= 1 && n as usize == s.len() + 1 {
+            return Ok(Value::Integer(0));
+        }
         if n < 1 || n as usize > s.len() {
             return unsupported("IndexOfAny with a start index outside the text (not pinned)");
         }
@@ -257,23 +261,49 @@ fn index_of_any(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NRes
 }
 
 /// `Remove(StartIndex [, Count])`: 1-based, `'Hello, World'.Remove(6)` is `Hello` and `Remove(6, 3)` is `Helloorld`
-/// (types/lt-variant-is-text-streams/LTP89TextConst.al:Edit_1). Arguments outside the text are not pinned.
+/// (types/lt-variant-is-text-streams/LTP89TextConst.al:Edit_1). The errors outside the text follow text/lt-text-instance/
+/// Edit1.Codeunit.al:216-330 (Remove_OneArg, Remove_TwoArgs): with one argument a start below 1 is `StartIndex cannot be less
+/// than 1.`, one just past the end removes nothing and one further is `startIndex cannot be larger than length of string.`; with
+/// two a start below 1 or a negative count is the non-negative error of `startIndex` (start - 1) or `count`, and a count past the
+/// end is `count ('C') must be less than or equal to 'R'.`. Two arguments with a start further than just past the end are not
+/// pinned.
 fn remove(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
     let s = u16s(&recv_text(&r)?);
     let start = int(a, 0)?;
-    if start < 1 || start as usize > s.len() {
-        return unsupported("Text.Remove with a start index outside the text (not pinned)");
-    }
-    let from = start as usize - 1;
+    let len = s.len() as i64;
+    let from = start - 1;
     let to = if a.len() > 1 {
         let n = int(a, 1)?;
-        if n < 0 || from + n as usize > s.len() {
-            return unsupported("Text.Remove with a count outside the text (not pinned)");
+        if from < 0 {
+            return Err(start_error("startIndex", from));
         }
-        from + n as usize
+        if n < 0 {
+            return Err(start_error("count", n));
+        }
+        if from > len {
+            return unsupported("Text.Remove with a start index more than one past the end and a count (not pinned)");
+        }
+        if n > len - from {
+            return Err(out_of_range(&format!(
+                "count ('{n}') must be less than or equal to '{}'. (Parameter 'count')\\Actual value was {n}.",
+                len - from
+            )));
+        }
+        (from + n) as usize
     } else {
+        if start < 1 {
+            return Err(out_of_range(
+                "StartIndex cannot be less than 1. (Parameter 'startIndex')",
+            ));
+        }
+        if from > len {
+            return Err(out_of_range(
+                "startIndex cannot be larger than length of string. (Parameter 'startIndex')",
+            ));
+        }
         s.len()
     };
+    let from = from as usize;
     let mut out = s[..from].to_vec();
     out.extend_from_slice(&s[to..]);
     Ok(Value::Text(from_u16(&out).into()))
@@ -383,8 +413,11 @@ fn pad(r: &Option<&mut Value>, a: &[Value], left: bool) -> NResult {
     let (Some(f), None) = (it.next(), it.next()) else {
         return unsupported("PadLeft/PadRight with a fill that is not one character");
     };
+    // text/lt-text-instance/Edit1.Codeunit.al:41-63,114-136; text/lt-textconst-label-methods/P103TextConstEdit.al:98-126.
     if width < 0 {
-        return unsupported("PadLeft/PadRight with a negative width");
+        return Err(out_of_range(&format!(
+            "totalWidth ('{width}') must be a non-negative value. (Parameter 'totalWidth')\\Actual value was {width}."
+        )));
     }
     let have = Value::text_len(&s);
     let missing = (width as usize).saturating_sub(have);
@@ -537,8 +570,9 @@ fn inc_str(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> NResult {
         return unsupported("IncStr of a digit block beyond 38 digits (not pinned)");
     };
     let sum = value + by;
+    // text/lt-text-functions/IncStr.Codeunit.al:141-219; the BigInteger increment: BM_IncStr_BigIntegerIncrement `big_neg_below_zero`.
     if sum < 0 {
-        return unsupported("IncStr below zero (not pinned)");
+        return raise("The result of incrementing cannot be negative.", "InvalidOperation");
     }
     let mut out: String = head.iter().collect();
     out.push_str(&format!("{sum:0width$}", width = num.len()));
@@ -551,10 +585,17 @@ fn pad_str(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> NResult {
     let len = int(a, 1)?;
     let fill = if a.len() > 2 { text(a, 2)? } else { " ".into() };
     let mut it = fill.chars();
+    // A fill that is not one character and a negative length are range errors (text/lt-text-functions/PadStr.Codeunit.al:
+    // 37-73, 100-118). Both at once is not pinned.
     let (Some(f), None) = (it.next(), it.next()) else {
-        return unsupported("PadStr with a fill that is not one character (not pinned)");
+        if len < 0 {
+            return unsupported("PadStr with a negative length and a fill that is not one character (not pinned)");
+        }
+        return Err(permitted("PADSTR", 3, fill.chars().count() as i64, "1", "1"));
     };
-    let want = usize::try_from(len).map_err(|_| Signal::Unsupported("PadStr with a negative length".into()))?;
+    let Ok(want) = usize::try_from(len) else {
+        return Err(permitted("PADSTR", 2, len, "0", INT_MAX));
+    };
     let u = u16s(&s);
     // Shorter than the text truncates (TestTextProcessingContracts.al PadStr_LengthLessThanStringLen_Truncates).
     if want <= u.len() {
@@ -801,19 +842,92 @@ fn tb_to_text(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResul
     }
     let u = u16s(&s);
     let (start, count) = (int(a, 0)?, int(a, 1)?);
+    // A start of 0 reads from the first character: `ToText(0, 10)` of ten characters is all of them, `ToText(0, 0)` of an empty
+    // builder is empty (text/lt-label-textbuilder/TxCTextBuilderEdit.al:312-330, 365-380).
+    let start = if start == 0 && (0..=u.len() as i64).contains(&count) {
+        1
+    } else {
+        start
+    };
     if start < 1 || count < 0 || (start as usize - 1) + count as usize > u.len() {
-        return unsupported("TextBuilder.ToText outside the text (error text not pinned)");
+        // Outside the text BC raises no error (TxCTextBuilderEdit.al:333-363 ToText_Errors, ToText_EmptyBuilder: a negative
+        // start or count, a count past the end, a start past the end); what text it gives is not pinned, so the result is
+        // a value every read of which is refused.
+        return Ok(Value::Unknown(
+            "the text TextBuilder.ToText(StartIndex, Count) gives outside the text (not pinned)".into(),
+        ));
     }
     let from = start as usize - 1;
     Ok(Value::Text(from_u16(&u[from..from + count as usize]).into()))
 }
 
-fn tb_length(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
+fn tb_length(ctx: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
     if !a.is_empty() {
-        return unsupported("setting TextBuilder.Length (not pinned)");
+        return tb_set_length(ctx, r, a);
     }
     let h = string_of(r)?;
     Ok(Value::Integer(with_string(&h, |s| Value::text_len(s)) as i32))
+}
+
+/// `Length(N)` cuts the text to N characters or extends it with NUL characters, and the capacity grows to hold it
+/// (text/lt-label-textbuilder/TxCTextBuilderBasics.al:230-257 Length_Getter_Setter; TxCTextBuilderEdit.al:556-567
+/// Length_Larger_Than_Capacity); above the largest capacity it overflows (TxCTextBuilderBasics.al:267-270). A negative length,
+/// and the answer of the setter, are not pinned.
+fn tb_set_length(ctx: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
+    let h = string_of(r)?;
+    let n = int(a, 0)?;
+    if n > i64::from(i32::MAX) {
+        return crate::native::raise("Arithmetic operation resulted in an overflow.", "AL:Overflow");
+    }
+    if n < 0 {
+        return unsupported("setting TextBuilder.Length to a negative number (not pinned)");
+    }
+    if ctx.ret_used() {
+        return unsupported("the answer of setting TextBuilder.Length (not pinned)");
+    }
+    with_string(&h, |s| {
+        let mut u = u16s(s);
+        u.resize(n as usize, 0);
+        *s = from_u16(&u);
+    });
+    grow_capacity(&h);
+    Ok(Value::Integer(n as i32))
+}
+
+/// `Replace(Old, New, StartIndex, Count)` replaces within the Count characters from StartIndex (1-based): `aXaXaXaX` with `X`
+/// to `-` from 2 for 4 is `a-a-aXaX`, `aX` to `-` from 1 for 4 is `--aXaX`. A start below 1, a negative count, or a range past
+/// the end is the argument error and leaves the text (text/lt-label-textbuilder/TxCTextBuilderEdit.al:235-304, from 0, -1 and
+/// `5, 5` of six characters); an empty range just past the end changes nothing. The answer of the call is not pinned.
+fn tb_replace_range(ctx: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
+    let h = string_of(r)?;
+    let (old, new) = (text(a, 0)?, text(a, 1)?);
+    let (start, count) = (int(a, 2)?, int(a, 3)?);
+    let u = with_string(&h, |s| u16s(s));
+    let invalid = || {
+        crate::native::raise::<Value>(
+            "An invalid argument was passed to a 'TextBuilder' data type method.".to_string(),
+            "ArgumentOutOfRange",
+        )
+    };
+    if ctx.ret_used() {
+        return unsupported("the answer of TextBuilder.Replace(Old, New, StartIndex, Count) (not pinned)");
+    }
+    if start < 1 || count < 0 || start - 1 + count > u.len() as i64 {
+        return invalid();
+    }
+    if old.is_empty() {
+        return unsupported(
+            "TextBuilder.Replace(Old, New, StartIndex, Count) of an empty Old in the text (not pinned)",
+        );
+    }
+    let (from, to) = ((start - 1) as usize, (start - 1 + count) as usize);
+    let mid = from_u16(&u[from..to]).replace(old.as_str(), new.as_str());
+    let mut out = from_u16(&u[..from]);
+    out.push_str(&mid);
+    out.push_str(&from_u16(&u[to..]));
+    with_string(&h, |s| *s = out);
+    grow_capacity(&h);
+    Ok(Value::Boolean(true))
 }
 
 fn tb_clear(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> NResult {
@@ -892,20 +1006,29 @@ fn tb_remove(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult
 
 /// `EnsureCapacity(N)` makes the capacity at least N and answers true; N above the maximum is an overflow; zero and a negative N
 /// change nothing (TxCTextBuilderBasics.al:EnsureCapacity_Basics).
-fn tb_ensure_capacity(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
+fn tb_ensure_capacity(ctx: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
     let h = string_of(r)?;
     let n = int(a, 0)?;
     if n > i64::from(i32::MAX) {
         return crate::native::raise("Arithmetic operation resulted in an overflow.", "AL:Overflow");
     }
-    // A negative capacity on a builder that holds text is an argument error (types/lt-format-codes-textbuilder-pagerun-labels/
-    // P144TextBuilderCapacity.al:P144_EnsureCapacity_Negative: 'abc' appended, capacity 16); on an empty builder with capacity 50 it
-    // changes nothing (text/lt-label-textbuilder/TxCTextBuilderBasics.al:EnsureCapacity_Basics). The two files differ in the text
-    // held and the capacity; which of them decides is not probed (docs/probes-needed.md).
-    if n < 0 && with_string(&h, |s| !s.is_empty()) {
-        return crate::native::raise::<Value>(
-            "An invalid argument was passed to a 'TextBuilder' data type method.".to_string(),
-            "ArgumentOutOfRange",
+    // A negative capacity whose answer is used answers false and changes nothing, on an empty builder and on one holding 'abc',
+    // with capacity 16 and 50 (types/lt-ax-text-format-dates/AxFillerBuilderAutoFormat.al:156-185, `Ret := TB.EnsureCapacity(-1)`
+    // in a TryFunction; TxCTextBuilderBasics.al:356 raises nothing either). Called as a statement on a builder that holds text it
+    // is an argument error (types/lt-format-codes-textbuilder-pagerun-labels/P144TextBuilderCapacity.al:160-173: 'abc' appended,
+    // capacity 16). Called as a statement on an empty builder is not pinned.
+    if n < 0 {
+        if ctx.ret_used() {
+            return Ok(Value::Boolean(false));
+        }
+        if with_string(&h, |s| !s.is_empty()) {
+            return crate::native::raise::<Value>(
+                "An invalid argument was passed to a 'TextBuilder' data type method.".to_string(),
+                "ArgumentOutOfRange",
+            );
+        }
+        return unsupported(
+            "TextBuilder.EnsureCapacity of a negative number on an empty builder, as a statement (not pinned)",
         );
     }
     if n > i64::from(capacity_of(&h)) {
@@ -929,11 +1052,32 @@ fn tb_replace(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResul
     Ok(Value::Boolean(true))
 }
 
+/// `AddText(Text or BigText [, Position])`: appends; with a position the text goes in before that character, at the end when the
+/// position is past it, and a position below 1 is the range error of INSSTR (types/lt-totext-bigtext-codeunit-run/P93BigText.al:
+/// 95-235, a BigText added to itself included).
 fn bt_add_text(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
+    let h = string_of(r)?;
+    let t = match a.first() {
+        Some(Value::Library(_, o)) => match &*o.borrow() {
+            LibraryValue::Text(s) | LibraryValue::TextCap(s, _) => s.clone(),
+            LibraryValue::Empty => String::new(),
+            _ => return unsupported("BigText.AddText of something that is no BigText"),
+        },
+        _ => text(a, 0)?.to_string(),
+    };
     if a.len() > 1 {
-        return unsupported("BigText.AddText at a position (not pinned)");
+        let pos = int(a, 1)?;
+        if pos < 1 {
+            return Err(permitted("INSSTR", 3, pos, "1", INT_MAX));
+        }
+        with_string(&h, |s| {
+            let mut u = u16s(s);
+            let at = (pos as usize - 1).min(u.len());
+            u.splice(at..at, t.encode_utf16());
+            *s = from_u16(&u);
+        });
+        return Ok(Value::Null);
     }
-    let (h, t) = (string_of(r)?, text(a, 0)?);
     with_string(&h, |s| s.push_str(&t));
     Ok(Value::Null)
 }
@@ -964,37 +1108,60 @@ fn bt_length(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> NResult
 fn bt_text_pos(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
     let h = string_of(r)?;
     let (hay, needle) = (with_string(&h, |s| u16s(s)), u16s(&text(a, 0)?));
+    // An empty text is not found, in an empty BigText and in one with text (streams/StTBigText.al:39 `textpos-empty`, :198 `empty`).
     if needle.is_empty() {
-        return unsupported("BigText.TextPos of an empty text (not pinned)");
+        return Ok(Value::Integer(0));
     }
     Ok(Value::Integer(find(&hay, &needle, 0).map_or(0, |p| p as i32 + 1)))
 }
 
 /// `GetSubText(var Text, Position [, Length])`; returns the number of characters.
+/// `GetSubText(var Text or BigText, Position [, Length])` answers the number of characters it gives: from the position to the end,
+/// or at most Length; a position past the end gives nothing. A position below 1 and a negative length are the range errors of
+/// COPYSTR (types/lt-totext-bigtext-codeunit-run/P93BigText.al:237-347). Both at once, and an empty part into a BigText that holds
+/// text, are not pinned.
 fn bt_get_sub_text(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
     let h = string_of(r)?;
     let u = with_string(&h, |s| u16s(s));
     let pos = int(a, 1)?;
-    // A position below 1 and a negative length raise CopyStr's range errors (streams/StTBigText.al:157 GetSubTextErrors).
+    let len = if a.len() > 2 { Some(int(a, 2)?) } else { None };
+    if pos < 1 && len.is_some_and(|l| l < 0) {
+        return unsupported("BigText.GetSubText with a position below 1 and a negative length (not pinned)");
+    }
     if pos < 1 {
         return Err(permitted("COPYSTR", 2, pos, "1", INT_MAX));
     }
-    let given = if a.len() > 2 { Some(int(a, 2)?) } else { None };
-    if let Some(len) = given.filter(|l| *l < 0) {
-        return Err(permitted("COPYSTR", 3, len, "0", INT_MAX));
+    if let Some(l) = len.filter(|l| *l < 0) {
+        return Err(permitted("COPYSTR", 3, l, "0", INT_MAX));
     }
-    // A length past the end gives the rest of the text and its length (StTBigText.al:134 `8, 100` gives `789` and 3; a start
-    // one past the end gives the empty text: xmlport/lt-xmlport-bigtext/XmlPortBigText.al:198 `1, 12` on an empty BigText,
-    // StTBigText.al:167 no error). What a start further out gives is not pinned (StTBigText.al:169 pins only no error).
-    if pos as usize > u.len() + 1 {
-        return unsupported(
-            "BigText.GetSubText from a position past the end of the text plus one (the result is not pinned)",
-        );
+    let from = (pos as usize - 1).min(u.len());
+    let to = len.map_or(u.len(), |l| (from + l as usize).min(u.len()));
+    let part = from_u16(&u[from..to]);
+    let n = (to - from) as i32;
+    match &mut a[0] {
+        Value::Library(_, t)
+            if !matches!(
+                &*t.borrow(),
+                LibraryValue::Text(_) | LibraryValue::TextCap(..) | LibraryValue::Empty
+            ) =>
+        {
+            return unsupported("BigText.GetSubText into something that is no BigText");
+        }
+        Value::Library(_, t) => {
+            let holds = match &*t.borrow() {
+                LibraryValue::Text(s) | LibraryValue::TextCap(s, _) => !s.is_empty(),
+                _ => false,
+            };
+            if part.is_empty() && holds {
+                return unsupported("BigText.GetSubText of nothing into a BigText that holds text (not pinned)");
+            }
+            if !part.is_empty() {
+                *t.borrow_mut() = LibraryValue::Text(part);
+            }
+        }
+        v => *v = Value::Text(part.into()),
     }
-    let from = pos as usize - 1;
-    let to = given.map_or(u.len(), |len| (from + len as usize).min(u.len()));
-    a[0] = Value::Text(from_u16(&u[from..to]).into());
-    Ok(Value::Integer((to - from) as i32))
+    Ok(Value::Integer(n))
 }
 
 // --------------------------------------------------------------- dispatch
@@ -1040,12 +1207,13 @@ pub fn native_for(sig: &Signature) -> Option<NativeFn> {
         ("TextBuilder", "Remove", [_, _]) => tb_remove,
         ("TextBuilder", "EnsureCapacity", [_]) => tb_ensure_capacity,
         ("TextBuilder", "Replace", [_, _]) => tb_replace,
-        ("BigText", "AddText", ["Text", ..]) => bt_add_text,
+        ("TextBuilder", "Replace", [_, _, _, _]) => tb_replace_range,
+        ("BigText", "AddText", ["Text" | "BigText", ..]) => bt_add_text,
         ("BigText", "Read", [_]) => bt_read,
         ("BigText", "Write", [_]) => bt_write,
         ("BigText", "Length", []) => bt_length,
         ("BigText", "TextPos", [_]) => bt_text_pos,
-        ("BigText", "GetSubText", ["Text", ..]) => bt_get_sub_text,
+        ("BigText", "GetSubText", ["Text" | "BigText", ..]) => bt_get_sub_text,
         _ => return None,
     };
     Some(f)

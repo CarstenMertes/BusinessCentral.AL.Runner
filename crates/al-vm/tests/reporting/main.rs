@@ -9,6 +9,7 @@ mod report_custom_layout;
 mod report_header_address;
 mod report_link_filter;
 mod report_link_flowfilter;
+mod report_members_lane;
 mod report_no_output;
 mod report_obsolete_properties;
 mod report_option_caption_ml;

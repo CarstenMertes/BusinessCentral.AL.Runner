@@ -107,23 +107,26 @@ fn an_integer_converts_to_the_enum_value_of_that_ordinal() {
     );
 }
 
-// The text of the not-found error of a Get keyed by an enum of another type or by an Integer is not
-// pinned (the probe drops the answer only for an Option, PEOptionEnumBigText.al:225-259); it is refused
-// (docs/probes-needed.md), while the answered form returns false (PXEnumRecordRef.al:127, :156).
+// The not-found error of a Get keyed by an enum of another type names the caller's value, keyed by an Integer the key's
+// enum value (the number for an ordinal it lacks): errors/lt-ms-refusals-138/P138EnumGetNotFound.al:103, :126-128.
 #[test]
-fn the_not_found_error_of_a_get_keyed_by_another_enum_or_an_integer_is_refused() {
+fn the_not_found_error_of_a_get_keyed_by_another_enum_or_an_integer_names_the_pinned_value() {
     let outcomes = run(
         "[Test] procedure ByEnum() var Found: Record \"PX Row\"; S: Enum \"PX Src Compat\"; begin
              Found.DeleteAll(); S := S::Seven; asserterror Found.Get('A', S);
+             if GetLastErrorText() <> 'The PX Row does not exist. Identification fields and values: Code=''A'',Kind=''Seven''' then
+                 Error('enum: %1', GetLastErrorText());
          end;
          [Test] procedure ByInteger() var Found: Record \"PX Row\"; I: Integer; begin
              Found.DeleteAll(); I := 5; asserterror Found.Get('A', I);
+             if GetLastErrorText() <> 'The PX Row does not exist. Identification fields and values: Code=''A'',Kind=''5''' then
+                 Error('integer: %1', GetLastErrorText());
+             I := 1; asserterror Found.Get('A', I);
+             if GetLastErrorText() <> 'The PX Row does not exist. Identification fields and values: Code=''A'',Kind=''Uno''' then
+                 Error('integer: %1', GetLastErrorText());
          end;",
     );
     for (name, outcome) in outcomes {
-        match outcome {
-            Outcome::NotRun(why) => assert!(why.contains("not pinned"), "{name}: {why}"),
-            other => panic!("{name}: {other:?}"),
-        }
+        assert_eq!(outcome, Outcome::Pass, "{name}");
     }
 }

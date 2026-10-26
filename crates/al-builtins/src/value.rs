@@ -469,6 +469,11 @@ pub struct PageState {
     pub close_vetoed: bool,
     /// A `TestPage.Close()` in the modal page's handler was refused by OnQueryClosePage and closed the TestPage all the same.
     pub test_close_vetoed: bool,
+    /// A `TestPage.Close()` in the modal page's handler closed the page (no veto).
+    pub test_closed_in_handler: bool,
+    /// How the current modal run started: `Some(true)` the static `Page.RunModal(Id)`, `Some(false)` a Page variable's
+    /// `RunModal()`, `None` any other run (an action, a lookup).
+    pub run_static: Option<bool>,
     /// The row the page was left on when it closed with LookupOK (`Page.RunModal(Id, Rec)` hands it back to `Rec`).
     pub selection: Option<Vec<Value>>,
     pub pending: Option<Vec<Value>>,
@@ -499,6 +504,13 @@ pub struct PageState {
     pub xrec_after_validate: Option<Vec<Value>>,
     /// CurrPage.Update ran while the page's row was stored but outside the view the action had just set (list refresh).
     pub view_left: bool,
+    /// An OnDrillDown turned MarkedOnly on for Rec without `CurrPage.Update`: the client still shows the rows of the view
+    /// without MarkedOnly (assumption drilldown-marked-only-update-refresh).
+    pub marked_only_unshown: bool,
+    /// The same OnDrillDown on a list WITH OnAfterGetRecord or OnAfterGetCurrRecord: what the page shows then is not pinned
+    /// (corpus pages/lt-sc-outside-pages/ScDrillDownMarkedOnly.al:422 covers only a page without them); every TestPage call
+    /// but Close is refused until Close.
+    pub marked_only_unpinned: bool,
     /// A TestPage GoToKey moved the cursor of a list without OnAfterGetCurrRecord: the client reads the row once more before
     /// every later action (pages/lt-ai-list-order/AiListOrderTests.al:39 Keep_Nav `update` = `R:R1002;R:R1002;A:filter...`;
     /// QgGoToKeyNextCall.al:297 Plain_GoToKey_ThenActionWithoutUpdate_Twice `second_action_log`), until a move clears it.
@@ -583,6 +595,10 @@ pub struct PageState {
     /// The page reached a state whose behavior is not pinned: every later call on it or its parts except Close is refused
     /// with this reason.
     pub unpinned_state: Option<String>,
+    /// `RequestPage.Editable` and `RequestPage.LookupMode` of a request page, as its own code set them (al-vm reports.rs
+    /// `request_page_member`).
+    pub request_editable: bool,
+    pub request_lookup_mode: bool,
     /// With `unpinned_state`: Close is refused too.
     pub unpinned_close: bool,
     /// The row a new line was started below (`New()` on a stored row of a list): after the new row
@@ -697,6 +713,8 @@ pub struct PageState {
     /// The refresh about to run follows an action on a card with OnFindRecord, without CurrPage.Update: pinned
     /// (pages/lt-be-card-onfindrecord/BeCardOnFindRecord.al), so it marks no assumption.
     pub refresh_pinned: bool,
+    /// A SetValue wrote a control bound to an expression on this page with no source table (an action after it is refused).
+    pub expr_set_no_source: bool,
     /// The refresh about to run was asked for by `CurrPage.Update` (not by an action that saved an edit).
     pub refresh_by_update: bool,
     /// The last `CurrPage.Update` call was `Update(false)` (it saves nothing).
@@ -715,7 +733,7 @@ pub struct PageState {
     /// Since that refresh only events happened that are pinned to leave this page as it is.
     pub shown_current: bool,
     /// The kinds of unpinned events since that refresh (bits of al-vm `pages/shown.rs`).
-    pub shown_doubts: u8,
+    pub shown_doubts: u16,
     /// The first call since that refresh after which a read of an expression it does not keep is refused.
     pub shown_doubt_call: Option<&'static str>,
 }
@@ -735,6 +753,8 @@ impl PageState {
     pub fn closed(object: u32) -> PageState {
         PageState {
             object,
+            request_editable: true,
+            request_lookup_mode: false,
             open: false,
             ran: false,
             mode: PageMode::View,
@@ -781,6 +801,8 @@ impl PageState {
             close_error: false,
             close_vetoed: false,
             test_close_vetoed: false,
+            test_closed_in_handler: false,
+            run_static: None,
             selection: None,
             pending: None,
             modal: false,
@@ -797,6 +819,8 @@ impl PageState {
             read_keeps_xrec: false,
             xrec_after_validate: None,
             view_left: false,
+            marked_only_unshown: false,
+            marked_only_unpinned: false,
             read_after_goto: false,
             read_after_goto_doubt: false,
             read_after_goto_quiet: false,
@@ -866,6 +890,7 @@ impl PageState {
             statement_run: false,
             field_run: false,
             refresh_pinned: false,
+            expr_set_no_source: false,
             refresh_by_update: false,
             refresh_update_false: false,
             filters_before_validate: None,
@@ -1649,6 +1674,9 @@ pub enum LibraryValue {
     },
     XmlWriteOptions {
         preserve_whitespace: bool,
+        /// Whether a document or element is written without indentation. A setter changes it only when it changes
+        /// `preserve_whitespace`, and a new value starts unindented (see xml.rs `write_options_preserve_whitespace`).
+        unindented: bool,
     },
     /// A `File` that was created or opened, or had a mode set (an untouched one is `Empty`).
     File(crate::file::FileState),

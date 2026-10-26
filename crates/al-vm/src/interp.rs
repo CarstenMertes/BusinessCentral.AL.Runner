@@ -44,6 +44,15 @@ impl Session {
         if id == ids::REQUESTPAGE_UPDATE_1 {
             return self.request_page_update(&values);
         }
+        if matches!(
+            id,
+            ids::REQUESTPAGE_EDITABLE_1
+                | ids::REQUESTPAGE_LOOKUPMODE_1
+                | ids::REQUESTPAGE_OBJECTID_1
+                | ids::REQUESTPAGE_ACTIVATE_1
+        ) {
+            return self.request_page_member(id, &values, &f.instance);
+        }
         if id == ids::REQUESTPAGE_CAPTION_1 {
             return self.request_page_caption(&values, &f.instance);
         }
@@ -1258,6 +1267,7 @@ impl Session {
                                             // A shorter write into a copy of an unloaded Blob is not pinned (`UNLOADED_WRITE`).
                                             db_row: false,
                                             first_write_truncates: false,
+                                            file: false,
                                         },
                                     )))
                                 }

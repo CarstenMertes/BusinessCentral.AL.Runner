@@ -180,12 +180,15 @@ impl Session {
         // A codeunit the test method runs itself, outside a try function, names the test runner too
         // (errors/lt-az-error-texts/AzErrorTexts.al:110-134 CodeunitRun_MissingId_RawText). Deeper calls from the test codeunit
         // keep the outermost object: only a helper codeunit is pinned (MissingCodeunit_FromHelperCodeunit above).
-        let caller =
-            if (kind == "Page" && self.tx.try_depth == 0) || (kind == "CodeUnit" && self.in_test_method_itself()) {
-                "Test Runner - Mgt"
-            } else {
-                caller
-            };
+        // A report the test method runs itself names the test runner as well (report/lt-report-members-testrequestpage/
+        // P91Run.al:117-165, Report.Run, RunModal and Execute).
+        let caller = if (kind == "Page" && self.tx.try_depth == 0)
+            || (matches!(kind, "CodeUnit" | "Report") && self.in_test_method_itself())
+        {
+            "Test Runner - Mgt"
+        } else {
+            caller
+        };
         self.missing_object_from(kind, id, caller)
     }
 

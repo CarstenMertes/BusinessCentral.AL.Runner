@@ -1,7 +1,7 @@
 //! A query read to its last row takes a new filter, and its next Read raises until it is opened again
 //! (errors/lt-ms-refusals-131/P131QuerySetRangeAfterRead.al:154-170). Opened again it runs with the new filter (Base
 //! Application's Workflow Step Instance.SetTableRelationValues sets filters on its query, opens it and reads it to the end,
-//! once per table relation; assumption query-closed-after-last-row; Tests-Workflow). A query that still has rows to read takes the filter and its next
+//! once per table relation; query/lt-query-read-to-end/QueryReadToEnd.al:88-200). A query that still has rows to read takes the filter and its next
 //! Read raises until it is opened again (query/lt-query-setrange-after-read/QuerySetRangeAfterRead.al:52-77).
 
 use al_sema::workspace::AppSource;

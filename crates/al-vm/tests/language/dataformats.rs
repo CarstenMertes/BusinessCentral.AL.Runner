@@ -652,11 +652,12 @@ fn xml_select_nodes_by_xpath() {
         "XmlDocument.ReadFrom('<r><a/><a/><a/></r>', D); D.GetRoot(E); E.SelectNodes('a', L); exit(Format(L.Count()));",
     );
     assert_eq!(t, "3");
-    // Prefixed names need a namespace manager, which the corpus never uses: refused.
-    assert!(unsupported(
+    // A prefixed name without a namespace manager raises (xml/XmlXPathNamespaces.al:314 `prefix_without_manager`).
+    let t = text_of(
         "D: XmlDocument; N: XmlNode;",
-        "XmlDocument.ReadFrom('<a:r xmlns:a=\"u\"/>', D); D.SelectSingleNode('/a:r', N); exit('');"
-    ));
+        "XmlDocument.ReadFrom('<a:r xmlns:a=\"u\"/>', D); asserterror D.SelectSingleNode('/a:r', N); exit(GetLastErrorCode());",
+    );
+    assert_eq!(t, "Xml:XPath");
 }
 
 #[test]
@@ -938,8 +939,14 @@ fn big_text() {
         "B.AddText('Hello World'); exit(Format(B.TextPos('World')) + Format(B.TextPos('Hello')) + Format(B.TextPos('xyz')));",
     );
     assert_eq!(t, "7".to_string() + "10");
-    // Position in AddText is not pinned.
-    assert!(unsupported("B: BigText;", "B.AddText('x', 1); exit('');"));
+    // A position in AddText inserts before that character (types/lt-totext-bigtext-codeunit-run/P93BigText.al:95-160).
+    assert_eq!(
+        text_of(
+            "B: BigText; S: Text;",
+            "B.AddText('bc'); B.AddText('a', 1); B.GetSubText(S, 1); exit(S);"
+        ),
+        "abc"
+    );
 }
 
 // streams/StTBigText.al:120 GetSubTextForms and :157 GetSubTextErrors: a length past the end gives the rest; a start one past

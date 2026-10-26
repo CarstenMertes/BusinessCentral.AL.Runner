@@ -193,6 +193,10 @@ pub(crate) struct Lowerer<'a> {
     /// The Label-typed variables declared `TextConst`, by lowercase name (a Label and a TextConst share `Ty::Label`).
     global_textconsts: std::collections::HashSet<String>,
     local_textconsts: std::collections::HashSet<String>,
+    /// The TextConst variables whose text depends on the language in force, by lowercase name: their texts by language
+    /// code ([`shared::textconst_languages`]).
+    global_textconst_languages: HashMap<String, Vec<(String, String)>>,
+    local_textconst_languages: HashMap<String, Vec<(String, String)>>,
     /// The Label variables declared `Locked = true`, by lowercase name: no translation changes them (ADR-053 step 1).
     global_locked_labels: std::collections::HashSet<String>,
     local_locked_labels: std::collections::HashSet<String>,
@@ -441,7 +445,10 @@ fn is_property_setter(receiver: &str, name: &str) -> bool {
             | ("Record" | "RecordRef", "ReadIsolation" | "SecurityFiltering")
             | ("Record", "FilterGroup" | "Ascending" | "Mark" | "MarkedOnly")
             | ("RecordRef", "FilterGroup")
-            | ("Report", "UseRequestPage" | "Language" | "FormatRegion")
+            | (
+                "Report",
+                "UseRequestPage" | "Language" | "FormatRegion" | "PrintOnlyIfDetail"
+            )
             | ("System", "WorkDate")
             | ("HttpRequestMessage", "Method" | "Content")
             | (
@@ -452,6 +459,12 @@ fn is_property_setter(receiver: &str, name: &str) -> bool {
             | ("File", "TextMode" | "WriteMode")
             | ("DataTransfer", "UpdateAuditFields")
             | ("XmlReadOptions" | "XmlWriteOptions", "PreserveWhitespace")
+            // `S.Company := ''` (platform/lt-platform-members/PlTSessionSettings.al:103-131 Properties_EdgeValues,
+            // SettingsAreCopies).
+            | (
+                "SessionSettings",
+                "Company" | "LanguageId" | "LocaleId" | "ProfileId" | "ProfileAppId" | "ProfileSystemScope" | "TimeZone"
+            )
     )
 }
 

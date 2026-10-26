@@ -1,7 +1,5 @@
 //! Tests-ERM refusals of issue 26: an Integer stored into an Enum and `RecordRef.Get(RecordId)` on a
-//! RecordRef that is not open. No corpus test pins either (`grep` of corpus/tests/al-language finds
-//! `Get(RecordId)` only on an open RecordRef), so each is refused with a reason that names the open
-//! question. `RecordRef.GetBySystemId`, refused here before, is probed now (al-vm
+//! RecordRef that is not open. `RecordRef.GetBySystemId`, refused here before, is probed now (al-vm
 //! tests/record_builtins.rs).
 
 use al_test_cli::report::Outcome;
@@ -37,15 +35,21 @@ fn not_run(o: &(String, Outcome)) -> String {
     }
 }
 
+// An Integer key for an Enum field is named as the key's enum value in the not-found error
+// (corpus errors/lt-ms-refusals-138/P138EnumGetNotFound.al:126-130).
 #[test]
-fn an_integer_key_for_an_enum_field_is_refused_with_its_reason() {
+fn an_integer_key_for_an_enum_field_names_the_enum_value_when_not_found() {
     let o =
         outcomes("[Test] procedure IntegerKey() var R: Record \"B6 Row\"; N: Integer; begin N := 1; R.Get(N); end;");
-    let why = not_run(&o[0]);
-    assert!(
-        why.contains("Integer") && why.contains("Enum") && why.contains("not pinned") && why.contains("probes-needed"),
-        "{why}"
-    );
+    match &o[0].1 {
+        Outcome::Fail(m) => {
+            assert_eq!(
+                m,
+                "The B6 Row does not exist. Identification fields and values: Kind='B'"
+            )
+        }
+        other => panic!("{other:?}"),
+    }
 }
 
 // Get(RecordId) on a RecordRef never opened opens the RecordId's table (branch ms-top-refusals-1): the row is then looked up.

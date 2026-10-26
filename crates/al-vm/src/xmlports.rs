@@ -1346,7 +1346,7 @@ impl Session {
                 }
                 // A DateTime in the XML form without a zone fails with this text (TestXmlPortFormatEvaluateContracts.al:192-194,
                 // `2024-03-05T12:34:56` beside a Date the line above reads); its code is not pinned.
-                Err(Signal::Unsupported(_))
+                Err(Signal::Unsupported(_) | Signal::Error(_))
                     if matches!(ty, RtType::DateTime)
                         && text.len() == 19
                         && text.char_indices().all(|(i, c)| match i {

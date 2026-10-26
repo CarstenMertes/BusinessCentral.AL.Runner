@@ -243,6 +243,15 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
                 T::Integer => match i32::try_from(d.mantissa() / 10i128.pow(d.scale())) {
                     Ok(n) => Value::Integer(n),
                     Err(_) if matches!(v, Value::Decimal(_)) => return cast_error("Int32"),
+                    // A BigInteger beyond an Integer (types/lt-scalars/ScT70057.al:140-160; types/lt-implicit-conversions/
+                    // P79BigOption.al:129-132, P79Enums.al:116-118; calcfields/lt-bm-flowfield-conversions/BmFlowFieldConversions.al:
+                    // 159-161).
+                    Err(_) if matches!(v, Value::BigInteger(_)) => {
+                        return raise(
+                            format!("Overflow under conversion of System.Int64 value {d} to System.Int32."),
+                            "ConversionCast",
+                        );
+                    }
                     Err(_) => return unsupported(format!("{d} overflows Integer")),
                 },
                 T::BigInteger => match i64::try_from(d.mantissa() / 10i128.pow(d.scale())) {
@@ -250,10 +259,18 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
                     Err(_) if matches!(v, Value::Decimal(_)) => return cast_error("Int64"),
                     Err(_) => return unsupported(format!("{d} overflows BigInteger")),
                 },
-                T::Byte => Value::Byte(
-                    u8::try_from(d.mantissa() / 10i128.pow(d.scale()))
-                        .or_else(|_| unsupported(format!("{d} overflows Byte")))?,
-                ),
+                // An Integer beyond a Byte raises (misc/lt-probes-needed-2/PnBErrorsCollections.al:560-562, 582-583,
+                // Arithmetic_ErrorTexts `byteOverflow`: 300). Other sources are not pinned.
+                T::Byte => match u8::try_from(d.mantissa() / 10i128.pow(d.scale())) {
+                    Ok(b) => Value::Byte(b),
+                    Err(_) if matches!(v, Value::Integer(_)) => {
+                        return raise(
+                            format!("Overflow under conversion of System.Int32 value {d} to System.Byte."),
+                            "ConversionCast",
+                        );
+                    }
+                    Err(_) => return unsupported(format!("{d} overflows Byte")),
+                },
                 T::Char => Value::Char(
                     u16::try_from(d.mantissa() / 10i128.pow(d.scale()))
                         .or_else(|_| unsupported(format!("{d} overflows Char")))?,
@@ -287,7 +304,23 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
         }
         // Text-like.
         (v, T::Text(max)) if crate::native::text_of(&v).is_some() => {
-            Value::Text(fit_txt(crate::native::text_of(&v).expect("text"), *max)?)
+            // The flag hides the value of a text too long for a Text field or variable (errors/lt-last-error-and-events/
+            // P70_02LastErrFlag.al:Flag_EvaluateAndOverflow `overflow_field|true`, `overflow_var|true`).
+            Value::Text(
+                fit_txt(crate::native::text_of(&v).expect("text"), *max).map_err(|s| match s {
+                    Signal::Error(mut e) if e.code == "StringLengthExceeded" => {
+                        let redacted = e
+                            .message
+                            .split_once(" Value: ")
+                            .map(|(head, _)| format!("{head} Value: <redacted>"));
+                        if let Some(r) = redacted {
+                            e.origin = crate::native::ErrorOrigin::Redacted(r);
+                        }
+                        Signal::Error(e)
+                    }
+                    other => other,
+                })?,
+            )
         }
         (v, T::Code(max)) if crate::native::text_of(&v).is_some() => {
             // Doc (Code data type): upper case, leading and trailing spaces removed.
@@ -308,9 +341,17 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
         }
         // A Text assigns into a Guid, with or without braces (record/TestRecordGetBySystemId*.al uses
         // `'00000000-0000-0000-0000-000000000000'`; the system-id tests use the braced form).
-        (Value::Text(s) | Value::Code(s), T::Guid) => match parse_guid(&s) {
+        // 32 hexadecimal digits without hyphens or braces are a Guid too; any other text is the InvalidGuidFormat error, the empty
+        // and a blank text included (types/W7Scalars.al:46-76 TextToGuid_AssignmentForms; types/lt-filter-enum-relation-duration-guid/
+        // E_Guid.al:101-158; types/lt-notification-id-text/NotificationIdFromText.al:30-65).
+        (Value::Text(s) | Value::Code(s), T::Guid) => match parse_guid(&s).or_else(|| parse_guid_without_hyphens(&s)) {
             Some(g) => Value::Guid(g),
-            None => return unsupported(format!("text `{s}` into a Guid (error text not pinned yet)")),
+            None => {
+                return raise(
+                    "Invalid format of GUID string. The correct format of the GUID string is: CDEF7890-ABCD-0123-1234-567890ABCDEF where 0-9, A-F symbolizes hexadecimal digits.",
+                    "InvalidGuidFormat",
+                );
+            }
         },
         // An Option converts to an Enum by its ordinal, with or without `AssignmentCompatibility`, blank member
         // ' ' giving 0; an ordinal the enum lacks raises no error, the enum holds that number
@@ -349,17 +390,15 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
                 _ => Value::BigInteger(n),
             }
         }
-        // A Boolean for a Text or Code (a Boolean handed to `Get` of a Code key): as `Format` writes it, Yes or No (the
-        // Code upper-cased). Not pinned; Microsoft's tests need the call not to be refused (assumption
-        // `boolean-to-text-as-format`).
+        // A Boolean for a Code (a Boolean handed to `Get` of a Code key): as `Format` writes it, upper-cased: Get(true)
+        // finds the row YES and not 1 or TRUE (types/lt-ax-text-format-dates/AxEvaluateText.al:348 GetTrue_CodeKey_Yes).
+        // An assignment of a Boolean to a Text or Code does not compile (must-not-compile cases 1190, 1191). For a Text
+        // (`Get` of a Text key) the text is not pinned (assumption `boolean-to-text-as-format`).
         (Value::Boolean(b), T::Text(max)) => {
             crate::assumptions::assume(crate::assumptions::Assumption::BooleanToTextAsFormat);
             Value::Text(fit(if b { "Yes" } else { "No" }.to_string(), *max)?.into())
         }
-        (Value::Boolean(b), T::Code(max)) => {
-            crate::assumptions::assume(crate::assumptions::Assumption::BooleanToTextAsFormat);
-            Value::Code(fit(if b { "YES" } else { "NO" }.to_string(), *max)?.into())
-        }
+        (Value::Boolean(b), T::Code(max)) => Value::Code(fit(if b { "YES" } else { "NO" }.to_string(), *max)?.into()),
         // A Date into a DateTime is that day at midnight, the blank Date the blank DateTime (as CreateDateTime(D, 0T)). Not
         // pinned; Microsoft's production order code assigns a Date to a DateTime (Tests-SCM-Manufacturing, 20 tests;
         // assumption date-to-datetime-is-midnight).
@@ -368,6 +407,22 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
 }
 
 /// `8-4-4-4-12` hexadecimal digits, with or without surrounding braces.
+/// 32 hexadecimal digits, without hyphens or braces, with blanks around them (W7Scalars.al:53,60 `no_hyphens`; E_Guid.al:122).
+fn parse_guid_without_hyphens(text: &str) -> Option<[u8; 16]> {
+    let t = text.trim();
+    if t.len() != 32 || !t.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    parse_guid(&format!(
+        "{}-{}-{}-{}-{}",
+        &t[..8],
+        &t[8..12],
+        &t[12..16],
+        &t[16..20],
+        &t[20..]
+    ))
+}
+
 pub fn parse_guid(text: &str) -> Option<[u8; 16]> {
     let t = text.trim();
     let inner = match (t.strip_prefix('{'), t.strip_suffix('}')) {
@@ -571,28 +626,55 @@ fn variant_text_decimal(text: &str) -> Option<Result<Decimal, ()>> {
     text.parse::<Decimal>().ok().map(Ok)
 }
 
+/// The error text of a RecordRef that is not open where a record is wanted (record/lt-ar-records/ArRecordProbes.al
+/// SG_VariantRecordRef_NotOpen_Assign, record/lt-as-records/AsRecRefGetTable.al:110 FromNotOpen; code Conversion).
+pub const RECORD_REF_NOT_OPEN: &str = "Unable to convert from Microsoft.Dynamics.Nav.Runtime.NavRecordRef to Microsoft.Dynamics.Nav.Runtime.INavRecordHandle.";
+
+/// The Record a RecordRef (held by a Variant) of the same table gives, assigned or passed by value: the field values of the
+/// ref's buffer, an unsaved value too, on the ref's row; not its filters, key, sort order or marks; and a temporary ref gives
+/// a Record that is not temporary (record/lt-ar-records/ArRecordProbes.al:333 VariantRecordRef_AssignedToRecord `filters` empty,
+/// `count` 4, `next` from the ref's row in the primary key; :366 VariantRecordRef_PassedToRecordParameter `3|r3||4`; and the
+/// SG_VariantRecordRef_KeyViewAndUnsavedValue `view` = `VERSION(1) SORTING(Field1)`, `ascending` Yes, `row` 3|unsaved, and
+/// SG_VariantRecordRef_Temporary_Assign `istemp` No, `count` 4, `db_has_77` No, corpus bump PR 738). A ref of another company is
+/// not pinned.
+pub fn record_ref_into_record(rec: &crate::value::RecordState) -> Result<Value, Signal> {
+    if rec.company.is_some() {
+        return unsupported("a RecordRef of another company into a Record (not pinned)".to_string());
+    }
+    let mut st = rec.clone();
+    st.key = 0;
+    st.adhoc = None;
+    st.ascending = true;
+    st.field_descending = 0;
+    st.marks.clear();
+    st.marked_only = false;
+    st.filters.clear();
+    st.filter_group = 0;
+    st.temporary = false;
+    st.temp_id = None;
+    st.run_page_link = None;
+    Ok(Value::Record(Rc::new(RefCell::new(st))))
+}
+
 /// The conversions no hot path reaches: a Date into a DateTime, else the refusal.
 #[cold]
 #[inline(never)]
 fn convert_rare(v: Value, t: &RtType) -> Result<Value, Signal> {
     match (&v, t) {
         (Value::Date(n, false), RtType::DateTime) if *n >= 0 => Ok(date_to_datetime(*n)),
-        // A RecordRef a Variant holds, into a record of its own table: the record with the RecordRef's row and filters, a copy
-        // (Base Application's Approvals Mgmt.InformUserOnStatusChange passes its Variant to a `Record "Sales Header"` parameter;
-        // 73 Tests-Workflow tests; assumption recordref-into-record). Another table is not pinned.
-        (Value::Library(_, h), RtType::Record(table, _)) => {
-            let copy = match &*h.borrow() {
-                LibraryValue::RecordRef(rec) if rec.borrow().table == *table => Some(rec.borrow().clone()),
-                _ => None,
-            };
-            match copy {
-                Some(state) => {
-                    crate::assumptions::assume(crate::assumptions::Assumption::RecordRefIntoRecord);
-                    Ok(Value::Record(std::rc::Rc::new(std::cell::RefCell::new(state))))
-                }
-                None => unsupported(format!("conversion of {} to {t}", v.describe(), t = t.describe())),
-            }
-        }
+        // A RecordRef a Variant holds, assigned to a Record (record/lt-ar-records/ArRecordProbes.al:333 VariantRecordRef_AssignedToRecord
+        // and the SG_VariantRecordRef_* tests after it): see `record_ref_into_record`. A RecordRef of another table raises
+        // NotSupportedOperation and one that is not open a Conversion error, the Record left as it was
+        // (SG_VariantRecordRef_OtherTable_AssignAndParameter `assign`, SG_VariantRecordRef_NotOpen_Assign). Passed to a Record
+        // parameter it goes through `Session::record_ref_into_record_param` instead.
+        (Value::Library(name, h), RtType::Record(table, _)) if name.eq_ignore_ascii_case("RecordRef") => match &*h
+            .borrow()
+        {
+            LibraryValue::RecordRef(rec) if rec.borrow().table == *table => record_ref_into_record(&rec.borrow()),
+            LibraryValue::RecordRef(_) => raise("The requested operation is not supported.", "NotSupportedOperation"),
+            LibraryValue::Empty => raise(RECORD_REF_NOT_OPEN, "Conversion"),
+            _ => unsupported(format!("conversion of {} to {t}", v.describe(), t = t.describe())),
+        },
         // A Variant holding true assigned to a Decimal is 1 (types/lt-variant-time-enum/VariantTextTimeEnumFilter.al:
         // Variant_CodeAndOtherTypes_ToDecimal `boolean`); false is not pinned.
         (Value::Boolean(true), RtType::Decimal) => Ok(Value::Decimal(Decimal::ONE)),
@@ -608,6 +690,19 @@ fn convert_rare(v: Value, t: &RtType) -> Result<Value, Signal> {
             ),
             None => unsupported(format!("conversion of {} to {t}", v.describe(), t = t.describe())),
         },
+        // A Variant holding an empty Text or two letters or more assigned to an Integer raises TypeConversion:Format, also into an Integer
+        // parameter (types/lt-variant/VaTConvert.al:13-38, 310-338; ScT70063 Variant_Types `text_to_int`); digits are read
+        // in `convert` (assumption text-digits-to-integer). Other forms, a single letter included (a Char literal may stand there),
+        // are refused.
+        (Value::Text(s) | Value::Code(s), RtType::Integer)
+            if s.as_str().is_empty()
+                || (s.as_str().len() > 1 && s.as_str().bytes().all(|b| b.is_ascii_alphabetic())) =>
+        {
+            raise(
+                "The expression Variant cannot be type-converted to a Integer value.".to_string(),
+                "TypeConversion:Format",
+            )
+        }
         // A Variant holding an Integer assigned to a Text variable raises TypeConversion (corpus
         // types/lt-variant/VaTCompare.al:Concat_After_Conversion, af117). The other numbers and a Code target are not pinned.
         // The same for an Enum (types/lt-filter-enum-relation-duration-guid/B_EnumOptionVariant.al:EnumVariant_To_Integer, `text_big`).
@@ -899,7 +994,12 @@ fn arith_general(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
             };
             // A BigInteger beyond the Int32 range raises the conversion error with the signed amount moved
             // (types/lt-time-big-integer/TimeBigIntegerArithmetic.al:P170_TimePlusMinusBigInteger `plus_over_int32`, `minus_over_int32`).
-            if matches!(n, V::BigInteger(_)) && i32::try_from(ms).is_err() {
+            // A Duration beyond the Int32 range likewise when added (types/lt-filter-enum-relation-duration-guid/D_Duration.al:
+            // 463-474 `af373`: 100000T + 5000000000 ms). Subtracting one is not pinned.
+            if matches!(n, V::Duration(_)) && i32::try_from(ms).is_err() && op == Arith::Sub {
+                return unsupported("Time minus a Duration beyond the Integer range (not pinned)".to_string());
+            }
+            if matches!(n, V::BigInteger(_) | V::Duration(_)) && i32::try_from(ms).is_err() {
                 let delta = if op == Arith::Add { ms } else { -ms };
                 return raise(
                     format!("Overflow under conversion of System.Int64 value {delta} to System.Int32."),
@@ -970,9 +1070,9 @@ fn arith_general(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
             return Ok(V::Integer(a - b));
         }
         // A whole-number Decimal adds days like an Integer (`StartDate + Days` with `Days: Decimal` holding
-        // `(EndDate - StartDate + 1) div 2` in Base Application's Phys. Invt. Count.-Management). A fraction
-        // would round or truncate: not pinned, so it stays refused below. Pinned for a whole Decimal: corpus
-        // record/lt-record-conversion-assumptions/DateDecimalWhole.al:P98_DatePlusMinusWholeDecimal.
+        // `(EndDate - StartDate + 1) div 2` in Base Application's Phys. Invt. Count.-Management). Pinned for a whole Decimal:
+        // corpus record/lt-record-conversion-assumptions/DateDecimalWhole.al:P98_DatePlusMinusWholeDecimal. A fraction raises
+        // (the next arm).
         (V::Date(a, c), n) if matches!(op, Arith::Add | Arith::Sub) && whole_days(n).is_some() => {
             // The result stays within 0001-01-01 and 9999-12-31, an undefined date takes no days, and the sum of days is
             // computed in 32 bits (Arithmetic.al:Date_Arithmetic_Errors, Date_Plus_Minus_Integer `af39`, `af41`).
@@ -993,6 +1093,19 @@ fn arith_general(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
             }
             return Ok(V::Date(sum, *c));
         }
+        // A defined Date plus or minus a Decimal with a fraction raises; a subtraction names the negated amount
+        // (misc/lt-probes-needed-6/PnF11DateDecimalArithmetic.al:57-117, DatePlusDecimal: 2.5, 0.4, -0.5, 12 / 5 as `2.4`;
+        // DateMinusDecimal: D - 2.5 names `-2.5`, D - -2.5 names `2.5`). A Decimal before the Date and the undefined date are
+        // not pinned.
+        (V::Date(a, _), V::Decimal(d)) if matches!(op, Arith::Add | Arith::Sub) && *a > 0 && !d.fract().is_zero() => {
+            let d = if op == Arith::Sub { -*d } else { *d };
+            return raise(
+                format!(
+                    "Overflow under conversion of Microsoft.Dynamics.Nav.Runtime.Decimal18 value {d} to System.Int32."
+                ),
+                "ConversionCast",
+            );
+        }
         _ => {}
     }
     let (Some(a), Some(b)) = (as_decimal(l), as_decimal(r)) else {
@@ -1004,12 +1117,11 @@ fn arith_general(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
             {
                 return duration_divide(op, *d, r);
             }
-            // Duration / Decimal: the Duration counts as its milliseconds and the quotient is a Decimal. Microsoft's
-            // Calculate Routing Line CalcDuration (Time difference / CalendarMgt.TimeFactor) needs it; Tests-SCM-Manufacturing,
-            // about 20 tests. Assumption duration-divided-by-decimal.
+            // Duration / Decimal: the Duration counts as its milliseconds and the quotient is a Decimal; a zero divisor
+            // raises DivideByZero (types/lt-ax-text-format-dates/AxDurationDateTime.al:21 Duration_DividedBy_IntegerAndDecimal,
+            // :53 Duration_DividedBy_ZeroDecimal).
             if op == Arith::Div {
                 if let V::Decimal(b) = r {
-                    crate::assumptions::assume(crate::assumptions::Assumption::DurationDividedByDecimal);
                     if b.is_zero() {
                         return raise("Attempted to divide by zero.", "AL:DivideByZero");
                     }
@@ -1172,6 +1284,14 @@ pub fn compare_operator(l: &Value, r: &Value, ordered: bool) -> Result<Ordering,
             } else {
                 big.cmp(d)
             });
+        }
+    }
+    // An Enum value against an Integer is equal when the ordinal is the number (types/lt-implicit-conversions/P79AcceptedShapes.al:
+    // 116-119, 204-234 EnumEqualsInteger, both orders, `=` and `<>`; types/lt-enum-option-conversions/P67EnumCompare.al:117-123).
+    // Their order is not pinned.
+    if !ordered {
+        if let (Value::Enum(_, a), Value::Integer(b)) | (Value::Integer(b), Value::Enum(_, a)) = (l, r) {
+            return Ok(if a == b { Ordering::Equal } else { a.cmp(b) });
         }
     }
     if ordered { compare_order(l, r) } else { compare(l, r) }
@@ -1384,6 +1504,11 @@ fn compare_general(l: &Value, r: &Value) -> Result<Ordering, Signal> {
     if let (Some(a), Some(b)) = (crate::native::text_of(l), crate::native::text_of(r)) {
         return Ok(a.cmp(&b));
     }
+    match (l, r) {
+        (V::Guid(a), V::Text(t) | V::Code(t)) => return Ok(a.cmp(&guid_of_text(t.as_str())?)),
+        (V::Text(t) | V::Code(t), V::Guid(b)) => return Ok(guid_of_text(t.as_str())?.cmp(b)),
+        _ => {}
+    }
     Ok(match (l, r) {
         (V::Boolean(a), V::Boolean(b)) => a.cmp(b),
         (V::Date(a, ca), V::Date(b, cb)) => (a, ca).cmp(&(b, cb)),
@@ -1391,6 +1516,10 @@ fn compare_general(l: &Value, r: &Value) -> Result<Ordering, Signal> {
         (V::Guid(a), V::Guid(b)) => a.cmp(b),
         (V::Option(a, _), V::Option(b, _)) => a.cmp(b),
         (V::Option(a, _), V::Integer(b)) | (V::Integer(a), V::Option(b, _)) => a.cmp(b),
+        // An Option against a BigInteger compares the ordinal with the number, beyond an Integer too, in `=`, `<>`, `<`, `>=`,
+        // `>`, `if`, `case` and `in` (types/lt-implicit-conversions/P79BigOption.al:326-470).
+        (V::Option(a, _), V::BigInteger(b)) => i64::from(*a).cmp(b),
+        (V::BigInteger(a), V::Option(b, _)) => a.cmp(&i64::from(*b)),
         // An Option against a Decimal compares the ordinal with the Decimal, a fraction included, in both orders and for
         // variables, members and fields (types/PROptionInteger.al:175-218 QS_OptionVariable_VersusDecimal `Quantity vs 1.5`
         // is `<`, :220-251 QS_OptionMember_VersusDecimalConstant, :253-271 QS_OptionField_VersusDecimalField); `case D of
@@ -1452,6 +1581,29 @@ fn compare_general(l: &Value, r: &Value) -> Result<Ordering, Signal> {
         }
         _ => return unsupported(format!("comparison of {} and {r}", l.describe(), r = r.describe())),
     })
+}
+
+/// The Guid a text stands for when it is compared with a Guid, in either order (misc/lt-cx-odd-leads/CxScalars.al:203-230,
+/// Guid_ComparedWithText: the braced form, the form without braces and lower case digits compare as that Guid). A text that
+/// is no Guid raises InvalidGuidFormat: pinned for the empty text, `garbage` (:203-230) and `abc` (:233-267,
+/// Guid_ComparedWithLiterals), so it is raised for a text with fewer than 32 hex digits, which no form of a Guid has. The
+/// other forms (32 digits, parentheses, blanks around) are not pinned for a comparison and are refused.
+fn guid_of_text(t: &str) -> Result<[u8; 16], Signal> {
+    if t.bytes().filter(u8::is_ascii_hexdigit).count() < 32 {
+        return crate::native::raise(
+            "Invalid format of GUID string. The correct format of the GUID string is: CDEF7890-ABCD-0123-1234-567890ABCDEF where 0-9, A-F symbolizes hexadecimal digits.",
+            "InvalidGuidFormat",
+        );
+    }
+    let inner = t.strip_prefix('{').and_then(|i| i.strip_suffix('}')).unwrap_or(t);
+    if inner.len() == 36 {
+        if let Some(Value::Guid(g)) = crate::evaluate::read_text(&crate::value::RtType::Guid, inner) {
+            return Ok(g);
+        }
+    }
+    unsupported(format!(
+        "a Guid compared with the text `{t}` (only the braced and the plain 36 character forms are pinned)"
+    ))
 }
 
 /// Whether two primary keys are the same value for value.
@@ -2197,7 +2349,7 @@ mod tests {
         assert!(
             matches!((&braced, &plain), (Value::Guid(a), Value::Guid(b)) if a == b && a[0] == 0x11 && a[15] == 0x55)
         );
-        assert!(matches!(g("not a guid"), Err(Signal::Unsupported(_))));
+        assert!(matches!(g("not a guid"), Err(Signal::Error(_))));
         assert!(matches!(
             convert(
                 Value::Code("11111111-1111-1111-1111-111111111111".into()),
@@ -2392,5 +2544,58 @@ mod tests {
         check_total_order("compare_key_value(Text)", &generated_texts(), &|a, b| {
             compare_key_value(&Value::Text(a.into()), &Value::Text(b.into())).unwrap()
         });
+    }
+    // types/W7Scalars.al:46-76: texts into a Guid.
+    #[test]
+    fn texts_into_a_guid() {
+        let into = |t: &str| convert(Value::Text(t.into()), &RtType::Guid);
+        let g = into("0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d").unwrap();
+        assert!(matches!(&g, Value::Guid(b) if b[0] == 0x0a && b[15] == 0x5d), "{g:?}");
+        for bad in [
+            "",
+            "   ",
+            "hello",
+            "{0a1b2c3d-4e5f-6a7b-8c9d-0e1f2a3b4c5d",
+            "0a1b2c3d-4e5f-6a7b-8c9d-0e1f2a3b4c5g",
+        ] {
+            assert!(
+                matches!(into(bad), Err(Signal::Error(ref e)) if e.code == "InvalidGuidFormat"),
+                "{bad}"
+            );
+        }
+    }
+    #[test]
+    fn a_big_integer_beyond_an_integer_is_the_conversion_error() {
+        // types/lt-scalars/ScT70057.al:140-160.
+        match convert(Value::BigInteger(-3_000_000_000), &RtType::Integer) {
+            Err(Signal::Error(e)) => {
+                assert_eq!(
+                    e.message,
+                    "Overflow under conversion of System.Int64 value -3000000000 to System.Int32."
+                );
+                assert_eq!(e.code, "ConversionCast");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+    #[test]
+    fn an_option_against_a_big_integer_and_an_enum_against_an_integer() {
+        // P79BigOption.al:326-470; P79AcceptedShapes.al:204-234.
+        let b = Value::Option(
+            1,
+            std::sync::Arc::from(vec!["A".to_string(), "B".to_string(), "C".to_string()]),
+        );
+        use super::{compare, compare_operator};
+        use std::cmp::Ordering;
+        assert_eq!(compare(&b, &Value::BigInteger(4_294_967_296)).unwrap(), Ordering::Less);
+        assert_eq!(compare(&Value::BigInteger(1), &b).unwrap(), Ordering::Equal);
+        assert_eq!(
+            compare_operator(&Value::Enum(7, 5), &Value::Integer(5), false).unwrap(),
+            Ordering::Equal
+        );
+        assert_ne!(
+            compare_operator(&Value::Integer(0), &Value::Enum(7, 5), false).unwrap(),
+            Ordering::Equal
+        );
     }
 }

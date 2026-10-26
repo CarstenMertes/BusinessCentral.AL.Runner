@@ -514,8 +514,21 @@ impl Session {
         };
         // A constant currency code (a text literal) of an amount or unit amount: that currency's places (SaUnitAmountSubst.al
         // `A1Lit`, `A2Lit`).
-        if matches!(kind.as_str(), "1" | "2") && text.len() > 2 && text.starts_with('\'') && text.ends_with('\'') {
+        if matches!(kind.as_str(), "1" | "2" | "4" | "5")
+            && text.len() > 2
+            && text.starts_with('\'')
+            && text.ends_with('\'')
+        {
             let code = text[1..text.len() - 1].replace("''", "'");
+            // Types 4 and 5 with a code that is no currency take the places of an amount and a unit amount: `GBP` gives
+            // `1,234.57` and `1,234.56789` (types/lt-ax-text-format-dates/AxFillerBuilderAutoFormat.al:193-260). A currency that
+            // exists is not pinned for them.
+            if matches!(kind.as_str(), "4" | "5") && self.currency_row_exists(&code)? {
+                return unsupported(format!(
+                    "Format of field {} with AutoFormatType {kind} and the existing currency `{code}` (not pinned)",
+                    f.name
+                ));
+            }
             let (min, max) = self.auto_format_places(&kind, &code)?;
             return Ok(format!("{min}:{max}"));
         }
@@ -564,6 +577,30 @@ impl Session {
             self.auto_format_places(&kind, &expr)?
         };
         Ok(format!("{min}:{max}"))
+    }
+
+    /// Whether the Currency table (4) holds a row of the code `code`; `true` when that cannot be told, so a caller refuses.
+    fn currency_row_exists(&mut self, code: &str) -> Result<bool, Signal> {
+        let engine = self.engine();
+        let Some(oi) = engine
+            .program
+            .objects
+            .iter()
+            .position(|o| o.id == Some(4) && o.table.is_some())
+        else {
+            return Ok(true);
+        };
+        let Some(t) = engine.tables[oi].clone() else {
+            return Ok(true);
+        };
+        let Ok(key) = ops::convert(Value::Text(code.to_string().into()), &t.fields[0].ty) else {
+            return Ok(true);
+        };
+        let row = self
+            .store
+            .get(&self.cx, &t, &[key])
+            .map_err(|e| Signal::Unsupported(format!("store error {e}")))?;
+        Ok(row.is_some())
     }
 
     pub(super) fn auto_format_places(&mut self, kind: &str, expr: &str) -> Result<(u32, u32), Signal> {

@@ -63,6 +63,8 @@ pub enum XData {
         system: String,
         subset: String,
         ready: bool,
+        /// How many arguments `Create` had (4 for a type read from text); it decides how a type that is not `ready` is written.
+        args: u8,
     },
     Declaration {
         version: String,
@@ -97,7 +99,7 @@ fn error(message: impl Into<String>, code: &str) -> Signal {
 
 /// `Microsoft.Dynamics.Nav.Runtime.NavXmlDocumentType variable not initialized.` (code NotInitialized): a variable nobody assigned,
 /// used where the type is known (xml/lt-xml-doctype-declaration/DocTypeErrors.al:Uninitialised_*).
-fn uninitialized(nav_type: &str) -> Signal {
+pub(crate) fn uninitialized(nav_type: &str) -> Signal {
     error(
         format!("Microsoft.Dynamics.Nav.Runtime.Nav{nav_type} variable not initialized."),
         "NotInitialized",
@@ -177,6 +179,14 @@ fn parent_of(h: &Handle) -> Option<Handle> {
     match &*h.borrow() {
         LibraryValue::Xml(c) => c.parent.as_ref().and_then(Weak::upgrade),
         _ => None,
+    }
+}
+
+/// Whether `h` had a parent that no variable references any more.
+fn parent_dropped(h: &Handle) -> bool {
+    match &*h.borrow() {
+        LibraryValue::Xml(c) => c.parent.as_ref().is_some_and(|w| w.upgrade().is_none()),
+        _ => false,
     }
 }
 
@@ -281,12 +291,14 @@ fn deep_clone(h: &Handle) -> Handle {
             system,
             subset,
             ready,
+            args,
         } => XData::DocType {
             name: name.clone(),
             public: public.clone(),
             system: system.clone(),
             subset: subset.clone(),
             ready: *ready,
+            args: *args,
         },
     });
     new_node(data)
@@ -1208,10 +1220,12 @@ impl Writer {
                 t.replace("--", "- -"),
                 if t.ends_with('-') { " " } else { "" }
             )),
+            // The end marker inside the data is written `? >` (xml/lt-xml-cdata-comment-pi-text/P90PIRead.al:1989 `pi-end-x`,
+            // :2110 `pi-end-doc`).
             XData::Pi { target, data } => Plan::Markup(if data.is_empty() {
                 format!("<?{target}?>")
             } else {
-                format!("<?{target} {data}?>")
+                format!("<?{target} {}?>", data.replace("?>", "? >"))
             }),
             XData::DocType {
                 name,
@@ -1219,9 +1233,19 @@ impl Writer {
                 system,
                 subset,
                 ready,
+                args,
             } => {
                 if !*ready {
-                    Plan::Skip
+                    // A type made without a subset (xml/lt-xml-remaining-node-methods/P104WriteDocType.al:146..157,
+                    // P104DocTypeCreate.al `doc1`..`doc3`): `<!DOCTYPE r >` for a name only, `<!DOCTYPE r PUBLIC "pub" "sys">`
+                    // with a public identifier. An empty public identifier with Create(Name, Public[, System]) is not pinned.
+                    if *args == 1 {
+                        Plan::Markup(format!("<!DOCTYPE {name} >"))
+                    } else if public.is_empty() || public.contains('"') || system.contains('"') {
+                        Plan::Skip
+                    } else {
+                        Plan::Markup(format!("<!DOCTYPE {name} PUBLIC \"{public}\" \"{system}\">"))
+                    }
                 } else if public.contains('"') || system.contains('"') {
                     // A quote cannot be written inside the quoted identifiers (DocTypeSetters.al:WriteToVariants, af214).
                     Plan::Quote
@@ -1403,8 +1427,43 @@ fn serialize(h: &Handle) -> Result<String, Signal> {
     serialize_with(h, true)
 }
 
+/// An attribute written on its own: `name="value"` with the value escaped as in an element
+/// (xml/lt-xml-attr-doc-http-members/P97AttrWrite.al:86 WriteTo_Text_Kinds `t1`..`t4`, `t9`, `t10`, `newline_tab`;
+/// :261 WriteTo_Detached_And_Removed, attached and removed alike; xml/XmlAttributes.al:56 Attribute_Create). A namespace
+/// declaration is `xmlns:prefix="uri"` (`t7`); a detached attribute with a namespace and no prefix gets `p0` (`t5`, `t6`,
+/// `t8`). Other namespaced shapes (a prefix of its own, attached to an element, `xmlns="uri"`) are not pinned. `None` for a
+/// node that is no attribute.
+fn attribute_markup(h: &Handle) -> Option<Result<String, Signal>> {
+    let (prefix, local, ns, value) = with(h, |d| match d {
+        XData::Attribute {
+            prefix,
+            local,
+            ns,
+            value,
+        } => Some((prefix.clone(), local.clone(), ns.clone(), value.clone())),
+        _ => None,
+    })?;
+    let mut v = String::new();
+    escape_attr(&value, &mut v);
+    let name = if ns.is_empty() && prefix.is_empty() {
+        local
+    } else if ns == XMLNS_URI && prefix == "xmlns" {
+        format!("xmlns:{local}")
+    } else if !ns.is_empty() && prefix.is_empty() && parent_of(h).is_none() && !parent_dropped(h) {
+        format!("p0:{local}")
+    } else {
+        return Some(unsupported(
+            "serialising a namespaced attribute on its own (a prefix of its own, attached, or a default namespace declaration; not pinned)",
+        ));
+    };
+    Some(Ok(format!("{name}=\"{v}\"")))
+}
+
 /// [`serialize`] with or without the indentation (`XmlWriteOptions.PreserveWhitespace` writes none).
 fn serialize_with(h: &Handle, indent: bool) -> Result<String, Signal> {
+    if let Some(t) = attribute_markup(h) {
+        return t;
+    }
     let mut w = Writer::new(indent);
     let is_doc = with(h, |d| matches!(d, XData::Document { .. }));
     if is_doc {
@@ -1697,7 +1756,61 @@ fn detached_is_invalid(h: &Handle) -> bool {
     })
 }
 
-fn position_in_parent(h: &Handle) -> Result<(Handle, usize), Signal> {
+/// Why a sibling operation on an element, attribute or document without a parent fails, before its arguments are read.
+/// - A detached attribute raises `InvalidOperation` whatever the arguments are, an unassigned `XmlNode` and an Integer
+///   included (xml/lt-xml-attr-doc-http-members/P97AttrEdit.al:AddAfterSelf_Detached_Kinds `k1`..`k18`, *_Detached_Typed).
+/// - A document raises `InvalidOperation` for every argument kind, except that an unassigned `XmlNode` argument raises
+///   `NotInitialized` first (P97DocEdit.al:*_Kinds `k14`, *_Typed `t1`..`t11`; P97DocMisc.al:Uninitialised_Document_Edits).
+/// - An element without a parent raises `InvalidOperation` for element arguments (xml/XmlElement.al:521
+///   AddAfterSelf_Root_Error `lone_after`, `lone_before`; :601 ReplaceWith_Root_Unparented `lone`); other arguments are
+///   not pinned.
+fn unparented_sibling_error(h: &Handle, args: &[Value]) -> Signal {
+    // A node whose parent was dropped (a document held only by a local variable that went out of scope) still has
+    // that parent on BC, which keeps it alive; the runtime holds parents weakly and cannot answer for it.
+    if parent_dropped(h) {
+        return Signal::Unsupported(
+            "a sibling operation on a node whose parent is no longer referenced (the runtime does not keep it)".into(),
+        );
+    }
+    let invalid = || {
+        error(
+            "The requested operation cannot be performed in this context.",
+            "InvalidOperation",
+        )
+    };
+    match kind(h) {
+        "XmlAttribute" => invalid(),
+        "XmlDocument" => {
+            for a in args {
+                if let Value::Library(name, v) = a {
+                    if matches!(&*v.borrow(), LibraryValue::Empty) {
+                        if name == "XmlNode" {
+                            return uninitialized("XmlNode");
+                        }
+                        return Signal::Unsupported(format!(
+                            "a sibling operation on a document with an unassigned {name} argument (not pinned)"
+                        ));
+                    }
+                }
+            }
+            invalid()
+        }
+        "XmlElement"
+            if !args.is_empty()
+                && args
+                    .iter()
+                    .all(|a| matches!(a, Value::Library(_, v) if is_xml(v) && kind(v) == "XmlElement")) =>
+        {
+            invalid()
+        }
+        _ => Signal::Unsupported(
+            "a sibling operation on an element without a parent with an argument other than an element (not pinned)"
+                .into(),
+        ),
+    }
+}
+
+fn position_in_parent(h: &Handle, args: &[Value]) -> Result<(Handle, usize), Signal> {
     let Some(p) = parent_of(h) else {
         if detached_is_invalid(h) {
             return Err(error(
@@ -1705,7 +1818,7 @@ fn position_in_parent(h: &Handle) -> Result<(Handle, usize), Signal> {
                 "InvalidOperation",
             ));
         }
-        return unsupported("a sibling operation on a node without a parent (error text not pinned yet)");
+        return Err(unparented_sibling_error(h, args));
     };
     let pos = children_of(&p).iter().position(|c| Rc::ptr_eq(c, h));
     match pos {
@@ -2004,6 +2117,17 @@ impl XParser<'_> {
         }
     }
 
+    /// Why a predicate has no `]`: the path ended (the pinned "not a node set", P90CDataRead.al `/r/a[`), or another token
+    /// stands there (not pinned).
+    fn unclosed_bracket(&mut self) -> &'static str {
+        self.ws();
+        if self.peek().is_none() {
+            "unclosed ["
+        } else {
+            "a token where ] belongs"
+        }
+    }
+
     /// Steps after a function call or a parenthesised expression: `(a)/b`, `f()[1]`.
     fn filter_tail(&mut self, e: Expr) -> XRes<Expr> {
         self.ws();
@@ -2013,7 +2137,7 @@ impl XParser<'_> {
             self.i += 1;
             preds.push(self.expr()?);
             if !self.eat("]") {
-                return malformed("unclosed [");
+                return malformed(self.unclosed_bracket());
             }
             self.ws();
         }
@@ -2144,6 +2268,11 @@ impl XParser<'_> {
             } else {
                 // A name may hold one `:`.
                 let Some(first) = self.name() else {
+                    // A character no XPath token starts with is an invalid token (xml/XmlXPathNamespaces.al:640
+                    // SelectNodes_Backslash_Path `\\contract`); anything else is a missing step.
+                    if self.peek().is_some_and(|c| !is_xpath_token_char(c)) {
+                        return malformed("an invalid token");
+                    }
                     return malformed("a step without a name");
                 };
                 let mut qn = first;
@@ -2200,11 +2329,17 @@ impl XParser<'_> {
             self.i += 1;
             preds.push(self.expr()?);
             if !self.eat("]") {
-                return malformed("unclosed [");
+                return malformed(self.unclosed_bracket());
             }
         }
         Ok(Step { axis, test, preds })
     }
+}
+
+/// Whether an XPath token can start with `c` (what .NET's XPath scanner reads): white space, punctuation of the grammar,
+/// quotes, digits and name characters.
+fn is_xpath_token_char(c: char) -> bool {
+    c.is_whitespace() || "()[]@,/|.*+-=!<>:$\"'".contains(c) || c.is_ascii_digit() || is_name_start(c)
 }
 
 fn parse_xpath(p: &str, prefixes: Prefixes) -> XRes<Expr> {
@@ -2311,8 +2446,16 @@ fn node_matches(h: &Handle, test: &Test, principal_attr: bool, ctx: &XCtx) -> XR
     Ok(match test {
         Test::Name(pre, n) => {
             let want = wanted(pre)?;
+            // `prefix:*` is every element of that namespace (xml/XmlXPathNamespaces.al:344 SelectNodes_WithNamespaceManager
+            // `x_star`); on the attribute axis it is not pinned.
+            let any_local = pre.is_some() && n == "*";
+            if any_local && principal_attr {
+                return Err(XFail::Signal(Signal::Unsupported(
+                    "the XPath test prefix:* on attributes (not pinned)".into(),
+                )));
+            }
             with(h, |d| match d {
-                XData::Element { local, ns, .. } if !principal_attr => *ns == want && local == n,
+                XData::Element { local, ns, .. } if !principal_attr => *ns == want && (any_local || local == n),
                 XData::Attribute { local, ns, .. } if principal_attr => *ns == want && local == n,
                 _ => false,
             })
@@ -2685,7 +2828,9 @@ fn options_preserve_whitespace_get(_: &mut dyn Ctx, r: Option<&mut Value>, _: &m
     };
     Ok(Value::Boolean(match &*cell.borrow() {
         LibraryValue::XmlReadOptions { preserve_whitespace }
-        | LibraryValue::XmlWriteOptions { preserve_whitespace } => *preserve_whitespace,
+        | LibraryValue::XmlWriteOptions {
+            preserve_whitespace, ..
+        } => *preserve_whitespace,
         _ => false,
     }))
 }
@@ -2992,10 +3137,14 @@ fn doctype_create(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> NR
     verify_name(&name)?;
     let (public, system, subset, ready) = match a.len() {
         1 => (String::new(), String::new(), String::new(), false),
+        // Written `<!DOCTYPE r PUBLIC "pub" "">` (xml/lt-xml-remaining-node-methods/P104WriteDocType.al:150 `v2_m1`,
+        // P104DocTypeCreate.al `doc2`); its getters are not pinned (doctype_get refuses them).
+        2 => (arg_text(a, 1)?, String::new(), String::new(), false),
         3 => (arg_text(a, 1)?, arg_text(a, 2)?, String::new(), false),
         4 => (arg_text(a, 1)?, arg_text(a, 2)?, arg_text(a, 3)?, true),
         n => return unsupported(format!("XmlDocumentType.Create with {n} arguments (not pinned)")),
     };
+    let args = a.len() as u8;
     Ok(tagged(
         "XmlDocumentType",
         new_node(XData::DocType {
@@ -3004,6 +3153,7 @@ fn doctype_create(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> NR
             system,
             subset,
             ready,
+            args,
         }),
     ))
 }
@@ -3017,10 +3167,13 @@ macro_rules! doctype_get {
     ($fname:ident, $field:ident) => {
         fn $fname(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
             let h = doctype_recv(r)?;
-            let (text, ready) = with(&h, |d| match d {
-                XData::DocType { $field, ready, .. } => ($field.clone(), *ready),
-                _ => (String::new(), true),
+            let (text, ready, args) = with(&h, |d| match d {
+                XData::DocType { $field, ready, args, .. } => ($field.clone(), *ready, *args),
+                _ => (String::new(), true, 4),
             });
+            if args == 2 {
+                return unsupported("a getter of a document type made by Create(Name, Public) (not pinned)");
+            }
             if !ready {
                 return Err(error(
                     "Exception of type 'Microsoft.Dynamics.Nav.Types.Exceptions.NavNCLMemberNotInitializedException' was thrown.",
@@ -3067,11 +3220,19 @@ doctype_set!(doctype_set_public, public, |_| Ok(()));
 doctype_set!(doctype_set_system, system, |_| Ok(()));
 doctype_set!(doctype_set_subset, subset, |_| Ok(()));
 
+/// `XmlProcessingInstruction.Create(Target, Data)`: an empty target and `xml` raise an Argument error, a target with a blank the
+/// XML name error (xml/XmlNodes.al:203-208 `empty_target`, `xml_target`, `space_target`); data holding `?>` is taken (`bad_data`).
+/// Other invalid targets are not pinned.
 fn pi_create(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> NResult {
+    let target = arg_text(a, 0)?;
+    if target == "xml" {
+        return Err(nav_argument());
+    }
+    check_pi_target(&target)?;
     Ok(tagged(
         "XmlProcessingInstruction",
         new_node(XData::Pi {
-            target: arg_text(a, 0)?,
+            target,
             data: arg_text(a, 1)?,
         }),
     ))
@@ -3152,6 +3313,10 @@ fn pi_get_target(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NRe
 
 fn pi_get_data(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
     let h = recv(r)?;
+    // What GetData reads of data holding the end marker is not pinned (only how it is written).
+    if with(&h, |d| matches!(d, XData::Pi { data, .. } if data.contains("?>"))) {
+        return unsupported("XmlProcessingInstruction.GetData of data holding `?>` (not pinned)");
+    }
     a[0] = Value::Text(
         with(&h, |d| match d {
             XData::Pi { data, .. } => data.clone(),
@@ -3160,6 +3325,54 @@ fn pi_get_data(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResu
         .into(),
     );
     Ok(Value::Boolean(true))
+}
+
+/// A processing instruction target: an empty one raises an Argument error and one with a blank (after a valid start) the XML
+/// name error (P90PIRead.al:2215, xml/XmlNodes.al:203-208); another valid name is taken. Other invalid names, and `xml` in
+/// any case, are not pinned (Create raises for `xml` itself).
+fn check_pi_target(name: &str) -> Result<(), Signal> {
+    if let Err(e) = verify_name(name) {
+        let chars: Vec<char> = name.chars().collect();
+        let first_bad = chars.iter().position(|c| !is_name_char(*c));
+        let pinned = chars.is_empty()
+            || (chars.first().copied().is_some_and(is_name_start) && first_bad.is_some_and(|i| chars[i] == ' '));
+        if pinned {
+            return Err(e);
+        }
+        return unsupported(format!("the processing instruction target `{name}` (not pinned)"));
+    }
+    if name.eq_ignore_ascii_case("xml") {
+        return unsupported(format!("the processing instruction target `{name}` (not pinned)"));
+    }
+    Ok(())
+}
+
+/// `XmlProcessingInstruction.SetTarget(Name)` (xml/lt-xml-cdata-comment-pi-text/P90PIRead.al:2215 PI_GetSetTargetAndData):
+/// `t2` is written `<?t2 data1?>`; an empty name raises an Argument error and a name with a blank the XML name error, both
+/// leaving the target as it was. Other invalid names, and names starting with `xml`, are not pinned.
+fn pi_set_target(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
+    let h = recv(r)?;
+    let name = arg_text(a, 0)?;
+    check_pi_target(&name)?;
+    with(&h, |d| {
+        if let XData::Pi { target, .. } = d {
+            *target = name;
+        }
+    });
+    Ok(Value::Null)
+}
+
+/// `XmlProcessingInstruction.SetData(Data)`: an empty text leaves `<?t2?>` and GetData reads it empty (P90PIRead.al:2215
+/// `doc-after-empty-data`; xml/XmlNodes.al:199 `setdata`); `?>` is taken and written `? >` (P90PIRead.al:2110 `pi-end-doc`).
+fn pi_set_data(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
+    let h = recv(r)?;
+    let v = arg_text(a, 0)?;
+    with(&h, |d| {
+        if let XData::Pi { data, .. } = d {
+            *data = v;
+        }
+    });
+    Ok(Value::Null)
 }
 
 // ----- names
@@ -3327,21 +3540,108 @@ fn add_first(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult
     Ok(Value::Boolean(true))
 }
 
+/// Content of a sibling operation of a text, CDATA, comment, processing instruction, document type or declaration
+/// (the receivers xml/lt-xml-remaining-node-methods/P104Tree*.al pin):
+/// - an Integer becomes its text (P104TreeACData.al:198 `c8` AddAfterSelf(42), :309 AddBeforeSelf(42); P104TreeBText.al:321
+///   ReplaceWith(42)). Only 0..=999 runs: whether a larger number is written with digit grouping (Format) or without
+///   (.NET) is not pinned, nor is the sign of a negative;
+/// - an empty text adds nothing (P104TreeAComment.al:208, :319 `c15`; P104TreeBComment.al:331 `c15`).
+///
+/// For other receivers neither is pinned: an Integer is refused by content_nodes and an empty text here.
+fn sibling_content_nodes(h: &Handle, args: &[Value]) -> Result<Vec<Handle>, Signal> {
+    let pinned = with(h, |d| {
+        !matches!(
+            d,
+            XData::Element { .. } | XData::Document { .. } | XData::Attribute { .. }
+        )
+    });
+    let mut conv: Vec<Value> = Vec::with_capacity(args.len());
+    for a in args {
+        conv.push(match a {
+            Value::Integer(n) if pinned && (0..=999).contains(n) => Value::Text(n.to_string().into()),
+            Value::Text(t) | Value::Code(t) if t.is_empty() => {
+                if !pinned {
+                    return unsupported(format!(
+                        "an empty text as sibling content of a {} (not pinned)",
+                        kind(h)
+                    ));
+                }
+                continue;
+            }
+            other => other.clone(),
+        });
+    }
+    content_nodes(&conv)
+}
+
+/// A text, CDATA, comment or processing instruction whose sibling operation gets one unassigned `XmlNode` raises
+/// `NotInitialized` and changes nothing, attached or detached (xml/lt-xml-cdata-comment-pi-text/P90*Edit.al:
+/// AfterSelf_UninitialisedArgument, BeforeSelf_UninitialisedArgument, ReplaceWith_UninitialisedArgument, P90CDataEdit.al:404).
+/// Several arguments with an unassigned one among them are not pinned (the content content_nodes refuses).
+fn reject_unassigned_sibling_arg(h: &Handle, a: &[Value]) -> Result<(), Signal> {
+    if let [Value::Library(name, v)] = a {
+        if name == "XmlNode"
+            && matches!(&*v.borrow(), LibraryValue::Empty)
+            && with(h, |d| {
+                matches!(
+                    d,
+                    XData::Text(_) | XData::CData(_) | XData::Comment(_) | XData::Pi { .. }
+                )
+            })
+        {
+            return Err(uninitialized("XmlNode"));
+        }
+    }
+    Ok(())
+}
+
+fn is_text_like(h: &Handle) -> bool {
+    with(h, |d| {
+        matches!(
+            d,
+            XData::Text(_) | XData::CData(_) | XData::Comment(_) | XData::Pi { .. }
+        )
+    })
+}
+
+/// Inserts the content of a sibling operation of a text, CDATA, comment or processing instruction. An attribute among
+/// the nodes raises an Argument error after the nodes before it are in (xml/lt-xml-cdata-comment-pi-text/
+/// P90CDataEdit.al:887 AfterSelf_ThreeNodes_OneInvalid `t1_6_3` keeps `e1`, `t1_3_6` keeps `e1` and `c3`, `t6_1_3` adds nothing).
+/// Other receivers refuse attributes before inserting anything (reject_attributes).
+fn insert_siblings(h: &Handle, p: &Handle, at: usize, nodes: Vec<Handle>) -> Result<(), Signal> {
+    // A declaration next to a document type raises an Argument error, as `Add` of one to a document does
+    // (xml/lt-xml-remaining-node-methods/P104TreeADocType.al:211 `c12`, :341; P104TreeBDocType.al:333).
+    if with(h, |d| matches!(d, XData::DocType { .. })) {
+        reject_declaration_in_document(p, &nodes)?;
+    }
+    if !is_text_like(h) {
+        reject_attributes(&nodes)?;
+        return insert(p, Some(at), nodes);
+    }
+    match nodes.iter().position(|n| kind(n) == "XmlAttribute") {
+        Some(k) => {
+            insert(p, Some(at), nodes[..k].to_vec())?;
+            Err(nav_argument())
+        }
+        None => insert(p, Some(at), nodes),
+    }
+}
+
 fn add_after_self(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
     let h = recv(r)?;
-    let (p, i) = position_in_parent(&h)?;
-    let nodes = content_nodes(a)?;
-    reject_attributes(&nodes)?;
-    insert(&p, Some(i + 1), nodes)?;
+    reject_unassigned_sibling_arg(&h, a)?;
+    let (p, i) = position_in_parent(&h, a)?;
+    let nodes = sibling_content_nodes(&h, a)?;
+    insert_siblings(&h, &p, i + 1, nodes)?;
     Ok(Value::Boolean(true))
 }
 
 fn add_before_self(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
     let h = recv(r)?;
-    let (p, i) = position_in_parent(&h)?;
-    let nodes = content_nodes(a)?;
-    reject_attributes(&nodes)?;
-    insert(&p, Some(i), nodes)?;
+    reject_unassigned_sibling_arg(&h, a)?;
+    let (p, i) = position_in_parent(&h, a)?;
+    let nodes = sibling_content_nodes(&h, a)?;
+    insert_siblings(&h, &p, i, nodes)?;
     Ok(Value::Boolean(true))
 }
 
@@ -3378,6 +3678,7 @@ fn remove(c: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> NResult {
 
 fn replace_with(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
     let h = recv(r)?;
+    reject_unassigned_sibling_arg(&h, a)?;
     if parent_of(&h).is_none() && with(&h, |d| matches!(d, XData::DocType { .. })) {
         // DocTypeNode.al:ReplaceWith_DetachedDocType.
         return Err(error(
@@ -3385,13 +3686,13 @@ fn replace_with(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NRes
             "InvalidOperation",
         ));
     }
-    let (p, i) = position_in_parent(&h)?;
+    let (p, i) = position_in_parent(&h, a)?;
     // A comment or a processing instruction of a document that cannot be replaced is gone all the same, whether the nodes
     // are refused as an argument or in the document (xml/lt-xml-cdata-comment-pi-text/P90CommentRead.al:
     // DocLevel_BeforeSelf_AndReplace, P90PIRead.al).
     if kind(&p) == "XmlDocument" && with(&h, |d| matches!(d, XData::Comment(_) | XData::Pi { .. })) {
         detach(&h);
-        let nodes = content_nodes(a)?;
+        let nodes = sibling_content_nodes(&h, a)?;
         reject_attributes(&nodes)?;
         for n in &nodes {
             check_fits(&p, n, &[], Some(i))?;
@@ -3399,12 +3700,23 @@ fn replace_with(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NRes
         insert(&p, Some(i), nodes)?;
         return Ok(Value::Boolean(true));
     }
-    let nodes = content_nodes(a)?;
+    // A text, CDATA, comment or processing instruction of an element is removed first, then the content is read and
+    // added, so a failing argument leaves it removed and a node that is its own argument goes back in its place
+    // (xml/lt-xml-cdata-comment-pi-text/P90CDataEdit.al:681 ReplaceWith_Attached_InvalidKinds `k6`..`k9`,
+    // ReplaceWith_Attached_ExistingNodes `k11`, ReplaceWith_ThreeNodes_OneInvalid `t1_6_3`).
+    if is_text_like(&h) {
+        detach(&h);
+        let nodes = sibling_content_nodes(&h, a)?;
+        insert_siblings(&h, &p, i, nodes)?;
+        return Ok(Value::Boolean(true));
+    }
+    let nodes = sibling_content_nodes(&h, a)?;
     reject_attributes(&nodes)?;
     // A document type that cannot be replaced is removed all the same (DocTypeNode.al:ReplaceWith_Element: the document
     // is `<a />` afterwards).
     if with(&h, |d| matches!(d, XData::DocType { .. })) {
         detach(&h);
+        reject_declaration_in_document(&p, &nodes)?;
         for n in &nodes {
             check_fits(&p, n, &[], Some(i))?;
         }
@@ -3724,13 +4036,26 @@ fn select(c: &mut dyn Ctx, h: &Handle, path: &str, prefixes: Prefixes) -> Result
     if with(h, |d| matches!(d, XData::Declaration { .. })) {
         return Ok(None);
     }
+    // So does a document type, when the result is used (P104SelDocType.al: every case answers `No:` or `No:0`); the
+    // statement form is not pinned.
+    if with(h, |d| matches!(d, XData::DocType { .. })) {
+        if c.ret_used() {
+            return Ok(None);
+        }
+        return unsupported(
+            "SelectNodes or SelectSingleNode of an XmlDocumentType with the result unused (not pinned)",
+        );
+    }
     match xpath(h, path, prefixes) {
         Ok(v) => Ok(Some(v)),
         Err(XFail::Signal(s)) => Err(s),
         Err(XFail::NotNodeSet) if !c.ret_used() => Err(error("Expression must evaluate to a node-set.", "Xml:XPath")),
-        Err(XFail::Malformed(why)) if !c.ret_used() => {
-            unsupported(format!("XPath `{path}`: {why} (statement form, error text not pinned)"))
-        }
+        // The statement form raises the text the result-used form leaves as the last error: the text belongs to the path
+        // (xml/XmlXPathNamespaces.al:640 SelectNodes_Backslash_Path: `nodes_unused` and `nodes_if` alike).
+        Err(XFail::Malformed(why)) if !c.ret_used() => match xpath_error_text(&why, path) {
+            Some(text) => Err(error(text, "Xml:XPath")),
+            None => unsupported(format!("XPath `{path}`: {why} (statement form, error text not pinned)")),
+        },
         // A call whose result is used answers false and leaves the error as the last error (misc/lt-probes-needed-1/
         // PnAXmlXPath.al:NamespacePaths, MalformedPaths: `Yes|-1` with the text and the code `Xml:XPath` readable afterwards).
         Err(XFail::NotNodeSet) => {
@@ -3738,7 +4063,7 @@ fn select(c: &mut dyn Ctx, h: &Handle, path: &str, prefixes: Prefixes) -> Result
             Ok(None)
         }
         Err(XFail::Malformed(why)) => {
-            if let Some(text) = xpath_error_text(&why) {
+            if let Some(text) = xpath_error_text(&why, path) {
                 set_xpath_error(c, &text);
             }
             Ok(None)
@@ -3756,7 +4081,13 @@ fn set_xpath_error(c: &mut dyn Ctx, text: &str) {
 }
 
 /// The text .NET gives for the reasons the corpus pins (PnAXmlXPath.al:NamespacePaths, MalformedPaths); the other reasons leave no text.
-fn xpath_error_text(why: &str) -> Option<String> {
+/// - Tokens after a complete expression, or a character no token starts with: `'<path>' has an invalid token.`
+///   (xml/XmlXPathNamespaces.al:150 SelectNodes_Invalid_XPath `two_names` `a b`, :640 `\\contract`;
+///   xml/lt-xml-cdata-comment-pi-text/P90CDataRead.al:1266 `a b`).
+/// - A variable: the namespace manager text (P90CDataRead.al:1239 `$v`).
+/// - A missing expression, step or `]`: `Expression must evaluate to a node-set.` (XmlXPathNamespaces.al:150 `/a/[`, ``,
+///   `///`, `foo(`; P90CDataRead.al:1225 ``, ` `, `[`, `//`, `self::`, `/r/a[`).
+fn xpath_error_text(why: &str, path: &str) -> Option<String> {
     const NS_MANAGER: &str =
         "Namespace Manager or XsltContext needed. This query has a prefix, variable, or user-defined function.";
     const KNOWN: [&str; 17] = [
@@ -3790,14 +4121,17 @@ fn xpath_error_text(why: &str) -> Option<String> {
     if why == "unterminated literal" {
         return Some("This is an unclosed string.".into());
     }
+    if why == "trailing characters" || why == "an invalid token" {
+        return Some(format!("'{path}' has an invalid token."));
+    }
+    if why == "variables are not supported" {
+        return Some(NS_MANAGER.into());
+    }
     if let Some(name) = why.strip_prefix("function ").and_then(|r| r.split(" with ").next()) {
         return (!KNOWN.contains(&name)).then(|| NS_MANAGER.to_string());
     }
-    matches!(
-        why,
-        "empty expression" | "unclosed [" | "a step without a name" | "trailing characters"
-    )
-    .then(|| "Expression must evaluate to a node-set.".to_string())
+    matches!(why, "empty expression" | "unclosed [" | "a step without a name")
+        .then(|| "Expression must evaluate to a node-set.".to_string())
 }
 
 fn select_single_node(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
@@ -3907,6 +4241,13 @@ fn manager_lookup_namespace(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Val
         LibraryValue::XmlNamespaces(v) => v.iter().rev().find(|(p, _)| *p == prefix).map(|(_, u)| u.clone()),
         _ => None,
     };
+    // `xml` and the empty prefix are known without being added (xml/XmlXPathNamespaces.al:408 NamespaceManager_AddLookup
+    // `lookup_xml`, `lookup_empty`), although HasNamespace answers No for them.
+    let found = found.or_else(|| match prefix.as_str() {
+        "xml" => Some(XML_URI.to_string()),
+        "" => Some(String::new()),
+        _ => None,
+    });
     match found {
         Some(u) => {
             a[1] = Value::Text(u.into());
@@ -3932,6 +4273,57 @@ fn write_to_text(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NRe
     Ok(Value::Boolean(true))
 }
 
+/// `WriteTo(XmlWriteOptions, var Text)`.
+/// - A text, CDATA, comment, processing instruction, document type or declaration is written as by `WriteTo(Text)`, whatever
+///   the options say (xml/lt-xml-remaining-node-methods/P104Write{Text,CData,Comment,PI,DocType,Decl}.al:P104_Text_Detached,
+///   P104_Text_InDoc `m2`..`m4`; P104DocTypeCreate.al:P104_Create_WriteTo_Overloads `opt_true`, `opt_false`); an unassigned
+///   document type or declaration raises `NotInitialized` naming `XmlNode` (P104WriteDecl.al:340 `uninit2`).
+/// - A document or element with `PreserveWhitespace(true)` is written unindented, as by `WriteTo(XmlWriteOptions, OutStream)`
+///   (xml/XmlDocReadWrite.al:392 WriteTo_Options, :418 WriteTo_Options_Whitespace; P104WriteNode.al `v2_m2`).
+/// - An attribute is not pinned (P97AttrWrite.al:WriteTo_TextOptions asserts nothing).
+fn write_to_text_options(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
+    let h = recv_or_uninit(r, "XmlNode")?;
+    let indent = match &a[0] {
+        Value::Library(_, cell) => match &*cell.borrow() {
+            LibraryValue::XmlWriteOptions { unindented, .. } => !unindented,
+            LibraryValue::Empty => true,
+            _ => return unsupported("WriteTo with something that is not an XmlWriteOptions"),
+        },
+        _ => return unsupported("WriteTo with something that is not an XmlWriteOptions"),
+    };
+    let untouched = matches!(&a[0], Value::Library(_, cell) if matches!(&*cell.borrow(), LibraryValue::Empty));
+    let text = match kind(&h) {
+        "XmlAttribute" => return unsupported("XmlAttribute.WriteTo(XmlWriteOptions, Text) (not pinned)"),
+        "XmlDocument" | "XmlElement" if untouched => {
+            return unsupported(
+                "WriteTo(XmlWriteOptions, Text) of a document or element with options never set (not pinned)",
+            );
+        }
+        "XmlDocument" | "XmlElement" => serialize_with(&h, indent)?,
+        _ => serialize(&h)?,
+    };
+    a[1] = Value::Text(text.into());
+    Ok(Value::Boolean(true))
+}
+
+/// `XmlAttribute.WriteTo(OutStream)`: the attribute's text in UTF-8, without a byte order mark
+/// (xml/lt-xml-attr-doc-http-members/P97AttrWrite.al:150 WriteTo_OutStream `k1`..`k6`: `a="plain"` is 9 bytes, the first
+/// character `a`). Pinned only for a stream nothing was written to: a stream that holds bytes is refused.
+fn attribute_write_to_outstream(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
+    let h = recv(r)?;
+    let text = serialize(&h)?;
+    crate::stream::write_raw_bytes_fresh(&mut a[0], text.as_bytes())?;
+    Ok(Value::Boolean(true))
+}
+
+/// `WriteTo([XmlWriteOptions,] OutStream)` of a declaration: an unassigned one raises `NotInitialized` naming `XmlNode`
+/// (P104WriteDecl.al:340 `uninit3`, `uninit4`). What an assigned one writes is one byte longer than its markup
+/// (P104WriteDecl.al:219 `v1_m1_len` 56 for 55 characters) and that byte is not pinned.
+fn declaration_write_to_outstream(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> NResult {
+    let _ = recv_or_uninit(r, "XmlNode")?;
+    unsupported("XmlDeclaration.WriteTo(OutStream): the byte after the markup is not pinned")
+}
+
 /// `WriteTo([XmlWriteOptions,] OutStream)`: UTF-8 with a byte order mark, whatever the encoding of the
 /// stream, the declaration saying `utf-8`; `PreserveWhitespace(true)` writes the document unindented
 /// (xml/TestXmlDocumentWriteToOutStreamContracts.al). A document without a `utf-8` declaration is written as
@@ -3945,7 +4337,7 @@ fn write_to_outstream(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -
     let indent = match options {
         None => true,
         Some(Value::Library(_, cell)) => match &*cell.borrow() {
-            LibraryValue::XmlWriteOptions { preserve_whitespace } => !preserve_whitespace,
+            LibraryValue::XmlWriteOptions { unindented, .. } => !unindented,
             LibraryValue::Empty => true,
             _ => return unsupported("WriteTo with something that is not an XmlWriteOptions"),
         },
@@ -3989,7 +4381,11 @@ fn write_to_outstream(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -
     // A text, CDATA, comment or processing instruction leaves the stream where it was, as JSON does: a second WriteTo writes over the
     // first one's bytes (xml/lt-xml-cdata-comment-pi-text/P90CDataRead.al:WriteTo_OutStream_TwiceIntoSameStream and its three siblings:
     // one copy, 16 bytes). Pinned for a stream nothing else was written to. A document and an element keep appending.
-    if with(&h, |d| !matches!(d, XData::Document { .. } | XData::Element { .. })) {
+    // A document type is pinned only for a stream nothing was written to (P104WriteDocType.al:199): a second WriteTo
+    // into the same stream, or one after other bytes, is refused.
+    if with(&h, |d| matches!(d, XData::DocType { .. })) {
+        crate::stream::write_raw_bytes_fresh(&mut a[stream], &bytes)?;
+    } else if with(&h, |d| !matches!(d, XData::Document { .. } | XData::Element { .. })) {
         crate::stream::write_raw_bytes_rewinding(&mut a[stream], &bytes)?;
     } else {
         crate::stream::write_raw_bytes(&mut a[stream], &bytes)?;
@@ -4046,8 +4442,21 @@ fn write_options_preserve_whitespace(_: &mut dyn Ctx, r: Option<&mut Value>, a: 
     let Some(Value::Boolean(on)) = a.first() else {
         return unsupported("PreserveWhitespace with something that is not a Boolean");
     };
+    // `PreserveWhitespace(false)` on a new value writes unindented (xml/lt-xml-attr-doc-http-members/P97DocWrite.al:123
+    // WriteTo_TextOptions_Variants `drop2`..`drop4`), while `true` and then `false` on one value writes indented again
+    // (xml/XmlDocReadWrite.al:392 WriteTo_Options `preserve_false`, :418; xml/TestXmlDocumentWriteToOutStreamContracts.al:98;
+    // P104Element.al:187): the setting follows only a change of the flag.
+    let (was, unindented) = match &*cell.borrow() {
+        LibraryValue::XmlWriteOptions {
+            preserve_whitespace,
+            unindented,
+        } => (*preserve_whitespace, *unindented),
+        _ => (false, true),
+    };
+    let unindented = if *on != was { *on } else { unindented };
     *cell.borrow_mut() = LibraryValue::XmlWriteOptions {
         preserve_whitespace: *on,
+        unindented,
     };
     Ok(Value::Null)
 }
@@ -4125,19 +4534,64 @@ fn remove_attribute(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> 
         }
         _ => {
             let name = arg_text(a, 0)?;
-            let found = attrs_of(&h).into_iter().find(|x| {
-                with(
-                    x,
-                    |d| matches!(d, XData::Attribute { local, ns, .. } if *local == name && ns.is_empty()),
-                )
-            });
-            match found {
+            let ns = if a.len() > 1 { arg_text(a, 1)? } else { String::new() };
+            match find_attribute_to_remove(&h, &name, &ns)? {
                 Some(x) => x,
-                None => return unsupported("RemoveAttribute of a missing attribute (behaviour not pinned yet)"),
+                None => return Ok(Value::Null),
             }
         }
     };
     detach(&target);
+    Ok(Value::Null)
+}
+
+/// The attribute `RemoveAttribute(Name)` or `RemoveAttribute(LocalName, NamespaceUri)` takes off `h`: the name is a local
+/// name without a prefix (`p:a` raises the XML name error, xml/lt-ay-xml/AyXmlRemoveNsAttribute.al:71
+/// RemoveAttribute_ByName_PrefixedPA, :174 `ns_prefixed_local`), matched with the namespace (none for the one-argument form:
+/// `b` leaves `p:b`, :103 RemoveAttribute_ByName_LocalB; :146 `ns_a_p`, `ns_a_empty`). A name nothing matches removes nothing
+/// (xml/XmlAttributes.al:259 RemoveAttribute `remove_missing`; AyXmlRemoveNsAttribute.al:174 `ns_unknown`). Other invalid
+/// names are not pinned.
+fn find_attribute_to_remove(h: &Handle, name: &str, ns: &str) -> Result<Option<Handle>, Signal> {
+    if let Err(e) = verify_ncname(name) {
+        let chars: Vec<char> = name.chars().collect();
+        let first_bad = chars.iter().position(|c| !is_name_char(*c));
+        if chars.first().copied().is_some_and(is_name_start) && first_bad.is_some_and(|i| chars[i] == ':') {
+            return Err(e);
+        }
+        return unsupported(format!("RemoveAttribute of the name `{name}` (not pinned)"));
+    }
+    Ok(attrs_of(h).into_iter().find(|x| {
+        with(
+            x,
+            |d| matches!(d, XData::Attribute { local, ns: n, .. } if local == name && n == ns),
+        )
+    }))
+}
+
+/// `XmlAttributeCollection.Remove`: by attribute (one this element holds: xml/lt-xml-remaining-node-methods/
+/// P104AttrCollection.al:31 P104_Remove_Attribute, its value stays readable), by name or by local name and namespace (:126
+/// P104_Remove_ByName_Overloads; a missing one removes nothing). An attribute of another element, and a name with a prefix,
+/// are not pinned.
+fn attrs_remove(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
+    let owner = owner_of(r)?;
+    if let Some(Value::Library(..)) = a.first() {
+        let attr = node_of(&a[0])?;
+        if !attrs_of(&owner).iter().any(|x| Rc::ptr_eq(x, &attr)) {
+            return unsupported("XmlAttributeCollection.Remove of an attribute its element does not hold (not pinned)");
+        }
+        detach(&attr);
+        return Ok(Value::Null);
+    }
+    let name = arg_text(a, 0)?;
+    if !is_ncname(&name) {
+        return unsupported(format!(
+            "XmlAttributeCollection.Remove of the name `{name}` (not pinned)"
+        ));
+    }
+    let ns = if a.len() > 1 { arg_text(a, 1)? } else { String::new() };
+    if let Some(x) = find_attribute_to_remove(&owner, &name, &ns)? {
+        detach(&x);
+    }
     Ok(Value::Null)
 }
 
@@ -4537,6 +4991,8 @@ pub fn native_for(sig: &Signature) -> Option<NativeFn> {
         ("XmlText" | "XmlCData" | "XmlComment" | "XmlAttribute", "Value", _) => value_prop,
         ("XmlProcessingInstruction", "GetTarget", [_]) => pi_get_target,
         ("XmlProcessingInstruction", "GetData", [_]) => pi_get_data,
+        ("XmlProcessingInstruction", "SetTarget", ["Text"]) => pi_set_target,
+        ("XmlProcessingInstruction", "SetData", ["Text"]) => pi_set_data,
         ("XmlElement" | "XmlAttribute", "Name", []) => element_name,
         ("XmlElement" | "XmlAttribute", "LocalName", []) => local_name,
         ("XmlElement" | "XmlAttribute", "NamespaceUri", []) => namespace_uri,
@@ -4598,6 +5054,11 @@ pub fn native_for(sig: &Signature) -> Option<NativeFn> {
         ("XmlNamespaceManager", "LookupNamespace", ["Text", "Text"]) => manager_lookup_namespace,
         ("XmlNamespaceManager", "HasNamespace", ["Text"]) => manager_has_namespace,
         (_, "WriteTo", ["Text"]) if is_node && first_by_var => write_to_text,
+        (_, "WriteTo", ["XmlWriteOptions", "Text"]) if is_node && sig.params.get(1).is_some_and(|p| p.by_var) => {
+            write_to_text_options
+        }
+        ("XmlAttribute", "WriteTo", ["OutStream"]) => attribute_write_to_outstream,
+        ("XmlDeclaration", "WriteTo", ["OutStream"] | ["XmlWriteOptions", "OutStream"]) => declaration_write_to_outstream,
         // The byte order mark and the markup, as for an element (xml/lt-xml-cdata-comment-pi-text/P90CDataRead.al:
         // WriteTo_OutStream_Attached_AndText, `Ù‹<![CDATA[x]]>`, 16 bytes; the Text, Comment and ProcessingInstruction files pin their own).
         (
@@ -4607,7 +5068,10 @@ pub fn native_for(sig: &Signature) -> Option<NativeFn> {
             | "XmlText"
             | "XmlCData"
             | "XmlComment"
-            | "XmlProcessingInstruction",
+            | "XmlProcessingInstruction"
+            // Pinned like the text kinds (xml/lt-xml-remaining-node-methods/P104WriteDocType.al:199 P104_Stream_Detached,
+            // `Ù‹<!DOCTYPE r >`, 16 bytes).
+            | "XmlDocumentType",
             "WriteTo",
             ["OutStream"] | ["XmlWriteOptions", "OutStream"],
         ) => write_to_outstream,
@@ -4615,7 +5079,8 @@ pub fn native_for(sig: &Signature) -> Option<NativeFn> {
         ("XmlReadOptions", "PreserveWhitespace", ["Boolean"]) => read_options_preserve_whitespace,
         ("XmlReadOptions" | "XmlWriteOptions", "PreserveWhitespace", []) => options_preserve_whitespace_get,
         ("XmlElement", "SetAttribute", ["Text", "Text"]) => set_attribute,
-        ("XmlElement", "RemoveAttribute", ["Text"] | ["XmlAttribute"]) => remove_attribute,
+        ("XmlElement", "RemoveAttribute", ["Text"] | ["XmlAttribute"] | ["Text", "Text"]) => remove_attribute,
+        ("XmlAttributeCollection", "Remove", ["XmlAttribute"] | ["Text"] | ["Text", "Text"]) => attrs_remove,
         ("XmlElement", "RemoveAllAttributes", []) => remove_all_attributes,
         ("XmlElement", "Attributes", []) => attributes,
         ("XmlAttributeCollection", "Count", []) => attrs_count,
@@ -4638,6 +5103,9 @@ pub fn native_for(sig: &Signature) -> Option<NativeFn> {
 pub fn format_node(name: &str, h: &Handle) -> Result<String, Signal> {
     if matches!(&*h.borrow(), LibraryValue::Empty) {
         return Err(uninitialized("XmlNode"));
+    }
+    if with(h, |d| matches!(d, XData::DocType { ready: false, .. })) {
+        return unsupported("Format of a document type made without a subset (not pinned)");
     }
     let _ = name;
     serialize(h)

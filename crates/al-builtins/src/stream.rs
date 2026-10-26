@@ -60,6 +60,9 @@ pub struct BlobBuf {
     /// the buffer first (BlobCalcFieldsLength.al:222 'new' over 'a long stored value' is 'new'); until then the stored value
     /// stays (:350 RF_GetWithoutCalcFields_OutStreamNotWritten_Modify).
     pub first_write_truncates: bool,
+    /// The buffer is the content of a `File` (on-premises): writes of a Record, a RecordId or a BigText raise another text
+    /// there (al-language-onprem/lt-file-type/FileQProbes.al:1309 `invalid stream mode: FileBinary`).
+    pub file: bool,
 }
 
 thread_local! {
@@ -284,6 +287,7 @@ pub fn new_blob() -> BlobRef {
         inserted: false,
         db_row: false,
         first_write_truncates: false,
+        file: false,
     }))
 }
 
@@ -310,6 +314,7 @@ pub fn copy_blob(b: &BlobRef, loaded: bool) -> BlobRef {
         inserted: b.inserted,
         db_row: false,
         first_write_truncates: false,
+        file: false,
     }))
 }
 
@@ -529,6 +534,9 @@ pub struct InState {
     /// The local that owned the stream's bytes went out of scope: only `Length`, `EOS` and `ReadText` are pinned afterwards
     /// (see [`owner_out_of_scope`]).
     pub owner_gone: bool,
+    /// A stream that was never created, handed to a `Report.*Layout` call that found no layout (see
+    /// [`mark_not_initialized`]): only `EOS` is pinned on it.
+    pub not_initialized: bool,
 }
 
 impl InState {
@@ -540,6 +548,7 @@ impl InState {
             hit_end: false,
             handed_to_content: false,
             owner_gone: false,
+            not_initialized: false,
         }
     }
 
@@ -551,6 +560,7 @@ impl InState {
             hit_end: false,
             handed_to_content: false,
             owner_gone: false,
+            not_initialized: false,
         }
     }
 
@@ -711,6 +721,7 @@ pub(crate) fn create_empty_in_stream(a: &mut [Value]) -> Result<(), Signal> {
         inserted: false,
         db_row: false,
         first_write_truncates: false,
+        file: false,
     });
     set_stream(
         &a[0],
@@ -849,6 +860,38 @@ pub(crate) fn owner_out_of_scope(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut
     })
 }
 
+/// A `Report.RdlcLayout`, `WordLayout` or `ExcelLayout` call whose result is used found no layout: a stream that was never
+/// created stays so, and `EOS` of it then raises NotInitialized (see `in_eos_plain`). Answers false, and changes nothing, for a
+/// stream that was created (what the call does to it is not pinned).
+pub fn mark_not_initialized(v: &Value) -> bool {
+    let Value::Library(_, h) = v else {
+        return false;
+    };
+    let mut g = h.borrow_mut();
+    if !matches!(&*g, LibraryValue::Empty) {
+        return false;
+    }
+    let mut s = InState::snapshot(Vec::new(), Encoding::default());
+    s.not_initialized = true;
+    *g = LibraryValue::InStream(s);
+    true
+}
+
+/// A `Report.RdlcLayout` call as a statement on a report whose only layout is `DefaultLayout = RDLC` without a file: a stream
+/// that was never created becomes an empty one (report/lt-report-members-testrequestpage/P91Static.al:126 `eos=Yes`). Answers
+/// false, and changes nothing, for a stream that was created.
+pub fn create_empty_in(v: &Value) -> bool {
+    let Value::Library(_, h) = v else {
+        return false;
+    };
+    let mut g = h.borrow_mut();
+    if !matches!(&*g, LibraryValue::Empty) {
+        return false;
+    }
+    *g = LibraryValue::InStream(InState::snapshot(Vec::new(), Encoding::default()));
+    true
+}
+
 /// [`with_in`]; `handed_ok` lets a stream HttpContent.WriteFrom took through (only `EOS` reads it), `gone_ok` one whose
 /// owner went out of scope (only `Length`, `EOS` and `ReadText` read it).
 fn with_in_of<T>(
@@ -865,6 +908,9 @@ fn with_in_of<T>(
             }
             if s.handed_to_content && !handed_ok {
                 return unsupported("use of an InStream after HttpContent.WriteFrom took it (only EOS is pinned)");
+            }
+            if s.not_initialized {
+                return unsupported("use of an InStream a Report layout call left uncreated (only EOS is pinned)");
             }
             if s.owner_gone && !gone_ok {
                 return unsupported(
@@ -929,6 +975,13 @@ fn in_eos(ctx: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult 
 }
 
 fn in_eos_plain(r: Option<&mut Value>, _: &mut [Value]) -> NResult {
+    // EOS of a stream a Report layout call found no layout for: the variable was never initialized
+    // (report/lt-report-requestpage-query-members/P105LytRdlc.al:76, P105LytWord.al:76, P105LytExcel.al:76).
+    if let Some(Value::Library(_, h)) = r.as_deref()
+        && matches!(&*h.borrow(), LibraryValue::InStream(s) if s.not_initialized)
+    {
+        return Err(crate::xml::uninitialized("InStream"));
+    }
     // A stream HttpContent.WriteFrom took is not at its end (network/lt-db-http-leads/DbHttpContentLeads.al:310): its position
     // did not move.
     with_in_of(r, true, true, |s| Ok(Value::Boolean(s.pos >= s.len())))
@@ -1155,7 +1208,29 @@ fn in_read(c: &mut dyn Ctx, mut r: Option<&mut Value>, a: &mut [Value]) -> NResu
         return Ok(Value::Null);
     }
     if a.len() > 1 {
-        return unsupported("InStream.Read with a length (not pinned)");
+        let Some(Value::Integer(n)) = a.get(1) else {
+            return unsupported("InStream.Read with a length that is not an Integer (not pinned)");
+        };
+        let n = *n;
+        if n < 0 {
+            return unsupported("InStream.Read with a negative length (not pinned)");
+        }
+        let enc = with_in(r.as_deref_mut(), |s| Ok(s.enc))?;
+        let Some(width) = fixed_stream_width(&a[0], enc) else {
+            return unsupported("InStream.Read with a length (not pinned)");
+        };
+        // The length of the type reads as without one (streams/lt-stream-length/StreamLengthIntegers.al:Integer_WriteReadLength_1
+        // `w4_rd`, :BigInteger_WriteReadLength_1 `w8_rd`, StreamLengthOthers.al `w12_rd`, `w16_rd`, `w1_rd`, `w4_rd`).
+        if usize::try_from(n).ok() == Some(width) {
+            return in_read(c, r, &mut a[..1]);
+        }
+        // Any other length raises before the stream is read, also on an empty stream; the position stays
+        // (StreamLengthIntegers.al:Integer_WriteReadLength_3 `r2_r`, `r2_rval` 0/No/1; :Integer_WriteReadLength_2 `w1_r`).
+        // The variable held its default value in every pinned case.
+        if !is_default_fixed(&a[0]) {
+            return unsupported("InStream.Read with a wrong length into a variable that holds a value (not pinned)");
+        }
+        return Err(invalid_stream_length(n, width));
     }
     // A Text or Code: the inverse of `Write(Text)` (:OutStream_Write_BinaryFormsOfEachType pins the
     // characters and a zero byte). It takes the characters up to the zero byte, or to the end of the
@@ -1207,7 +1282,8 @@ fn in_read(c: &mut dyn Ctx, mut r: Option<&mut Value>, a: &mut [Value]) -> NResu
         return Ok(Value::Integer(count as i32));
     }
     let width = match a[0] {
-        Value::Integer(_) | Value::Boolean(_) | Value::Date(..) => 4,
+        // An Option is its ordinal in 4 bytes (streams/lt-stream-length/StreamLengthOthers.al:Option_WriteReadLength_1 `nb_rd`).
+        Value::Integer(_) | Value::Boolean(_) | Value::Date(..) | Value::Option(..) => 4,
         Value::Byte(_) | Value::Char(_) => 1,
         Value::BigInteger(_) => 8,
         Value::Guid(_) => 16,
@@ -1242,6 +1318,8 @@ fn in_read(c: &mut dyn Ctx, mut r: Option<&mut Value>, a: &mut [Value]) -> NResu
             Value::Char(_) => crate::value::RtType::Char,
             Value::BigInteger(_) => crate::value::RtType::BigInteger,
             Value::Guid(_) => crate::value::RtType::Guid,
+            // The first member (StreamLengthOthers.al:Option_WriteReadLength_1 `nb_rd2` is A).
+            Value::Option(_, names) => crate::value::RtType::Option(names.to_vec()),
             _ => crate::value::RtType::Decimal,
         });
         return Ok(Value::Integer(0));
@@ -1296,6 +1374,13 @@ fn in_read(c: &mut dyn Ctx, mut r: Option<&mut Value>, a: &mut [Value]) -> NResu
             }
         }
         Value::Decimal(_) => Value::Decimal(decimal_from_bytes(&bytes)?),
+        Value::Option(_, ref names) => {
+            let n = i32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+            if usize::try_from(n).map_or(true, |i| i >= names.len()) {
+                return unsupported("InStream.Read into an Option of an ordinal that is no member (not pinned)");
+            }
+            Value::Option(n, names.clone())
+        }
         _ => Value::Integer(i32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])),
     };
     Ok(Value::Integer(width as i32))
@@ -1367,6 +1452,18 @@ pub fn write_raw_bytes_rewinding(stream: &mut Value, bytes: &[u8]) -> Result<(),
     write_bytes(&b, bytes);
     b.borrow_mut().write_pos = 0;
     Ok(())
+}
+
+/// As [`write_raw_bytes_rewinding`], for a kind whose bytes are pinned only for a stream nothing was written to yet
+/// (an attribute or a document type: whether a second write goes over the first or after it is not pinned).
+pub fn write_raw_bytes_fresh(stream: &mut Value, bytes: &[u8]) -> Result<(), Signal> {
+    let (b, _) = out_buf(Some(stream))?;
+    if !b.borrow().bytes.is_empty() {
+        return unsupported(
+            "WriteTo(OutStream) of an attribute or document type into a stream that holds bytes (not pinned)",
+        );
+    }
+    write_raw_bytes_rewinding(stream, bytes)
 }
 
 /// Writes bytes to an `OutStream` argument whatever its encoding (the caller pins the bytes).
@@ -1494,10 +1591,47 @@ fn decimal_from_bytes(b: &[u8]) -> Result<rust_decimal::Decimal, Signal> {
 /// millisecond of the day plus one), a Text its characters and a zero byte
 /// (:OutStream_Write_BinaryFormsOfEachType, all little endian), a Date 4 and a Decimal 12 (see
 /// [`date_bytes`], [`decimal_bytes`]).
-fn out_write(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
-    let (b, enc) = out_buf(r)?;
+fn out_write(c: &mut dyn Ctx, mut r: Option<&mut Value>, a: &mut [Value]) -> NResult {
+    let (b, enc) = out_buf(r.as_deref_mut())?;
+    // A Record or a RecordId cannot be written to a stream of a Blob or a Temp Blob, with a length or without one: the error
+    // is raised and nothing is written (streams/lt-stream-read-write-media/P102WriteRecord.al:26 and :45, streams/lt-stream-length/
+    // StreamLengthOthers.al:Record_RecordId_WriteLength, types/lt-aj-probes/AjMisc.al:175-176 and :221).
+    let record_kind = match &a[0] {
+        Value::Record(rec) => Some(rec.try_borrow().map(|r| r.temporary).unwrap_or(true)),
+        Value::Library(_, h) => matches!(&*h.borrow(), LibraryValue::RecordId { .. }).then_some(false),
+        _ => None,
+    };
+    if let Some(temporary) = record_kind {
+        if temporary || b.borrow().file {
+            return unsupported("OutStream.Write of a temporary Record or to a File stream (not pinned)");
+        }
+        return Err(Signal::Error(Box::new(crate::native::AlError {
+            message: "ALStream.ALWrite, invalid stream mode: Stream".into(),
+            code: "InvalidStreamMode".into(),
+            ..Default::default()
+        })));
+    }
     // `Write(Text, Length)` writes the first Length characters (all of a shorter text) and the zero byte
     // (streams/TestProbeStreamContracts.al:WriteText_NonAscii_Char_Byte_Length, `write_text_len3`, `write_text_len5_over`).
+    if a.len() == 2
+        && let Value::Integer(n) = a[1]
+        && let Some(width) = fixed_stream_width(&a[0], enc)
+    {
+        // The length of the type writes as without one (streams/lt-stream-length/StreamLengthIntegers.al:Integer_WriteReadLength_1
+        // `w4_wret`, :BigInteger_WriteReadLength_1 `w8_wret`, StreamLengthOthers.al `w12_wret`, `w16_wret`, `w1_wret`, `w4_wret`).
+        if usize::try_from(n).ok() == Some(width) {
+            return out_write(c, r, &mut a[..1]);
+        }
+        if n < 0 {
+            return unsupported("OutStream.Write with a negative length of a fixed-size value (not pinned)");
+        }
+        // Any other length raises and writes nothing (StreamLengthIntegers.al:Integer_WriteReadLength_2 `w1_w`, `w1_bytes` 0:).
+        // Only the used result is pinned.
+        if !c.ret_used() {
+            return unsupported("OutStream.Write with a wrong length, result unused (not pinned)");
+        }
+        return Err(invalid_stream_length(n, width));
+    }
     if a.len() == 2 {
         let (Some(t), Value::Integer(n)) = (crate::native::text_of(&a[0]), &a[1]) else {
             return unsupported(
@@ -1544,6 +1678,9 @@ fn out_write(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult
         // (corpus types/PEOptionEnumBigText.al:313-333, whose results fix the bytes on BC 27.5).
         Value::Byte(b) => vec![*b],
         Value::Integer(n) => n.to_le_bytes().to_vec(),
+        // An Option is its ordinal in 4 bytes (streams/lt-stream-length/StreamLengthOthers.al:Option_WriteReadLength_1 `nb_bytes`
+        // 4:01000000 for the second member).
+        Value::Option(n, _) => n.to_le_bytes().to_vec(),
         Value::Boolean(v) => i32::from(*v).to_le_bytes().to_vec(),
         Value::BigInteger(n) => n.to_le_bytes().to_vec(),
         Value::Time(t) => i32::try_from(*t)
@@ -1572,6 +1709,45 @@ fn out_write(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult
     Ok(Value::Integer(bytes.len() as i32))
 }
 
+/// The bytes `Write(Value)` and `Read(Value)` take for a type whose length form is pinned
+/// (streams/lt-stream-length/StreamLengthIntegers.al and StreamLengthOthers.al: Integer, Boolean and Option 4, BigInteger 8,
+/// Byte 1, Decimal 12, Guid 16, and Char 1 on a stream of the default encoding).
+fn fixed_stream_width(v: &Value, enc: Encoding) -> Option<usize> {
+    match v {
+        Value::Integer(_) | Value::Boolean(_) | Value::Option(..) => Some(4),
+        Value::BigInteger(_) => Some(8),
+        Value::Byte(_) => Some(1),
+        Value::Char(_) if enc == Encoding::MsDos => Some(1),
+        Value::Decimal(_) => Some(12),
+        Value::Guid(_) => Some(16),
+        _ => None,
+    }
+}
+
+fn is_default_fixed(v: &Value) -> bool {
+    match v {
+        Value::Integer(n) => *n == 0,
+        Value::Option(n, _) => *n == 0,
+        Value::Boolean(b) => !b,
+        Value::BigInteger(n) => *n == 0,
+        Value::Byte(n) => *n == 0,
+        Value::Char(n) => *n == 0,
+        Value::Decimal(d) => d.is_zero(),
+        Value::Guid(g) => g.iter().all(|b| *b == 0),
+        _ => false,
+    }
+}
+
+/// "An invalid length 1 was specified in stream function. 4 was expected." (InvalidStreamLength,
+/// streams/lt-stream-length/StreamLengthIntegers.al:Integer_WriteReadLength_2 `w1_w`).
+fn invalid_stream_length(given: i32, width: usize) -> Signal {
+    Signal::Error(Box::new(crate::native::AlError {
+        message: format!("An invalid length {given} was specified in stream function. {width} was expected."),
+        code: "InvalidStreamLength".into(),
+        ..Default::default()
+    }))
+}
+
 /// `CopyStream(OutStream, InStream [, BytesToRead])`: copies what remains of the source.
 fn copy_stream(ctx: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> NResult {
     // One side is a .NET stream: the context copies the bytes through its host (ADR-024).
@@ -1587,7 +1763,7 @@ fn copy_stream(ctx: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> NRe
         };
     }
     if a.len() > 2 {
-        return unsupported("CopyStream with a byte count (not pinned)");
+        return copy_stream_count(ctx, a);
     }
     // Content carried unread in the company build (owner decision 2026-10-23 "Carry bytes unread", `is_carried_mark`): the
     // target becomes an opaque copy; the source has no bytes to drain.
@@ -1602,6 +1778,49 @@ fn copy_stream(ctx: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> NRe
     let bytes = with_in(Some(&mut a[1]), |s| Ok(s.drain()))?;
     write_bytes(&out, &bytes);
     Ok(Value::Boolean(true))
+}
+
+/// `CopyStream(OutStream, InStream, BytesToRead)` (streams/StTCopyBlob.al): a count the source still holds copies that many
+/// bytes, moves the source on and answers true (:77-80 `copied` Yes, `source-pos` 5; :187 copies `ab`); 0 copies nothing and
+/// answers true (:117-122 `copied0`, `pos0` 1); from an empty source it answers false and writes nothing (:144-157). A count
+/// beyond what is left of a source with data (:81-84 answers false but leaves EOS No), a negative count and a false answer in
+/// statement form are not pinned.
+fn copy_stream_count(ctx: &mut dyn Ctx, a: &mut [Value]) -> NResult {
+    let Value::Integer(n) = a[2] else {
+        return unsupported("CopyStream with a byte count that is not an Integer (not pinned)");
+    };
+    let Ok(n) = usize::try_from(n) else {
+        return unsupported("CopyStream with a negative byte count (not pinned)");
+    };
+    if ctx.company_build() && carried_mark_of_in(&a[1]).is_some() {
+        return unsupported("CopyStream with a byte count of content carried unread (not pinned)");
+    }
+    let used = ctx.ret_used();
+    let (out, _) = out_buf(Some(&mut a[0]))?;
+    let bytes = with_in(Some(&mut a[1]), |s| {
+        let left = s.len().saturating_sub(s.pos);
+        if s.is_empty() && n > 0 {
+            if !used {
+                return unsupported("CopyStream with a byte count from an empty stream, result unused (not pinned)");
+            }
+            return Ok(None);
+        }
+        if s.is_empty() || n > left {
+            return unsupported("CopyStream with a byte count beyond what the stream holds (not pinned)");
+        }
+        let taken = s.rest()[..n].to_vec();
+        s.pos += n;
+        Ok(Some(taken))
+    })?;
+    match bytes {
+        Some(b) => {
+            if !b.is_empty() {
+                write_bytes(&out, &b);
+            }
+            Ok(Value::Boolean(true))
+        }
+        None => Ok(Value::Boolean(false)),
+    }
 }
 
 // ------------------------------------------------------- arrays and strings

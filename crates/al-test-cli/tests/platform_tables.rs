@@ -2303,8 +2303,7 @@ codeunit 50000 "T" { Subtype = Test;
 
 // al-runner issue 5842 (the reporter's run on real BC 29.0.54011.55407, 2/2 tests): the row of a control bound to an element
 // of a page array (`Costs[1]`) has no source field and reports the expression as written; the other rows of the page are
-// served beside it. Assumption page-control-field-array-element-source until the corpus bump brings the writer's probe
-// (record/TestPageControlFieldArraySource.al, also run below). A call expression is not pinned and stays refused.
+// served beside it. Pinned by record/TestPageControlFieldArraySource.al (also run below). A call expression is not pinned and stays refused.
 #[test]
 fn page_control_field_serves_the_row_of_an_array_element_control() {
     let o = outcomes(

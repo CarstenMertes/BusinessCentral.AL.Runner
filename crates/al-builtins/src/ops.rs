@@ -584,6 +584,24 @@ pub fn arith(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
             return int_arith(op, *a, *b).map(V::Integer);
         }
     }
+    // A Decimal with a Decimal or an Integer, `+`, `-` or `*`: the end of `arith_general`, which no earlier arm of it
+    // takes for these operands, without its walk past the arms of the other types (the hot path of Decimal loops).
+    if let (V::Decimal(_) | V::Integer(_), V::Decimal(_) | V::Integer(_)) = (l, r) {
+        if matches!(op, Arith::Add | Arith::Sub | Arith::Mul)
+            && (matches!(l, V::Decimal(_)) || matches!(r, V::Decimal(_)))
+        {
+            let (Some(a), Some(b)) = (as_decimal(l), as_decimal(r)) else {
+                unreachable!("Decimal and Integer are numbers")
+            };
+            let res = match op {
+                Arith::Add => a.checked_add(b),
+                Arith::Sub => a.checked_sub(b),
+                _ => a.checked_mul(b),
+            }
+            .ok_or_else(|| Signal::Unsupported("decimal overflow".into()))?;
+            return Ok(V::Decimal(keep_18_digits(res)));
+        }
+    }
     arith_general(op, l, r)
 }
 

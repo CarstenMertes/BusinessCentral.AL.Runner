@@ -14,6 +14,7 @@ mod flowfield_write;
 mod flowfields;
 mod general_journal;
 mod get_recordid_other_table;
+mod global_filter_group;
 mod hostvalues;
 mod key_ties;
 mod lane_codeunit_run;

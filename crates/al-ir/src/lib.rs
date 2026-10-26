@@ -928,7 +928,7 @@ pub struct Control {
     /// For a page's own control bound to an expression of a form Page Control Field serves (an element of a page array with a
     /// number index `Costs[1]`, a field of a page record variable `OtherLine.Amount`, an arithmetic expression `Costs[1] +
     /// Costs[2]`): the source as written, its SourceExpression, and whether the default of its Editable column is `True`
-    /// (assumption page-control-field-array-element-source).
+    /// (record/TestPageControlFieldArraySource.al).
     #[serde(default)]
     pub expr_source: Option<(String, bool)>,
 }

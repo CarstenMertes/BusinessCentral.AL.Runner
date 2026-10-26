@@ -114,8 +114,10 @@ impl Session {
             ids::DATABASE_USERID_1 => Ok(Value::Text(self.host.identity.user_id().into())),
             ids::DATABASE_USERSECURITYID_1 => Ok(Value::Guid(self.host.identity.user_security_id())),
             ids::DATABASE_SESSIONID_1 => Ok(Value::Integer(self.session_id())),
-            // Only an id no session has is pinned (session/TestSessionComplete.al:45-52: 99999 is not active).
+            // An id no session has is not active (session/TestSessionComplete.al:45-52: 99999; platform/lt-platform-members/
+            // PlTSession.al:295-296: 0 and 2147483647); the running session is (PlTSession.al:294 SessionId_Relations).
             ids::SESSION_ISSESSIONACTIVE_1 => match args.first() {
+                Some(Value::Integer(n)) if *n == self.session_id() => Ok(Value::Boolean(true)),
                 Some(Value::Integer(n)) if *n != self.session_id() => Ok(Value::Boolean(false)),
                 other => unsupported(format!(
                     "Session.IsSessionActive({other}): only an id other than the running session's is pinned",

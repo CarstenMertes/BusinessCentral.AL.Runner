@@ -511,20 +511,7 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     // False in a test: measured on real BC by session/TestEnvironmentUserTenantContracts.al:238
     // (Assert.IsFalse(TaskScheduler.CanCreateTask())).
     ("TaskScheduler.CanCreateTask#1", |_, _, _| Ok(Value::Boolean(false))),
-    // CreateTask hands back a new task id (session/TestTaskSchedulerCloudBehavior.al:9-20 pins that
-    // and nothing more). A task starts in a session of its own after the creating transaction
-    // commits, which a test does not wait for, so the task is not run (docs/probes-needed.md).
-    ("TaskScheduler.CreateTask#1", |c, _, _| Ok(Value::Guid(c.new_guid()))),
-    ("TaskScheduler.CreateTask#2", |c, _, _| Ok(Value::Guid(c.new_guid()))),
-    ("TaskScheduler.SetTaskReady#1", |_, _, _| {
-        unsupported("TaskScheduler.SetTaskReady (not pinned)")
-    }),
-    ("TaskScheduler.TaskExists#1", |_, _, _| {
-        unsupported("TaskScheduler.TaskExists (not pinned)")
-    }),
-    ("TaskScheduler.CancelTask#1", |_, _, _| {
-        unsupported("TaskScheduler.CancelTask (not pinned)")
-    }),
+    // CreateTask, TaskExists, CancelTask and SetTaskReady keep the session's tasks: `Ctx::session_op` (al-vm tasks.rs).
     ("Session.StartSession#1", start_session),
     ("Session.StartSession#2", start_session),
     ("Session.StartSession#3", start_session),
@@ -2330,12 +2317,21 @@ fn clear(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result
         // A cleared stream is one that was never created again (streams/TestProbeStreamContracts.al:RecordAssign_CopiesBlobBytes).
         // A cleared SecretText is an empty one and a copy taken before keeps its content
         // (fieldref/lt-fieldref-testfield-types/SystemClearArraySecret.al:69-90, errorinfo/lt-errnotif/EnTSecret.al:15-26).
+        // A cleared ModuleInfo reads as one nobody filled (platform/lt-platform-members/PlTNavApp.al:69-81).
+        // A cleared BigText is empty (streams/StTBigText.al:ClearBigText `len-after-clear` 0, `len-after-add` 1).
         // A cleared HttpClient is a new one: no base address, the default timeout, no default headers; the next call
         // starts it fresh (network/lt-http-relative-request/HttpRelativeRequestPath.al:NewClient clears, then sets the base address).
         Value::Library(name, _)
             if matches!(
                 name.as_str(),
-                "OutStream" | "InStream" | "FileUpload" | "HttpClient" | "HttpHeaders" | "SecretText"
+                "OutStream"
+                    | "InStream"
+                    | "FileUpload"
+                    | "HttpClient"
+                    | "HttpHeaders"
+                    | "SecretText"
+                    | "ModuleInfo"
+                    | "BigText"
             ) =>
         {
             Value::Library(

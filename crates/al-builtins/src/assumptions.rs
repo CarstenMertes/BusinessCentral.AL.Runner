@@ -244,7 +244,7 @@ registry! {
         assumed: "A Guid passed where a function wants a Text is its text form {XXXXXXXX-...}, as in an assignment. Pinned for CopyStr, StrLen, UpperCase, LowerCase, StrPos and Notification.SetData (types/lt-guid-as-text-argument/GuidAsTextArgument.al); every other Text parameter is assumed alike.",
         tests: "Match General Jnl Lines UT (CopyStr(CreateGuid(), 1, 50)); 61 Tests-General Journal tests. Error Message Handler.ShowNotification (Notification.SetData with a Guid); 27 Tests-ERM tests.",
         probe: "A Guid passed to other Text parameters: StrSubstNo('%1', ...) as the format, DelStr, PadStr, ConvertStr, IncStr, SelectStr, Text.Contains.",
-        note: "Confirmed by writer SG on corpus bump PR 738 (branch al-runtime-rs-staging-pub-sg 37b221b7, green on 27.5, 28.5, 29.0): every one of those functions and a procedure's Text and Code parameter see the upper-case text form; a Text[10] parameter raises StringLengthExceeded. Remove this entry when that bump lands.",
+        note: "Confirmed by writer SG on corpus bump PR 738 (branch al-runtime-rs-staging-pub-sg 37b221b7, green on every supported BC major): every one of those functions and a procedure's Text and Code parameter see the upper-case text form; a Text[10] parameter raises StringLengthExceeded. Remove this entry when that bump lands.",
         awaiting: Awaiting {
             issues: &[5586],
             files: &[
@@ -455,7 +455,7 @@ registry! {
         assumed: "Groups of an aggregated query that tie on every OrderBy column are read in the order of the query's grouping columns (column declaration order, each ascending).",
         tests: "Create Pick's CalcQtyInWhseEntries (OrderBy Block_Movement, ten grouping columns): SCM Extend Warehouse CheckItemAvailabilityWhenCreatingPickAndExistReservedQtyForProdOrder and the tests that create a pick for a directed put-away location; about 77 Tests-SCM tests.",
         probe: "An aggregated query with an OrderBy on a column most groups share and several grouping columns, rows inserted in non-key order: the order of the tied groups on Read. Asked in corpus #651.",
-        note: "Confirmed by writer SG on corpus bump PR 738 (branch al-runtime-rs-staging-pub-sg 37b221b7, green on 27.5, 28.5, 29.0): query/lt-az-query/AzQueryTests.al SG_OrderByTies_GroupingSubThenCat, _GroupingCatThenSub, _DescendingKind, _DescendingSum. No al-runner issue, so no `awaiting` field: remove this entry when that bump lands.",
+        note: "Confirmed by writer SG on corpus bump PR 738 (branch al-runtime-rs-staging-pub-sg 37b221b7, green on every supported BC major): query/lt-az-query/AzQueryTests.al SG_OrderByTies_GroupingSubThenCat, _GroupingCatThenSub, _DescendingKind, _DescendingSum. No al-runner issue, so no `awaiting` field: remove this entry when that bump lands.",
     },
     TableRelationSeveralWhereNonKey => {
         id: "table-relation-several-where-non-key",
@@ -497,7 +497,7 @@ registry! {
         id: "exception-tostring-stack-frames",
         assumed: "ToString and Format of the exception GetLastErrorObject answers, for a trace the corpus does not pin (an error caught by a TryFunction or asserterror, a record-not-found or division error, a dialog error raised deeper than one procedure below a Codeunit.Run's OnRun): the lines after the first are the AL frames of the error. BC writes .NET frames there (pinned shapes: GetLastErrorObjectKinds.al:384, AzLastErrorObject.al:180, :199), so a read of those lines would differ; only the first line and the `   at ` marker are pinned (GetLastErrorObject.al:85-87). Kept for the four baseline cases that read only those.",
         tests: "Corpus baseline cases 61471 GetLastErrorObject_AfterErrorInTryFunction, _AfterErrorInAsserterror, _AfterGetWithoutRow, _AfterDivisionByZero (onprem-dotnet suite; refusing them loses them). Microsoft tests that read ToString or Format of a last-error exception.",
-        probe: "Format(GetLastErrorObject()) split into lines after Error('x') caught by a TryFunction, by asserterror, after Get of a missing row and after a division by zero, each on 27.5, 28.5 and 29.0: every line. Asked in corpus #652.",
+        probe: "Format(GetLastErrorObject()) split into lines after Error('x') caught by a TryFunction, by asserterror, after Get of a missing row and after a division by zero, each on every supported BC major: every line. Asked in corpus #652.",
     },
     PageOpenCaptionClassExpressions => {
         id: "page-open-caption-class-expressions",

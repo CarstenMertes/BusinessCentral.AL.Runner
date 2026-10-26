@@ -251,8 +251,21 @@ fn media_import(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out 
 }
 
 fn set_import(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
-    if id_of(&r)? != [0; 16] {
-        return unsupported("MediaSet.ImportStream into a set that already has members (not pinned)");
+    let current = id_of(&r)?;
+    if current != [0; 16] {
+        // Another import adds a member and answers the set's id again (streams/StTMedia.al:MediaSetImportThreeArgs `count2` 2,
+        // :MediaSetImportTwiceAdds `count` 2 and `ids-differ` No).
+        if !store(c)?.sets.borrow().contains_key(&current) {
+            return unsupported("MediaSet.ImportStream into a set the session does not hold (not pinned)");
+        }
+        let member = import_object(c, a)?;
+        store(c)?
+            .sets
+            .borrow_mut()
+            .get_mut(&current)
+            .expect("checked")
+            .push(member);
+        return Ok(Value::Guid(current));
     }
     // The set's own id is what the call returns and what MediaId answers; the member has another
     // (media/TestMediaSetPersistence.al:127-155).
@@ -346,11 +359,20 @@ fn set_item(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
     let Some(Value::Integer(i)) = a.first() else {
         return unsupported("MediaSet.Item with this index");
     };
-    let item = usize::try_from(*i - 1)
+    let i = *i;
+    let item = usize::try_from(i - 1)
         .ok()
         .and_then(|i| store(c).ok()?.sets.borrow().get(&id)?.get(i).copied());
+    let known = id == [0; 16] || store(c)?.sets.borrow().contains_key(&id);
     match item {
         Some(m) => Ok(Value::Guid(m)),
+        // Index 0 and an index past the members raise (streams/StTMedia.al:MediaSetEmpty `item0`, `item1`;
+        // :MediaSetImportTwiceAdds `item3`, `item0`). A negative index is not pinned.
+        None if known && i == 0 => crate::native::raise(
+            "The parameter index must have a value greater than zero.",
+            "IndexOutOfBounds",
+        ),
+        None if known && i > 0 => crate::native::raise("Argument was out of range: index.", "ArgumentOutOfRange"),
         None => unsupported(format!("MediaSet.Item({i}) outside the set (error text not pinned)")),
     }
 }

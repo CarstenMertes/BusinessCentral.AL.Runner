@@ -86,6 +86,12 @@ pub trait Backing {
             .or_else(|| self.rows("", object))
             .is_some_and(|r| !r.is_empty())
     }
+    /// Who offers the rows, for a cache across stores: two backings with the same identity offer the same rows for
+    /// every table, and an identity is never given to another backing that offers other rows. `None` (the default):
+    /// not known, so no cache may assume it.
+    fn identity(&self) -> Option<(u64, u64)> {
+        None
+    }
 }
 
 /// A table's rows in the order of one key, to step through them without a pass over the table per step.
@@ -559,6 +565,20 @@ impl MemStore {
     pub fn backed_rows(&self, company: &str, object: u32) -> Option<Rows> {
         self.seen(object);
         self.backing.as_ref()?.rows(company, object)
+    }
+
+    /// The identity of the rows the untouched tables read ([`Backing::identity`]): `Some((0, 0))` without a backing,
+    /// `None` when the backing does not say.
+    pub fn backing_identity(&self) -> Option<(u64, u64)> {
+        match &self.backing {
+            None => Some((0, 0)),
+            Some(b) => b.identity(),
+        }
+    }
+
+    /// Whether table `t` is answered by the store's provider of computed tables rather than stored.
+    pub fn is_virtual(&self, t: &TableDef) -> bool {
+        self.virtual_of(t).is_some()
     }
 
     /// The store without its provider: the data only. A captured snapshot (ADR-004) holds no

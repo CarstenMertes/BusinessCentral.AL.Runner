@@ -606,6 +606,17 @@ pub fn clear_hits() {
     HITS.with(|h| h.set(0));
 }
 
+/// The marks of this thread as a bit set (bit `a as u32` for assumption `a`); clears them. With [`add_hit_bits`], a
+/// caller that replays a recorded run of code puts back the marks that run made.
+pub fn take_hit_bits() -> u128 {
+    HITS.with(|h| h.replace(0))
+}
+
+/// Adds the marks of the bit set `bits` (from [`take_hit_bits`]) to this thread's marks.
+pub fn add_hit_bits(bits: u128) {
+    HITS.with(|h| h.set(h.get() | bits));
+}
+
 /// The marks of this thread since the last [`clear_hits`] or `take_hits`, in registry order; clears them.
 pub fn take_hits() -> Vec<Assumption> {
     let bits = HITS.with(|h| h.replace(0));

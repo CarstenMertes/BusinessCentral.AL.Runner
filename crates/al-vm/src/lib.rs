@@ -631,6 +631,9 @@ pub struct Session {
     pub(crate) cx: al_data::AccessContext,
     /// The tables that held a row when the install baseline was captured (none without one).
     pub(crate) baseline_rows: std::collections::BTreeSet<u32>,
+    /// The origin of the baseline the session restored and the store's change counter right after
+    /// (`Session::baseline_origin`).
+    pub(crate) baseline_origin: Option<(u64, u64)>,
     /// Whether the builtin being called has its result used (ADR-011 `ret_used`).
     pub(crate) ret_used: bool,
     /// The form of the text of the `FieldError` being called, for the text `GetLastErrorText(true)` answers
@@ -876,6 +879,7 @@ impl Session {
                 user: user.into(),
             },
             baseline_rows: Default::default(),
+            baseline_origin: None,
             ret_used: true,
             field_error_form: None,
             error_finals: None,
@@ -1365,6 +1369,43 @@ impl Session {
         self.work_date = Some(day);
     }
 
+    /// The session's WorkDate as a day number: the date set, or today.
+    pub fn work_date(&self) -> i32 {
+        self.work_date_day().expect("always a date")
+    }
+
+    /// The milliseconds the session's clock moved on besides the real clock (`Sleep`, and each reading by AL code):
+    /// a run of code that leaves it unchanged read no clock.
+    pub fn clock_offset_ms(&self) -> i64 {
+        self.waited_ms
+    }
+
+    /// Whether the session notes the code it runs: AL code coverage, `--coverage` counts or the impact trace.
+    pub fn notes_code_run(&self) -> bool {
+        self.coverage.code_coverage || self.coverage.coverage_counts.is_some() || self.coverage.impact_on
+    }
+
+    /// Whether the session holds the single instance of codeunit `object` (one of its routines or variables used it).
+    pub fn has_single_instance(&self, object: usize) -> bool {
+        self.singletons.contains_key(&object)
+    }
+
+    /// The company the session's record operations work in.
+    pub fn access_company(&self) -> &str {
+        &self.cx.company
+    }
+
+    /// The change stamp of table object `object` in the session's company ([`al_data::memory::MemStore::table_stamp`]:
+    /// equal stamps mean the same rows; 0, the rows the backing offers). `None` for a table without a schema or whose
+    /// rows are computed.
+    pub fn table_stamp(&self, object: u32) -> Option<u64> {
+        let t = self.engine.tables.get(object as usize)?.as_ref()?;
+        if self.store.is_virtual(t) {
+            return None;
+        }
+        Some(self.store.table_stamp(&self.cx, t))
+    }
+
     /// Whether the session has a client that is not a background session: BC's login code runs only then
     /// (Base Application `LogInManagement.CompanyOpen`, guarded by GuiAllowed and a client type other than Background).
     pub fn has_interactive_client(&self) -> bool {
@@ -1670,7 +1711,7 @@ impl Session {
     ) -> Result<(Value, Vec<Value>), Signal> {
         let aliases = std::mem::take(&mut self.events.next_aliases);
         self.events.next_is_subscriber = false;
-        self.note_entered(object);
+        self.note_routine(object, routine);
         self.first_use(&instance)?;
         let engine = self.engine.clone();
         let r = &engine.program.objects[object].routines[routine];

@@ -37,6 +37,8 @@ pub struct Touches {
     pub entered: HashSet<usize>,
     /// For `--affected` (decision 6): a DotNet operation ran (its state is not keyed).
     pub dotnet: bool,
+    /// The routines that were called, as (object, routine). Not a raise or a touch: `is_empty` leaves it out.
+    pub routines: HashSet<(usize, usize)>,
 }
 
 impl Touches {
@@ -55,6 +57,12 @@ impl crate::Session {
     pub fn enable_impact_trace(&mut self) {
         *self.coverage.impact.borrow_mut() = Some(Touches::default());
         self.coverage.impact_on = true;
+    }
+
+    /// Stops noting and forgets what was noted.
+    pub fn disable_impact_trace(&mut self) {
+        *self.coverage.impact.borrow_mut() = None;
+        self.coverage.impact_on = false;
     }
 
     /// What was noted since the last call; noting starts again. Empty when the trace is off.
@@ -89,6 +97,17 @@ impl crate::Session {
             if write {
                 t.writes.insert(table);
             }
+        }
+    }
+
+    #[inline]
+    pub(crate) fn note_routine(&self, object: usize, routine: usize) {
+        if !self.coverage.impact_on {
+            return;
+        }
+        if let Some(t) = self.coverage.impact.borrow_mut().as_mut() {
+            t.entered.insert(object);
+            t.routines.insert((object, routine));
         }
     }
 

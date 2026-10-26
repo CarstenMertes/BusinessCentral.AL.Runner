@@ -377,6 +377,50 @@ impl Lowerer<'_> {
         out
     }
 
+    /// The CaptionClass and AutoFormatExpression settings of the table `oi`, of every object that declares one of its
+    /// fields and of its `extensions`, read once per table: each field reads them from here, not from a new walk of the
+    /// object's sections (a walk per field made the lowering of a table quadratic in its fields: Base Application's
+    /// tables doubled the instructions of a full corpus run with Microsoft's apps).
+    fn field_exprs(&self, oi: usize, extensions: &[usize]) -> FieldExprsByObject {
+        let mut out = FieldExprsByObject::default();
+        let declared = self.members[oi].fields.iter().map(|f| f.declared_in.unwrap_or(oi));
+        for o in std::iter::once(oi).chain(declared).chain(extensions.iter().copied()) {
+            if out.contains_key(&o) || !self.ws.usable(o) {
+                continue;
+            }
+            let obj = self.ws.object_ast(o);
+            let mut format_settings = Vec::new();
+            for s in ast::sections_in(obj.syntax()) {
+                let at = if s.name().eq_ignore_ascii_case("field") {
+                    1
+                } else if s.name().eq_ignore_ascii_case("modify") {
+                    0
+                } else {
+                    continue;
+                };
+                if !s
+                    .properties()
+                    .any(|p| p.name().eq_ignore_ascii_case("AutoFormatExpression"))
+                {
+                    continue;
+                }
+                if let Some(n) = s.args().get(at) {
+                    format_settings.push(n.clone());
+                }
+            }
+            out.insert(
+                o,
+                FieldExprs {
+                    caption_routines: crate::pages::field_caption_class_routines(&obj),
+                    caption_settings: crate::pages::field_caption_class_settings(&obj),
+                    format_routines: crate::pages::field_auto_format_routines(&obj),
+                    format_settings,
+                },
+            );
+        }
+        out
+    }
+
     /// The routine that evaluates field `f`'s `CaptionClass` expression: of the object that declares the field, or of the
     /// last of the table's `extensions` whose `modify` block sets one.
     fn field_caption_class(
@@ -385,14 +429,9 @@ impl Lowerer<'_> {
         f: &crate::members::FieldInfo,
         extensions: &[usize],
         routine_at: &RoutineAt,
+        exprs: &FieldExprsByObject,
     ) -> Option<(usize, usize)> {
-        self.field_expression_routine(
-            oi,
-            f,
-            extensions,
-            routine_at,
-            crate::pages::field_caption_class_routines,
-        )
+        self.field_expression_routine(oi, f, extensions, routine_at, exprs, |e| &e.caption_routines)
     }
 
     /// The routine that evaluates field `f`'s `AutoFormatExpression` expression, found as `field_caption_class`.
@@ -402,8 +441,9 @@ impl Lowerer<'_> {
         f: &crate::members::FieldInfo,
         extensions: &[usize],
         routine_at: &RoutineAt,
+        exprs: &FieldExprsByObject,
     ) -> Option<(usize, usize)> {
-        self.field_expression_routine(oi, f, extensions, routine_at, crate::pages::field_auto_format_routines)
+        self.field_expression_routine(oi, f, extensions, routine_at, exprs, |e| &e.format_routines)
     }
 
     /// Why field `f`'s `AutoFormatExpression` is refused: the table and its `extensions` set it two or more times and
@@ -413,30 +453,21 @@ impl Lowerer<'_> {
         oi: usize,
         f: &crate::members::FieldInfo,
         extensions: &[usize],
+        exprs: &FieldExprsByObject,
     ) -> Option<String> {
         let declared = f.declared_in.unwrap_or(oi);
         let (mut settings, mut expressions) = (0, 0);
         for o in std::iter::once(declared).chain(extensions.iter().copied().filter(|&e| e != declared)) {
-            if !self.ws.usable(o) {
+            let Some(e) = exprs.get(&o) else {
                 continue;
-            }
-            let obj = self.ws.object_ast(o);
-            settings += ast::sections_in(obj.syntax())
+            };
+            settings += e
+                .format_settings
                 .iter()
-                .filter(|s| {
-                    let at = if s.name().eq_ignore_ascii_case("field") {
-                        1
-                    } else if s.name().eq_ignore_ascii_case("modify") {
-                        0
-                    } else {
-                        return false;
-                    };
-                    s.args().get(at).is_some_and(|n| n.eq_ignore_ascii_case(&f.name))
-                        && s.properties()
-                            .any(|p| p.name().eq_ignore_ascii_case("AutoFormatExpression"))
-                })
+                .filter(|n| n.eq_ignore_ascii_case(&f.name))
                 .count();
-            expressions += crate::pages::field_auto_format_routines(&obj)
+            expressions += e
+                .format_routines
                 .iter()
                 .filter(|(n, _, _)| n.eq_ignore_ascii_case(&f.name))
                 .count();
@@ -457,20 +488,21 @@ impl Lowerer<'_> {
         f: &crate::members::FieldInfo,
         extensions: &[usize],
         routine_at: &RoutineAt,
-        routines: fn(&ast::Object) -> Vec<(String, String, String)>,
+        exprs: &FieldExprsByObject,
+        routines: fn(&FieldExprs) -> &Vec<(String, String, String)>,
     ) -> Option<(usize, usize)> {
         let declared = f.declared_in.unwrap_or(oi);
         let mut found = None;
         for o in std::iter::once(declared).chain(extensions.iter().copied().filter(|&e| e != declared)) {
-            if !self.ws.usable(o) {
+            let Some(e) = exprs.get(&o) else {
                 continue;
-            }
-            let obj = self.ws.object_ast(o);
-            for (field, name, _) in routines(&obj) {
+            };
+            for (field, name, _) in routines(e) {
                 if !field.eq_ignore_ascii_case(&f.name) {
                     continue;
                 }
-                if let Some(r) = obj.routines().find(|r| r.name() == name) {
+                let obj = self.ws.object_ast(o);
+                if let Some(r) = obj.routines().find(|r| r.name() == *name) {
                     let offset: usize = r.syntax().text_range().start().into();
                     if let Some(r) = routine_at.get(&(o, offset)) {
                         found = Some((o, r));
@@ -489,19 +521,21 @@ impl Lowerer<'_> {
         oi: usize,
         f: &crate::members::FieldInfo,
         extensions: &[usize],
+        exprs: &FieldExprsByObject,
     ) -> Option<String> {
         let declared = f.declared_in.unwrap_or(oi);
         let (mut settings, mut expressions) = (0, 0);
         for o in std::iter::once(declared).chain(extensions.iter().copied().filter(|&e| e != declared)) {
-            if !self.ws.usable(o) {
+            let Some(e) = exprs.get(&o) else {
                 continue;
-            }
-            let obj = self.ws.object_ast(o);
-            settings += crate::pages::field_caption_class_settings(&obj)
+            };
+            settings += e
+                .caption_settings
                 .iter()
                 .filter(|n| n.eq_ignore_ascii_case(&f.name))
                 .count();
-            expressions += crate::pages::field_caption_class_routines(&obj)
+            expressions += e
+                .caption_routines
                 .iter()
                 .filter(|(n, _, _)| n.eq_ignore_ascii_case(&f.name))
                 .count();
@@ -564,6 +598,7 @@ impl Lowerer<'_> {
         routine_at: &RoutineAt,
     ) -> (ir::Table, Vec<usize>) {
         let m = &self.members[oi];
+        let exprs = self.field_exprs(oi, &extensions);
         let fields = m
             .fields
             .iter()
@@ -623,10 +658,10 @@ impl Lowerer<'_> {
                         (Some(o), Some(off)) => routine_at.get(&(o, off)).map(|r| (o, r)),
                         _ => None,
                     },
-                    caption_class: self.field_caption_class(oi, f, &extensions, routine_at),
-                    caption_class_refusal: self.field_caption_class_refusal(oi, f, &extensions),
-                    auto_format_expression: self.field_auto_format(oi, f, &extensions, routine_at),
-                    auto_format_refusal: self.field_auto_format_refusal(oi, f, &extensions),
+                    caption_class: self.field_caption_class(oi, f, &extensions, routine_at, &exprs),
+                    caption_class_refusal: self.field_caption_class_refusal(oi, f, &extensions, &exprs),
+                    auto_format_expression: self.field_auto_format(oi, f, &extensions, routine_at, &exprs),
+                    auto_format_refusal: self.field_auto_format_refusal(oi, f, &extensions, &exprs),
                     tdd_length_unknown: self.tdd_length_unknown(oi, f),
                     flow_filter: f.class == crate::members::FieldClass::FlowFilter,
                     calc,
@@ -901,3 +936,19 @@ pub(crate) fn option_init_ordinal(text: &str, members: &[String]) -> Option<Opti
         _ => None,
     })
 }
+
+/// The CaptionClass and AutoFormatExpression settings of one table or table extension (`field_exprs`).
+#[derive(Default)]
+struct FieldExprs {
+    /// `pages::field_caption_class_routines`.
+    caption_routines: Vec<(String, String, String)>,
+    /// `pages::field_caption_class_settings`.
+    caption_settings: Vec<String>,
+    /// `pages::field_auto_format_routines`.
+    format_routines: Vec<(String, String, String)>,
+    /// The field names of the `field` sections and `modify` blocks that set `AutoFormatExpression`, once per section.
+    format_settings: Vec<String>,
+}
+
+/// `FieldExprs` by object index.
+type FieldExprsByObject = std::collections::HashMap<usize, FieldExprs>;

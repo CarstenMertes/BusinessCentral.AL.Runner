@@ -101,6 +101,11 @@ impl Lowerer<'_> {
             };
             (name, value, val)
         };
+        // The table's field names and the page's global names for `control_expr_text`, made once per page when a control
+        // first needs them (made per control, they cost a walk of the whole page object for every control that sets one of
+        // the properties).
+        let expr_fields: std::cell::OnceCell<Vec<String>> = std::cell::OnceCell::new();
+        let expr_globals: std::cell::OnceCell<Vec<String>> = std::cell::OnceCell::new();
         let mut controls = Vec::new();
         for raw in &layout.controls {
             let sec = &raw.section;
@@ -215,13 +220,16 @@ impl Lowerer<'_> {
                     if !["visible", "enabled", "editable"].contains(&name.as_str()) || changed.contains(&name) {
                         continue;
                     }
-                    let fields: Vec<String> = table
-                        .map(|t| self.members[t].fields.iter().map(|f| f.name.clone()).collect())
-                        .unwrap_or_default();
-                    let globals: Vec<String> = obj.var_decls().flat_map(|v| v.names()).map(|n| n.to_string()).collect();
+                    let fields = expr_fields.get_or_init(|| {
+                        table
+                            .map(|t| self.members[t].fields.iter().map(|f| f.name.clone()).collect())
+                            .unwrap_or_default()
+                    });
+                    let globals = expr_globals
+                        .get_or_init(|| obj.var_decls().flat_map(|v| v.names()).map(|n| n.to_string()).collect());
                     if let Some(text) = obj
                         .id()
-                        .and_then(|id| crate::pages::control_expr_text(&p.value_text(), id, &globals, &fields))
+                        .and_then(|id| crate::pages::control_expr_text(&p.value_text(), id, globals, fields))
                     {
                         prop_texts.push((name, text));
                     }

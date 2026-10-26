@@ -16459,7 +16459,7 @@
         "code": "FormCloseNotAllowed",
         "file": "crates/al-vm/src/pages/open.rs",
         "generic": false,
-        "line": 1490,
+        "line": 1525,
         "pinned": true,
         "site": "handlers/TestPageCloseVeto_Tests.al:259",
         "template": "The page cannot be closed at this time."
@@ -16468,7 +16468,7 @@
         "code": "FormCloseNotAllowed",
         "file": "crates/al-vm/src/pages/rows.rs",
         "generic": false,
-        "line": 3086,
+        "line": 3122,
         "pinned": true,
         "site": "handlers/TestPageCloseVeto_Tests.al:259",
         "template": "The page cannot be closed at this time."

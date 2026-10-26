@@ -469,6 +469,11 @@ pub struct PageState {
     pub close_vetoed: bool,
     /// A `TestPage.Close()` in the modal page's handler was refused by OnQueryClosePage and closed the TestPage all the same.
     pub test_close_vetoed: bool,
+    /// A `TestPage.Close()` in the modal page's handler closed the page (no veto).
+    pub test_closed_in_handler: bool,
+    /// How the current modal run started: `Some(true)` the static `Page.RunModal(Id)`, `Some(false)` a Page variable's
+    /// `RunModal()`, `None` any other run (an action, a lookup).
+    pub run_static: Option<bool>,
     /// The row the page was left on when it closed with LookupOK (`Page.RunModal(Id, Rec)` hands it back to `Rec`).
     pub selection: Option<Vec<Value>>,
     pub pending: Option<Vec<Value>>,
@@ -704,6 +709,8 @@ pub struct PageState {
     /// The refresh about to run follows an action on a card with OnFindRecord, without CurrPage.Update: pinned
     /// (pages/lt-be-card-onfindrecord/BeCardOnFindRecord.al), so it marks no assumption.
     pub refresh_pinned: bool,
+    /// A SetValue wrote a control bound to an expression on this page with no source table (an action after it is refused).
+    pub expr_set_no_source: bool,
     /// The refresh about to run was asked for by `CurrPage.Update` (not by an action that saved an edit).
     pub refresh_by_update: bool,
     /// The last `CurrPage.Update` call was `Update(false)` (it saves nothing).
@@ -788,6 +795,8 @@ impl PageState {
             close_error: false,
             close_vetoed: false,
             test_close_vetoed: false,
+            test_closed_in_handler: false,
+            run_static: None,
             selection: None,
             pending: None,
             modal: false,
@@ -875,6 +884,7 @@ impl PageState {
             statement_run: false,
             field_run: false,
             refresh_pinned: false,
+            expr_set_no_source: false,
             refresh_by_update: false,
             refresh_update_false: false,
             filters_before_validate: None,

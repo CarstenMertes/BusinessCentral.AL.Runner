@@ -97,6 +97,18 @@ impl Session {
                 ));
             }
         }
+        // `Lookup = false` on a control over a field with a TableRelation, with no OnLookup: Lookup() opens no page and raises
+        // nothing (pageext/lt-u-page-props/UPageProps.al:147-154 PageExt_LookupOnAndOff `ext_off_pages_opened = 0`, a page
+        // extension's control). With an OnLookup, or on a request page, it is not pinned.
+        if method == PageMethod::Lookup && lit("lookup").is_some_and(|v| v.eq_ignore_ascii_case("false")) {
+            if !found.is_empty() || self.is_request_page(st) {
+                return unsupported(format!(
+                    "TestField.Lookup on control {} with Lookup = false and an OnLookup trigger, or on a request page (not pinned)",
+                    ctl.name
+                ));
+            }
+            return Ok(Value::Null);
+        }
         let (owner, routine) = match found.as_slice() {
             [one] => *one,
             [] if method == PageMethod::DrillDown => {
@@ -519,10 +531,16 @@ impl Session {
         pos: Option<usize>,
     ) -> Result<Value, Signal> {
         let current = self.control_value(st, idx)?;
-        if !Self::same_values(
+        let holds_value = !Self::same_values(
             std::slice::from_ref(&current),
             std::slice::from_ref(&Value::default_for(&field.ty)),
-        ) {
+        );
+        // A field that holds a value: the lookup page opens on the related row (pages/lt-page-runtime/P82Lookups.al:247
+        // Lookup_TableRelation_Ok `handler-first = G1`; pages/lt-an-testpage-640/AnTestPageTests.al:480). Not built yet: making it
+        // run lets pageext/lt-u-page-props/UPageProps.al:PageExt_LookupOnAndOff pass, after which four later tests of that
+        // codeunit run and fail on behaviors that are not modelled (a page extension's DataCaptionExpression, an API page's
+        // caption, UpdatePropagation on a card over the part's table, a profileextension's Enabled).
+        if holds_value {
             return unsupported(
                 "Lookup over a TableRelation from a field that already holds a value (the page's position is not pinned)",
             );
@@ -698,6 +716,11 @@ impl Session {
     /// does nothing and raises nothing (corpus handlers/TestPageActionEnabledSourceField_Tests.al,
     /// TPAE_ActionEnabledBoolField_FalseRow_IsDisabledAndItsTriggerIsSkipped).
     pub(super) fn action_invoke(&mut self, st: &St, idx: usize) -> Result<Value, Signal> {
+        if st.borrow().expr_set_no_source {
+            return unsupported(
+                "an action after a SetValue on a control bound to an expression of a page with no source table (the refresh after the action is not modelled)",
+            );
+        }
         // A duplicate-key Insert the action made comes out at the page's next read of the table, still inside Invoke, with the
         // wrapped code (errors/lt-az-error-texts/AzErrorTexts.al:167-185 PageAction_DuplicateInsert: `TestWrapped:CSideDuplicateKey`).
         // One that was pending before the action is not pinned and keeps its code.

@@ -87,6 +87,7 @@ page_methods! {
     "Page.RunModal#5" => PageRunModalStatic,
     "Page.LookupMode#1" => PageLookupMode,
     "Page.Close#1" => PageClose,
+    "Page.Activate#1" => PageActivate,
     "TestPart.Caption#1" => TestPartCaption,
     "TestPart.Editable#1" => TestPartEditable,
     "TestPart.Enabled#1" => TestPartEnabled,

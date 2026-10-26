@@ -3984,6 +3984,7 @@
 67092 List_OK
 67092 List_PageTypedHandler
 67094 PageVariableNeverOpened_PartRead
+67094 SelectionFilter_PageVariableNeverOpened
 67095 Nav_ActionChangesViewThenUpdate
 67095 Nav_TwelveRows_OpenLastPreviousFirstNext
 67096 DeleteLastOfTwoRows_WithoutUpdate
@@ -9091,6 +9092,8 @@
 71206 StrMenu_WithHandler_Cancel
 71206 StrMenu_WithHandler_Choice
 71206 StrMenu_WithoutHandler
+71207 AfterRunModal_Members
+71207 BeforeRun_Members
 71207 RunModal_Twice_SameVariable
 71210 P118_GetApplicationLanguage_Reads
 71210 P118_MakeCodeFilter_GetFilterAndCopy
@@ -9175,11 +9178,15 @@
 71363 UpdateTrue_ExprInvisible_OpenEdit
 71363 UpdateTrue_LiteralInvisible_OpenEdit
 71367 SaveRecord_ExprInvisible_OpenEdit
+71371 Activate_ExprInvisible_OpenEdit
+71371 Activate_LiteralInvisible_OpenEdit
 71375 Editable_ExprInvisible_OpenEdit
 71375 Editable_LiteralInvisible_OpenEdit
 71379 SelectionFilter_ExprInvisible_OpenEdit
 71379 SelectionFilter_LiteralInvisible_OpenEdit
+71382 Update_AfterModalClosed
 71382 Update_NeverRun
+71385 Close_AfterModalClosed
 71385 Close_NeverRun
 71394 FieldTable_AppPackageIds_AfterGetFindAndNext
 71394 FieldTable_IsPartOfPrimaryKey_BaseApp
@@ -11252,6 +11259,8 @@
 73077 Export_Quit
 73078 RunStatic_ImportWithoutSource
 73078 RunStatic_UnknownNumbers
+73079 Activate_PageNotRunning
+73079 Activate_PageNotRunningRefresh
 73079 Run_FieldNoZeroAndUnknown
 73079 Run_ListNoRecord
 73079 Run_ListWithFilteredRecord
@@ -11263,6 +11272,8 @@
 73079 Run_WithRecordAndFieldNo
 73079 Run_WithRecordAndFieldValue
 73079 Run_WithRecordNotInTable
+73080 Activate_InsideModalHandler
+73080 Activate_InsideModalHandlerRefresh
 73080 RunModal_FieldNoZeroAndUnknown
 73080 RunModal_RecordOnly_EachResponse
 73080 RunModal_UnknownPage
@@ -13082,6 +13093,10 @@
 74562 TempRecord_InsertInCalleeThroughValueVariant
 74562 TempRecord_InsertInCalleeThroughVarVariant
 74562 TempRecord_InsertThroughRecordRefOfVariantParameter
+74568 ArrayElementField_SecondElement_SetValue
+74568 ArrayElementField_SetValueNumber_RunsOnValidate
+74568 ArrayElementField_SetValueText_ConvertsToDecimal
+74568 ArrayElementField_SetValueUnconvertible_IsRefused
 74571 OtherRecordedProc
 74571 RecordedProc
 74572 OtherRecordedProc
@@ -14590,6 +14605,16 @@
 81684 EnqueueBackgroundTask_WithHandlers
 81684 RunPageBackgroundTask_WithHandlers
 81685 RunPageBackgroundTask_NoHandlers
+81855 Direct_List_UpdateFalse_Twice
+81855 Direct_Part_UpdateFalse
+81855 Direct_Part_UpdateTrue
+81855 Never_Opened_Card_TryFunction
+81855 Never_Opened_List_TryFunction
+81855 Never_Opened_Part_TryFunction
+81855 SetRecord_Then_Update_List
+81855 SetTableView_Then_Update_Card
+81855 Update_Then_RunModal_Card_HandlerCloses
+81855 Update_Then_RunModal_Card_HandlerReads
 81861 Counters_NotNegative
 81861 Counters_NothingBetween
 81861 Counters_TableOperations
@@ -14677,6 +14702,7 @@
 84168 Handler_OverloadedWithPlainProcedure_IsTheHandler
 84168 Handlers_AnswerEverySecondCall
 84168 Message_WhileDialogOpen_IsHandledAtOnce
+84168 ModalHandler_CallsClose_RunModalOutcome
 84168 TrappedPage_ActionOpensModal_StateAfter
 84169 AssistEdit_InViewMode
 84169 CardPage_ActionInvoke_TriggerOrder

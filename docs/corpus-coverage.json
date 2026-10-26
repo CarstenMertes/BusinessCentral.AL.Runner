@@ -2,7 +2,7 @@
   "corpus_commit": "80711c1b1ee4c1ea25ac3cbaff7faf729ddeca4b",
   "language": {
     "bc": "27-29",
-    "implemented": 1551,
+    "implemented": 1552,
     "methods": [
       {
         "bc": [
@@ -11790,7 +11790,7 @@
         "scope": "",
         "sig": "([Boolean])",
         "site": "pages/lt-bl-unopened-currpage/UnopenedFixtures.al:56",
-        "state": "refused",
+        "state": "implemented",
         "type": "Page"
       },
       {
@@ -27947,7 +27947,7 @@
     ],
     "overloads": 1750,
     "pinned": 1706,
-    "refused": 171,
+    "refused": 170,
     "runtime_only": [
       "ErrorInfo.Create#3",
       "FieldRef.FieldError#2",

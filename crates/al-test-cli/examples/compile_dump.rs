@@ -77,12 +77,12 @@ fn main() {
         writeln!(f, "chkdiag {d:?}").unwrap();
     }
     let mut t: Vec<_> = checked.types.iter().collect();
-    t.sort_by_key(|(k, _)| **k);
+    t.sort_by_key(|(k, _)| *k);
     for (k, v) in t {
         writeln!(f, "ty {k:?} {v:?}").unwrap();
     }
     let mut r: Vec<_> = checked.resolutions.iter().collect();
-    r.sort_by_key(|(k, _)| **k);
+    r.sort_by_key(|(k, _)| *k);
     for (k, v) in r {
         writeln!(f, "res {k:?} {v:?}").unwrap();
     }

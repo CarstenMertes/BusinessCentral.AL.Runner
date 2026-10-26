@@ -121,7 +121,7 @@ pub fn signature(ws: &Workspace, site: &TddSite) -> Option<String> {
 pub fn sites_by_object(ws: &Workspace, resolutions: &PosMap<Res>) -> Vec<(usize, String)> {
     resolutions
         .iter()
-        .filter_map(|(&(file, start, _), r)| match r.inner() {
+        .filter_map(|((file, start, _), r)| match r.inner() {
             Res::TddStub(site) => {
                 let sig = signature(ws, site)?;
                 let holder = (0..ws.objects.len()).find(|&oi| {

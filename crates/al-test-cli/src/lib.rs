@@ -2,6 +2,14 @@
 
 pub use al_testrun::{baseline, deps, dotnet, explain, host, isolation, runtime, target};
 
+/// mimalloc as the global allocator (feature `mimalloc`, on by default). It sits in the library, not in `main.rs`, so
+/// every binary that links this crate uses it: the CLI, and the integration tests and examples that compile the corpus
+/// in their own process (the cold-compile budget in `perf_budget`, `perf_vm`, `phases`). With the system allocator the
+/// cold compile took 20.4 G instructions; with mimalloc 18.7 G.
+#[cfg(all(feature = "mimalloc", not(target_family = "wasm")))]
+#[global_allocator]
+static ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 pub mod args;
 pub mod awaiting;
 pub mod behavior_coverage;

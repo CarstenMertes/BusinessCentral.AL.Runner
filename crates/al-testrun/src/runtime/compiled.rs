@@ -210,6 +210,32 @@ pub struct Compiled {
     pub(crate) compiles: usize,
     /// What the incremental update needs, when the compile used the dependency cache (`update_files`).
     pub(crate) incr: Option<Incr>,
+    /// A warm server: the engines the last request ran on, for the next request over this compile (al-runner issue
+    /// 5856). An engine is built from the program alone; what a run sets on it is set again (`KeptEngines::take`).
+    pub(crate) kept: std::sync::Mutex<Option<KeptEngines>>,
+}
+
+/// The engines of a request of a warm server, kept for the next one over the same compile ([`Compiled::kept`]).
+pub(crate) struct KeptEngines {
+    /// What the engines were built for besides the program: they serve only a run with the same.
+    pub(crate) key: String,
+    /// The engine the install baseline ran on.
+    pub(crate) install: Arc<al_vm::Engine>,
+    /// The engine the tests ran on, when it was another one (several test threads).
+    pub(crate) tests: Option<Arc<al_vm::Engine>>,
+}
+
+impl Compiled {
+    /// Drops the kept engines: they share the program, which is about to change.
+    pub(crate) fn forget_engines(&mut self) {
+        if let Ok(k) = self.kept.get_mut() {
+            if let Some(old) = k.take() {
+                retire(old);
+            }
+        }
+        // A kept baseline over test data holds the program too.
+        crate::baseline_cache::forget_kept();
+    }
 }
 
 /// What [`Compiled::update_files`] needs of the compile it renews.
@@ -306,6 +332,7 @@ impl Compiled {
     /// state and the caller compiles again.
     pub fn update_files(&mut self, changes: &[FileChange]) -> Result<(), String> {
         let started = std::time::Instant::now();
+        self.forget_engines();
         let Compiled {
             ws,
             lowered,
@@ -429,6 +456,8 @@ impl Compiled {
         if changed.is_empty() {
             return;
         }
+        // The kept engines hold the program: with them it would be copied.
+        self.forget_engines();
         let program = std::sync::Arc::make_mut(&mut self.lowered.program);
         for (p, caller) in changed {
             program.apps[p].resources = resources[caller].to_vec();
@@ -511,6 +540,7 @@ impl Warm {
         opts: &RunOptions,
     ) -> Result<(CorpusRuntime, WarmUse), String> {
         use std::hash::{Hash, Hasher};
+        let compile_started = std::time::Instant::now();
         let mut build = Some(build);
         let hashes: Vec<(usize, String, u64)> = files
             .iter()
@@ -601,6 +631,7 @@ impl Warm {
                 ..opts.clone()
             };
             // The old compile goes first: two of them are never in memory together.
+            crate::baseline_cache::forget_kept();
             if let Some(old) = self.slot.take() {
                 retire(old.compiled);
             }
@@ -617,12 +648,15 @@ impl Warm {
         if let Some(resources) = resources {
             slot.compiled.set_resources(resources);
         }
-        let rt = CorpusRuntime::run_compiled(&slot.compiled, target, dotnet, opts);
+        let compile_time = compile_started.elapsed();
+        let mut rt = CorpusRuntime::run_compiled_kept(&slot.compiled, target, dotnet, opts, true);
+        rt.phases.warm_compile = Some(compile_time);
         Ok((rt, used))
     }
 
     /// Drops what is kept.
     pub fn clear(&mut self) {
+        crate::baseline_cache::forget_kept();
         if let Some(old) = self.slot.take() {
             retire(old.compiled);
         }

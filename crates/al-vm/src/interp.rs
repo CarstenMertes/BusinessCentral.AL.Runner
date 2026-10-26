@@ -1258,6 +1258,7 @@ impl Session {
                                             // A shorter write into a copy of an unloaded Blob is not pinned (`UNLOADED_WRITE`).
                                             db_row: false,
                                             first_write_truncates: false,
+                                            file: false,
                                         },
                                     )))
                                 }

@@ -216,18 +216,18 @@ fn dt2date(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
     Ok(Value::Date(ms.div_euclid(MS_PER_DAY) as i32 + 1, false))
 }
 
-/// `DateTime.Date()` is `DT2Date` of the receiver (assumed, docs/probes-needed.md).
+/// `DateTime.Date()` is `DT2Date` of the receiver, the undefined DateTime included
+/// (types/lt-datetime-date-time-methods/DateTimeDateTimeMethods.al:27 DateTime_DateAndTimeMethods_SetValue, :51 _Undefined).
 fn datetime_date(c: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Out {
-    crate::assumptions::assume(crate::assumptions::Assumption::DateTimeDateTimeMethods);
     let Some(v) = r else {
         return unsupported("DateTime.Date without a receiver");
     };
     dt2date(c, None, &mut [v.clone()])
 }
 
-/// `DateTime.Time()` is `DT2Time` of the receiver (assumed, docs/probes-needed.md).
+/// `DateTime.Time()` is `DT2Time` of the receiver, the undefined DateTime included
+/// (types/lt-datetime-date-time-methods/DateTimeDateTimeMethods.al:27 DateTime_DateAndTimeMethods_SetValue, :51 _Undefined).
 fn datetime_time(c: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Out {
-    crate::assumptions::assume(crate::assumptions::Assumption::DateTimeDateTimeMethods);
     let Some(v) = r else {
         return unsupported("DateTime.Time without a receiver");
     };
@@ -578,6 +578,10 @@ fn parse_formula(text: &str) -> Result<Vec<Term>, Signal> {
                 if i + 2 == b.len() {
                     return err_number();
                 }
+                // `WD0` is an error whose text is not pinned (types/lt-datetime/CalcDate.al:188,204: Evaluate answers false).
+                if b.get(i + 2) == Some(&b'0') && !b.get(i + 3).is_some_and(u8::is_ascii_digit) {
+                    return Err(Signal::Error(Box::new(crate::native::unpinned_error())));
+                }
                 return refuse();
             };
             terms.push(Term::WeekDay {
@@ -610,8 +614,17 @@ fn parse_formula(text: &str) -> Result<Vec<Term>, Signal> {
             // SignsAndDigits_ErrorTexts `D`, `+D`, `-D`; WeekAndWeekdayUnits `W`, `WD`; TextsFromTheTestLibraries `Y`;
             // Placeholders_PercentN `+%D`). The other units (M, Q) are not pinned.
             let rest = &b[i..];
-            if matches!(rest, b"D" | b"W" | b"WD" | b"Y" | b"%D") {
+            // `%Q` and `%Y` too, with or without the brackets (types/lt-date-formula-signed-wd/DateFormulaSignedWd.al:89-136).
+            if matches!(rest, b"D" | b"W" | b"WD" | b"Y" | b"%D" | b"%Q" | b"%Y") {
                 return err_number();
+            }
+            // Letters that start with no unit letter are the unit error: `abc` shows `ABC` (types/lt-datetime/CalcDate.al:463,
+            // 478). Other letters are not pinned.
+            if i == 0
+                && rest.iter().all(u8::is_ascii_alphabetic)
+                && !matches!(rest[0], b'D' | b'W' | b'M' | b'Q' | b'Y' | b'C')
+            {
+                return err_unit();
             }
             return refuse();
         }
@@ -621,17 +634,29 @@ fn parse_formula(text: &str) -> Result<Vec<Term>, Signal> {
         // `nWD` moves n days (DateFormulaEdges.al:WeekAndWeekdayUnits `2WD`, `1WD+1D`; types/W7EvaluateTests.al:
         // EvaluateDateFormula_Format2_NonEnglishFormulas, Friday + `1WD` is the Saturday). Pinned without a sign only.
         if b.get(i) == Some(&b'W') && b.get(i + 1) == Some(&b'D') && !b.get(i + 2).is_some_and(u8::is_ascii_digit) {
-            if plus || negative {
+            // With a sign as the first term, `+1WD` and `-1WD` move one day too, with or without the brackets
+            // (types/lt-date-formula-signed-wd/DateFormulaSignedWd.al:41-88). Another number with a sign, and a signed later
+            // term, are not pinned.
+            if (plus || negative) && !(n == 1 && start == 1) {
                 return refuse();
             }
-            terms.push(Term::Step(Unit::Day, n));
+            terms.push(Term::Step(Unit::Day, if negative { -n } else { n }));
             i += 2;
             continue;
+        }
+        // A number before a current period (`2CW`) is an error whose text is not pinned (types/lt-datetime/CalcDate.al:100,117:
+        // Evaluate answers false).
+        if b.get(i) == Some(&b'C') && unit_of(b.get(i + 1)).is_some() {
+            return Err(Signal::Error(Box::new(crate::native::unpinned_error())));
         }
         let Some(unit) = unit_of(b.get(i)) else {
             // A number with no unit: at the end of the formula or before a slash (`+5`, `5`, `01/01/26`), or
             // a text of digits and hyphens, a date (errors/lt-ms-refusals-128/P128CalcDateForms.al:
             // P128_CalcDate_DateTextIsNotAFormula `2026-10-16`, `10-16-26`).
+            // A number and one letter that is no unit is the unit error (types/lt-datetime/CalcDate.al:465,480 `1X`).
+            if i + 1 == b.len() && start == 0 && b[i].is_ascii_alphabetic() && b[i] != b'C' {
+                return err_unit();
+            }
             let date_with_hyphens = b.iter().all(|c| c.is_ascii_digit() || *c == b'-');
             if i == b.len() || b[i] == b'/' || (b[i] == b'-' && date_with_hyphens) {
                 return err_unit();
@@ -1292,7 +1317,7 @@ mod tests {
     fn calcdate_refuses_forms_the_corpus_does_not_pin() {
         let from = date(2024, 3, 15);
         for f in [
-            "<MON>", "<1W+MON>", "<2CM>", "<1X>", "<WD0>", "<1D>M", "<-1WD>", "<+M>", "<1<D>",
+            "<MON>", "<1W+MON>", "<1XY>", "<1D>M", "<-2WD>", "<1D+1WD>", "<+M>", "<1<D>",
         ] {
             refused(calc(f, from.clone()));
         }
@@ -1673,5 +1698,42 @@ mod tests {
             "System.DWY2Date#1",
             vec![t("x"), Value::Integer(1), Value::Integer(2024)],
         ));
+    }
+    // types/lt-date-formula-signed-wd/DateFormulaSignedWd.al:41-136; types/lt-datetime/CalcDate.al:100,117,188,204,463-480.
+    #[test]
+    fn calcdate_signed_working_day_percent_units_and_letter_errors() {
+        let fri = date(2024, 1, 12);
+        is_date(calc("+1WD", fri.clone()), 2024, 1, 13);
+        is_date(calc("<-1WD>", fri.clone()), 2024, 1, 11);
+        let err = |f: &str| match calc(f, fri.clone()) {
+            Err(Signal::Error(e)) => (e.message, e.code),
+            other => panic!("{f}: {other:?}"),
+        };
+        assert_eq!(
+            err("<%Q>"),
+            (
+                "The date formula '%Q' should include a number.".to_string(),
+                "Evaluate".to_string()
+            )
+        );
+        assert_eq!(
+            err("%Y"),
+            (
+                "The date formula '%Y' should include a number.".to_string(),
+                "Evaluate".to_string()
+            )
+        );
+        assert!(
+            err("abc")
+                .0
+                .starts_with("The date formula 'ABC' should include a time unit.")
+        );
+        assert!(
+            err("<1X>")
+                .0
+                .starts_with("The date formula '1X' should include a time unit.")
+        );
+        assert_eq!(err("<2CW>").1, crate::native::UNPINNED_ERROR);
+        assert_eq!(err("<WD0>").1, crate::native::UNPINNED_ERROR);
     }
 }

@@ -275,11 +275,18 @@ codeunit 50661 "Later"
     Subtype = Test;
     [Test] procedure L1() begin end;
 }
+codeunit 50662 "Later Reader"
+{
+    Subtype = Test;
+    [Test] procedure L2() begin if not IsolatedStorage.Contains('k', DataScope::Module) then Error('gone'); end;
+}
 "#,
         true,
     );
     assert_eq!(outcome(&o, "S1"), &Outcome::Pass, "{o:?}");
-    assert!(not_run(outcome(&o, "L1"), "isolated storage"), "{o:?}");
+    // Only a later codeunit whose reach can touch isolated storage or a number sequence depends on what was left there.
+    assert_eq!(outcome(&o, "L1"), &Outcome::Pass, "{o:?}");
+    assert!(not_run(outcome(&o, "L2"), "isolated storage"), "{o:?}");
 }
 
 // StartSession in a test raises TestStartSessionNotAllowed under a runner's TestIsolation = Codeunit

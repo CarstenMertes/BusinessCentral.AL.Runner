@@ -98,56 +98,71 @@ impl Ident {
     }
 }
 
-/// Listings that sessions of one engine share. A listed table's rows depend on the program (and,
-/// for three tables, on the host's identity: see [`Providers::shares`]), never on a session's
-/// data, so a session that needs a table another session of the same engine listed takes that
-/// listing. The Field table alone is 37,000 rows, listed in 0.2 s; a corpus run's test codeunits
-/// each have a session of their own and several of them read it.
+/// Listings that sessions of engines of one program share. A listed table's rows depend on the
+/// program and the target (`Engine::tables` is made from the program; Feature Key and Language
+/// Selection follow the target), and for a few tables on the host's identity (see
+/// [`Providers::shares`]), never on a session's data or on what a run sets on its engine, so a
+/// session that needs a table another session listed takes that listing. The Field table alone
+/// is 37,000 rows, listed in 0.2 s; a corpus run's test codeunits each have a session of their
+/// own and several of them read it, and the install baseline's engine and the tests' engine of a
+/// run are two engines of one program.
 ///
 /// Shared by all threads: the first thread that needs a table builds it, the others wait for it
 /// instead of building it again (a builder reads the program and the host, never another listing,
-/// so two builders cannot wait for each other). The two engines used last keep their listings,
-/// which bounds the memory: a run has the engine the tests run on and the one the install
-/// baseline ran on. The engine is named by its `uid`, not held: a held `Arc` or `Weak` would stop
-/// `Arc::get_mut` on the engine, which the runner uses.
+/// so two builders cannot wait for each other). The two programs used last keep their listings,
+/// which bounds the memory. A program is held by a `Weak`: it does not keep the program alive,
+/// and while it exists `Arc::make_mut` on the program moves a changed program to another address,
+/// so a program changed in place is never taken for the one listed. The engine is not held: a
+/// held `Arc` or `Weak` would stop `Arc::get_mut` on the engine, which the runner uses.
 #[derive(Default)]
 struct SharedListings {
-    engines: Mutex<Vec<EngineListings>>,
+    programs: Mutex<Vec<ProgramListings>>,
 }
 
-struct EngineListings {
-    engine: u64,
+struct ProgramListings {
+    program: std::sync::Weak<al_ir::Program>,
+    target: Option<al_version::Target>,
     tables: HashMap<Virtual, Arc<OnceLock<Option<Arc<mat::SharedMat>>>>>,
 }
 
-/// The most engines whose listings are kept.
-const ENGINES_KEPT: usize = 2;
+impl ProgramListings {
+    fn of(&self, engine: &Engine) -> bool {
+        std::ptr::eq(self.program.as_ptr(), Arc::as_ptr(&engine.program)) && self.target == engine.target
+    }
+}
+
+/// The most programs whose listings are kept.
+const PROGRAMS_KEPT: usize = 2;
 
 static SHARED: LazyLock<SharedListings> = LazyLock::new(SharedListings::default);
 
 impl SharedListings {
-    /// The listing of `kind` for `engine`, built by `build` if no thread has built it yet. `None`
-    /// when the listing holds a handle and cannot be shared: each session then lists it itself.
-    fn listing(&self, engine: u64, kind: Virtual, build: impl FnOnce() -> mat::Mat) -> Option<Arc<mat::SharedMat>> {
+    /// The listing of `kind` for the program and target of `engine`, built by `build` if no thread
+    /// has built it yet. `None` when the listing holds a handle and cannot be shared: each session
+    /// then lists it itself.
+    fn listing(&self, engine: &Engine, kind: Virtual, build: impl FnOnce() -> mat::Mat) -> Option<Arc<mat::SharedMat>> {
         let slot = {
-            let mut engines = self.engines.lock().unwrap_or_else(|e| e.into_inner());
-            let at = match engines.iter().position(|e| e.engine == engine) {
+            let mut programs = self.programs.lock().unwrap_or_else(|e| e.into_inner());
+            // A dropped program's listings can never be asked for again.
+            programs.retain(|p| p.program.strong_count() > 0);
+            let at = match programs.iter().position(|p| p.of(engine)) {
                 Some(at) => at,
                 None => {
-                    if engines.len() == ENGINES_KEPT {
-                        engines.remove(0);
+                    if programs.len() == PROGRAMS_KEPT {
+                        programs.remove(0);
                     }
-                    engines.push(EngineListings {
-                        engine,
+                    programs.push(ProgramListings {
+                        program: Arc::downgrade(&engine.program),
+                        target: engine.target.clone(),
                         tables: HashMap::new(),
                     });
-                    engines.len() - 1
+                    programs.len() - 1
                 }
             };
-            // The engine asked for last is the last to go.
-            let last = engines.len() - 1;
-            engines.swap(at, last);
-            engines[last].tables.entry(kind).or_default().clone()
+            // The program asked for last is the last to go.
+            let last = programs.len() - 1;
+            programs.swap(at, last);
+            programs[last].tables.entry(kind).or_default().clone()
         };
         slot.get_or_init(|| mat::SharedMat::try_new(build()).map(Arc::new))
             .clone()
@@ -176,8 +191,6 @@ pub(crate) struct Providers {
     /// Weak: the engine owns nothing of the session, and a baseline snapshot of the store (which
     /// holds this provider) must not keep the engine shared.
     engine: std::sync::Weak<Engine>,
-    /// `Engine::uid` of that engine.
-    engine_uid: u64,
     ident: Ident,
     /// Per object index: the provider of that table, if it is a virtual platform table ([`served_tables`], once per
     /// engine).
@@ -234,7 +247,6 @@ impl Providers {
         let served = engine.served_tables.get_or_init(|| served_tables(engine)).clone();
         Providers {
             engine: Arc::downgrade(engine),
-            engine_uid: engine.uid,
             ident,
             served,
             listed: RefCell::default(),
@@ -471,7 +483,7 @@ impl Providers {
         }
         let build = || mat::Mat::new(t, self.list_rows(t, kind));
         let shared = if Self::shares(kind) {
-            SHARED.listing(self.engine_uid, kind, build)
+            SHARED.listing(&self.engine(), kind, build)
         } else {
             mat::SharedMat::try_new(build()).map(Arc::new)
         };
@@ -844,44 +856,99 @@ mod tests {
     }
 
     #[test]
-    fn sessions_of_one_engine_share_a_listing_and_other_engines_do_not() {
+    fn sessions_of_one_engine_share_a_listing_and_other_programs_do_not() {
         let shared = SharedListings::default();
-        let a = shared.listing(1, Virtual::Field, some_mat).unwrap();
+        let (one, two) = (engine(), engine());
+        let a = shared.listing(&one, Virtual::Field, some_mat).unwrap();
         assert!(Arc::ptr_eq(
             &a,
-            &shared.listing(1, Virtual::Field, || panic!("built twice")).unwrap()
+            &shared.listing(&one, Virtual::Field, || panic!("built twice")).unwrap()
         ));
-        let other_kind = shared.listing(1, Virtual::AllObj, some_mat).unwrap();
+        let other_kind = shared.listing(&one, Virtual::AllObj, some_mat).unwrap();
         assert!(!Arc::ptr_eq(&a, &other_kind));
-        let other_engine = shared.listing(2, Virtual::Field, some_mat).unwrap();
-        assert!(!Arc::ptr_eq(&a, &other_engine));
+        let other_program = shared.listing(&two, Virtual::Field, some_mat).unwrap();
+        assert!(!Arc::ptr_eq(&a, &other_program));
     }
 
     #[test]
-    fn only_the_two_engines_used_last_keep_their_listings() {
+    fn engines_of_one_program_share_a_listing() {
+        // The install baseline's engine and the tests' engine of a run are built from one program.
         let shared = SharedListings::default();
-        let first = shared.listing(1, Virtual::Field, some_mat).unwrap();
-        shared.listing(2, Virtual::Field, some_mat);
-        // Engine 1 is still held: the baseline engine and the test engine of one run both list.
+        let program = Arc::new(al_ir::Program::default());
+        let (baseline, tests) = (
+            Engine::new(program.clone(), Vec::new()),
+            Engine::new(program, Vec::new()),
+        );
+        let a = shared.listing(&baseline, Virtual::Field, some_mat).unwrap();
+        let b = shared
+            .listing(&tests, Virtual::Field, || panic!("built again"))
+            .unwrap();
+        assert!(Arc::ptr_eq(&a, &b));
+    }
+
+    #[test]
+    fn engines_of_one_program_for_other_targets_do_not_share() {
+        // Feature Key and Language Selection follow the target.
+        let shared = SharedListings::default();
+        let program = Arc::new(al_ir::Program::default());
+        let newest = Engine::new(program.clone(), Vec::new());
+        let older = Engine::with_target(
+            program,
+            Vec::new(),
+            Some(al_version::Target::for_bc(al_version::BcVersion::new(27, 0))),
+        );
+        let a = shared.listing(&newest, Virtual::FeatureKey, some_mat).unwrap();
+        let b = shared.listing(&older, Virtual::FeatureKey, some_mat).unwrap();
+        assert!(!Arc::ptr_eq(&a, &b));
+    }
+
+    #[test]
+    fn a_program_changed_in_place_is_listed_again() {
+        // `Arc::make_mut` on a program nothing else holds: its listings must not be taken for the changed one.
+        let shared = SharedListings::default();
+        let mut program = Arc::new(al_ir::Program::default());
+        let a = shared
+            .listing(&Engine::new(program.clone(), Vec::new()), Virtual::Field, some_mat)
+            .unwrap();
+        Arc::make_mut(&mut program).apps.clear();
+        let rebuilt = std::cell::Cell::new(false);
+        let b = shared
+            .listing(&Engine::new(program, Vec::new()), Virtual::Field, || {
+                rebuilt.set(true);
+                some_mat()
+            })
+            .unwrap();
+        assert!(rebuilt.get());
+        assert!(!Arc::ptr_eq(&a, &b));
+    }
+
+    #[test]
+    fn only_the_two_programs_used_last_keep_their_listings() {
+        let shared = SharedListings::default();
+        let (one, two, three) = (engine(), engine(), engine());
+        let first = shared.listing(&one, Virtual::Field, some_mat).unwrap();
+        shared.listing(&two, Virtual::Field, some_mat);
+        // Program one is asked for again before a third comes.
         assert!(Arc::ptr_eq(
             &first,
             &shared
-                .listing(1, Virtual::Field, || panic!("dropped too early"))
+                .listing(&one, Virtual::Field, || panic!("dropped too early"))
                 .unwrap()
         ));
-        shared.listing(3, Virtual::Field, some_mat);
-        // Engine 2 was used before engine 1 was asked again, so engine 2 is the one that went.
+        shared.listing(&three, Virtual::Field, some_mat);
+        // Program two was used before program one was asked again, so program two is the one that went.
         let rebuilt = std::cell::Cell::new(false);
-        shared.listing(2, Virtual::Field, || {
+        shared.listing(&two, Virtual::Field, || {
             rebuilt.set(true);
             some_mat()
         });
-        assert!(rebuilt.get(), "engine 2 was replaced");
+        assert!(rebuilt.get(), "program two was replaced");
     }
 
     #[test]
     fn threads_asking_for_one_listing_build_it_once() {
         let shared = SharedListings::default();
+        let e = engine();
         let builds = std::sync::atomic::AtomicUsize::new(0);
         let barrier = std::sync::Barrier::new(8);
         let got: Vec<Arc<mat::SharedMat>> = std::thread::scope(|scope| {
@@ -889,7 +956,7 @@ mod tests {
                 .map(|_| {
                     scope.spawn(|| {
                         barrier.wait();
-                        shared.listing(7, Virtual::Field, || {
+                        shared.listing(&e, Virtual::Field, || {
                             builds.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                             std::thread::sleep(std::time::Duration::from_millis(20));
                             some_mat()
@@ -915,14 +982,14 @@ mod tests {
             code_storage: Default::default(),
         });
         let with_handle = || mat::Mat::new(&t, vec![mat::Entry::ok(vec![Value::List(Default::default())])]);
-        assert!(shared.listing(1, Virtual::Field, with_handle).is_none());
+        assert!(shared.listing(&engine(), Virtual::Field, with_handle).is_none());
     }
 
     #[test]
     fn a_listing_does_not_stop_arc_get_mut_on_its_engine() {
         // The runner sets `unseeded` on the engine after the install baseline listed tables.
         let mut a = engine();
-        SHARED.listing(a.uid, Virtual::Field, some_mat);
+        SHARED.listing(&a, Virtual::Field, some_mat);
         assert!(Arc::get_mut(&mut a).is_some());
     }
 

@@ -436,7 +436,7 @@ impl Engine {
             served_tables: _,
             derived: _,
             install_facts: _,
-            // Kept: the listings shared under it depend on the program only (`platform::SharedListings`).
+            // Kept: state shared between the sessions of this engine is keyed by it.
             uid: _,
         } = self;
         unseeded.clear();

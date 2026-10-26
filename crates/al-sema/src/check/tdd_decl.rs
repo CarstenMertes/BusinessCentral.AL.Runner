@@ -96,8 +96,8 @@ pub fn needs(ws: &Workspace, checked: &CheckResult) -> Vec<TddNeed> {
         }
     };
     let mut sites: Vec<_> = checked.resolutions.iter().collect();
-    sites.sort_by_key(|(k, _)| **k);
-    for (&(file, _, _), r) in sites {
+    sites.sort_by_key(|(k, _)| *k);
+    for ((file, _, _), r) in sites {
         let Res::TddStub(site) = r.inner() else { continue };
         let app = ws.apps[ws.files[file].app].id.clone();
         match (site.kind, &site.ret) {

@@ -29,4 +29,5 @@ query_methods! {
     "Query.SaveAsJson#1" => "SaveAsJson",
     "Query.SaveAsCsv#2" => "SaveAsCsv",
     "Query.SaveAsCsv#4" => "SaveAsCsvStatic",
+    "Query.SaveAsXml#4" => "SaveAsXmlStatic",
 }

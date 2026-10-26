@@ -87,6 +87,7 @@ page_methods! {
     "Page.RunModal#5" => PageRunModalStatic,
     "Page.LookupMode#1" => PageLookupMode,
     "Page.Close#1" => PageClose,
+    "Page.Activate#1" => PageActivate,
     "TestPart.Caption#1" => TestPartCaption,
     "TestPart.Editable#1" => TestPartEditable,
     "TestPart.Enabled#1" => TestPartEnabled,
@@ -129,6 +130,19 @@ page_methods! {
     "TestRequestPage.New#1" => TestPageNew,
     // handlers/PSRequestPageEditable.al: the page-level form answers as TestPage.Editable does.
     "TestRequestPage.Editable#1" => TestPageEditable,
+    // report/lt-report-requestpage-query-members/P105RpNav.al and P105RpFind.al: moves, searches and Expand on a request
+    // page without a SourceTable (al-vm pages/request.rs `request_page_without_source_op`).
+    "TestRequestPage.First#1" => TestPageFirst,
+    "TestRequestPage.Last#1" => TestPageLast,
+    "TestRequestPage.Next#1" => TestPageNext,
+    "TestRequestPage.Previous#1" => TestPagePrevious,
+    "TestRequestPage.GoToKey#1" => TestPageGoToKey,
+    "TestRequestPage.GoToRecord#1" => TestPageGoToRecord,
+    "TestRequestPage.FindFirstField#1" => TestPageFindFirstField,
+    "TestRequestPage.FindNextField#1" => TestPageFindNextField,
+    "TestRequestPage.FindPreviousField#1" => TestPageFindPreviousField,
+    "TestRequestPage.IsExpanded#1" => TestPageIsExpanded,
+    "TestRequestPage.Expand#1" => TestPageExpand,
     "TestRequestPage.ValidationErrorCount#1" => TestPageValidationErrorCount,
     "TestRequestPage.GetValidationError#1" => TestPageGetValidationError,
     "TestAction.Invoke#1" => TestActionInvoke,

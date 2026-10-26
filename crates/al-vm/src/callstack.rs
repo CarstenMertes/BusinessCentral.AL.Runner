@@ -108,8 +108,37 @@ fn frame_line(program: &ir::Program, object: usize, frame: CallFrame) -> Option<
         ObjKind::PageExtension => "PageExtension",
         ObjKind::Report => "Report",
         ObjKind::ReportExtension => "ReportExtension",
+        // errors/lt-ms-refusals-128/P128Callstack.al:263-264 (procedures), lt-ms-refusals-129/P129CallstackQuery.al:105
+        // (OnBeforeOpen), P129CallstackXmlPort.al:147-153 and lt-ms-refusals-135/P135CallstackXmlportEtc.al:187-189.
+        // errors/lt-ms-refusals-129/P129CallstackTableExt.al: the extension's own OnInsert, OnModify, OnDelete and OnRename,
+        // an OnValidate of its field and a procedure.
+        ObjKind::TableExtension => "TableExtension",
+        ObjKind::Query => "Query",
+        ObjKind::XmlPort => "XmlPort",
         _ => return None,
     };
+    // The triggers of a query or an xmlport the corpus measured; any other is not pinned.
+    let pinned_trigger = match obj.kind {
+        ObjKind::Query => matches!(
+            (routine.container.as_ref().map(|c| c.0.as_str()), routine.name.as_str()),
+            (None, "OnBeforeOpen")
+        ),
+        ObjKind::XmlPort => matches!(
+            (routine.container.as_ref().map(|c| c.0.as_str()), routine.name.as_str()),
+            (None, "OnPreXmlPort" | "OnPostXmlPort")
+                | (Some("tableelement"), "OnPreXmlItem" | "OnAfterGetRecord")
+                | (Some("fieldelement"), "OnBeforePassField")
+                | (Some("textelement"), "OnBeforePassVariable")
+        ),
+        ObjKind::TableExtension => match (routine.field, routine.name.as_str()) {
+            (Some(_), name) => name == "OnValidate",
+            (None, name) => matches!(name, "OnInsert" | "OnModify" | "OnDelete" | "OnRename"),
+        },
+        _ => true,
+    };
+    if routine.is_trigger && !pinned_trigger {
+        return None;
+    }
     // A name with a character other than a letter, digit, underscore, blank or parenthesis is not measured.
     if !routine
         .name
@@ -126,11 +155,34 @@ fn frame_line(program: &ir::Program, object: usize, frame: CallFrame) -> Option<
     let name = match (routine.field, &routine.container) {
         // "<field> - OnValidate" is one quoted name (same file:186).
         (Some(f), _) => {
-            let field = obj.table.as_ref()?.fields.get(f)?;
+            // A table extension's field trigger: the field of the extended table.
+            let table = match obj.kind {
+                ObjKind::TableExtension => program
+                    .objects
+                    .iter()
+                    .find(|o| o.kind == ObjKind::Table && o.id.is_some() && o.id == obj.extends_id)?
+                    .table
+                    .as_ref()?,
+                _ => obj.table.as_ref()?,
+            };
+            let field = table.fields.get(f)?;
             format!("\"{} - {}\"", field.name, routine.name)
         }
         (None, Some((section, owner))) if routine.is_trigger => {
-            if matches!(section.as_str(), "action" | "dataitem") && !owner.is_empty() && !owner.contains('"') {
+            // A page field's OnValidate, OnLookup, OnDrillDown and OnAssistEdit (P128Callstack.al:226-228,
+            // P129CallstackPageControls.al:255-261) and the xmlport element triggers checked above.
+            let page_field = section == "field"
+                && matches!(obj.kind, ObjKind::Page)
+                && matches!(
+                    routine.name.as_str(),
+                    "OnValidate" | "OnLookup" | "OnDrillDown" | "OnAssistEdit"
+                );
+            let xml_element = matches!(obj.kind, ObjKind::XmlPort)
+                && matches!(section.as_str(), "tableelement" | "fieldelement" | "textelement");
+            if (matches!(section.as_str(), "action" | "dataitem") || page_field || xml_element)
+                && !owner.is_empty()
+                && !owner.contains('"')
+            {
                 format!("\"{owner} - {}\"", routine.name)
             } else {
                 return None;

@@ -866,6 +866,7 @@ fn walk_control<V: RefVisitor>(
         prop_texts: _,
         var_field,
         var_slot: _,
+        expr_source: _,
     } = c;
     if let Some((table, field)) = var_field {
         fld(v, field, TableOf::object(Some(*table)));
@@ -997,6 +998,7 @@ fn walk_xmlport<V: RefVisitor>(x: &mut XmlPort, v: &mut V) {
         record_separator: _,
         table_separator: _,
         text_encoding_declared: _,
+        text_encoding: _,
         utf8: _,
         xml_utf8: _,
         namespaces: _,
@@ -1006,6 +1008,7 @@ fn walk_xmlport<V: RefVisitor>(x: &mut XmlPort, v: &mut V) {
         format_evaluate_xml: _,
         format_evaluate_declared: _,
         no_default_fields_validation: _,
+        preserve_whitespace: _,
         nodes,
         source_slot: _,
         destination_slot: _,
@@ -1038,6 +1041,7 @@ fn walk_xmlport<V: RefVisitor>(x: &mut XmlPort, v: &mut V) {
             unbound: _,
             required: _,
             field_validate: _,
+            big_text: _,
             source_view: _,
             triggers: _,
         } = n;

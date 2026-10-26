@@ -56,6 +56,10 @@ pub enum Gate {
     /// `RecordRef.IsDirty` exists from BC 28; the corpus probe is compiled only from BC 28
     /// (recordref/lt-recordref-isdirty-edges/RecordRefIsDirtyEdges.al, corpus bump 22). Not consumed yet.
     RecordRefIsDirtyFrom28,
+    /// `GetLastErrorText(true)` after a Find of an empty table (`table is empty`, `does not exist` of `Find('=')`) is probed
+    /// only from BC 28: the corpus test is guarded with `#if BC28PLUS` (error-handling/lt-last-error-text-forms/
+    /// FindEmptyTableExcludeFlag.al:76). BC 27 keeps the refusal.
+    EmptyTableFindExcludeFlagFrom28,
     /// The platform table "Custom Report Layout" (table 2000000233) has two more columns from BC 29,
     /// "Header Part Name" and "Theme Part Name" (Text[300]); before, it ends at "App ID"
     /// (platform/lt-platform-tables/PtCloudTables.al, corpus bump 22). Not consumed yet.
@@ -219,6 +223,11 @@ pub enum Gate {
     /// CI by design, so it cannot stay in the green corpus. Consumed by `al-testrun` `OnRunRows::of_target`, under the
     /// assumption `test-codeunit-onrun-rows`.
     TestCodeunitOnRunRowFrom28,
+    /// From BC 29 the .NET trace of an error raised in a procedure of another codeunit that an OnRun calls has a
+    /// `ValueTaskExtensions.ManualResetValueTaskSource`1.GetResult(Int16 token)` frame between the two codeunits; BC 27.5 and 28.5
+    /// do not (al-language-onprem-dotnet/lt-az-dotnet/AzLastErrorObject.al:212-216 ToString_OtherCodeunit). Consumed by `al-vm`
+    /// dotnet/last_error.rs `exception_text`.
+    ExceptionTraceValueTaskFrameFrom29,
 }
 
 impl Gate {
@@ -238,6 +247,7 @@ impl Gate {
         Gate::QueryAggregateOverBigInteger,
         Gate::PartLineBeforeHostKeyFrom28,
         Gate::RecordRefIsDirtyFrom28,
+        Gate::EmptyTableFindExcludeFlagFrom28,
         Gate::ReportLayoutSelectionPartNamesFrom29,
         Gate::ReportPartNamePropertiesFrom29,
         Gate::GetTextArgumentEvaluateErrorFrom28,
@@ -277,6 +287,7 @@ impl Gate {
         Gate::OtherRecordOptionCaptionFrom29,
         Gate::JpegMediaSetKeptFrom29,
         Gate::TestCodeunitOnRunRowFrom28,
+        Gate::ExceptionTraceValueTaskFrameFrom29,
     ];
 
     /// The first BC major with the new behaviour.
@@ -311,7 +322,8 @@ impl Gate {
             | Gate::HttpBlankHeaderNameIsFormatFrom29
             | Gate::DocxMediaRezippedFrom29
             | Gate::OtherRecordOptionCaptionFrom29
-            | Gate::JpegMediaSetKeptFrom29 => 29,
+            | Gate::JpegMediaSetKeptFrom29
+            | Gate::ExceptionTraceValueTaskFrameFrom29 => 29,
             Gate::ReportSaveAsDataItemIdentity
             | Gate::FeatureKeyListChangedFrom28
             | Gate::FromBase64InvalidTextRaises
@@ -324,6 +336,7 @@ impl Gate {
             | Gate::FileDownloadWithoutClientFrom28
             | Gate::GetTextArgumentEvaluateErrorFrom28
             | Gate::RecordRefIsDirtyFrom28
+            | Gate::EmptyTableFindExcludeFlagFrom28
             | Gate::PartLineBeforeHostKeyFrom28
             | Gate::RequestPageExtensionRecordTriggerOrderFrom28
             | Gate::OptionFieldRefSetEvaluateErrorFrom28
@@ -371,6 +384,10 @@ impl Gate {
                     lines: "193,199,204,216",
                 },
             ],
+            Gate::ExceptionTraceValueTaskFrameFrom29 => &[Evidence {
+                file: "../al-language-onprem-dotnet/lt-az-dotnet/AzLastErrorObject.al",
+                lines: "212",
+            }],
             Gate::DocxMediaRezippedFrom29 => &[Evidence {
                 file: "../al-language-onprem/media/MediaFiles.al",
                 lines: "506,511",
@@ -489,6 +506,10 @@ impl Gate {
                     lines: "103,109,115,150,155",
                 },
             ],
+            Gate::EmptyTableFindExcludeFlagFrom28 => &[Evidence {
+                file: "error-handling/lt-last-error-text-forms/FindEmptyTableExcludeFlag.al",
+                lines: "76",
+            }],
             Gate::RecordRefIsDirtyFrom28 => &[
                 Evidence {
                     file: "record/lt-as-records/AsGetTableIsDirty.al",

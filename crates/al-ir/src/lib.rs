@@ -614,6 +614,9 @@ pub struct XmlPort {
     /// A `TextEncoding` property other than UTF8 was declared (its value is not kept).
     #[serde(default)]
     pub text_encoding_declared: bool,
+    /// `TextEncoding` of a VariableText port when it is MSDOS, WINDOWS or UTF16 (lower case); the export writes it.
+    #[serde(default)]
+    pub text_encoding: Option<String>,
     /// `FormatEvaluate = Xml`: values export and import in their XML forms. The default and
     /// `Legacy` use the display text (xmlport/TestXmlPortFormatEvaluateContracts.al).
     #[serde(default)]
@@ -626,6 +629,9 @@ pub struct XmlPort {
     /// (xmlport/lt-bj-xmlport-default-validation/BjXmlPortDefaultValidation.al:274-283).
     #[serde(default)]
     pub no_default_fields_validation: bool,
+    /// `PreserveWhiteSpace = true`: an Xml import keeps the white space around the value of a Text field element.
+    #[serde(default)]
+    pub preserve_whitespace: bool,
     /// Schema nodes in source order; `parent` makes the tree. Top-level nodes have no parent.
     pub nodes: Vec<XmlNode>,
     /// Global slots of the source `InStream` and destination `OutStream` set by
@@ -696,6 +702,9 @@ pub struct XmlNode {
     /// `FieldValidate` of a field element as declared (`None`: not declared, the port's `DefaultFieldsValidation` decides).
     #[serde(default)]
     pub field_validate: Option<bool>,
+    /// `TextType = BigText` on a text element without children: its variable is a BigText.
+    #[serde(default)]
+    pub big_text: bool,
     /// `SourceTableView` of a table element as written (`sorting(..) order(..) where(..)`).
     #[serde(default)]
     pub source_view: Option<String>,
@@ -916,6 +925,12 @@ pub struct Control {
     /// For a control with a `var_field`: the slot of that record variable among the page's globals.
     #[serde(default)]
     pub var_slot: Option<usize>,
+    /// For a page's own control bound to an expression of a form Page Control Field serves (an element of a page array with a
+    /// number index `Costs[1]`, a field of a page record variable `OtherLine.Amount`, an arithmetic expression `Costs[1] +
+    /// Costs[2]`): the source as written, its SourceExpression, and whether the default of its Editable column is `True`
+    /// (record/TestPageControlFieldArraySource.al).
+    #[serde(default)]
+    pub expr_source: Option<(String, bool)>,
 }
 
 /// The action an `actionref` delegates to.

@@ -330,6 +330,10 @@ impl Session {
             // A DateTime reads as Format gives it, to the minute (record/lt-testfield-typed-values/FieldRefTestFieldTypedTemporalCode.al:
             // P189_FldRef_DateTime_Value, `03/15/24 12:00 PM` for 12:00:00 and 12:00:01).
             | Value::DateTime(_)
+            // A Time reads as Format gives it: a 12-hour clock with the hour padded by a space, no milliseconds, the undefined
+            // time as nothing (record/lt-testfield-fielderror-typed/P96Temporal.al:111-128, fieldref/lt-fieldref-testfield-types/
+            // FieldRefTestFieldTime.al:36 ` 1:00:00 PM`).
+            | Value::Time(_)
             | Value::DateFormula(_) => al_builtins::format::try_format(v, 0, 0, self).map_err(Signal::Unsupported),
             // A RecordId reads as Format gives it (`Table: key`, record/TestProbeRecordRefContracts.al:472-502); an error
             // message shows it the same way (record/lt-record-id-in/RecordIdInMessage.al:P168_Error_RecordIdAsArgument_PlainKey and siblings).
@@ -1014,9 +1018,12 @@ impl Session {
                     if matches!(current, Value::Option(..) | Value::Enum(..)) {
                         let key = self.key_text(t, &row)?;
                         let member = self.member_caption(t, pos, &current)?;
-                        return Err(error(
+                        // The flag hides the key and keeps the member (error-handling/lt-last-error-text-forms/
+                        // TestFieldOptionEnumExcludeFlag.al:80, :83, :111, :114).
+                        return Err(error_redacted(
                             format!("{caption} must not be {member} in {table}: {key}"),
                             "TestField",
+                            format!("{caption} must not be {member} in {table}: <redacted>"),
                         ));
                     }
                     let key = self.key_text(t, &row)?;
@@ -1348,6 +1355,9 @@ impl Session {
                 if skip_mismatch {
                     continue;
                 }
+                if let Some(e) = self.transfer_type_mismatch(rec, t, &from, (dp, sp), &updates) {
+                    return Err(e);
+                }
                 return unsupported(format!(
                     "TransferFields across fields of different types (error text not pinned): field {} of {} and field {} of {}",
                     from.fields[sp].name, from.name, df.name, t.name
@@ -1376,6 +1386,19 @@ impl Session {
                 return Err(self.transfer_too_small(rec, t, &from, (dp, sp), updates));
             }
             tdd_fits(&schema.fields[dp], &src_fields[sp])?;
+            // A Blob of a row read without CalcFields moves as an empty one: the target has no value, and inserting it stores
+            // none (record/lt-record-write/RcBTransfer.al:486-493, Transfer_Blob_Field_BQ `withoutCalcFields`); a written or
+            // calculated one moves its content (`fromInsertedVariable`, `withCalcFields`).
+            if let Value::Blob(b) = &src_fields[sp] {
+                let unread = {
+                    let b = b.borrow();
+                    !b.loaded && !b.written
+                };
+                if unread {
+                    updates.push((dp, Value::Blob(al_builtins::stream::new_blob())));
+                    continue;
+                }
+            }
             updates.push((dp, ops::convert(src_fields[sp].clone(), &df.ty)?));
         }
         // From a row of the same table with the primary key (the default), the buffer takes the source's row version: a Modify of a
@@ -1411,6 +1434,66 @@ impl Session {
             r.fields[dp] = v;
         }
         Ok(Value::Null)
+    }
+
+    /// Two fields of one number and different types, between two tables of the same app: DB:TypeMisMatch naming the fields, the
+    /// tables and the types, whatever the value, and the fields copied before the failing one stay copied
+    /// (record/lt-record-write/RcBTransfer.al:265-357, Transfer_TypeDifferences_Narrowing, _DecimalFraction, _Widening,
+    /// Transfer_DifferentPrimaryKey). Pinned for Decimal into Integer or BigInteger and Integer into Code, between tables whose
+    /// captions are their names; anything else gives `None` and stays refused. Between tables of different apps BC skips the field
+    /// instead (Transfer_From_Another_Apps_Table_Type_Mismatch_BQ), which is not implemented.
+    fn transfer_type_mismatch(
+        &mut self,
+        rec: &Rec,
+        t: &TableDef,
+        from: &TableDef,
+        (dp, sp): (usize, usize),
+        updates: &[(usize, Value)],
+    ) -> Option<Signal> {
+        let objects = &self.engine.program.objects;
+        if objects[t.object as usize].app != objects[from.object as usize].app {
+            return None;
+        }
+        let name = |ty: &RtType| match ty {
+            RtType::Integer => Some("Integer"),
+            RtType::Decimal => Some("Decimal"),
+            RtType::BigInteger => Some("BigInteger"),
+            RtType::Code(_) => Some("Code"),
+            _ => None,
+        };
+        let (to_ty, from_ty) = (name(&t.fields[dp].ty)?, name(&from.fields[sp].ty)?);
+        if !matches!(
+            (to_ty, from_ty),
+            ("Integer" | "BigInteger", "Decimal") | ("Code", "Integer")
+        ) {
+            return None;
+        }
+        let caption_is_name = |o: usize| {
+            let obj = &objects[o];
+            obj.properties
+                .iter()
+                .find(|(k, _)| k.eq_ignore_ascii_case("Caption"))
+                .is_none_or(|(_, v)| v.trim().trim_matches('\'') == obj.name)
+        };
+        if self.field_caption(t, dp) != t.fields[dp].name
+            || self.field_caption(from, sp) != from.fields[sp].name
+            || !caption_is_name(t.object as usize)
+            || !caption_is_name(from.object as usize)
+        {
+            return None;
+        }
+        let mut r = rec.borrow_mut();
+        for (p, v) in updates {
+            r.fields[*p] = v.clone();
+        }
+        let (to, src) = (&t.fields[dp].name, &from.fields[sp].name);
+        Some(crate::transactions::al_error_code(
+            &format!(
+                "The following fields must have the same type:\\\\Field: {to} <-- {src}\\Table: {} <-- {}\\Type: {to_ty} <-- {from_ty}",
+                t.name, from.name
+            ),
+            "DB:TypeMisMatch",
+        ))
     }
 
     /// A Text value longer than the target Text field: DB:TypeMisMatch with the size text, the target field keeps its value, and
@@ -1801,6 +1884,10 @@ impl Session {
     /// commas, no colon after the table (corpus record/TestRecordRuntimeTextsAndViews.al:
     /// Record_FieldError_Texts). The code is `NCLCSRTS:TableErrorStr`.
     fn field_error(&mut self, rec: &Rec, t: &TableDef, args: &[Value]) -> Result<Value, Signal> {
+        let form = self
+            .field_error_form
+            .take()
+            .unwrap_or(al_builtins::native::ErrorTextForm::Other);
         let pos = arg_pos(args, 0)?;
         let row = rec.borrow().fields.clone();
         let mut parts = Vec::new();
@@ -1816,8 +1903,8 @@ impl Session {
         // and leaves the ErrorInfo as it was; a collectible one is collected in a collecting scope as a copy
         // that holds the full text (handlers/PWRefusedBuiltins.al:113-168, BC 27.5).
         let mut info = None;
-        // No text, an empty text and an ErrorInfo with an empty message all say what is wrong with the value: a blank Text, Date or
-        // DateTime "You must specify <field>", any other value "<field> must not be <value>" (record/lt-testfield-fielderror-typed/
+        // No text, an empty text and an ErrorInfo with an empty message all say what is wrong with the value: a blank Text, Code
+        // (error-handling/lt-last-error-text-forms/FieldErrorTextVariable.al:122), Date or DateTime "You must specify <field>", any other value "<field> must not be <value>" (record/lt-testfield-fielderror-typed/
         // P96FieldError.al:FieldError_NoText_Empty_Row; P96LongText.al:LongText_FieldError_Message `fe_empty`).
         let mut what = match args.get(1) {
             Some(v) => match (al_builtins::native::text_of(v), al_builtins::errorinfo::message_of(v)) {
@@ -1833,8 +1920,11 @@ impl Session {
         .filter(|w| !w.is_empty());
         let given_text = what.is_some();
         let info_given = info.is_some();
-        let blank_value =
-            is_blank(&row[pos])? && matches!(row[pos], Value::Text(_) | Value::Date(..) | Value::DateTime(_));
+        let blank_value = is_blank(&row[pos])?
+            && matches!(
+                row[pos],
+                Value::Text(_) | Value::Code(_) | Value::Date(..) | Value::DateTime(_)
+            );
         let full = match what.take() {
             Some(w) => format!("{} {w} in {} {key}.", self.field_caption(t, pos), self.caption(t)),
             None if blank_value => format!(
@@ -1857,14 +1947,27 @@ impl Session {
                 }
             }
         }
-        // The flag: P86LastError.al:270, :273 (the text given as a literal), :276, :279. Only the two forms the corpus pins;
-        // the "You must specify" form and an ErrorInfo are not pinned.
+        // The flag: P86LastError.al:270, :276, :282 (no text); "You must specify" of a blank Text, Code or Date field
+        // (error-handling/lt-last-error-text-forms/FieldErrorTextVariable.al:106, :112, :121); a text written as a literal,
+        // a local Text or Code variable or a concatenation (P86LastError.al:273, :279, FieldErrorTextVariable.al:65-82,
+        // :142-150); a global Label or TextConst (lt-last-error-text-exclude/LastErrorTextExcludeLabel.al:246,
+        // FieldErrorTextConst.al:51, :54). A blank DateTime, a text of another form and an ErrorInfo are not pinned.
+        use al_builtins::native::ErrorTextForm;
+        let field = format!("{}.{}", self.caption(t), self.field_caption(t, pos));
         let redacted = match (given_text, blank_value, info_given) {
-            (false, false, false) => Some(format!(
-                "FieldError for incorrect value of {}.{}",
-                self.caption(t),
-                self.field_caption(t, pos)
-            )),
+            (false, false, false) => Some(format!("FieldError for incorrect value of {field}")),
+            (false, true, false) if !matches!(row[pos], Value::DateTime(_)) => {
+                Some(format!("FieldError for unspecified value of {field}"))
+            }
+            (true, _, false) => match (form, args.get(1).and_then(al_builtins::native::text_of)) {
+                (ErrorTextForm::Literal | ErrorTextForm::Computed, _) => Some(format!(
+                    "FieldError on field {field}, message: Use FIELDERROR with a text constant to improve Telemetry details."
+                )),
+                (ErrorTextForm::Constant, Some(text)) if !text.contains("\r\n") => {
+                    Some(format!("FieldError on field {field}, message: {text}"))
+                }
+                _ => None,
+            },
             _ => None,
         };
         match redacted {

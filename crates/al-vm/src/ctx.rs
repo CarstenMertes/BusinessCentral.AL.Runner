@@ -111,6 +111,17 @@ impl al_builtins::native::Ctx for Session {
     fn set_last_error(&mut self, e: AlError) {
         self.last_error = e;
     }
+    fn field_error_with_form(
+        &mut self,
+        rec: Option<&mut Value>,
+        args: &mut [Value],
+        form: al_builtins::native::ErrorTextForm,
+    ) -> Result<Value, Signal> {
+        self.field_error_form = Some(form);
+        let r = self.record(al_builtins::record_op::RecordOp::FieldError, rec, args);
+        self.field_error_form = None;
+        r
+    }
     fn record(
         &mut self,
         method: al_builtins::record_op::RecordOp,
@@ -120,7 +131,7 @@ impl al_builtins::native::Ctx for Session {
         match rec {
             Some(Value::Record(rc)) => {
                 let rc = rc.clone();
-                self.record_op(method, &rc, args)
+                self.record_op_from_al(method, &rc, args)
             }
             other => Err(Signal::Unsupported(format!(
                 "record method {method} on {}",

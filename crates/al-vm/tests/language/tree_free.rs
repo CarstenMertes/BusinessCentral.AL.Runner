@@ -103,14 +103,17 @@ fn a_for_loop_over_an_empty_range_leaves_the_counter_at_the_start() {
 }
 
 #[test]
-fn a_textconst_without_an_enu_text_is_refused_not_read_as_its_first_text() {
-    // Hard rules 3 and 4: which text such a TextConst reads as is not pinned (docs/probes-needed.md "TextConst").
-    let global = code("var G: TextConst DEU = 'Hallo', FRA = 'Bonjour'; procedure F(): Text begin exit(G); end;");
-    let local = code("procedure F(): Text var L: TextConst DEU = 'Hallo'; begin exit(L); end;");
+fn a_textconst_without_an_enu_text_and_an_unpinned_order_is_refused() {
+    // Without ENU only one language or DEU then FRA is pinned (textconst_languages.rs); FRA before DEU is not.
+    let global = code("var G: TextConst FRA = 'Bonjour', DEU = 'Hallo'; procedure F(): Text begin exit(G); end;");
+    let local = code("procedure F(): Text var L: TextConst FRA = 'Bonjour', DEU = 'Hallo'; begin exit(L); end;");
     for src in [global, local] {
         match al_testkit::run_with(&src, "C", "F", vec![]) {
             Err(al_builtins::native::Signal::Unsupported(why)) => {
-                assert!(why.contains("TextConst without an ENU text (not pinned)"), "{why}")
+                assert!(
+                    why.contains("no ENU text, other than one text or DEU then FRA"),
+                    "{why}"
+                )
             }
             other => panic!("{other:?}"),
         }

@@ -606,15 +606,9 @@ impl Session {
         // That the Before event sees the new value is docs/probes-needed.md.
         self.table_event(t, "onbeforevalidateevent", rec, Some(xrec), false, Some(&field.name))?;
         // The triggers table extensions attach to the field bracket its own OnValidate
-        // (record/TestTriggerDispatchOrder.al:TriggerOrder_Validate_FieldPipeline_IsStable). The
-        // order of two extensions' triggers on one field is not pinned.
-        if field.ext_before_validate.len() > 1 || field.ext_after_validate.len() > 1 {
-            return unsupported(format!(
-                "Validate of {}.{}: more than one table extension declares OnBeforeValidate or OnAfterValidate for it (their order is not pinned)",
-                t.name, field.name
-            ));
-        }
-        for &(object, routine) in &field.ext_before_validate {
+        // (record/TestTriggerDispatchOrder.al:TriggerOrder_Validate_FieldPipeline_IsStable).
+        let (before, after) = self.ext_validate_order(t, field)?;
+        for &(object, routine) in &before {
             self.run_trigger(object, routine, rec, Some(xrec))?;
         }
         if let Some((object, routine)) = field.on_validate {
@@ -630,10 +624,57 @@ impl Session {
                 return Err(e);
             }
         }
-        for &(object, routine) in &field.ext_after_validate {
+        for &(object, routine) in &after {
             self.run_trigger(object, routine, rec, Some(xrec))?;
         }
         self.table_event(t, "onaftervalidateevent", rec, Some(xrec), false, Some(&field.name))
+    }
+
+    /// The OnBeforeValidate and OnAfterValidate triggers table extensions declare for `field`, in the order they run. Two
+    /// extensions of one app run in the order of their object ids, both before and after the field's own OnValidate
+    /// (record/lt-modify-field-two/ModifyFieldTwoExtensions.al:148-169, P163_Validate_TwoExtensionsOnOneField_Order: 73328 "Ext A"
+    /// then 73329 "Ext B"; events/W4ValidateOrderAndCurrFieldNo.al:331 `ext1.before;ext2.before;base.onvalidate;ext1.after;ext2.after;`,
+    /// 68065 "Ext One" then 68066 "Ext Two"). In both pins the id order is also the order of the names; when the two orders differ,
+    /// or with more than two extensions or extensions of different apps, the order is not pinned and the Validate is refused.
+    #[allow(clippy::type_complexity)]
+    fn ext_validate_order(
+        &self,
+        t: &TableDef,
+        field: &al_ir::Field,
+    ) -> Result<(Vec<(usize, usize)>, Vec<(usize, usize)>), Signal> {
+        let (mut before, mut after) = (field.ext_before_validate.clone(), field.ext_after_validate.clone());
+        if before.len() <= 1 && after.len() <= 1 {
+            return Ok((before, after));
+        }
+        let refuse = || {
+            unsupported(format!(
+                "Validate of {}.{}: more than one table extension declares OnBeforeValidate or OnAfterValidate for it (their order is not pinned)",
+                t.name, field.name
+            ))
+        };
+        let objects = &self.engine.program.objects;
+        let mut involved: Vec<usize> = before.iter().chain(&after).map(|&(o, _)| o).collect();
+        involved.sort_unstable();
+        involved.dedup();
+        if involved.len() > 2
+            || before.len() > 2
+            || after.len() > 2
+            || involved.iter().any(|&o| objects[o].app != objects[involved[0]].app)
+            || [&before, &after].iter().any(|l| l.len() == 2 && l[0].0 == l[1].0)
+        {
+            return refuse();
+        }
+        let mut by_id = involved.clone();
+        by_id.sort_by_key(|&o| objects[o].id);
+        let mut by_name = involved.clone();
+        by_name.sort_by_key(|&o| objects[o].name.to_ascii_lowercase());
+        if by_id != by_name || by_id.windows(2).any(|w| objects[w[0]].id == objects[w[1]].id) {
+            return refuse();
+        }
+        let rank = |o: usize| by_id.iter().position(|&x| x == o);
+        before.sort_by_key(|&(o, _)| rank(o));
+        after.sort_by_key(|&(o, _)| rank(o));
+        Ok((before, after))
     }
 
     /// `Record.Delete(run)` of the row `rec` holds: Before event, OnDelete, the
@@ -940,6 +981,18 @@ impl Session {
             }
         }
         Ok(None)
+    }
+
+    /// Whether table `t` declares a Blob field (a duplicate Insert into it fails at once).
+    fn has_blob_field(&self, t: &TableDef) -> bool {
+        self.engine.program.objects[t.object as usize]
+            .table
+            .as_ref()
+            .is_some_and(|s| {
+                s.fields
+                    .iter()
+                    .any(|f| matches!(&f.ty, RtType::Library(al_builtins::library_kind::LibraryKind::Blob)))
+            })
     }
 
     /// The refusal of a unique index; only the start of BC's message is pinned.
@@ -2215,6 +2268,90 @@ impl Session {
         self.store_for(rec).count(&cx, &t, &[]).ok()
     }
 
+    /// A record method AL code calls (a Record or a RecordRef): [`Session::record_op`], with the global filter group checked
+    /// (`global_group_check`). The runtime's own record calls (page refills, probes) are not AL code and pass straight on.
+    pub(crate) fn record_op_from_al(
+        &mut self,
+        method: RecordOp,
+        rec: &Rec,
+        args: &mut [Value],
+    ) -> Result<Value, Signal> {
+        let (table, group) = {
+            let r = rec.borrow();
+            (r.table, r.filter_group)
+        };
+        if matches!(method, RecordOp::SetFilter | RecordOp::SetRange) && group == 1 {
+            return self.set_global_group_filter(rec, table, method, args);
+        }
+        if !self.global_group1.is_empty() {
+            self.global_group_check(rec, table, method.name())?;
+        }
+        self.record_op(method, rec, args)
+    }
+
+    /// The filters of `rec` in filter group 1, as text to compare.
+    fn group1_signature(rec: &Rec) -> String {
+        let r = rec.borrow();
+        let mut v: Vec<String> = r
+            .filters
+            .iter()
+            .filter(|f| f.group == 1)
+            .map(|f| format!("{}={:?}", f.field, f.expr))
+            .collect();
+        v.sort();
+        v.join(";")
+    }
+
+    /// SetFilter or SetRange in filter group 1 (the global group) on a database record: BC keeps the filter on every record
+    /// of the table for the rest of the session, through Reset and Clear (types/lt-code-digits-page-run-view/
+    /// P145PageRunView.al:232-235, SfSeed :236-268, seed_before = 4 at :283). The session notes what group 1 holds now;
+    /// `global_group_check` refuses the records that do not carry it.
+    #[cold]
+    #[inline(never)]
+    fn set_global_group_filter(
+        &mut self,
+        rec: &Rec,
+        table: u32,
+        method: RecordOp,
+        args: &mut [Value],
+    ) -> Result<Value, Signal> {
+        if rec.borrow().temporary {
+            return unsupported(format!(
+                "{} in filter group 1 (the global group) on a temporary record (how BC scopes it is not pinned)",
+                method.name()
+            ));
+        }
+        self.global_group_check(rec, table, method.name())?;
+        let r = self.record_op(method, rec, args)?;
+        let sig = Self::group1_signature(rec);
+        if sig.is_empty() {
+            self.global_group1.remove(&table);
+        } else {
+            self.global_group1.insert(table, sig);
+        }
+        Ok(r)
+    }
+
+    /// A record of a table whose filter group 1 (the global group) holds a filter another record set: BC applies that
+    /// filter to this record too (P145PageRunView.al:232-235), the runtime keeps filters on the record that set them.
+    /// Answered when the record carries the same group 1 filters (the setter, or a copy of it such as the record of
+    /// Page.Run(Page, Rec)); refused otherwise.
+    pub(crate) fn global_group_check(&self, rec: &Rec, table: u32, what: &str) -> Result<(), Signal> {
+        let Some(global) = self.global_group1.get(&table) else {
+            return Ok(());
+        };
+        if what == "FilterGroup" {
+            return Ok(());
+        }
+        if !rec.borrow().temporary && Self::group1_signature(rec) == *global {
+            return Ok(());
+        }
+        unsupported(format!(
+            "{what} on a record of a table with a filter in filter group 1 (the global group) that another record set: BC \
+             applies it to every record of the table for the session, the runtime does not"
+        ))
+    }
+
     pub(crate) fn record_op_inner(&mut self, method: RecordOp, rec: &Rec, args: &mut [Value]) -> Result<Value, Signal> {
         self.connection_check(rec)?;
         if rec.borrow().unpinned_buffer.is_some() {
@@ -2751,7 +2888,16 @@ impl Session {
                             self.note_explicit_key(&t, a, &row, &cx.company);
                         }
                     }
-                    return self.fail_unique(&t, unique_key, &row);
+                    let r = self.fail_unique(&t, unique_key, &row);
+                    // The flag hides the values of a unique index an Insert into a table with a Blob field breaks
+                    // (error-handling/lt-last-error-text-forms/InsertDuplicateKeyExcludeFlag.al:121). Other tables are not pinned.
+                    if self.has_blob_field(&t) && !rec.borrow().temporary {
+                        return r.map_err(|s| redact_error(s, format!(
+                            "There is already a record in table {} that has the same values in a unique index for the following fields: <redacted>",
+                            self.caption(&t)
+                        )));
+                    }
+                    return r;
                 }
                 let mut stored = Self::to_store(rec, self.stored_view(&t, &row));
                 if let Some(e) = self.sql_columns(rec, &t, &mut stored)? {
@@ -2856,14 +3002,7 @@ impl Session {
                         // answers false at once, and a Blob field makes it fail at once (corpus
                         // record/TestRecordRuntimeTextsAndViews.al:Record_Insert_DuplicateKey_*).
                         // A temporary table's behaviour is not pinned: it fails at once.
-                        let has_blob = self.engine.program.objects[t.object as usize]
-                            .table
-                            .as_ref()
-                            .is_some_and(|s| {
-                                s.fields.iter().any(|f| {
-                                    matches!(&f.ty, RtType::Library(al_builtins::library_kind::LibraryKind::Blob))
-                                })
-                            });
+                        let has_blob = self.has_blob_field(&t);
                         // A table with an AutoIncrement field needs the platform's answer at once
                         // (record/TestAutoIncrementContracts.al:AutoIncrement_SecondInsert_...).
                         if !self.ret_used
@@ -2890,7 +3029,17 @@ impl Session {
                             }
                             return Ok(Value::Boolean(true));
                         }
-                        self.fail(&t, &row, true)
+                        let r = self.fail(&t, &row, true);
+                        // The flag hides the key of a duplicate Insert into a table with a Blob field (error-handling/
+                        // lt-last-error-text-forms/InsertDuplicateKeyExcludeFlag.al:68, :85, :102). Other tables are not pinned.
+                        if has_blob && auto.is_none() && !rec.borrow().temporary {
+                            r.map_err(|s| redact_error(s, format!(
+                                "The record in table {} already exists. Identification fields and values: <redacted>",
+                                self.caption(&t)
+                            )))
+                        } else {
+                            r
+                        }
                     }
                 }
             }
@@ -3134,6 +3283,12 @@ impl Session {
             RecordOp::Delete => {
                 let run = arg_bool(args, 0)?;
                 self.tenant_license_state_refuses(&t, "delete")?;
+                // A Delete loads the missing fields of a partially loaded record first: afterwards they read as loaded, with the
+                // values of the row it deleted (record/lt-load-fields-fetched/LoadFieldsFetched.al:270-289,
+                // P170_JitLoad_After_Delete_Of_The_Same_Partial_Record_BQ, Delete without triggers). With triggers it is not pinned.
+                if !run && !rec.borrow().temporary {
+                    self.load_missing_fields(rec, None)?;
+                }
                 self.delete_row(&t, rec, run)
             }
             RecordOp::DeleteAll => {
@@ -3177,11 +3332,10 @@ impl Session {
                 let user_rows = self.is_user_row(&t, rec.borrow().temporary);
                 // MarkedOnly limits the rows to the marked ones, which the store's bulk delete does not know: delete row
                 // by row what the scan finds (Post Inventory Cost to G/L ends its data item with
-                // `MarkedOnly(true); DeleteAll()` and keeps the capacity entries it has not posted yet).
+                // `MarkedOnly(true); DeleteAll()` and keeps the capacity entries it has not posted yet). Only the marked
+                // rows that pass the filters go, with OnDelete per row for DeleteAll(true)
+                // (record/lt-as-records/AsMarkedDeleteAll.al:27-94).
                 let marked_only = rec.borrow().marked_only;
-                if marked_only {
-                    al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::DeleteAllMarkedOnly);
-                }
                 if events || global || user_rows || (run && trigger) || marked_only {
                     // One Delete per row (record/TestTriggerContracts.al:DeleteAll_WithTrigger_FiresForEachFilteredRecord).
                     let key = rec.borrow().key;
@@ -3334,19 +3488,13 @@ impl Session {
                                 // reads 'Three', not the ordinal the enum lacks
                                 // (corpus types/PEOptionEnumBigText.al:225-259, probed on BC 27.5).
                                 (Some(o @ Value::Option(..)), RtType::Enum(_)) => o.clone(),
-                                // Whether the message names an enum of another type, or an Integer, by the
-                                // caller's value or by the key's is not pinned (docs/probes-needed.md); found
-                                // and not found are (types/PXEnumRecordRef.al:123,127,154,156).
-                                (Some(Value::Enum(from, _)), RtType::Enum(to)) if from != to && !self.ret_used => {
-                                    return Err(Signal::Unsupported(
-                                        "the not-found error of a Get keyed by an enum of another type: the identification text is not pinned (docs/probes-needed.md)".into(),
-                                    ));
-                                }
-                                (Some(Value::Integer(_)), RtType::Enum(_)) if !self.ret_used => {
-                                    return Err(Signal::Unsupported(
-                                        "the not-found error of a Get keyed by an Integer on an Enum field: the identification text is not pinned (docs/probes-needed.md)".into(),
-                                    ));
-                                }
+                                // An enum of another type is named by the caller's value, its caption in its own enum, also
+                                // for an ordinal the key's enum lacks (errors/lt-ms-refusals-138/P138EnumGetNotFound.al:82-86,
+                                // :103, :178-180).
+                                (Some(e @ Value::Enum(from, _)), RtType::Enum(to)) if from != to => e.clone(),
+                                // An Integer is named as the key's enum value: its caption, or the number for an ordinal the
+                                // enum lacks (P138EnumGetNotFound.al:126-130, :153-155).
+                                (Some(Value::Integer(n)), RtType::Enum(to)) => Value::Enum(*to, *n),
                                 _ => pk[n].clone(),
                             };
                         }
@@ -3492,10 +3640,22 @@ impl Session {
                             && (matches!(method, RecordOp::FindFirst | RecordOp::FindLast | RecordOp::FindSet)
                                 || (method == RecordOp::Find && matches!(which.as_str(), "-" | "+")))
                         {
+                            // The flag leaves the text as it is, from BC 28 (error-handling/lt-last-error-text-forms/
+                            // FindEmptyTableExcludeFlag.al:99-121: FindFirst, FindLast, FindSet, FindSet(true), Find('-'),
+                            // Find('+'); guarded with BC28PLUS). On every version for FindFirst and FindLast
+                            // (types/lt-evaluate-format-lasterror-setview/P86LastError.al:339-353, not guarded).
+                            let pinned = self.has(al_version::Gate::EmptyTableFindExcludeFlagFrom28)
+                                || matches!(method, RecordOp::FindFirst | RecordOp::FindLast);
+                            let origin = if !rec.borrow().temporary && pinned {
+                                al_builtins::native::ErrorOrigin::SameText
+                            } else {
+                                al_builtins::native::ErrorOrigin::Unknown
+                            };
                             return Err(Signal::Error(Box::new(AlError {
                                 message: format!("The {} table is empty.", self.caption(&t)),
                                 code: "DB:TableIsEmpty".into(),
                                 call_stack: String::new(),
+                                origin,
                                 ..Default::default()
                             })));
                         }
@@ -3530,10 +3690,24 @@ impl Session {
                                     self.caption(&t)
                                 )
                             };
+                            // The flag hides the key of `Find('=')`, from BC 28 (FindEmptyTableExcludeFlag.al:123; guarded with
+                            // BC28PLUS). The other search strings are not pinned.
+                            let origin = if which == "="
+                                && !rec.borrow().temporary
+                                && self.has(al_version::Gate::EmptyTableFindExcludeFlagFrom28)
+                            {
+                                al_builtins::native::ErrorOrigin::Redacted(format!(
+                                    "The {} does not exist. Identification fields and values: <redacted>",
+                                    self.caption(&t)
+                                ))
+                            } else {
+                                al_builtins::native::ErrorOrigin::Unknown
+                            };
                             return Err(Signal::Error(Box::new(AlError {
                                 message,
                                 code: "DB:RecordNotFound".into(),
                                 call_stack: String::new(),
+                                origin,
                                 ..Default::default()
                             })));
                         }
@@ -3545,6 +3719,21 @@ impl Session {
                                 t.name
                             ));
                         }
+                        // The flag hides the filters (error-handling/lt-last-error-text-forms/FindEmptyTableExcludeFlag.al:148,
+                        // :152, :156: FindFirst, FindLast and FindSet of a table with rows). An empty table is not pinned.
+                        let empty = self
+                            .store_for(rec)
+                            .count(&cx, &t, &[])
+                            .map_err(|e| Signal::Unsupported(format!("{e}")))?
+                            == 0;
+                        let origin = if rec.borrow().temporary || empty {
+                            al_builtins::native::ErrorOrigin::Unknown
+                        } else {
+                            al_builtins::native::ErrorOrigin::Redacted(format!(
+                                "There is no {} within the filter.{BR}{BR}Filters: <redacted>",
+                                self.caption(&t)
+                            ))
+                        };
                         Err(Signal::Error(Box::new(AlError {
                             message: format!(
                                 "There is no {} within the filter.{BR}{BR}Filters: {filters}",
@@ -3552,6 +3741,7 @@ impl Session {
                             ),
                             code: "DB:NothingInsideFilter".into(),
                             call_stack: String::new(),
+                            origin,
                             ..Default::default()
                         })))
                     }
@@ -3560,11 +3750,21 @@ impl Session {
             RecordOp::Next => {
                 let steps = match args.first() {
                     Some(Value::Integer(n)) => *n,
-                    // A whole-number Decimal (`Calendar.Next(12 / CountFrequency)`); a fraction would round or
-                    // truncate, which is not pinned.
+                    // A whole-number Decimal steps like the Integer (`Calendar.Next(12 / CountFrequency)`); one with a fraction
+                    // raises and leaves the row (misc/lt-probes-needed-6/PnF11DateDecimalArithmetic.al:119-187,
+                    // Next_Decimal_Whole: 1, 2, -1, -2, 12 / 4, 0, 20 past the end; Next_Decimal_Fraction: 1.5, -1.5, 0.4, ...).
                     Some(Value::Decimal(d)) if d.fract().is_zero() && i32::try_from(d.trunc()).is_ok() => {
-                        al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::NextWholeDecimal);
                         i32::try_from(d.trunc()).unwrap_or(0)
+                    }
+                    Some(Value::Decimal(d)) if !d.fract().is_zero() => {
+                        return Err(Signal::Error(Box::new(AlError {
+                            message: format!(
+                                "Overflow under conversion of Microsoft.Dynamics.Nav.Runtime.Decimal18 value {d} to System.Int32."
+                            ),
+                            code: "ConversionCast".into(),
+                            call_stack: String::new(),
+                            ..Default::default()
+                        })));
                     }
                     None => 1,
                     other => return unsupported(format!("Next({})", other.describe())),
@@ -3705,8 +3905,16 @@ impl Session {
                                 ));
                             }
                             if self.global_language == 1033 && args.len() <= 2 {
+                                let failing = parsed
+                                    .as_ref()
+                                    .err()
+                                    .and_then(|e| al_builtins::filter::not_evaluated_value(e))
+                                    .unwrap_or_default()
+                                    .to_string();
                                 if let Some(fixed) =
-                                    self.repair_word_filter_text(event, param, &text, &|t| parse(t).is_ok())?
+                                    self.repair_word_filter_text(event, param, &text, &failing, &|t| {
+                                        parse(t).map(|_| ())
+                                    })?
                                 {
                                     parsed = parse(&fixed);
                                 }
@@ -3786,12 +3994,19 @@ impl Session {
                         })));
                     }
                     // record/TestFilterTextBooleanFindContracts.al:130 (SetFilter_BooleanField_UnknownWord_Throws).
+                    // A leading blank stays in the quoted filter (misc/lt-system-functions/EvalLastError.al:501-539,
+                    // BT_Evaluate_Boolean_LeadingBlank `filter [ Da]`); a trailing one is not pinned.
                     Err(e) if e.starts_with(al_builtins::filter::INVALID_BOOLEAN) => {
                         let word = &e[al_builtins::filter::INVALID_BOOLEAN.len()..];
+                        if text.ends_with(char::is_whitespace) {
+                            return unsupported(
+                                "the error of a Boolean filter with a trailing blank (its quoted filter is not pinned)",
+                            );
+                        }
                         return Err(Signal::Error(Box::new(AlError {
                             message: format!(
                                 "The filter \"{}\" is not valid for the {} field on the {} table. The value \"{word}\" can't be evaluated into type Boolean.",
-                                text.trim(),
+                                text,
                                 self.field_caption(&t, pos),
                                 self.caption(&t)
                             ),
@@ -4348,4 +4563,15 @@ enum StaleVerdict {
     Written,
     /// Stale: the write fails with DB:RecordChanged.
     Refused,
+}
+
+/// `s` with the text `GetLastErrorText(true)` answers for it, when it is an AL error.
+fn redact_error(s: Signal, redacted: String) -> Signal {
+    match s {
+        Signal::Error(mut e) => {
+            e.origin = al_builtins::native::ErrorOrigin::Redacted(redacted);
+            Signal::Error(e)
+        }
+        other => other,
+    }
 }

@@ -2,7 +2,7 @@
   "corpus_commit": "7eceb6bb3b4056985e6853458b9f22d9ae3269da",
   "language": {
     "bc": "27-29",
-    "implemented": 1543,
+    "implemented": 1589,
     "methods": [
       {
         "bc": [
@@ -17,7 +17,7 @@
         "scope": "",
         "sig": "()",
         "site": "misc/lt-probe-requests-140/P140IntegerToText.al:140",
-        "state": "refused",
+        "state": "implemented",
         "type": "BigInteger"
       },
       {
@@ -33,7 +33,7 @@
         "scope": "",
         "sig": "(BigText, [Integer])",
         "site": "types/lt-totext-bigtext-codeunit-run/P93BigText.al:22",
-        "state": "refused",
+        "state": "implemented",
         "type": "BigText"
       },
       {
@@ -65,7 +65,7 @@
         "scope": "",
         "sig": "(var BigText, Integer, [Integer])",
         "site": "types/lt-totext-bigtext-codeunit-run/P93BigText.al:40",
-        "state": "refused",
+        "state": "implemented",
         "type": "BigText"
       },
       {
@@ -289,7 +289,7 @@
         "scope": "",
         "sig": "()",
         "site": "types/lt-totext-bigtext-codeunit-run/P93ScalarToText.al:185",
-        "state": "refused",
+        "state": "implemented",
         "type": "Byte"
       },
       {
@@ -305,7 +305,7 @@
         "scope": "",
         "sig": "([Boolean])",
         "site": "types/lt-totext-bigtext-codeunit-run/P93ScalarToText.al:186",
-        "state": "refused",
+        "state": "implemented",
         "type": "Byte"
       },
       {
@@ -1963,7 +1963,7 @@
         "scope": "",
         "sig": "(Integer, Text, var Text)",
         "site": "misc/lt-open-overloads-collections-isolated/P107Collections.al:21",
-        "state": "refused",
+        "state": "implemented",
         "type": "Dictionary"
       },
       {
@@ -4555,7 +4555,7 @@
         "scope": "",
         "sig": "()",
         "site": "text/lt-textconst-label-methods/P103TimeGuidMax.al:64",
-        "state": "refused",
+        "state": "implemented",
         "type": "Guid"
       },
       {
@@ -4571,7 +4571,7 @@
         "scope": "",
         "sig": "([Boolean])",
         "site": "text/lt-textconst-label-methods/P103TimeGuidMax.al:65",
-        "state": "refused",
+        "state": "implemented",
         "type": "Guid"
       },
       {
@@ -10160,7 +10160,7 @@
         "scope": "",
         "sig": "(Integer, Integer, var List of [Integer])",
         "site": "misc/lt-open-overloads-collections-isolated/P107Collections.al:77",
-        "state": "refused",
+        "state": "implemented",
         "type": "List"
       },
       {
@@ -10304,7 +10304,7 @@
         "scope": "",
         "sig": "(Integer, Integer, var Integer)",
         "site": "misc/lt-open-overloads-collections-isolated/P107Collections.al:147",
-        "state": "refused",
+        "state": "implemented",
         "type": "List"
       },
       {
@@ -11790,7 +11790,7 @@
         "scope": "",
         "sig": "([Boolean])",
         "site": "pages/lt-bl-unopened-currpage/UnopenedFixtures.al:56",
-        "state": "refused",
+        "state": "implemented",
         "type": "Page"
       },
       {
@@ -12505,7 +12505,7 @@
         "scope": "",
         "sig": "(Integer, OutStream)",
         "site": "query/TestQueryObject.al:545",
-        "state": "refused",
+        "state": "implemented",
         "type": "Query"
       },
       {
@@ -15780,7 +15780,7 @@
         "scope": "",
         "sig": "([Boolean])",
         "site": "recordref/lt-recordref-fieldref-members/P92Counts.al:134",
-        "state": "refused",
+        "state": "implemented",
         "type": "RecordRef"
       },
       {
@@ -15828,7 +15828,7 @@
         "scope": "",
         "sig": "(array[] of Decimal)",
         "site": "report/lt-report-requestpage-query-members/P105TotArray.al:43",
-        "state": "refused",
+        "state": "implemented",
         "type": "Report"
       },
       {
@@ -15844,7 +15844,7 @@
         "scope": "",
         "sig": "(var Decimal, [var Decimal...])",
         "site": "report/lt-report-members-testrequestpage/P91Inst.al:42",
-        "state": "refused",
+        "state": "implemented",
         "type": "Report"
       },
       {
@@ -15860,7 +15860,7 @@
         "scope": "",
         "sig": "()",
         "site": "report/lt-report-requestpage-query-members/P105LytDefault.al:40",
-        "state": "refused",
+        "state": "implemented",
         "type": "Report"
       },
       {
@@ -15892,7 +15892,7 @@
         "scope": "",
         "sig": "(Integer, InStream)",
         "site": "pages/lt-obsolete-layout-parts/P117LayoutStreams.al:29",
-        "state": "refused",
+        "state": "implemented",
         "type": "Report"
       },
       {
@@ -15908,7 +15908,7 @@
         "scope": "",
         "sig": "(var InStream)",
         "site": "report/lt-report-requestpage-query-members/P105LytExcel.al:43",
-        "state": "refused",
+        "state": "implemented",
         "type": "Report"
       },
       {
@@ -16035,7 +16035,7 @@
         "scope": "",
         "sig": "()",
         "site": "report/lt-report-members-testrequestpage/P91Inst.al:84",
-        "state": "refused",
+        "state": "implemented",
         "type": "Report"
       },
       {
@@ -16083,7 +16083,7 @@
         "scope": "",
         "sig": "([Integer])",
         "site": "misc/lt-probes-needed-8/PnH4CurrReport.al:63",
-        "state": "refused",
+        "state": "implemented",
         "type": "Report"
       },
       {
@@ -16099,7 +16099,7 @@
         "scope": "",
         "sig": "(Integer, [Integer])",
         "site": "report/lt-report-requestpage-query-members/P105Paper.al:43",
-        "state": "refused",
+        "state": "implemented",
         "type": "Report"
       },
       {
@@ -16163,7 +16163,7 @@
         "scope": "",
         "sig": "([Boolean])",
         "site": "report/lt-report-members-testrequestpage/P91Inst.al:94",
-        "state": "refused",
+        "state": "implemented",
         "type": "Report"
       },
       {
@@ -16195,7 +16195,7 @@
         "scope": "",
         "sig": "(Integer, InStream)",
         "site": "pages/lt-obsolete-layout-parts/P117LayoutStreams.al:25",
-        "state": "refused",
+        "state": "implemented",
         "type": "Report"
       },
       {
@@ -16211,7 +16211,7 @@
         "scope": "",
         "sig": "(var InStream)",
         "site": "report/lt-report-requestpage-query-members/P105LytRdlc.al:43",
-        "state": "refused",
+        "state": "implemented",
         "type": "Report"
       },
       {
@@ -16561,7 +16561,7 @@
         "scope": "",
         "sig": "()",
         "site": "misc/lt-probes-needed-8/PnH4CurrReport.al:63",
-        "state": "refused",
+        "state": "implemented",
         "type": "Report"
       },
       {
@@ -16577,7 +16577,7 @@
         "scope": "",
         "sig": "(Boolean)",
         "site": "report/lt-report-requestpage-query-members/P105ShowOutput.al:46",
-        "state": "refused",
+        "state": "implemented",
         "type": "Report"
       },
       {
@@ -16625,7 +16625,7 @@
         "scope": "",
         "sig": "()",
         "site": "report/lt-report-members-testrequestpage/P91Inst.al:48",
-        "state": "refused",
+        "state": "implemented",
         "type": "Report"
       },
       {
@@ -16689,7 +16689,7 @@
         "scope": "",
         "sig": "(Integer, InStream)",
         "site": "pages/lt-obsolete-layout-parts/P117LayoutStreams.al:27",
-        "state": "refused",
+        "state": "implemented",
         "type": "Report"
       },
       {
@@ -16705,7 +16705,7 @@
         "scope": "",
         "sig": "(var InStream)",
         "site": "report/lt-report-requestpage-query-members/P105LytWord.al:43",
-        "state": "refused",
+        "state": "implemented",
         "type": "Report"
       },
       {
@@ -16753,7 +16753,7 @@
         "scope": "",
         "sig": "([Boolean])",
         "site": "report/lt-report-requestpage-query-members/P105RpMembers.al:79",
-        "state": "refused",
+        "state": "implemented",
         "type": "RequestPage"
       },
       {
@@ -16801,7 +16801,7 @@
         "scope": "",
         "sig": "([Boolean])",
         "site": "report/lt-report-requestpage-query-members/P105RpMembers.al:57",
-        "state": "refused",
+        "state": "implemented",
         "type": "RequestPage"
       },
       {
@@ -16817,7 +16817,7 @@
         "scope": "",
         "sig": "([Boolean])",
         "site": "report/lt-report-requestpage-query-members/P105RpMembers.al:65",
-        "state": "refused",
+        "state": "implemented",
         "type": "RequestPage"
       },
       {
@@ -16833,7 +16833,7 @@
         "scope": "",
         "sig": "([Boolean])",
         "site": "report/lt-report-requestpage-query-members/P105RpMembers.al:73",
-        "state": "refused",
+        "state": "implemented",
         "type": "RequestPage"
       },
       {
@@ -20485,7 +20485,7 @@
         "scope": "",
         "sig": "(Boolean)",
         "site": "report/lt-report-requestpage-query-members/P105RpFind.al:110",
-        "state": "refused",
+        "state": "implemented",
         "type": "TestRequestPage"
       },
       {
@@ -20501,7 +20501,7 @@
         "scope": "",
         "sig": "(TestField, Joker)",
         "site": "report/lt-report-requestpage-query-members/P105RpFind.al:76",
-        "state": "refused",
+        "state": "implemented",
         "type": "TestRequestPage"
       },
       {
@@ -20517,7 +20517,7 @@
         "scope": "",
         "sig": "(TestField, Joker)",
         "site": "report/lt-report-requestpage-query-members/P105RpFind.al:78",
-        "state": "refused",
+        "state": "implemented",
         "type": "TestRequestPage"
       },
       {
@@ -20533,7 +20533,7 @@
         "scope": "",
         "sig": "(TestField, Joker)",
         "site": "report/lt-report-requestpage-query-members/P105RpFind.al:80",
-        "state": "refused",
+        "state": "implemented",
         "type": "TestRequestPage"
       },
       {
@@ -20549,7 +20549,7 @@
         "scope": "",
         "sig": "()",
         "site": "report/lt-report-requestpage-query-members/P105RpNav.al:78",
-        "state": "refused",
+        "state": "implemented",
         "type": "TestRequestPage"
       },
       {
@@ -20581,7 +20581,7 @@
         "scope": "",
         "sig": "([Joker...])",
         "site": "report/lt-report-requestpage-query-members/P105RpNav.al:88",
-        "state": "refused",
+        "state": "implemented",
         "type": "TestRequestPage"
       },
       {
@@ -20597,7 +20597,7 @@
         "scope": "",
         "sig": "(Table)",
         "site": "report/lt-report-requestpage-query-members/P105RpNav.al:90",
-        "state": "refused",
+        "state": "implemented",
         "type": "TestRequestPage"
       },
       {
@@ -20613,7 +20613,7 @@
         "scope": "",
         "sig": "()",
         "site": "report/lt-report-requestpage-query-members/P105RpFind.al:108",
-        "state": "refused",
+        "state": "implemented",
         "type": "TestRequestPage"
       },
       {
@@ -20629,7 +20629,7 @@
         "scope": "",
         "sig": "()",
         "site": "report/lt-report-requestpage-query-members/P105RpNav.al:80",
-        "state": "refused",
+        "state": "implemented",
         "type": "TestRequestPage"
       },
       {
@@ -20661,7 +20661,7 @@
         "scope": "",
         "sig": "()",
         "site": "report/lt-report-requestpage-query-members/P105RpNav.al:82",
-        "state": "refused",
+        "state": "implemented",
         "type": "TestRequestPage"
       },
       {
@@ -20709,7 +20709,7 @@
         "scope": "",
         "sig": "()",
         "site": "report/lt-report-requestpage-query-members/P105RpNav.al:84",
-        "state": "refused",
+        "state": "implemented",
         "type": "TestRequestPage"
       },
       {
@@ -21589,7 +21589,7 @@
         "scope": "",
         "sig": "(Text, Text, Integer, Integer)",
         "site": "text/lt-label-textbuilder/TxCTextBuilderEdit.al:241",
-        "state": "refused",
+        "state": "implemented",
         "type": "TextBuilder"
       },
       {
@@ -27781,7 +27781,7 @@
         "scope": "",
         "sig": "([Boolean])",
         "site": "xmlport/lt-xmlport-query-datatransfer/XmlPortFixtures.al:265",
-        "state": "refused",
+        "state": "implemented",
         "type": "Xmlport"
       },
       {
@@ -27947,7 +27947,7 @@
     ],
     "overloads": 1750,
     "pinned": 1706,
-    "refused": 179,
+    "refused": 133,
     "runtime_only": [
       "ErrorInfo.Create#3",
       "FieldRef.FieldError#2",

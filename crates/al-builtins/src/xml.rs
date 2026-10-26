@@ -99,7 +99,7 @@ fn error(message: impl Into<String>, code: &str) -> Signal {
 
 /// `Microsoft.Dynamics.Nav.Runtime.NavXmlDocumentType variable not initialized.` (code NotInitialized): a variable nobody assigned,
 /// used where the type is known (xml/lt-xml-doctype-declaration/DocTypeErrors.al:Uninitialised_*).
-fn uninitialized(nav_type: &str) -> Signal {
+pub(crate) fn uninitialized(nav_type: &str) -> Signal {
     error(
         format!("Microsoft.Dynamics.Nav.Runtime.Nav{nav_type} variable not initialized."),
         "NotInitialized",
@@ -4929,6 +4929,14 @@ pub(crate) fn read_tree(text: &str) -> Result<Result<crate::xmlport::Elem, Optio
         .into_iter()
         .find(|c| with(c, |d| matches!(d, XData::Element { .. })))
         .ok_or("a document without a root element")?;
+    // The import of a port without namespaces fails on a root element in a namespace (al-vm xmlports.rs, ROOT_IN_NAMESPACE).
+    let (local, ns) = with(&root, |d| match d {
+        XData::Element { local, ns, .. } => (local.clone(), ns.clone()),
+        _ => unreachable!("the root is an element"),
+    });
+    if !ns.is_empty() {
+        return Err(format!("{}{local}", crate::xmlport::ROOT_IN_NAMESPACE));
+    }
     convert(&root).map(Ok)
 }
 

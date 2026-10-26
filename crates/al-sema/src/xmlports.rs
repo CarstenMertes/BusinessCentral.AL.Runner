@@ -12,13 +12,7 @@ use al_ir as ir;
 use al_syntax::ast;
 
 /// Object properties that change nothing the runtime can observe.
-const INERT_OBJECT_PROPERTIES: &[&str] = &[
-    "caption",
-    "captionml",
-    "permissions",
-    "transactiontype",
-    "usedefaultnamespace",
-];
+const INERT_OBJECT_PROPERTIES: &[&str] = &["caption", "captionml", "permissions", "transactiontype"];
 
 /// A schema element before its names are resolved.
 pub struct RawNode {
@@ -39,6 +33,8 @@ pub struct Layout {
     pub record_separator: Option<String>,
     pub table_separator: Option<String>,
     pub text_encoding_declared: bool,
+    /// `TextEncoding` other than UTF8, lower case, when it is pinned for the port's format.
+    pub text_encoding: Option<String>,
     pub utf8: bool,
     pub xml_utf8: bool,
     pub namespaces: Vec<(String, String)>,
@@ -51,6 +47,7 @@ pub struct Layout {
     /// `FormatEvaluate` as declared.
     pub format_evaluate_declared: Option<bool>,
     pub no_default_fields_validation: bool,
+    pub preserve_whitespace: bool,
     pub reasons: Vec<String>,
     /// Reasons only running the port refuses (see `ir::XmlPort::run_unsupported`).
     pub run_reasons: Vec<String>,
@@ -99,6 +96,14 @@ fn allowed_triggers(kind: ir::XmlNodeKind) -> &'static [&'static str] {
     }
 }
 
+/// Whether node `i` is a text element with `TextType = BigText` (checked in `visit`).
+fn is_big_text(layout: &Layout, i: usize) -> bool {
+    layout.nodes[i].kind == ir::XmlNodeKind::Text
+        && layout
+            .property(i, "TextType")
+            .is_some_and(|v| v.trim().eq_ignore_ascii_case("bigtext"))
+}
+
 fn allowed_properties(kind: ir::XmlNodeKind) -> &'static [&'static str] {
     match kind {
         ir::XmlNodeKind::Table => &[
@@ -126,9 +131,12 @@ fn allowed_properties(kind: ir::XmlNodeKind) -> &'static [&'static str] {
         ],
         // `occurrence` is checked in `visit`: Required or Optional on a field attribute of a table element.
         // `FieldValidate` on a field attribute: Yes validates, No does not (pages/lt-report-page-properties/06-xmlport-fvat.al:118).
+        // `Width` on a field attribute: a column of a FixedText port (xmlport/lt-ay-xmlport/AyXmlPortAttributeWidth.al:163-260).
+        // On another format it is refused in `layout_ir`.
         ir::XmlNodeKind::FieldAttr => &[
             "xmlname",
             "namespaceprefix",
+            "width",
             "autocalcfield",
             "unbound",
             "occurrence",
@@ -136,7 +144,8 @@ fn allowed_properties(kind: ir::XmlNodeKind) -> &'static [&'static str] {
         ],
         // `occurrence` is checked in `visit`: Required or Optional on a text attribute of a text or table element.
         ir::XmlNodeKind::TextAttr => &["xmlname", "namespaceprefix", "width", "unbound", "occurrence"],
-        ir::XmlNodeKind::Text => &["xmlname", "minoccurs", "maxoccurs"],
+        // `texttype` is checked in `visit`: BigText or Text on a text element without children.
+        ir::XmlNodeKind::Text => &["xmlname", "minoccurs", "maxoccurs", "texttype"],
     }
 }
 
@@ -151,6 +160,7 @@ pub fn layout(obj: &ast::Object) -> Layout {
         record_separator: None,
         table_separator: None,
         text_encoding_declared: false,
+        text_encoding: None,
         utf8: false,
         xml_utf8: false,
         namespaces: Vec::new(),
@@ -161,10 +171,12 @@ pub fn layout(obj: &ast::Object) -> Layout {
         format_evaluate_xml: false,
         format_evaluate_declared: None,
         no_default_fields_validation: false,
+        preserve_whitespace: false,
         reasons: Vec::new(),
         run_reasons: Vec::new(),
         export_reasons: Vec::new(),
     };
+    let (mut default_namespace, mut use_default_namespace) = (false, Some(false));
     for p in obj.properties() {
         let (name, value) = (p.name().to_ascii_lowercase(), p.value_text());
         match name.as_str() {
@@ -185,12 +197,10 @@ pub fn layout(obj: &ast::Object) -> Layout {
             "userequestpage" => {}
             // xmlport/TestXmlPortTextFormatsContracts.al: VariableText and FixedText pin these; an Xml port's encoding is not pinned.
             "textencoding" if value.trim().eq_ignore_ascii_case("utf8") => out.utf8 = true,
+            // Checked after the loop: MSDOS, WINDOWS and UTF16 are pinned for a VariableText export.
             "textencoding" => {
                 out.text_encoding_declared = true;
-                out.run_reasons.push(format!(
-                    "xmlport property textencoding = {} is not pinned for a run",
-                    value.trim()
-                ));
+                out.text_encoding = Some(value.trim().to_ascii_lowercase());
             }
             // xmlport/lt-af-xmlport/AfXmlPortEncoding.al: UTF8 and UTF16 on a Format = Xml port; any other value is refused below.
             "encoding" => out.encoding = Some(value.trim().to_string()),
@@ -271,10 +281,61 @@ pub fn layout(obj: &ast::Object) -> Layout {
                     value.trim()
                 )),
             },
+            // xmlport/lt-xmlport-query-datatransfer/XpTImportOptions.al:406 Import_PreserveWhitespace: an Xml import keeps the
+            // white space around a Text value (al-vm xmlports.rs). What an export writes is not pinned (:420 reads only that the
+            // UTF-16 output is no UTF-8); another format is not pinned.
+            "preservewhitespace" => match bool_prop(&value) {
+                Some(false) => {}
+                Some(true) => out.preserve_whitespace = true,
+                _ => out.run_reasons.push(format!(
+                    "xmlport property preservewhitespace = {} is not pinned",
+                    value.trim()
+                )),
+            },
+            // Checked after the loop, with DefaultNamespace.
+            "usedefaultnamespace" => use_default_namespace = bool_prop(&value),
+            "defaultnamespace" => default_namespace = true,
             n if INERT_OBJECT_PROPERTIES.contains(&n) => {}
             other => out
                 .run_reasons
                 .push(format!("xmlport property {other} is not supported yet")),
+        }
+    }
+    // xmlport/W7XmlPortTests.al:345 XmlPortExport_BytesPerDeclaredEncoding and xmlport/lt-xmlport-query-datatransfer/
+    // XpTEncoding.al:90-160: the bytes a VariableText export writes for MSDOS, WINDOWS and UTF16. Another format or value is
+    // not pinned.
+    if let Some(enc) = out.text_encoding.clone() {
+        if out.format != ir::XmlFormat::VariableText || !matches!(enc.as_str(), "msdos" | "windows" | "utf16") {
+            out.run_reasons.push(format!(
+                "xmlport property textencoding = {} is not pinned for a run",
+                enc.to_ascii_uppercase()
+            ));
+            out.text_encoding = None;
+        }
+    }
+    // A DefaultNamespace that UseDefaultNamespace does not use changes nothing on import: a root in a namespace is not found,
+    // one without is imported (xmlport/lt-xmlport-query-datatransfer/XpTNamespaces.al:Import_DefaultNs*, xmlport 73418;
+    // pages/lt-report-page-properties/06-xmlport-dnsfalse.al:45-49). What an export writes is not pinned (both read only that
+    // the UTF-16 output is no UTF-8); UseDefaultNamespace = true is not supported yet. Without DefaultNamespace it is inert.
+    if out.preserve_whitespace {
+        if out.format == ir::XmlFormat::Xml {
+            out.export_reasons
+                .push("xmlport property preservewhitespace = true (what an export writes is not pinned)".into());
+        } else {
+            out.preserve_whitespace = false;
+            out.run_reasons
+                .push("xmlport property preservewhitespace = true of a text format is not pinned".into());
+        }
+    }
+    if default_namespace {
+        match use_default_namespace {
+            Some(false) => out.export_reasons.push(
+                "xmlport property defaultnamespace without UseDefaultNamespace (what an export writes is not pinned)"
+                    .into(),
+            ),
+            _ => out
+                .run_reasons
+                .push("xmlport property defaultnamespace with UseDefaultNamespace is not supported yet".into()),
         }
     }
     if let Some(enc) = out.encoding.clone() {
@@ -415,6 +476,15 @@ fn visit(section: &ast::Section, parent: Option<usize>, out: &mut Layout) {
                 ));
             } else if pn == "xmlname" {
                 xml_name = crate::scan::unquote_xmlport(&p.value_text());
+            } else if pn == "texttype" {
+                // xmlport/lt-xmlport-bigtext/XmlPortBigText.al:178-266: BigText on a text element without children, on export
+                // and import. Text is the default. A BigText element with children, or another value, is not pinned.
+                let value = p.value_text().trim().to_ascii_lowercase();
+                if s.sections().next().is_some() || !matches!(value.as_str(), "bigtext" | "text") {
+                    out.run_reasons.push(format!(
+                        "property texttype = {value} of {section_name} {name} is not supported (not pinned)"
+                    ));
+                }
             } else if pn == "occurrence" {
                 // Pinned for a text attribute of the root, of a container text element and of a table element below it
                 // (xmlport/lt-qr-xmlport-container-occurs/QrXpContainerOccurs.al:441-560, QS_TextAttr_*; earlier on a table
@@ -590,6 +660,15 @@ fn occurs_refusal(layout: &Layout, i: usize) -> Option<String> {
 pub fn build(cx: &Context, mut reasons: Vec<String>) -> ir::XmlPort {
     let layout = cx.layout;
     let mut run_reasons = layout.run_reasons.clone();
+    let mut export_reasons = layout.export_reasons.clone();
+    // The one test of a Width on an Xml field attribute (AyXmlPortAttributeWidth.al:199) reads the UTF-16 export with
+    // InStream.Read into a Char, which BC reads two bytes at a time and the runtime one: not pinned for the runtime yet.
+    if layout.format != ir::XmlFormat::FixedText
+        && (0..layout.nodes.len())
+            .any(|i| layout.nodes[i].kind == ir::XmlNodeKind::FieldAttr && layout.property(i, "Width").is_some())
+    {
+        run_reasons.push("property width of a fieldattribute outside a FixedText port is not supported yet".into());
+    }
     let mut nodes: Vec<ir::XmlNode> = Vec::new();
     for (i, raw) in layout.nodes.iter().enumerate() {
         let sec = &raw.section;
@@ -643,6 +722,7 @@ pub fn build(cx: &Context, mut reasons: Vec<String>) -> ir::XmlPort {
                 .flatten()
                 .map(|v| v.trim().eq_ignore_ascii_case("required")),
             field_validate: layout.property(i, "FieldValidate").and_then(|v| bool_prop(&v)),
+            big_text: is_big_text(layout, i),
             triggers,
         };
         match kind {
@@ -764,13 +844,18 @@ pub fn build(cx: &Context, mut reasons: Vec<String>) -> ir::XmlPort {
                         match pos {
                             Some(p) => {
                                 let t = nodes[tn].table.expect("a position implies a table");
-                                // A FlowField exports its calculated value (assumption xmlport-exports-flowfield-calculated); a
-                                // FlowFilter has no value to write.
+                                // A FlowField exports its calculated value (assumption xmlport-exports-flowfield-calculated). An
+                                // Xml import skips a FlowFilter element (al-vm xmlports.rs); what an export writes for one is not
+                                // pinned (xmlport/lt-xmlport-flowfield-sum-count/XmlPortFlowFieldSumCount.al:243 reads only
+                                // that the UTF-16 output is no UTF-8).
                                 if !matches!(
                                     cx.members[t].fields[p].class,
                                     FieldClass::Normal | FieldClass::FlowField
                                 ) {
-                                    reasons.push(format!("{} is bound to a FlowFilter", raw.name));
+                                    export_reasons.push(format!(
+                                        "{} is bound to a FlowFilter (what an export writes is not pinned)",
+                                        raw.name
+                                    ));
                                 }
                                 node.field = Some(p);
                             }
@@ -817,6 +902,7 @@ pub fn build(cx: &Context, mut reasons: Vec<String>) -> ir::XmlPort {
         record_separator: layout.record_separator.clone(),
         table_separator: layout.table_separator.clone(),
         text_encoding_declared: layout.text_encoding_declared,
+        text_encoding: layout.text_encoding.clone(),
         utf8: layout.utf8,
         xml_utf8: layout.xml_utf8,
         namespaces: layout.namespaces.clone(),
@@ -826,12 +912,13 @@ pub fn build(cx: &Context, mut reasons: Vec<String>) -> ir::XmlPort {
         format_evaluate_xml: layout.format_evaluate_xml,
         format_evaluate_declared: layout.format_evaluate_declared.is_some(),
         no_default_fields_validation: layout.no_default_fields_validation,
+        preserve_whitespace: layout.preserve_whitespace,
         nodes,
         source_slot: cx.source_slot,
         destination_slot: cx.destination_slot,
         unsupported: reasons,
         run_unsupported: run_reasons,
-        export_unsupported: layout.export_reasons.clone(),
+        export_unsupported: export_reasons,
     }
 }
 

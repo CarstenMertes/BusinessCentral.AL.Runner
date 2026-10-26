@@ -97,6 +97,18 @@ impl Session {
                 ));
             }
         }
+        // `Lookup = false` on a control over a field with a TableRelation, with no OnLookup: Lookup() opens no page and raises
+        // nothing (pageext/lt-u-page-props/UPageProps.al:147-154 PageExt_LookupOnAndOff `ext_off_pages_opened = 0`, a page
+        // extension's control). With an OnLookup, or on a request page, it is not pinned.
+        if method == PageMethod::Lookup && lit("lookup").is_some_and(|v| v.eq_ignore_ascii_case("false")) {
+            if !found.is_empty() || self.is_request_page(st) {
+                return unsupported(format!(
+                    "TestField.Lookup on control {} with Lookup = false and an OnLookup trigger, or on a request page (not pinned)",
+                    ctl.name
+                ));
+            }
+            return Ok(Value::Null);
+        }
         let (owner, routine) = match found.as_slice() {
             [one] => *one,
             [] if method == PageMethod::DrillDown => {
@@ -135,6 +147,7 @@ impl Session {
             }
         };
         st.borrow_mut().refresh = false;
+        let marked_only_before = !self.has_source(st) || self.page_rec(st).borrow().marked_only;
         let result = if method == PageMethod::Lookup {
             // OnLookup(var Text): Boolean. The text it writes back replaces the field's value, and
             // the Boolean says whether the user picked anything (corpus
@@ -185,6 +198,7 @@ impl Session {
             st.borrow_mut().refresh = false;
         }
         let v = result?;
+        self.drilldown_marked_only_refresh(st, method, marked_only_before);
         // The client refreshes the page after an AssistEdit trigger: OnAfterGetRecord runs again
         // (pages/lt-page-runtime/P82Lookups.al:AssistEdit_Trigger, `OnAssistEdit;OnAfterGetRecord(L1)`). A DrillDown and a Lookup are not pinned to.
         // The row is not read again: a field the trigger set on the record stays (pages/lt-page-editability-width-lookups/
@@ -198,6 +212,14 @@ impl Session {
             && !self.declares(st, "onnextrecord")
             && (self.declares(st, "onaftergetrecord") || self.declares(st, "onaftergetcurrrecord"))
         {
+            // On a List page the refresh is not pinned: P82Lookups.al pins it on a card, and on a list page BC logs no
+            // OnAfterGetRecord after the trigger (errors/lt-ms-refusals-129/P129CallstackPageControls.al:252, no
+            // `assistedit 2`) under conditions this runtime does not tell apart yet.
+            if self.engine.object_facts[st.borrow().object as usize].page_type == Some(al_ir::PageType::List) {
+                return unsupported(
+                    "TestField.AssistEdit on a List page that declares OnAfterGetRecord: whether the page is refreshed afterwards is not pinned",
+                );
+            }
             let r = (|| {
                 self.populate_current(st)?;
                 self.page_trigger(st, "onaftergetcurrrecord", vec![])?;
@@ -208,6 +230,94 @@ impl Session {
         }
         self.run_refresh(st)?;
         Ok(v)
+    }
+
+    /// After an OnDrillDown that turned MarkedOnly on for Rec and called `CurrPage.Update(false)`, a list with OnAfterGetRecord or
+    /// OnAfterGetCurrRecord drops the rows it held, so its moves read the marked rows from the table, as a list without those
+    /// triggers does (al-runner issue 5844, the reporter's run on real BC; not pinned by the corpus yet).
+    fn drilldown_marked_only_refresh(&mut self, st: &St, method: PageMethod, marked_only_before: bool) {
+        let shape = {
+            let s = st.borrow();
+            method == PageMethod::DrillDown && s.open && s.host.is_none() && s.parts.is_empty() && !s.draft
+        };
+        if !shape
+            || marked_only_before
+            || !self.has_source(st)
+            || !self.page_rec(st).borrow().marked_only
+            || !self.is_list(st)
+            || self.declares(st, "onfindrecord")
+            || self.declares(st, "onnextrecord")
+        {
+            return;
+        }
+        let row_triggers = self.declares(st, "onaftergetrecord") || self.declares(st, "onaftergetcurrrecord");
+        let update_false = {
+            let s = st.borrow();
+            s.refresh && s.refresh_by_update && s.refresh_update_false
+        };
+        // Without CurrPage.Update the page keeps showing the rows without MarkedOnly (`marked_only_unshown_call`). Pinned for a
+        // page without the row triggers only (corpus pages/lt-sc-outside-pages/ScDrillDownMarkedOnly.al:422
+        // DrilldownWithoutUpdateListAndGoTo); with them the later TestPage calls are refused.
+        if !st.borrow().refresh {
+            if row_triggers {
+                st.borrow_mut().marked_only_unpinned = true;
+            } else {
+                st.borrow_mut().marked_only_unshown = true;
+            }
+            return;
+        }
+        if !update_false || !row_triggers || st.borrow().window.is_empty() {
+            return;
+        }
+        // Pinned: pages/lt-sc-outside-pages/ScDrillDownMarkedOnly.al (codeunit 89016).
+        let mut s = st.borrow_mut();
+        s.window.clear();
+        s.window_from_start = false;
+        s.window_top_unread = false;
+    }
+
+    /// After an OnDrillDown that turned MarkedOnly on for Rec without `CurrPage.Update`, on a list without OnFindRecord,
+    /// OnNextRecord and the row triggers: the client still shows the rows of the view without MarkedOnly, so First, Next and
+    /// GoToRecord walk them (al-runner issue 5844, corpus writer's probe pages/lt-sc-outside-pages/ScDrillDownMarkedOnly.al
+    /// DrilldownWithoutUpdateListAndGoTo `listed=[ 10 20] goto20=Yes`). Close ends it; any
+    /// other TestPage call before that is not pinned and is refused.
+    pub(super) fn marked_only_unshown_call(
+        &mut self,
+        method: al_builtins::page_op::PageOp,
+        st: &St,
+        f: impl FnOnce(&mut Self) -> Result<Value, Signal>,
+    ) -> Result<Value, Signal> {
+        use al_builtins::page_op::PageOp;
+        if st.borrow().marked_only_unpinned {
+            if method == PageOp::TestPageClose {
+                st.borrow_mut().marked_only_unpinned = false;
+                return f(self);
+            }
+            return unsupported(format!(
+                "{method} after an OnDrillDown turned MarkedOnly on without CurrPage.Update on a page with OnAfterGetRecord or \
+                 OnAfterGetCurrRecord (what the page shows then is not pinned)"
+            ));
+        }
+        if !st.borrow().marked_only_unshown {
+            return f(self);
+        }
+        match method {
+            PageOp::TestPageClose => {
+                st.borrow_mut().marked_only_unshown = false;
+                f(self)
+            }
+            PageOp::TestFieldValue => f(self),
+            PageOp::TestPageFirst | PageOp::TestPageNext | PageOp::TestPageGoToRecord => {
+                let rec = self.page_rec(st);
+                rec.borrow_mut().marked_only = false;
+                let r = f(self);
+                rec.borrow_mut().marked_only = true;
+                r
+            }
+            _ => unsupported(format!(
+                "{method} after an OnDrillDown turned MarkedOnly on without CurrPage.Update (what the page shows then is not pinned)"
+            )),
+        }
     }
 
     /// `Lookup()` on a control with no OnLookup trigger of its own: the source table field's
@@ -426,10 +536,16 @@ impl Session {
         pos: Option<usize>,
     ) -> Result<Value, Signal> {
         let current = self.control_value(st, idx)?;
-        if !Self::same_values(
+        let holds_value = !Self::same_values(
             std::slice::from_ref(&current),
             std::slice::from_ref(&Value::default_for(&field.ty)),
-        ) {
+        );
+        // A field that holds a value: the lookup page opens on the related row (pages/lt-page-runtime/P82Lookups.al:247
+        // Lookup_TableRelation_Ok `handler-first = G1`; pages/lt-an-testpage-640/AnTestPageTests.al:480). Not built yet: making it
+        // run lets pageext/lt-u-page-props/UPageProps.al:PageExt_LookupOnAndOff pass, after which four later tests of that
+        // codeunit run and fail on behaviors that are not modelled (a page extension's DataCaptionExpression, an API page's
+        // caption, UpdatePropagation on a card over the part's table, a profileextension's Enabled).
+        if holds_value {
             return unsupported(
                 "Lookup over a TableRelation from a field that already holds a value (the page's position is not pinned)",
             );
@@ -605,6 +721,11 @@ impl Session {
     /// does nothing and raises nothing (corpus handlers/TestPageActionEnabledSourceField_Tests.al,
     /// TPAE_ActionEnabledBoolField_FalseRow_IsDisabledAndItsTriggerIsSkipped).
     pub(super) fn action_invoke(&mut self, st: &St, idx: usize) -> Result<Value, Signal> {
+        if st.borrow().expr_set_no_source {
+            return unsupported(
+                "an action after a SetValue on a control bound to an expression of a page with no source table (the refresh after the action is not modelled)",
+            );
+        }
         // A duplicate-key Insert the action made comes out at the page's next read of the table, still inside Invoke, with the
         // wrapped code (errors/lt-az-error-texts/AzErrorTexts.al:167-185 PageAction_DuplicateInsert: `TestWrapped:CSideDuplicateKey`).
         // One that was pending before the action is not pinned and keeps its code.
@@ -1671,6 +1792,19 @@ impl Session {
             })
         };
         rows.push(row(self)?);
+        // A list that reads each row once more in its key (`reads_once_more_in_its_key`) reads the row it starts from once more
+        // here, and once more before the refresh's own read (pages/lt-sg-list-key-moves/SgListKeyMovesTests.al SG_Key_FourRows_Moves
+        // `update` `R:C;U;R:C;R:C;R:C;R:B;R:A;R:C;R:D;R:C;R:C;R:C;C:C;` against SG_Pk_FourRows_Moves, and the same in
+        // SG_Key_OneRow_Open and SG_Key_ThirtyRows_Moves; corpus bump PR 738).
+        let once_more = self.still_reads_once_more(st);
+        if once_more && !read_first {
+            return unsupported(
+                "the reads of a refresh after a control's OnValidate on a list in a key other than the primary key (not pinned)",
+            );
+        }
+        if once_more {
+            self.populate_current(st)?;
+        }
         let mut moved = false;
         for _ in 1..Self::WINDOW {
             if !self.nav_next(st, 1)? {
@@ -1734,6 +1868,9 @@ impl Session {
         self.record_op(RecordOp::Get, rec, &mut pk)?;
         // A view of one row has no step back onto it (a list of one row opens with RRC, not RRRC; Action_List_FewRows).
         if more_rows {
+            self.populate_current(st)?;
+        }
+        if once_more {
             self.populate_current(st)?;
         }
         // Without OnAfterGetCurrRecord the refresh reads nothing more (AiListOrderTests.al:233 Keep_Plain, :335

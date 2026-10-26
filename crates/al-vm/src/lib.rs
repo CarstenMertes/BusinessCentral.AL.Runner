@@ -83,7 +83,7 @@ pub struct Engine {
     /// Per object, per routine: why it cannot run, if it cannot.
     pub blocked: Vec<Vec<Option<String>>>,
     /// Store schema per table object.
-    pub tables: Vec<Option<Arc<al_data::TableDef>>>,
+    pub tables: Arc<[Option<Arc<al_data::TableDef>>]>,
     /// Event publishers and their subscribers, resolved by name.
     pub events: events::Registry,
     /// The BC version this program runs as; `None` gets the newest behaviour (ADR-015 3.4).
@@ -247,7 +247,7 @@ impl Engine {
         dotnet: dotnet::DotNetConfig,
     ) -> Arc<Engine> {
         let program: Arc<ir::Program> = program.into();
-        let tables = program
+        let tables: Vec<Option<Arc<al_data::TableDef>>> = program
             .objects
             .iter()
             .enumerate()
@@ -370,7 +370,7 @@ impl Engine {
         Arc::new(Engine {
             program,
             blocked,
-            tables,
+            tables: tables.into(),
             events,
             target,
             dotnet,
@@ -397,6 +397,58 @@ impl Engine {
             derived: Default::default(),
             install_facts: Default::default(),
         })
+    }
+
+    /// Puts back what a run sets on an engine after [`Engine::with_config`], so that a warm server can run its next
+    /// request on the engine of the last one (al-runner issue 5856) as on a new engine. Every field is named here: a new
+    /// field fails to compile until it is either reset or listed as worked out from the program and the config alone.
+    /// The .NET host is the caller's to set again (`dotnet`).
+    pub fn reset_run_state(&mut self) {
+        let Engine {
+            // Set by a run.
+            unseeded,
+            demo_tables,
+            company_refusal,
+            skipped_apps,
+            resource_overrides,
+            resources_read,
+            test_data,
+            // From the program and the config of `with_config` (and al-testrun's `global_triggers_find_unavailable`,
+            // which reads only the compile): the same for every run over this program.
+            program: _,
+            blocked: _,
+            tables: _,
+            events: _,
+            target: _,
+            dotnet: _,
+            platform_unseeded: _,
+            unevaluable_init: _,
+            table_facts: _,
+            object_facts: _,
+            field_facts: _,
+            facts: _,
+            exec: _,
+            codeunits: _,
+            // Caches that are worked out from the program on first use.
+            profile_seeds: _,
+            delete_subscribed: _,
+            positions_by_object: _,
+            served_tables: _,
+            derived: _,
+            install_facts: _,
+            // Kept: the listings shared under it depend on the program only (`platform::SharedListings`).
+            uid: _,
+        } = self;
+        unseeded.clear();
+        demo_tables.clear();
+        *company_refusal = None;
+        skipped_apps.clear();
+        match resource_overrides.get_mut() {
+            Ok(o) => o.clear(),
+            Err(e) => e.into_inner().clear(),
+        }
+        *resources_read.get_mut() = false;
+        *test_data = None;
     }
 
     /// The first compiled codeunit with this id, in program order: the object `Codeunit.Run(Id)` runs. Found in an index
@@ -581,6 +633,9 @@ pub struct Session {
     pub(crate) baseline_rows: std::collections::BTreeSet<u32>,
     /// Whether the builtin being called has its result used (ADR-011 `ret_used`).
     pub(crate) ret_used: bool,
+    /// The form of the text of the `FieldError` being called, for the text `GetLastErrorText(true)` answers
+    /// (`Ctx::field_error_with_form`); `None` outside such a call.
+    pub(crate) field_error_form: Option<al_builtins::native::ErrorTextForm>,
     /// The parameters of the routine that just failed with an error, as it left them:
     /// the caller writes its `var` arguments back before it handles the error.
     pub(crate) error_finals: Option<Vec<Value>>,
@@ -613,6 +668,9 @@ pub struct Session {
     pub(crate) scratch_messages: Option<Vec<String>>,
     /// `--tdd` (ADR-051 decision 5): the stubs that ran since the last [`Session::take_tdd_reached`].
     pub(crate) tdd_reached: std::collections::BTreeSet<String>,
+    /// The filters in filter group 1 (the global group) last set on a database record, per table object: BC keeps them on
+    /// every record of the table for the rest of the session (records.rs `global_group_check`).
+    pub(crate) global_group1: std::collections::HashMap<u32, String>,
     /// Value capture and loop tracking (`capture.rs`); `None`: off, and the statements run as they always did.
     pub(crate) capture: Option<Box<capture::Capture>>,
     /// Which executable form the next routine runs (one byte): the plain one, the captured one (a capture is on and the
@@ -769,7 +827,7 @@ impl Session {
             media.clone(),
         )));
         if let Some(td) = &engine.test_data {
-            store = store.with_backing(Rc::new(testdata::TestBacking::new(engine.clone(), td.clone())));
+            store = store.with_backing(Rc::new(testdata::TestBacking::new(&engine, td.clone())));
         }
         let sequences = restored_sequences(&engine, &company);
         al_builtins::ops::set_turkic_code(al_builtins::native::is_turkic_language(host.identity.global_language()));
@@ -819,6 +877,7 @@ impl Session {
             },
             baseline_rows: Default::default(),
             ret_used: true,
+            field_error_form: None,
             error_finals: None,
             var_alias_watch: Vec::new(),
             frames: Vec::new(),
@@ -850,6 +909,7 @@ impl Session {
             http_policy: None,
             scratch_messages: None,
             tdd_reached: Default::default(),
+            global_group1: Default::default(),
             capture: None,
             form: Form::Plain,
             debug: None,
@@ -950,6 +1010,9 @@ impl Session {
                 request_only_page: false,
                 zero_date_view_failed: false,
                 report_executed: Vec::new(),
+                report_run_modal_done: Vec::new(),
+                print_only_if_detail: false,
+                csv_written: None,
                 report_save_tried: Vec::new(),
                 prepared: Vec::new(),
                 rp_init_done: Vec::new(),
@@ -1453,6 +1516,50 @@ impl Session {
         }))
     }
 
+    /// A RecordRef (held by a Variant) handed by value to a Record parameter of table `table`: of the same table, the Record
+    /// `ops::record_ref_into_record` makes (record/lt-ar-records/ArRecordProbes.al:366 VariantRecordRef_PassedToRecordParameter).
+    /// Of another table it raises ObjectDefinitionChanged, naming the first field of the ref's table: pinned for that field a Code
+    /// where the parameter's table has an Integer (ArRecordProbes.al SG_VariantRecordRef_OtherTable_AssignAndParameter `param`,
+    /// corpus bump PR 738); other pairs of types, and a ref that is not open, raise an error whose text is not pinned.
+    pub(crate) fn record_ref_into_record_param(
+        &mut self,
+        h: &Rc<RefCell<al_builtins::value::LibraryValue>>,
+        table: u32,
+    ) -> Result<Value, Signal> {
+        let other = match &*h.borrow() {
+            al_builtins::value::LibraryValue::RecordRef(rec) if rec.borrow().table == table => {
+                return al_builtins::ops::record_ref_into_record(&rec.borrow());
+            }
+            al_builtins::value::LibraryValue::RecordRef(rec) => rec.borrow().table,
+            al_builtins::value::LibraryValue::Empty => {
+                return Err(Signal::Error(Box::new(al_builtins::native::unpinned_error())));
+            }
+            _ => {
+                return Err(Signal::Unsupported(
+                    "a RecordRef value that is no record into a Record parameter".into(),
+                ));
+            }
+        };
+        let first = |t: u32| {
+            self.engine.program.objects[t as usize]
+                .table
+                .as_ref()
+                .and_then(|s| s.fields.first())
+                .map(|f| (f.name.clone(), f.ty.clone()))
+        };
+        if let (Some((_, RtType::Integer)), Some((name, RtType::Code(_)))) = (first(table), first(other)) {
+            return Err(Signal::Error(Box::new(al_builtins::native::AlError {
+                message: format!(
+                    "The definition of the {name} field has changed; old type: Integer, new type: Code. Start your activity again."
+                ),
+                code: "ObjectDefinitionChanged".into(),
+                call_stack: String::new(),
+                ..Default::default()
+            })));
+        }
+        Err(Signal::Error(Box::new(al_builtins::native::unpinned_error())))
+    }
+
     /// A record passed by value is a copy (ADR-010). A temporary record's copy
     /// gets an independent, empty table of its own (corpus
     /// record/TestTempTableContracts.al:TempVar_PassedByValue_CallerNotAffected).
@@ -1641,6 +1748,15 @@ impl Session {
                     Value::Record(Rc::new(RefCell::new(st)))
                 }
                 (Value::Record(rc), false) => self.record_by_value(&rc),
+                // A Variant holding a RecordRef handed by value to a Record parameter: see `record_ref_into_record_param`.
+                (Value::Library(name, h), false)
+                    if name.eq_ignore_ascii_case("RecordRef") && matches!(r.locals[i].ty, RtType::Record(..)) =>
+                {
+                    let RtType::Record(table, _) = &r.locals[i].ty else {
+                        unreachable!()
+                    };
+                    self.record_ref_into_record_param(&h, *table)?
+                }
                 // An array passed by value is a copy: the callee's writes and Clear do not reach the caller
                 // (misc/W5Clear.al:Clear_ArrayPassedByValue).
                 (Value::Array(a), false) => {

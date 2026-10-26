@@ -63,6 +63,9 @@ pub enum ReadFailure {
     Unsupported(String),
 }
 
+/// The start of the `ReadFailure::Unsupported` text for a root element in a namespace; the local name follows.
+pub const ROOT_IN_NAMESPACE: &str = "a root element in a namespace: ";
+
 /// Reads the root element of `text`.
 pub fn parse(text: &str) -> Result<Elem, ReadFailure> {
     let text = text.strip_prefix('\u{feff}').unwrap_or(text);
@@ -103,17 +106,32 @@ pub fn serialize_roots(roots: &[Elem], encoding: &str) -> String {
 /// An element on one line with no indentation: `<Item><Id>1</Id></Item>`. `None` when an element has no text (how an
 /// empty value is written without indentation is not pinned) or holds attributes.
 pub fn compact(e: &Elem) -> Option<String> {
+    // Attributes in order and an element without content as `<Name />` (xmlport/lt-bd-xmlport/BdXmlPort.al:473
+    // BdInlineSchema_Attributes, :436 BdInlineSchema_FieldTypesEmptyValues: `<Row Id="1" ... Note="">`, `<Name />`). An
+    // element with attributes and no content is not pinned.
     fn go(e: &Elem, out: &mut String) -> Option<()> {
-        if !e.attrs.is_empty() || e.children.is_empty() {
+        let empty = e.children.iter().all(|c| matches!(c, Node::Text(t) if t.is_empty()));
+        if empty && !e.attrs.is_empty() {
             return None;
         }
         out.push('<');
         out.push_str(&e.name);
+        if empty {
+            out.push_str(" />");
+            return Some(());
+        }
+        for (n, v) in &e.attrs {
+            out.push(' ');
+            out.push_str(n);
+            out.push_str("=\"");
+            crate::xml::escape_attr(v, out);
+            out.push('"');
+        }
         out.push('>');
         for c in &e.children {
             match c {
                 Node::Elem(c) => go(c, out)?,
-                Node::Text(t) if t.is_empty() => return None,
+                Node::Text(t) if t.is_empty() => {}
                 Node::Text(t) => crate::xml::escape_text(t, out),
             }
         }
@@ -298,7 +316,13 @@ mod tests {
             parse("<a xmlns=\"u\"><b/></a>"),
             Err(ReadFailure::Unsupported(_))
         ));
-        assert!(matches!(parse("<a xmlns=\"u\"/>"), Ok(e) if e.attr("xmlns") == Some("u")));
+        // A root element in a namespace is told apart for the port to report (al-vm xmlports.rs); an empty default namespace
+        // is none.
+        assert!(
+            matches!(parse("<a xmlns=\"u\"/>"), Err(ReadFailure::Unsupported(w)) if w == format!("{ROOT_IN_NAMESPACE}a"))
+        );
+        assert!(matches!(parse("<a xmlns=\"\"/>"), Ok(e) if e.attr("xmlns") == Some("")));
+        assert!(parse("<a><b xmlns=\"u\"/></a>").is_ok());
     }
 
     #[test]

@@ -1689,6 +1689,12 @@ codeunit 50100 C
         R.SetFilter(Id, '1..x');
         exit(R.GetFilter(Id));
     end;
+    procedure Star(): Text
+    var R: Record FRow;
+    begin
+        R.SetFilter(Id, '*');
+        exit(R.GetFilter(Id));
+    end;
 }
 "#;
 
@@ -1699,13 +1705,27 @@ fn make_int_filter_is_raised_for_a_word_of_letters() {
     assert_eq!(text(run(INT_FILTER, "Word")), "5|MakeIntFilter(abc)");
 }
 
-// Whether BC raises `MakeIntFilter` for another text that does not evaluate (`1..x`, `1.5`, `*`) is not pinned: with a subscriber
-// present the SetFilter is refused, not answered with the evaluate error of record/lt-record-read/RcAFilters.al:392-414 (measured
-// with subscribers that change nothing) (docs/probes-needed.md, corpus #657).
+// The failing piece of a range (`1..x`) is asked about by MakeIntFilter (events/lt-bd-filter-events/BdFilterEvents.al:BdFilter_Int_1
+// to _4). This subscriber leaves `x` as it is, so the evaluate error follows (record/lt-record-read/RcAFilters.al:392-414).
+#[test]
+fn with_a_make_int_filter_subscriber_an_unrepaired_range_piece_raises_the_evaluate_error() {
+    match run(INT_FILTER, "Range") {
+        Err(Signal::Error(e)) => assert!(
+            e.message
+                .contains("The value \"x\" can't be evaluated into type Integer"),
+            "{}",
+            e.message
+        ),
+        other => panic!("{other:?}"),
+    }
+}
+
+// Whether BC raises `MakeIntFilter` for another text that does not evaluate (`*`) is not pinned: with a subscriber present the
+// SetFilter is refused, not answered with the evaluate error (docs/probes-needed.md, corpus #657).
 #[test]
 fn with_a_make_int_filter_subscriber_another_bad_text_is_refused() {
-    match run(INT_FILTER, "Range") {
-        Err(Signal::Unsupported(r)) => assert!(r.contains("MakeIntFilter") && r.contains("1..x"), "{r}"),
+    match run(INT_FILTER, "Star") {
+        Err(Signal::Unsupported(r)) => assert!(r.contains("MakeIntFilter") && r.contains("*"), "{r}"),
         other => panic!("{other:?}"),
     }
 }

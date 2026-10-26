@@ -199,6 +199,25 @@ impl Session {
                     .unwrap_or_default();
                 Ok(Value::Text(path.into()))
             }
+            // ImportFile(): true while the port imports, false while it exports, read in OnPreXmlPort and OnPostXmlPort
+            // (xmlport/lt-xmlport-query-datatransfer/XmlPortFixtures.al:265 and :275, xmlport 73421: XpTExportBasic.al:211
+            // Export_TextAndAttributeElements, XpTImportOptions.al:268-307). Outside a run and the setter are not pinned.
+            ids::XMLPORT_IMPORTFILE_1 => {
+                let inst = self.xp_instance(receiver)?;
+                if !args.is_empty() {
+                    return unsupported("Xmlport.ImportFile with an argument (not pinned)");
+                }
+                let dir = inst
+                    .borrow()
+                    .xp_text
+                    .iter()
+                    .find(|(k, _)| *k == 13)
+                    .map(|(_, v)| v == "1");
+                match dir {
+                    Some(import) => Ok(Value::Boolean(import)),
+                    None => unsupported("Xmlport.ImportFile outside OnPreXmlPort or OnPostXmlPort (not pinned)"),
+                }
+            }
             // Filename(): empty until set, per instance (P94XpFilename.al: Fresh_Empty, Set_ReadBack, Set_TwoInstancesIndependent).
             ids::XMLPORT_FILENAME_1 => {
                 let inst = self.xp_instance(receiver)?;
@@ -430,6 +449,13 @@ impl Session {
     }
 
     fn xp_run(&mut self, inst: &Inst, dir: Dir, ret_used: bool, static_form: bool) -> Result<Value, Signal> {
+        let r = self.xp_run_tx(inst, dir, ret_used, static_form);
+        // The direction ImportFile() reads holds only while the port runs (see XMLPORT_IMPORTFILE_1).
+        inst.borrow_mut().xp_text.retain(|(k, _)| *k != 13);
+        r
+    }
+
+    fn xp_run_tx(&mut self, inst: &Inst, dir: Dir, ret_used: bool, static_form: bool) -> Result<Value, Signal> {
         // An export started inside a TryFunction whose result is used: its triggers' Insert and Modify are the export's, not
         // writes of the try (xmlport/lt-y-xmlport-props/YXmlPortProps.al:861, RS_XmlPortRequestPageRec_Export: in
         // OnPreXmlPort Modify answers false and Insert writes the row the export then lists), as an import's are
@@ -521,8 +547,30 @@ impl Session {
             inst.borrow_mut().xp_text.retain(|(k, _)| *k != 12);
             inst.borrow_mut().xp_text.push((12, text));
         }
+        let mark = |inst: &Inst| {
+            inst.borrow_mut()
+                .xp_text
+                .push((13, if dir == Dir::Import { "1" } else { "0" }.to_string()));
+        };
+        let unmark = |inst: &Inst| inst.borrow_mut().xp_text.retain(|(k, _)| *k != 13);
         if let Some(r) = pre {
-            self.call(schema.object, r, inst.clone(), Vec::new())?;
+            mark(inst);
+            self.xp_run_object_trigger(inst, r)?;
+            unmark(inst);
+            // Break, BreakUnbound and Quit in OnPreXmlPort end an import there: nothing is read, OnPostXmlPort does not run and
+            // the import succeeds (xmlport/lt-ay-xmlport/AyXmlPortFlowTriggers.al:352-389, Import_pre_*: `pre1;`, no rows).
+            // An export writes the declaration alone (:584-624); whether a line break follows it is not pinned. Skip there,
+            // and the value of a guarded import, are not pinned either.
+            if let Some(flow) = Self::xp_flow(inst) {
+                Self::xp_clear_flow(inst);
+                if dir == Dir::Export || ret_used || flow == Flow::Skip {
+                    return unsupported(
+                        "Break, BreakUnbound, Quit or Skip in OnPreXmlPort of an export, a guarded import, or Skip there (not pinned)",
+                    );
+                }
+                inst.borrow_mut().xp_text.retain(|(k, _)| *k != 12);
+                return Ok(Value::Null);
+            }
         }
         Self::xp_clear_flow(inst);
         let run = match dir {
@@ -547,7 +595,9 @@ impl Session {
             if matches!(result, Value::Boolean(false)) {
                 return unsupported("OnPostXmlPort after a guarded run that returned false (not pinned)");
             }
+            mark(inst);
             self.call(schema.object, r, inst.clone(), Vec::new())?;
+            unmark(inst);
         }
         Ok(result)
     }
@@ -653,12 +703,22 @@ impl Session {
         let [top] = tops[..] else {
             return unsupported("XmlPort import with more than one top-level element (not pinned)");
         };
+        if xp.text_encoding.as_deref() == Some("msdos") {
+            return unsupported("XmlPort import into a VariableText port with TextEncoding = MSDOS (not pinned)");
+        }
         // An import of a text port whose root is a table element is refused by BC, an export is not
         // (xmlport/lt-xmlport-query-datatransfer/XpTVariableText.al:Csv_ImportBasic and the other Csv_Import tests).
         if xp.format != ir::XmlFormat::Xml && xp.nodes[top].kind == ir::XmlNodeKind::Table {
             return Err(xerr(
                 "If you choose XMLport format Fixed Text or Variable Text, then the root element must have source type Text.",
                 "XmlPortInvalidNodeType",
+            ));
+        }
+        // The root error above is pinned for WINDOWS and UTF16 (XpTEncoding.al:165-205); an import that gets further is not.
+        if let Some(enc) = &xp.text_encoding {
+            return unsupported(format!(
+                "XmlPort import into a VariableText port with TextEncoding = {} (not pinned)",
+                enc.to_ascii_uppercase()
             ));
         }
         let table_root = root_table_element(schema, top);
@@ -674,13 +734,36 @@ impl Session {
         if xp.format != ir::XmlFormat::Xml {
             return self.xp_import_text(inst, schema, top, &text);
         }
+
         let root = match al_builtins::xmlport::parse(&text) {
             Ok(r) => r,
             Err(ReadFailure::Malformed(Some(message))) => return Err(xerr(message, "XmlPortImport:Xml")),
             Err(ReadFailure::Malformed(None)) => {
                 return unsupported("XmlPort import of a malformed document whose error text is not pinned");
             }
-            Err(ReadFailure::Unsupported(why)) => return unsupported(format!("XmlPort import of {why}")),
+            // A port without namespaces does not find a root element that is in one, by a default namespace or a prefix
+            // (xmlport/lt-xmlport-query-datatransfer/XpTNamespaces.al:Import_NoNamespaceXmlportWithNamespacedInput and, for a
+            // port whose DefaultNamespace is not used, Import_DefaultNsMatching, _DefaultNsWrong, _DefaultNsViaPrefixDeclaration;
+            // xmlport/lt-bd-xmlport/BdXmlPort.al:315 BdDefaultNamespace_OnRoot, strict and lax; pages/lt-report-page-properties/
+            // 06-xmlport-dnsfalse.al:45). Pinned for a text element root of the document's local name.
+            Err(ReadFailure::Unsupported(why)) => {
+                if let Some(local) = why.strip_prefix(al_builtins::xmlport::ROOT_IN_NAMESPACE) {
+                    if xp.namespaces.is_empty()
+                        && xp.nodes.iter().all(|n| n.ns_prefix.is_none())
+                        && xp.nodes[top].kind == ir::XmlNodeKind::Text
+                        && local == xp.nodes[top].xml_name
+                    {
+                        return Err(xerr(
+                            format!("The element <{local}> cannot be found in the object description."),
+                            "XmlPortElementNotFound",
+                        ));
+                    }
+                    return unsupported(
+                        "XmlPort import of a document whose root element is in a namespace (not pinned)",
+                    );
+                }
+                return unsupported(format!("XmlPort import of {why}"));
+            }
         };
         if xp.inline_schema {
             return unsupported(
@@ -703,6 +786,35 @@ impl Session {
                         .is_some_and(|p| !declared.iter().any(|(q, _)| q == p))
                 })
                 || e.elements().any(|c| foreign_prefix(c, declared))
+        }
+        // With PreserveWhiteSpace, white space between elements is not pinned.
+        if xp.preserve_whitespace {
+            fn spaced(e: &Elem) -> bool {
+                (e.elements().next().is_some()
+                    && e.children.iter().any(|c| matches!(c, Node::Text(t) if !t.is_empty())))
+                    || e.elements().any(spaced)
+            }
+            if spaced(&root) {
+                return unsupported(
+                    "XmlPort import with PreserveWhiteSpace of white space between elements (not pinned)",
+                );
+            }
+        }
+        // A port without namespaces ignores a prefix that the root declares and no element uses
+        // (XpTNamespaces.al:Import_NoNamespaceXmlportWithUnusedPrefixDecl, `xmlns:z` on the root: imported).
+        let mut root = root;
+        if xp.namespaces.is_empty() {
+            fn uses_prefix(e: &Elem, p: &str) -> bool {
+                e.name.split_once(':').is_some_and(|(q, _)| q == p) || e.elements().any(|c| uses_prefix(c, p))
+            }
+            let unused: Vec<String> = root
+                .attrs
+                .iter()
+                .filter_map(|(n, _)| n.strip_prefix("xmlns:"))
+                .filter(|p| !uses_prefix(&root, p))
+                .map(|p| format!("xmlns:{p}"))
+                .collect();
+            root.attrs.retain(|(n, _)| !unused.contains(n));
         }
         if foreign_prefix(&root, &xp.namespaces) {
             return unsupported("XmlPort import of a document with namespaces the port does not declare (not pinned)");
@@ -755,10 +867,42 @@ impl Session {
                 .collect();
             return utf16_declared_utf8(String::from_utf16_lossy(&units));
         }
-        if bytes.len() >= 2 && bytes[0] == 0 && bytes[1] == b'<' {
-            return unsupported(
-                "XmlPort import of a UTF-16 big endian document without a byte order mark (not pinned)",
-            );
+        // A UTF-16 big endian document, with the byte order mark FE FF or without one when it starts with `<`, is read as UTF-16
+        // when it declares utf-16 or (without a mark) nothing; one without a mark that declares utf-8 fails at the first NUL after
+        // the declaration (xmlport/lt-ah-xmlport/AhXmlPort.al:543-597, BigEndian_*: `'.', hexadecimal value 0x00, is an invalid
+        // character. Line 1, position 39.` after the 38 characters of the declaration). Other declarations are not pinned.
+        let bom_be = bytes.starts_with(&[0xFE, 0xFF]);
+        if bom_be || (bytes.len() >= 2 && bytes[0] == 0 && bytes[1] == b'<') {
+            let body = if bom_be { &bytes[2..] } else { &bytes[..] };
+            let units: Vec<u16> = body.chunks_exact(2).map(|p| u16::from_be_bytes([p[0], p[1]])).collect();
+            let text = String::from_utf16_lossy(&units);
+            let declared = text
+                .strip_prefix("<?xml")
+                .and_then(|_| text.split_once("?>"))
+                .map(|(decl, rest)| {
+                    (
+                        decl.to_ascii_lowercase(),
+                        decl.chars().count() + 2,
+                        rest.starts_with('<'),
+                    )
+                });
+            let says = |d: &str, enc: &str| {
+                d.contains(&format!("encoding=\"{enc}\"")) || d.contains(&format!("encoding='{enc}'"))
+            };
+            return match declared {
+                Some((d, _, _)) if says(&d, "utf-16") => Ok(text),
+                None if !bom_be => Ok(text),
+                Some((d, len, true)) if !bom_be && says(&d, "utf-8") && !d.contains('\n') && !d.contains('\r') => {
+                    Err(xerr(
+                        format!(
+                            "'.', hexadecimal value 0x00, is an invalid character. Line 1, position {}.",
+                            len + 1
+                        ),
+                        "XmlPortImport:Xml",
+                    ))
+                }
+                _ => unsupported("XmlPort import of a UTF-16 big endian document with this declaration (not pinned)"),
+            };
         }
         let rest = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(&bytes);
         match std::str::from_utf8(rest) {
@@ -920,7 +1064,23 @@ impl Session {
                 ir::XmlNodeKind::Text if !schema.children(child).is_empty() => {
                     self.xp_import_container(inst, schema, child, ce)?
                 }
-                ir::XmlNodeKind::Text => self.xp_assign_variable(inst, schema, child, ce.text())?,
+                ir::XmlNodeKind::Text => {
+                    self.xp_assign_variable(inst, schema, child, ce.text())?;
+                    // Break in OnAfterAssignVariable of a text element right below the root ends the import there and
+                    // OnPostXmlPort runs; Quit ends it without OnPostXmlPort (xmlport/lt-ay-xmlport/AyXmlPortFlowTriggers.al:391
+                    // Import_head_Break `pre1;head1;post;`, :417 Import_head_Quit `pre1;head1;`, no rows). Deeper it is not pinned.
+                    if let Some(f @ (Flow::Break | Flow::Quit)) = Self::xp_flow(inst) {
+                        if schema.node(node).parent.is_some() {
+                            return unsupported(
+                                "Break or Quit in OnAfterAssignVariable of a text element below the root's children (not pinned)",
+                            );
+                        }
+                        if f == Flow::Break {
+                            Self::xp_clear_flow(inst);
+                        }
+                        return Ok(());
+                    }
+                }
                 _ => return unsupported("XmlPort import of a field element outside a table element"),
             }
         }
@@ -944,10 +1104,14 @@ impl Session {
         // A text attribute without `Occurrence` may be missing, as before these pins. A field attribute declared
         // `Occurrence = Optional` may be missing and leaves its field as it is, one declared Required may not
         // (platform/lt-ag-contoso/AgXmlPortImport.al:248 FieldAttribute_Occurrence_RequiredAndOptional_Import).
+        // A text attribute of the root text element without `Occurrence` is required too
+        // (xmlport/lt-xmlport-query-datatransfer/XpTImportOptions.al:282 Import_TextElementsMissingAttribute, xmlport 73421).
+        let root_text = schema.node(node).parent.is_none() && schema.node(node).kind == ir::XmlNodeKind::Text;
         let missing = schema.children(node).into_iter().find(|&a| {
             let n = schema.node(a);
             ((n.kind == ir::XmlNodeKind::FieldAttr && n.required != Some(false))
-                || (n.kind == ir::XmlNodeKind::TextAttr && n.required == Some(true)))
+                || (n.kind == ir::XmlNodeKind::TextAttr
+                    && (n.required == Some(true) || (n.required.is_none() && root_text))))
                 && !elem.attrs.iter().any(|(name, _)| *name == n.xml_name)
         });
         // A declaration of a namespace of the port is no attribute (YXmlPortProps.al:NodeProperties_Import_NamesPrefixes).
@@ -1007,7 +1171,15 @@ impl Session {
     /// (xmlport/TestXmlPortAdvanced.al:XmlPort_TextVariableTriggers_ImportMutatesAssignedValues).
     fn xp_assign_variable(&mut self, inst: &Inst, schema: &Schema, node: usize, text: String) -> Result<(), Signal> {
         let slot = schema.node(node).slot.expect("text nodes have a slot");
-        inst.borrow_mut().globals[slot] = Value::Text(text.into());
+        // A BigText element gets the whole text, past 2048 characters (xmlport/lt-xmlport-bigtext/XmlPortBigText.al:218).
+        inst.borrow_mut().globals[slot] = if schema.node(node).big_text {
+            Value::Library(
+                al_builtins::library_kind::LibraryKind::BigText,
+                std::rc::Rc::new(std::cell::RefCell::new(al_builtins::value::LibraryValue::Text(text))),
+            )
+        } else {
+            Value::Text(text.into())
+        };
         self.xp_run_trigger(inst, schema, node, "onafterassignvariable")
     }
 
@@ -1027,37 +1199,75 @@ impl Session {
     ) -> Result<(usize, Option<Flow>), Signal> {
         // White space around a value is dropped, for text too (xmlport/lt-xmlport-query-datatransfer/XpTImportBasic.al:
         // Import_WhitespaceAroundValues).
+        let raw = text;
         let text = text.trim();
         let n = schema.node(node);
         let table_node = schema.node(n.table_node.expect("field nodes have a table node"));
         let pos = n.field.expect("field nodes have a field");
         let rec = self.xp_record(inst, table_node)?;
-        let (ty, calc) = {
+        let (ty, calc, flow_filter) = {
             let r = rec.borrow();
-            let calc = self.engine.program.objects[r.table as usize]
+            let field = self.engine.program.objects[r.table as usize]
                 .table
                 .as_ref()
-                .and_then(|s| s.fields.get(pos))
+                .and_then(|s| s.fields.get(pos));
+            let calc = field
                 .filter(|f| !f.stored && !f.flow_filter)
                 .map(|f| f.calc.as_ref().map(|c| c.method));
+            let flow_filter = field.is_some_and(|f| f.flow_filter);
             match &self.engine.tables[r.table as usize] {
-                Some(t) => (t.fields[pos].ty.clone(), calc),
+                Some(t) => (t.fields[pos].ty.clone(), calc, flow_filter),
                 None => return unsupported("XmlPort import into a table without a schema"),
             }
         };
-        // A field element bound to a FlowField is skipped by an Xml import: the field keeps its value and OnAfterAssignField
-        // does not run (xmlport/lt-ay-xmlport/AyXmlPortLookupFlowField.al:Import_AutoCalc and Import_NoAutoCalc for Lookup,
-        // `before-insert=;`; xmlport/lt-xmlport-flowfield-sum-count/XmlPortFlowFieldSumCount.al:326-347 for Sum with the
-        // trigger, `total seen` empty, and :350-372 for Sum and Count). The other formats, the other methods, a trigger on a
-        // Lookup or Count element and a text that is no value of the type are not pinned.
+        // With PreserveWhiteSpace a Text field element keeps it (XpTImportOptions.al:406 Import_PreserveWhitespace, `  a  b  `);
+        // around another value or in an attribute that is not pinned.
+        let text = if schema.xp().preserve_whitespace && text != raw {
+            if n.kind != ir::XmlNodeKind::Field || !matches!(ty, RtType::Text(_)) {
+                return unsupported(
+                    "XmlPort import with PreserveWhiteSpace of white space around a value that is no Text field element (not pinned)",
+                );
+            }
+            raw
+        } else {
+            text
+        };
+        // A field element bound to a FlowFilter is skipped by an Xml import: its OnAfterAssignField does not run and the import
+        // goes on (xmlport/lt-xmlport-flowfield-element/XmlPortFlowFilterElement.al:224 Import_FlowFilterElement_AssignedWithoutSave,
+        // `log` empty; xmlport/lt-xmlport-flowfield-sum-count/XmlPortFlowFieldSumCount.al:326 `no error`). The other formats and
+        // a text that is no value of the type are not pinned.
+        if flow_filter {
+            if schema.xp().format != al_ir::XmlFormat::Xml {
+                return unsupported(format!(
+                    "XmlPort import of field element {} bound to a FlowFilter in a text format (not pinned)",
+                    n.name
+                ));
+            }
+            if !text.is_empty() && self.xp_value(text, &ty, false).is_err() {
+                return unsupported(format!(
+                    "XmlPort import of field element {} bound to a FlowFilter with a text that is no value of its type (not pinned)",
+                    n.name
+                ));
+            }
+            return Ok((pos, None));
+        }
+        // A field element bound to a FlowField is skipped by an import: the field keeps its value and OnAfterAssignField
+        // does not run. Xml: every method, with the trigger or without (xmlport/lt-ay-xmlport/AyXmlPortLookupFlowField.al:
+        // Import_AutoCalc and Import_NoAutoCalc for Lookup, `before-insert=;`; :364 PYD_Import_Xml_ExistMinMaxAverage for Exist,
+        // Min, Max, Average, Lookup and Count with triggers; xmlport/lt-xmlport-flowfield-sum-count/XmlPortFlowFieldSumCount.al:
+        // 326-372 for Sum and Count). VariableText: Lookup, Count and Min (:415); FixedText: Lookup and Count (:439). A text that
+        // is no value of the type is skipped too for a Decimal or Boolean element (:389, :402); for an Integer one the schema
+        // check fails (:377 `many`). The other methods of the text formats and the other wrong texts are not pinned.
         if let Some(method) = calc {
             use al_ir::CalcMethod;
-            let pinned = schema.xp().format == al_ir::XmlFormat::Xml
-                && match method {
-                    Some(CalcMethod::Sum) => true,
-                    Some(CalcMethod::Lookup | CalcMethod::Count) => n.trigger("onafterassignfield").is_none(),
-                    _ => false,
-                };
+            let pinned = match (schema.xp().format, method) {
+                (_, None) => false,
+                (al_ir::XmlFormat::Xml, Some(_)) => true,
+                (al_ir::XmlFormat::VariableText, Some(m)) => {
+                    matches!(m, CalcMethod::Lookup | CalcMethod::Count | CalcMethod::Min)
+                }
+                (al_ir::XmlFormat::FixedText, Some(m)) => matches!(m, CalcMethod::Lookup | CalcMethod::Count),
+            };
             if !pinned {
                 return unsupported(format!(
                     "XmlPort import of field element {} bound to a FlowField of this kind (not pinned)",
@@ -1065,10 +1275,23 @@ impl Session {
                 ));
             }
             if !text.is_empty() && self.xp_value(text, &ty, false).is_err() {
-                return unsupported(format!(
-                    "XmlPort import of field element {} bound to a FlowField with a text that is no value of its type (not pinned)",
-                    n.name
-                ));
+                let xml = schema.xp().format == al_ir::XmlFormat::Xml;
+                match ty {
+                    RtType::Decimal | RtType::Boolean if xml => {}
+                    RtType::Integer if xml && text.chars().all(|c| c.is_ascii_alphabetic()) => {
+                        return Err(schema_error(format!(
+                            "The '{}' element is invalid - The value '{text}' is invalid according to its datatype \
+                             'http://www.w3.org/2001/XMLSchema:int' - The string '{text}' is not a valid Int32 value.",
+                            n.xml_name
+                        )));
+                    }
+                    _ => {
+                        return unsupported(format!(
+                            "XmlPort import of field element {} bound to a FlowField with a text that is no value of its type (not pinned)",
+                            n.name
+                        ));
+                    }
+                }
             }
             return Ok((pos, None));
         }
@@ -1105,7 +1328,43 @@ impl Session {
                 Err(other) => return Err(other),
             }
         } else {
-            self.xp_value(text, &ty, false)?
+            match self.xp_value(text, &ty, false) {
+                // FormatEvaluate = Legacy reads a Date in the form yyyy-mm-dd too (xmlport/lt-xmlport-query-datatransfer/
+                // XpTImportOptions.al:337 Import_FormatEvaluateLegacy_XmlValues, `2024-01-15`). Other XML forms are not pinned
+                // here (TestXmlPortFormatEvaluateContracts.al:192 refuses the document as a whole).
+                Err(Signal::Error(e))
+                    if matches!(ty, RtType::Date)
+                        && text.len() == 10
+                        && text
+                            .char_indices()
+                            .all(|(i, c)| if i == 4 || i == 7 { c == '-' } else { c.is_ascii_digit() }) =>
+                {
+                    match self.xp_value_xml(text, &ty, None) {
+                        Ok(v) => v,
+                        Err(_) => return Err(Signal::Error(e)),
+                    }
+                }
+                // A DateTime in the XML form without a zone fails with this text (TestXmlPortFormatEvaluateContracts.al:192-194,
+                // `2024-03-05T12:34:56` beside a Date the line above reads); its code is not pinned.
+                Err(Signal::Unsupported(_) | Signal::Error(_))
+                    if matches!(ty, RtType::DateTime)
+                        && text.len() == 19
+                        && text.char_indices().all(|(i, c)| match i {
+                            4 | 7 => c == '-',
+                            10 => c == 'T',
+                            13 | 16 => c == ':',
+                            _ => c.is_ascii_digit(),
+                        }) =>
+                {
+                    return Err(Signal::Error(Box::new(al_builtins::native::AlError {
+                        message: "The date is not valid.".into(),
+                        code: al_builtins::native::UNPINNED_ERROR.into(),
+                        call_stack: String::new(),
+                        ..Default::default()
+                    })));
+                }
+                other => other?,
+            }
         };
         rec.borrow_mut().fields[pos] = value.clone();
         self.xp_validate_field(schema, node, &rec, pos, value, text.is_empty())?;
@@ -1498,6 +1757,7 @@ impl Session {
         }
         rec.borrow_mut().fields = fresh;
         let mut assigned: Vec<usize> = Vec::new();
+        let mut links: Vec<(usize, Value)> = Vec::new();
         // Nested table elements take their link fields from the record above
         // (xmlport/TestXmlPortAdvanced.al:XmlPort_NestedTableElements_ImportCreatesParentAndChildren).
         if let Some(link) = n.link_node.filter(|_| first_of_node) {
@@ -1510,11 +1770,29 @@ impl Session {
                     .fields[own]
                     .ty
                     .clone();
-                rec.borrow_mut().fields[own] = al_builtins::ops::convert(v, &ty)?;
+                let v = al_builtins::ops::convert(v, &ty)?;
+                links.push((own, v.clone()));
+                rec.borrow_mut().fields[own] = v;
                 assigned.push(own);
             }
         }
         self.xp_run_trigger(inst, schema, node, "onafterinitrecord")?;
+        // Break in OnAfterInitRecord of a table element right below the root ends the import before that row: the rows before
+        // it stay, OnPostXmlPort runs (AyXmlPortFlowTriggers.al:428 Import_init_Break, `...init2;post;`, rows `1=a,`). Deeper it
+        // is not pinned.
+        if Self::xp_flow(inst) == Some(Flow::Break) {
+            let below_root = n
+                .parent
+                .is_some_and(|p| schema.node(p).parent.is_none() && schema.node(p).kind == ir::XmlNodeKind::Text);
+            if !below_root {
+                return unsupported(
+                    "Break in OnAfterInitRecord of a table element that is not right below the root (not pinned)",
+                );
+            }
+            Self::xp_clear_flow(inst);
+            Self::xp_stop_import(inst);
+            return Ok(());
+        }
         self.xp_import_attrs(inst, schema, node, elem, Some(&mut assigned))?;
         let mut saved = false;
         let mut saved_before_tables = false;
@@ -1527,12 +1805,22 @@ impl Session {
             .iter()
             .filter(|&&c| schema.node(c).link_node.is_some())
             .count();
-        if linked_children != 0 && linked_children != table_children.len() {
-            return unsupported(
-                "XmlPort import of a table element with table elements below it of which only some name a LinkTable (not pinned)",
-            );
+        // Some linked and some not: pinned with the linked ones first in the schema and no triggers (AhXmlPort.al:325-360,
+        // xmlport 78633): the record is stored before its first linked row, the rows below keep their own values.
+        let mixed = linked_children != 0 && linked_children != table_children.len();
+        if mixed {
+            let linked_first = table_children
+                .iter()
+                .skip_while(|&&c| schema.node(c).link_node.is_some())
+                .all(|&c| schema.node(c).link_node.is_none());
+            let quiet = n.triggers.is_empty() && table_children.iter().all(|&c| schema.node(c).triggers.is_empty());
+            if !linked_first || !quiet {
+                return unsupported(
+                    "XmlPort import of a table element with table elements below it of which only some name a LinkTable (not pinned)",
+                );
+            }
         }
-        let save_first = linked_children == table_children.len();
+        let save_first = linked_children == table_children.len() || mixed;
         let mut seq = Sequence::new(schema, node);
         let mut linked: Vec<usize> = Vec::new();
         for ce in elem.elements() {
@@ -1543,6 +1831,31 @@ impl Session {
                 ir::XmlNodeKind::Field => {
                     let pos = self.xp_assign_field(inst, schema, child, &ce.text())?;
                     assigned.push(pos);
+                    // A link field the document gives another value than the record above fails the import there, before the
+                    // elements below (xmlport/lt-ah-xmlport/AhXmlPort.al:325 Mixed_Import and :386 Grand_Import, `ParentId` 99
+                    // under `Id` 1: `P1=p1 ` stored, nothing after). Pinned for an element and fields without triggers.
+                    if let Some((_, want)) = links.iter().find(|(own, _)| *own == pos) {
+                        let same = ops::compare(&rec.borrow().fields[pos], want)? == std::cmp::Ordering::Equal;
+                        if !same {
+                            let quiet = n.triggers.is_empty()
+                                && schema
+                                    .children(node)
+                                    .iter()
+                                    .all(|&c| schema.node(c).triggers.is_empty());
+                            if !quiet || n.name != n.xml_name {
+                                return unsupported(
+                                    "XmlPort import of a link field with another value than the record above, with triggers or an XmlName (not pinned)",
+                                );
+                            }
+                            return Err(xerr(
+                                format!(
+                                    "The data conflicts with the LinkTable and LinkFields setup of Table {}.",
+                                    n.name
+                                ),
+                                "XmlPortData",
+                            ));
+                        }
+                    }
                     if !schema.children(child).is_empty() {
                         self.xp_import_field_children(inst, schema, child, ce, &mut assigned)?;
                     }
@@ -1555,6 +1868,11 @@ impl Session {
                     // docs/probes-needed.md; xmlport/lt-xmlport-linktable/XmlPortLinkTableNoLinkFields.al:BothTemporary_Import_*,
                     // PersistentChild_Import_*, with LinkTable and no LinkFields). Without LinkTable the elements below are imported first and
                     // the record is stored after them (same file, NoLinkTable_Import_OneParentOneChild, _TwoParents).
+                    if mixed && !saved && schema.node(child).link_node.is_none() {
+                        return unsupported(
+                            "XmlPort import of a row of an unlinked table element before any linked row, beside linked ones (when the record above is stored is not pinned)",
+                        );
+                    }
                     if save_first && !saved {
                         self.xp_save_record(inst, schema, node, &assigned, false)?;
                         saved = true;
@@ -1828,9 +2146,13 @@ impl Session {
             return unsupported("a VariableText or FixedText port whose root has no table element (not pinned)");
         }
         let fields = schema.children(table);
+        // A field attribute of a FixedText port is a column in schema order like a field element, cut and padded to its Width
+        // (xmlport/lt-ay-xmlport/AyXmlPortAttributeWidth.al:163 export, :181 attributes only, :244 import).
+        let fixed = schema.xp().format == ir::XmlFormat::FixedText;
         let column = |f: usize| {
             let n = schema.node(f);
             n.kind == ir::XmlNodeKind::Field
+                || (fixed && n.kind == ir::XmlNodeKind::FieldAttr)
                 || (text_columns && n.kind == ir::XmlNodeKind::Text && schema.children(f).is_empty())
         };
         if fields.iter().any(|&f| !column(f)) || fields.is_empty() {
@@ -1987,12 +2309,35 @@ impl Session {
             other => other?,
         }
         let text = lines.join(&record_sep);
+        use al_builtins::stream::Encoding;
         if xp.utf8 {
             let mut out = vec![0xEF, 0xBB, 0xBF];
             out.extend_from_slice(text.as_bytes());
             Ok(out)
+        } else if variable && xp.text_encoding.as_deref() == Some("utf16") {
+            // UTF-16 little endian after FF FE (xmlport/W7XmlPortTests.al:368; XpTEncoding.al:135, 31 characters in 64 bytes).
+            let mut out = vec![0xFF, 0xFE];
+            out.extend(Encoding::Utf16.encode(&text));
+            Ok(out)
+        } else if variable && xp.text_encoding.as_deref() == Some("windows") {
+            // Code page 1252, `?` for a character it lacks (W7XmlPortTests.al:366 `E9`; XpTEncoding.al:90 `ü` and `ß`, :105
+            // `€` as 80, :120 `✓` as `?`). A character outside the basic plane is not pinned.
+            if text.chars().any(|c| (c as u32) > 0xFFFF) {
+                return unsupported(
+                    "a VariableText export with TextEncoding = WINDOWS of a character outside the basic plane (not pinned)",
+                );
+            }
+            Ok(Encoding::Windows.encode(&text))
         } else if text.is_ascii() {
             Ok(text.into_bytes())
+        } else if variable
+            && matches!(xp.text_encoding.as_deref(), None | Some("msdos"))
+            && !text.contains('€')
+            && Encoding::MsDos.encode_pinned(&text)
+        {
+            // Code page 437, also without a TextEncoding (W7XmlPortTests.al:365 and :369, `é` as 82; XpTEncoding.al:150
+            // `ü` and `ß`). The euro sign and a character the code page lacks are not pinned for an xmlport.
+            Ok(Encoding::MsDos.encode(&text))
         } else {
             unsupported(
                 "a VariableText or FixedText export with characters beyond ASCII and no TextEncoding (not pinned)",
@@ -2160,24 +2505,67 @@ impl Session {
         {
             return unsupported(shape());
         }
-        let rec = self.xp_record(inst, schema.node(table))?;
+        let tn = schema.node(table);
+        if tn.max_unbounded.is_some() {
+            return unsupported(shape());
+        }
+        let rec = self.xp_record(inst, tn)?;
         let t = self.table(&rec)?;
-        let mut fields = String::new();
+        // The schema of the table element: its elements in a sequence, then its attributes, in schema order
+        // (xmlport/lt-bd-xmlport/BdXmlPort.al:425 BdInlineSchema_FieldTypes, :473 BdInlineSchema_Attributes). An Integer
+        // element is `xs:int` and a BigInteger one `xs:long`, both with `default="0"`; every other pinned type is `xs:string`.
+        // A field attribute is `xs:string` whatever its type, `use="required"` unless Occurrence = Optional; a text attribute
+        // is required; a text element with MinOccurs = Zero is `minOccurs="0" maxOccurs="unbounded"`.
+        let (mut fields, mut attrs) = (String::new(), String::new());
         for f in schema.children(table) {
             let n = schema.node(f);
+            if !n.triggers.is_empty() || n.max_unbounded.is_some() || n.ns_prefix.is_some() {
+                return unsupported(shape());
+            }
             let ty = n.field.map(|p| &t.fields[p].ty);
-            let line = match (n.kind, ty) {
-                (ir::XmlNodeKind::Field, Some(RtType::Integer)) if !n.min_zero && n.triggers.is_empty() => format!(
-                    "      <xs:element minOccurs=\"1\" maxOccurs=\"1\" default=\"0\" name=\"{}\" type=\"xs:int\" />\r\n",
+            let element = |min: &str, max: &str, default: bool, xs: &str| {
+                format!(
+                    "      <xs:element minOccurs=\"{min}\" maxOccurs=\"{max}\"{} name=\"{}\" type=\"xs:{xs}\" />\r\n",
+                    if default { " default=\"0\"" } else { "" },
                     n.xml_name
-                ),
-                (ir::XmlNodeKind::Field, Some(RtType::Text(_))) if !n.min_zero && n.triggers.is_empty() => format!(
-                    "      <xs:element minOccurs=\"1\" maxOccurs=\"1\" name=\"{}\" type=\"xs:string\" />\r\n",
-                    n.xml_name
-                ),
-                _ => return unsupported(shape()),
+                )
             };
-            fields.push_str(&line);
+            match (n.kind, ty) {
+                (ir::XmlNodeKind::Field, Some(ty)) if !n.min_zero => {
+                    let line = match ty {
+                        RtType::Integer => element("1", "1", true, "int"),
+                        RtType::BigInteger => element("1", "1", true, "long"),
+                        RtType::Text(_)
+                        | RtType::Code(_)
+                        | RtType::Decimal
+                        | RtType::Date
+                        | RtType::Boolean
+                        | RtType::Option(_)
+                        | RtType::DateTime
+                        | RtType::Time
+                        | RtType::Duration
+                        | RtType::Guid => element("1", "1", false, "string"),
+                        _ => return unsupported(shape()),
+                    };
+                    fields.push_str(&line);
+                }
+                (ir::XmlNodeKind::Text, _) if n.min_zero && schema.children(f).is_empty() && !n.big_text => {
+                    fields.push_str(&element("0", "unbounded", false, "string"));
+                }
+                (ir::XmlNodeKind::FieldAttr, Some(RtType::Integer | RtType::Decimal | RtType::Boolean))
+                | (ir::XmlNodeKind::TextAttr, _) => {
+                    let used = match (n.kind, n.required) {
+                        (_, None) => "required",
+                        (ir::XmlNodeKind::FieldAttr, Some(false)) => "optional",
+                        _ => return unsupported(shape()),
+                    };
+                    attrs.push_str(&format!(
+                        "    <xs:attribute name=\"{}\" type=\"xs:string\" use=\"{used}\" />\r\n",
+                        n.xml_name
+                    ));
+                }
+                _ => return unsupported(shape()),
+            }
         }
         if fields.is_empty() {
             return unsupported(shape());
@@ -2197,12 +2585,15 @@ impl Session {
                 }
             }
         }
-        if rows.is_empty() {
+        // An optional table element without rows writes none (BdXmlPort.al:460 BdInlineSchema_NoRowsAttributes); one that is
+        // not optional writes the record as it stands (:447 BdInlineSchema_NoRows), as `xp_export_table` does.
+        if rows.is_empty() && !tn.min_zero {
             return unsupported("XmlPort export with InlineSchema and no rows (not pinned)");
         }
-        let (root_name, table_name) = (&schema.node(top).xml_name, &schema.node(table).xml_name);
+        let (root_name, table_name) = (&schema.node(top).xml_name, &tn.xml_name);
+        let table_min = if tn.min_zero { "0" } else { "1" };
         Ok(format!(
-            "<?xml version=\"1.0\" encoding=\"UTF-16\" standalone=\"no\"?>\r\n<{root_name}>\r\n<xs:schema xmlns:xs=\"http://www.w3.org/2001/XMLSchema\">\r\n  <xs:complexType name=\"{table_name}\">\r\n    <xs:sequence>\r\n{fields}    </xs:sequence>\r\n  </xs:complexType>\r\n  <xs:complexType name=\"{root_name}\" mixed=\"true\">\r\n    <xs:sequence>\r\n      <xs:element minOccurs=\"1\" maxOccurs=\"unbounded\" name=\"{table_name}\" type=\"{table_name}\" />\r\n    </xs:sequence>\r\n  </xs:complexType>\r\n  <xs:element name=\"{root_name}\" type=\"{root_name}\" />\r\n</xs:schema>{rows}</{root_name}>"
+            "<?xml version=\"1.0\" encoding=\"UTF-16\" standalone=\"no\"?>\r\n<{root_name}>\r\n<xs:schema xmlns:xs=\"http://www.w3.org/2001/XMLSchema\">\r\n  <xs:complexType name=\"{table_name}\">\r\n    <xs:sequence>\r\n{fields}    </xs:sequence>\r\n{attrs}  </xs:complexType>\r\n  <xs:complexType name=\"{root_name}\" mixed=\"true\">\r\n    <xs:sequence>\r\n      <xs:element minOccurs=\"{table_min}\" maxOccurs=\"unbounded\" name=\"{table_name}\" type=\"{table_name}\" />\r\n    </xs:sequence>\r\n  </xs:complexType>\r\n  <xs:element name=\"{root_name}\" type=\"{root_name}\" />\r\n</xs:schema>{rows}</{root_name}>"
         ))
     }
 
@@ -2316,6 +2707,12 @@ impl Session {
         let slot = schema.node(node).slot.expect("text nodes have a slot");
         match &inst.borrow().globals[slot] {
             Value::Text(s) | Value::Code(s) => Ok(s.to_string()),
+            // A BigText element writes its whole text (xmlport/lt-xmlport-bigtext/XmlPortBigText.al:178, :198).
+            Value::Library(al_builtins::library_kind::LibraryKind::BigText, h) => match &*h.borrow() {
+                al_builtins::value::LibraryValue::Empty => Ok(String::new()),
+                al_builtins::value::LibraryValue::Text(s) => Ok(s.clone()),
+                _ => unsupported("XmlPort export of a BigText variable of this kind"),
+            },
             other => unsupported(format!("XmlPort export of the variable {}", other.describe())),
         }
     }
@@ -2381,6 +2778,11 @@ impl Session {
         }
         match &v {
             Value::Integer(i) => Ok(i.to_string()),
+            // A BigInteger without digit grouping and a Guid in braces (xmlport/lt-bd-xmlport/BdXmlPort.al:425
+            // BdInlineSchema_FieldTypes: `9876543210`, `{5A2F6C9E-...}`; :436 `0`, `{00000000-...}`). A negative BigInteger
+            // is not pinned.
+            Value::BigInteger(i) if *i >= 0 => Ok(i.to_string()),
+            Value::Guid(g) => Ok(al_builtins::format::format_guid(g)),
             Value::Text(s) | Value::Code(s) => Ok(s.to_string()),
             Value::Decimal(_) => al_builtins::xmlport::field_text(&v)
                 .or_else(|why| unsupported(format!("XmlPort export of {why} (the text form is not pinned)"))),

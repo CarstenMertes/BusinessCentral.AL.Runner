@@ -816,6 +816,11 @@ fn as_integer(s: &Scalar) -> Result<Value, Signal> {
     if matches!(s, Scalar::Null) {
         return Err(conversion(NAV_JSON_VALUE, "System.Int32"));
     }
+    // A JSON `true` read as an Integer is 1 (misc/lt-probes-needed-1/PnAJsonGetters.al:191-210, ArrayWrongKindAtIndex
+    // `int-of-bool`); `false` is not pinned.
+    if let Scalar::Val(Value::Boolean(true)) = s {
+        return Ok(Value::Integer(1));
+    }
     if let Scalar::Val(Value::Text(t) | Value::Code(t)) = s {
         match t.trim().parse::<i32>() {
             Ok(n) => return Ok(Value::Integer(n)),
@@ -1284,18 +1289,42 @@ fn array_typed(r: Option<&mut Value>, a: &mut [Value], coerce: Coerce) -> Result
     }
 }
 
+/// A failed conversion of a typed getter in the language in force: the .NET text of [`conversion`] in 1033; in 1031 the
+/// German text, pinned for a Date (misc/lt-system-functions/EvalLastError.al:463-481, BT_Evaluate_DottedDate_Language1031
+/// `1031 json`). Any other conversion error in another language is not pinned and is refused.
+fn in_language(language: i32, result: Result<Value, Signal>) -> Result<Value, Signal> {
+    match result {
+        Err(Signal::Error(e)) if e.code == "Conversion" && language != 1033 => {
+            let date = format!("Unable to convert from {NAV_JSON_VALUE} to Microsoft.Dynamics.Nav.Runtime.NavDate.");
+            if language == 1031 && e.message == date {
+                return Err(error(
+                    format!(
+                        "Die Konvertierung von {NAV_JSON_VALUE} in Microsoft.Dynamics.Nav.Runtime.NavDate ist nicht m\u{f6}glich."
+                    ),
+                    "Conversion",
+                ));
+            }
+            unsupported(format!(
+                "the text of the JSON conversion error `{}` in the language {language} (not pinned)",
+                e.message
+            ))
+        }
+        other => other,
+    }
+}
+
 macro_rules! typed_getters {
     ($($obj:ident, $arr:ident, $val:ident => $coerce:path;)*) => {$(
-        fn $obj(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Result<Value, Signal> {
-            object_typed(r, a, $coerce)
+        fn $obj(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Result<Value, Signal> {
+            in_language(c.language(), object_typed(r, a, $coerce))
         }
-        fn $arr(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Result<Value, Signal> {
-            array_typed(r, a, $coerce)
+        fn $arr(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Result<Value, Signal> {
+            in_language(c.language(), array_typed(r, a, $coerce))
         }
         #[allow(dead_code)]
-        fn $val(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
+        fn $val(c: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
             let h = recv(r)?;
-            $coerce(&scalar_of(&h)?)
+            in_language(c.language(), $coerce(&scalar_of(&h)?))
         }
     )*};
 }

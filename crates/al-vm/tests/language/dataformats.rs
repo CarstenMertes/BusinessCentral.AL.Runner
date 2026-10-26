@@ -939,8 +939,50 @@ fn big_text() {
         "B.AddText('Hello World'); exit(Format(B.TextPos('World')) + Format(B.TextPos('Hello')) + Format(B.TextPos('xyz')));",
     );
     assert_eq!(t, "7".to_string() + "10");
-    // A position past one beyond the end is not pinned (streams/StTBigText.al:AddTextAtPosition pins 1 to one past the end).
-    assert!(unsupported("B: BigText;", "B.AddText('x', 3); exit('');"));
+    // A position in AddText inserts before that character (types/lt-totext-bigtext-codeunit-run/P93BigText.al:95-160).
+    assert_eq!(
+        text_of(
+            "B: BigText; S: Text;",
+            "B.AddText('bc'); B.AddText('a', 1); B.GetSubText(S, 1); exit(S);"
+        ),
+        "abc"
+    );
+}
+
+// streams/StTBigText.al:120 GetSubTextForms and :157 GetSubTextErrors: a length past the end gives the rest; a start one past
+// the end or further gives nothing; a start below 1 or a negative length raise CopyStr's range errors.
+// streams/StTBigText.al:240 ConvertTextAndBack: Format gives the whole text.
+#[test]
+fn big_text_get_sub_text_clips_at_the_end() {
+    let v = "B: BigText; S: Text; N: Integer;";
+    let t = text_of(
+        v,
+        "B.AddText('0123456789'); N := B.GetSubText(S, 8, 100); exit(S + '/' + Format(N));",
+    );
+    assert_eq!(t, "789/3");
+    let t = text_of(
+        v,
+        "B.AddText('0123456789'); N := B.GetSubText(S, 11, 1); exit(S + '/' + Format(N));",
+    );
+    assert_eq!(t, "/0");
+    let t = text_of(v, "B.AddText('dir'); B.AddText('ect'); exit(Format(B));");
+    assert_eq!(t, "direct");
+    let (m, c) = raised(v, "B.AddText('0123456789'); N := B.GetSubText(S, 0, 1); exit('');");
+    assert_eq!(
+        (m.as_str(), c.as_str()),
+        (
+            "The value of COPYSTR parameter 2 is outside of the permitted range. The current value is: 0. The permitted range is: from 1 to 2,147,483,647.",
+            "OutsidePermittedRange"
+        )
+    );
+    let (m, _) = raised(v, "B.AddText('0123456789'); N := B.GetSubText(S, 1, -1); exit('');");
+    assert!(m.starts_with("The value of COPYSTR parameter 3 is outside of the permitted range. The current value is: -1. The permitted range is: from 0"), "{m}");
+    // A start further out gives nothing too (corpus StTBigText.al:169 GetSubTextErrors and the cases of main that pass on it).
+    let t = text_of(
+        v,
+        "B.AddText('0123456789'); N := B.GetSubText(S, 20); exit(S + '/' + Format(N));",
+    );
+    assert_eq!(t, "/0");
 }
 
 #[test]

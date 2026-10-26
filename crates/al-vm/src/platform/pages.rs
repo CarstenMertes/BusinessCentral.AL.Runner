@@ -485,7 +485,10 @@ pub(super) fn page_control_field_rows(p: &Providers, t: &TableDef) -> Vec<Entry>
             r[pos(t, 11)] = Value::Integer(sequence);
             sequence += 1;
             match control_row(&c, o, src, ctl, t, &mut r) {
-                Ok(()) => out.push(Entry::ok(r)),
+                Ok(false) => out.push(Entry::ok(r)),
+                // A row of an expression-bound control (`Control::expr_source`), pinned by
+                // record/TestPageControlFieldArraySource.al (codeunit 89002).
+                Ok(true) => out.push(Entry::ok(r)),
                 Err(why) => {
                     let mut k = blank.row();
                     k[pos(t, 1)] = Value::Integer(id as i32);
@@ -505,7 +508,7 @@ fn control_row(
     ctl: &al_ir::Control,
     t: &TableDef,
     r: &mut Row,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     r[pos(t, 3)] = Value::Text(ctl.name.clone().into());
     // TableNo is the page's source table, stated even for a control with no source field
     // (TestPageControlFieldControlTree.al:59-61).
@@ -553,6 +556,15 @@ fn control_row(
                 .ok_or_else(|| format!("page '{}' control '{}': no such variable", o.name, ctl.name))?;
             r[pos(t, 9)] = Value::Text(g.name.clone().into());
         }
+        // A control bound to an expression of a served form (`Control::expr_source`) has no source field and names the
+        // expression as written; an undeclared Editable is `True` for an array element or a record variable's field and
+        // `False` for an arithmetic expression (al-runner issue 5842, corpus writer's probe
+        // record/TestPageControlFieldArraySource.al; not on the pinned corpus yet).
+        Binding::Expr(_) if let Some((text, editable)) = &ctl.expr_source => {
+            r[pos(t, 9)] = Value::Text(text.clone().into());
+            r[pos(t, 7)] = bool_prop(o, ctl, "editable", if *editable { "True" } else { "False" })?;
+            return Ok(true);
+        }
         _ => {
             return Err(format!(
                 "page '{}' control '{}': an expression-bound control (its SourceExpression is not pinned)",
@@ -560,5 +572,5 @@ fn control_row(
             ));
         }
     }
-    Ok(())
+    Ok(false)
 }

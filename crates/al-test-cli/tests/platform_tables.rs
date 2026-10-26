@@ -2300,3 +2300,75 @@ codeunit 50000 "T" { Subtype = Test;
     assert!(not_run(&o, "WalkInKeyOrderReadsExpression").contains("ControlId"));
     passes(&o, "WalkBySequence");
 }
+
+// al-runner issue 5842 (the reporter's run on real BC 29.0.54011.55407, 2/2 tests): the row of a control bound to an element
+// of a page array (`Costs[1]`) has no source field and reports the expression as written; the other rows of the page are
+// served beside it. Pinned by record/TestPageControlFieldArraySource.al (also run below). A call expression is not pinned and stays refused.
+#[test]
+fn page_control_field_serves_the_row_of_an_array_element_control() {
+    let o = outcomes(
+        r#"table 50100 "Repro Cost Line 50100"
+{
+    fields { field(1; "Entry No."; Integer) { } field(2; Quantity; Decimal) { } }
+    keys { key(PK; "Entry No.") { } }
+}
+page 50101 "Repro Cost Line List 50101"
+{
+    PageType = List;
+    SourceTable = "Repro Cost Line 50100";
+    layout { area(Content) { repeater(Lines) {
+        field("Entry No."; Rec."Entry No.") { }
+        field(HiddenQuantity; Rec.Quantity) { Visible = false; }
+        field(CostOne; Costs[1]) { Caption = 'Cost 1'; Editable = false; }
+    } } }
+    var Costs: array[2] of Decimal;
+}
+page 50103 "Repro Cost Line List 50103"
+{
+    PageType = List;
+    SourceTable = "Repro Cost Line 50100";
+    layout { area(Content) { repeater(Lines) {
+        field(CostText; Format(Costs[1])) { }
+    } } }
+    var Costs: array[2] of Decimal;
+}
+codeunit 50000 "T" { Subtype = Test;
+  [Test] procedure HiddenControlReportsVisibleFalse() var P: Record "Page Control Field"; IsVisible: Boolean; begin
+    P.SetRange(PageNo, Page::"Repro Cost Line List 50101");
+    P.SetRange(ControlName, 'HiddenQuantity');
+    if not P.FindFirst() then Error('no row');
+    if not Evaluate(IsVisible, P.Visible) then Error('not a Boolean: %1', P.Visible);
+    if IsVisible then Error('visible %1', P.Visible); end;
+  [Test] procedure ArrayElementControlRow() var P: Record "Page Control Field"; Actual: Text; Expected: Text; begin
+    P.SetRange(PageNo, Page::"Repro Cost Line List 50101");
+    P.SetRange(ControlName, 'CostOne');
+    if not P.FindFirst() then Error('no row');
+    Actual := StrSubstNo('TableNo=%1 FieldNo=%2 Enabled=[%3] Editable=[%4] Visible=[%5] SourceExpression=[%6] OptionString=[%7] Sequence=%8',
+        P.TableNo, P.FieldNo, P.Enabled, P.Editable, P.Visible, P.SourceExpression, P.OptionString, P.Sequence);
+    Expected := 'TableNo=50100 FieldNo=0 Enabled=[true] Editable=[false] Visible=[true] SourceExpression=[Costs[1]] OptionString=[] Sequence=2';
+    if Actual <> Expected then Error('Expected %1, got %2', Expected, Actual); end;
+  [Test] procedure OtherExpressionRefused() var P: Record "Page Control Field"; begin
+    P.SetRange(PageNo, Page::"Repro Cost Line List 50103");
+    P.FindFirst(); end; }"#,
+    );
+    passes(&o, "HiddenControlReportsVisibleFalse");
+    passes(&o, "ArrayElementControlRow");
+    not_run(&o, "OtherExpressionRefused");
+}
+
+// The corpus writer's probe of al-runner issue 5842 (corpus branch al-runtime-rs-staging-pub-sc @2150ff97, green on BC 27.5, 28.5
+// and 29.0), a copy in fixtures/outside-sc with a stand-in for the Assert codeunit, until the corpus bump lands.
+#[test]
+fn page_control_field_array_source_probe_passes() {
+    let src = format!(
+        "{}\n{}",
+        include_str!("fixtures/outside-sc/TestPageControlFieldArraySource.al")
+            .replace("codeunit 89002 \"LT SC Control Field Arr Tests\"", "codeunit 89002 T"),
+        include_str!("fixtures/outside-sc/Assert.al")
+    );
+    let o = outcomes(&src);
+    assert_eq!(o.len(), 5, "{o:?}");
+    for (n, _) in &o {
+        passes(&o, n);
+    }
+}

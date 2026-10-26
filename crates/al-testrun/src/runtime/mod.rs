@@ -369,6 +369,27 @@ pub struct Phases {
     /// How many times the apps were compiled for the run: 2 when a compile without the baseline was thrown away
     /// because the rule said "may observe", or when a lean run ran again.
     pub compiles: usize,
+    /// A warm server ([`Warm::run`]): the time this request spent on the compile (finding the kept one, updating it,
+    /// or compiling again). `None` outside a warm server.
+    pub warm_compile: Option<std::time::Duration>,
+    /// Where the install baseline of the run came from: `ran` (the install code ran), `cache` (read from the compile
+    /// cache folder), `kept` (a warm server's baseline of an earlier request). `None`: no baseline.
+    pub baseline_source: Option<&'static str>,
+    /// One per pass over the test codeunits (one per entry of a server request, else one).
+    pub passes: Vec<PassTime>,
+    /// A warm server ran the request on the engines an earlier request over the same compile kept.
+    pub engine_kept: bool,
+}
+
+/// The time of one pass over the test codeunits ([`Phases::passes`]).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PassTime {
+    /// The time the test threads took to set up their own copy of the install baseline before their first test
+    /// codeunit: writing the snapshot they read (once per run), then the longest of them (they read it side by side).
+    /// Zero with one test thread, which uses the baseline as it is.
+    pub reset: std::time::Duration,
+    /// The wall time of the pass, its reset included.
+    pub wall: std::time::Duration,
 }
 
 impl Phases {

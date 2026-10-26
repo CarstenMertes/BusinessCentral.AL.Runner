@@ -26,6 +26,7 @@ while read -r rid target ext exe; do
   [ -f "$here/native/$rid/$exe" ] || { echo "error: $archive holds no $exe" >&2; exit 1; }
 done <<'TARGETS'
 linux-x64 x86_64-unknown-linux-musl tar.xz al-runner
+linux-arm64 aarch64-unknown-linux-musl tar.xz al-runner
 osx-arm64 aarch64-apple-darwin tar.xz al-runner
 win-x64 x86_64-pc-windows-msvc zip al-runner.exe
 TARGETS

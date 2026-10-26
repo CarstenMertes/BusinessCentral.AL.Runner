@@ -1,7 +1,7 @@
 name: Edge
 
 # The rolling `edge` pre-release: the newest build of the `release` branch. When CI is green on a
-# push to `release`, this rebuilds the three targets and REPLACES the assets of the one pre-release
+# push to `release`, this rebuilds the four targets and REPLACES the assets of the one pre-release
 # with the tag `edge`. The tag moves to the commit. No new tag or release per push, and edge is
 # never "latest". See docs/releasing.md.
 # nightly-edge.yml also calls this workflow (workflow_call) with the commit it fast-forwarded

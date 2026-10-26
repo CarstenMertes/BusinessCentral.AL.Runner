@@ -400,29 +400,34 @@ struct Plan {
 }
 
 pub(crate) struct TestBacking {
-    engine: Arc<Engine>,
+    /// The program and the tables of the engine the backing was made for. Not the engine itself: a warm server keeps a
+    /// baseline over test data for its next request, and the engine stays free to be set for that request
+    /// (al-runtime issue 5856).
+    program: Arc<al_ir::Program>,
+    tables: Arc<[Option<Arc<TableDef>>]>,
     data: TestData,
     /// By table object: the table built from the restored rows, once per thread.
     cache: RefCell<HashMap<u32, Option<Rows>>>,
 }
 
 impl TestBacking {
-    pub(crate) fn new(engine: Arc<Engine>, data: TestData) -> TestBacking {
+    pub(crate) fn new(engine: &Engine, data: TestData) -> TestBacking {
         TestBacking {
-            engine,
+            program: engine.program.clone(),
+            tables: engine.tables.clone(),
             data,
             cache: RefCell::default(),
         }
     }
 
     fn app_id(&self, app: u32) -> Option<&str> {
-        self.engine.program.apps.get(app as usize).map(|a| a.id.as_str())
+        self.program.apps.get(app as usize).map(|a| a.id.as_str())
     }
 
     /// Maps the columns of `rows` onto the fields of table `object`. `Err`: the table cannot be
     /// loaded and why.
     fn plan(&self, object: u32, rows: &TableRows) -> Result<Plan, String> {
-        let program = &self.engine.program;
+        let program = &self.program;
         let obj = &program.objects[object as usize];
         let schema = obj.table.as_ref().ok_or("not a table")?;
         let table_app = self.app_id(obj.app);
@@ -518,7 +523,7 @@ impl TestBacking {
             .collect();
         // The AutoIncrement field of the table and whether the source holds a value for it. A source of untyped values
         // (a configuration package) holds none: the database numbered those rows as it inserted them.
-        let auto = self.engine.program.objects[t.object as usize]
+        let auto = self.program.objects[t.object as usize]
             .table
             .as_ref()
             .and_then(|s| s.fields.iter().position(|f| f.auto_increment));
@@ -585,7 +590,7 @@ impl TestBacking {
             .map(|f| {
                 let owner = f
                     .declared_in
-                    .and_then(|d| self.app_id(self.engine.program.objects[d as usize].app));
+                    .and_then(|d| self.app_id(self.program.objects[d as usize].app));
                 let column = match (owner, table_app) {
                     (Some(o), Some(t)) if !eq_ci(o, t) => format!("{}${o}", sql_name(&f.name)),
                     _ => sql_name(&f.name),
@@ -601,7 +606,7 @@ impl TestBacking {
     }
 
     fn load(&self, object: u32, t: &TableDef) -> Option<Rows> {
-        let program = &self.engine.program;
+        let program = &self.program;
         let obj = &program.objects[object as usize];
         let stats = &self.data.stats;
         let record = |o: Outcome| {
@@ -669,7 +674,7 @@ impl Backing for TestBacking {
     }
 
     fn rows(&self, company: &str, object: u32) -> Option<Rows> {
-        let t = self.engine.tables.get(object as usize)?.as_ref()?;
+        let t = self.tables.get(object as usize)?.as_ref()?;
         let wanted = if t.per_company { self.company() } else { "" };
         if !eq_ci(company, wanted) {
             return None;

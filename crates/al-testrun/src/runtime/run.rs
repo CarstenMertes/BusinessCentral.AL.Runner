@@ -212,8 +212,8 @@ pub(crate) fn run_codeunit_core(
         return all(Outcome::NotRun(why.clone()));
     }
     // A test runner codeunit with TestIsolation = Disabled (al-runner --isolation disabled) runs: what it keeps between
-    // tests and for the later codeunits was measured by corpus writer SD (corpus PR 735, registered assumption
-    // `runner-test-isolation`, below). BC's TestRunnerHub under a codeunit's RequiredTestIsolation = Disabled is pinned
+    // tests and for the later codeunits is the probe of corpus writer SD (tests/al-language-isolation-probe/src, runner 61304,
+    // real BC 27.5, 28.5 and 29.0 on Windows containers; the corpus nightly runs only 61300 and 61301). BC's TestRunnerHub under a codeunit's RequiredTestIsolation = Disabled is pinned
     // (QuCommitIsolation.al:572-718, `Scratch::hub`).
     let runner_disabled = isolation == TestIsolation::Disabled && !scratch.hub && !execute;
     // A test runner codeunit with TestIsolation = Function (al-runner --isolation test), not the hub.
@@ -526,7 +526,6 @@ pub(crate) fn run_codeunit_core(
         };
         let routine = &obj.routines[r];
         let handlers = resolve_handlers(lowered, object, r);
-        let mut committed = false;
         let mut failure: Option<AlError> = None;
         let mut refused_in = None;
         // Why a step of the test runner around this test was refused or failed (runner_reset.rs): what it left is not
@@ -578,10 +577,6 @@ pub(crate) fn run_codeunit_core(
                     // The AL test runner enables every application area before each test method
                     // (corpus session/TestSessionApplicationAreaTestBoundary.al:67552).
                     session.start_test_method();
-                    // Under a runner's TestIsolation = Disabled each test relies on the measured mode (corpus PR 735).
-                    if runner_disabled {
-                        al_builtins::assumptions::assume(Assumption::RunnerTestIsolation);
-                    }
                     let model = models.get(&r).copied().unwrap_or_default();
                     // TransactionModel::None is handled before the method body: every active
                     // transaction is ended on the way in (codeunit/TestWriteTxTestBoundary.al:
@@ -591,7 +586,6 @@ pub(crate) fn run_codeunit_core(
                         session.commit_transaction();
                     }
                     session.tx_model = model;
-                    let commits_before = session.commits;
                     session.clear_stop();
                     // A scratch run is stopped by `cancel` too, and has a watchdog for that even without a limit.
                     let cancel = if execute { crate::events::cancel_flag() } else { None };
@@ -650,7 +644,6 @@ pub(crate) fn run_codeunit_core(
                         ))),
                         r => r,
                     };
-                    committed = session.commits != commits_before;
                     session.tx_model = al_vm::TxModel::AutoCommit;
                     let unexecuted = session.end_ui_scope();
                     // The runner commits a test that passes: with a table still marked by Consistent(false) what BC does there
@@ -865,12 +858,9 @@ pub(crate) fn run_codeunit_core(
         // TestRunnerHub with RequiredTestIsolation = Function (QuCommitIsolation.al:466-488 QU_F04_NextTestSees, :530-551
         // QU_F09_LaterTestSeesCommittedRows), and under a runner codeunit's TestIsolation = Function, the part before the
         // Commit() too, whether the test passes or fails (corpus PR 735, IsolProbeCommit.Codeunit.al C1-C3,
-        // SdIsolCommitError.Codeunit.al:24-25 E2-E5 under runner 61300; registered assumption `runner-test-isolation`).
+        // SdIsolCommitError.Codeunit.al:24-25 E2-E5 under runner 61300, measured on real BC by writer SD).
         // The checkpoint below restores it. A failed test after a Commit() is pinned by the nightly oracle (isolation
-        // probe T10 and T11 under runner 61300, IsolProbeFixture.Codeunit.al:118-160): only a passed one is flagged.
-        if committed && runner_function && outcome == Outcome::Pass {
-            al_builtins::assumptions::assume(Assumption::RunnerTestIsolation);
-        }
+        // probe T10 and T11 under runner 61300, IsolProbeFixture.Codeunit.al:118-160).
         if let Some(observe) = observe.as_mut() {
             observe(
                 &routine.name,
@@ -885,8 +875,9 @@ pub(crate) fn run_codeunit_core(
         if let Some(cp) = &checkpoint {
             if runner_function {
                 match cp.restore_for_runner(&mut session) {
-                    None => {}
-                    Some(true) => al_builtins::assumptions::assume(Assumption::RunnerTestIsolation),
+                    // A new key's IsolatedStorage.Set and a new NumberSequence.Insert are rolled back
+                    // (IsolProbeAfterRollback.Codeunit.al S1-S9 under runner 61300).
+                    None | Some(true) => {}
                     Some(false) => {
                         unmeasured_restore.get_or_insert_with(|| {
                             format!(

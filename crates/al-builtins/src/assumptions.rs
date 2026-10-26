@@ -235,18 +235,9 @@ registry! {
     },
     GuidAsTextArgument => {
         id: "guid-as-text-argument",
-        assumed: "A Guid passed where a function wants a Text is its text form {XXXXXXXX-...}, as in an assignment. Pinned for CopyStr, StrLen, UpperCase, LowerCase, StrPos and Notification.SetData (types/lt-guid-as-text-argument/GuidAsTextArgument.al); every other Text parameter is assumed alike.",
+        assumed: "A Guid passed where a function wants a Text is its text form {XXXXXXXX-...}, as in an assignment. Pinned for CopyStr, StrLen, UpperCase, LowerCase, StrPos, Notification.SetData, StrSubstNo's format, DelStr, PadStr, ConvertStr, IncStr, SelectStr, InsStr, DelChr, Contains, IndexOf, StartsWith, Replace and a procedure's Text and Code parameter (types/lt-guid-as-text-argument/GuidAsTextArgument.al); the other text parameters that read through the shared text argument are assumed alike.",
         tests: "Match General Jnl Lines UT (CopyStr(CreateGuid(), 1, 50)); 61 Tests-General Journal tests. Error Message Handler.ShowNotification (Notification.SetData with a Guid); 27 Tests-ERM tests.",
-        probe: "A Guid passed to other Text parameters: StrSubstNo('%1', ...) as the format, DelStr, PadStr, ConvertStr, IncStr, SelectStr, Text.Contains.",
-        note: "Confirmed by writer SG on corpus bump PR 738 (branch al-runtime-rs-staging-pub-sg 37b221b7, green on every supported BC major): every one of those functions and a procedure's Text and Code parameter see the upper-case text form; a Text[10] parameter raises StringLengthExceeded. Remove this entry when that bump lands.",
-        awaiting: Awaiting {
-            issues: &[5586],
-            files: &[
-                "tests/al-language/types/lt-guid-as-text-argument/GuidAsTextArgument.al::Guid_AsTextArgument_MoreStringFunctions",
-                "tests/al-language/types/lt-guid-as-text-argument/GuidAsTextArgument.al::Guid_AsTextArgument_ProcedureParameters",
-            ],
-            since: "2026-10-25",
-        },
+        probe: "A Guid passed to the Text parameters not in GuidAsTextArgument.al (for example Text.EndsWith, Text.Split, Text.LastIndexOf, TextBuilder.Append).",
     },
     FeatureKeyEnabledModify => {
         id: "feature-key-enabled-modify",
@@ -386,45 +377,11 @@ registry! {
         tests: "Microsoft and NP Retail code that sets SetBaseAddress and then Get('/orders').",
         probe: "SetBaseAddress('https://example.invalid/api') (no trailing slash) then Get('orders'); SetBaseAddress('https://example.invalid/api/v1/') then Get('a/b'), Get('./x'), Get('a/../b'), Get('../../x'), Get('orders?x=1#f') with a handler printing Request.Path.",
     },
-    HttpHeadersAddUsedResult => {
-        id: "http-headers-add-used-result",
-        assumed: "HttpHeaders.Add whose result is used answers false and sets the last error to the header error (text and code) also for an empty name (InvalidHeader:Argument) and on the client's default headers. (Pinned on master for request, content and response headers: network/lt-ay-http/AyHeaderAddResult.al:499-543 PY_AddFalse_LastError_*; the empty name, the client headers and the `if not H.Add(..)` form are pinned by SE_AddFalse_* in corpus bump PR 737, writer SE, green on every measured major.)",
-        tests: "Code that tests the result of HttpHeaders.Add and then reads GetLastErrorText.",
-        probe: "Done by writer SE (branch al-runtime-rs-staging-pub-se, corpus PR 737): remove this entry when the bump lands.",
-        awaiting: Awaiting {
-            issues: &[],
-            files: &[
-                "tests/al-language/network/lt-ay-http/AyHeaderAddResult.al::SE_AddFalse_LastError_EmptyName",
-                "tests/al-language/network/lt-ay-http/AyHeaderAddResult.al::SE_AddFalse_LastError_ClientHeaders",
-                "tests/al-language/network/lt-ay-http/AyHeaderAddResult.al::SE_AddFalse_LastError_IfNotForm",
-            ],
-            since: "2026-10-25",
-        },
-    },
     HttpContentLengthAfterRead => {
         id: "http-content-length-after-read",
-        assumed: "A Content-Length the headers of a content already hold stays as it is through ReadAs(Text) and WriteFrom, also when it was added by hand. (Pinned on master for one a read put there: network/lt-ay-http/AyContentLength.al PY_ContentLength_*; a hand-set value kept by a read is pinned by SE_ContentLength_AddedByHandBeforeRead in corpus bump PR 737, writer SE; a hand-set value then WriteFrom of a body of another length is not measured and follows the same rule.)",
-        tests: "Code that sets Content-Length by hand and then reads or rewrites the content.",
-        probe: "Done by writer SE (branch al-runtime-rs-staging-pub-se, corpus PR 737): remove this entry when the bump lands. Still wanted: Add('Content-Length', '3') then WriteFrom('a longer text') and GetValues.",
-        awaiting: Awaiting {
-            issues: &[],
-            files: &[
-                "tests/al-language/network/lt-ay-http/AyContentLength.al::SE_ContentLength_AddedByHandBeforeRead",
-                "tests/al-language/network/lt-ay-http/AyContentLength.al::SE_ContentLength_EmptyBody",
-            ],
-            since: "2026-10-25",
-        },
-    },
-    HttpHeaderRules => {
-        id: "http-header-rules",
-        assumed: "HttpHeaders.Add follows the rules network/lt-se-header-values/SeHeaderValues.al (codeunit 89030, corpus bump PR 737, writer SE, same on every measured major) measured: a request-only name on response headers and a response-only name on request or client headers is stored as written; the client's default headers check like request headers; Accept-Charset, Accept-Language, TE, Pragma, Trailer, Upgrade, Via, Warning, Server and Proxy-Authenticate check their values; dates of the RFC 850, asctime, UTC and offset forms are stored as RFC 1123 GMT and a date in lower case is refused; If-Range and Retry-After take a date; Max-Forwards 007 reads 7, Content-Length 05 reads 5; a uri with an upper-case scheme or host or no path is stored in its normal form; Host with an empty port, Range with a suffix range, Content-Range `bytes */10` and Expect with a parameter are accepted, Range `bytes=x` is refused.",
-        tests: "Every Microsoft or NP Retail test that builds a request with headers (Authorization, Accept, Content-Type, custom X- headers).",
-        probe: "Done by writer SE (branch al-runtime-rs-staging-pub-se, corpus PR 737): remove this entry when the bump lands.",
-        awaiting: Awaiting {
-            issues: &[],
-            files: &["tests/al-language/network/lt-se-header-values/SeHeaderValues.al"],
-            since: "2026-10-25",
-        },
+        assumed: "A Content-Length added by hand stays as it is when WriteFrom then writes a body of another length. (Pinned: one a read put there stays through WriteFrom, network/lt-ay-http/AyContentLength.al PY_ContentLength_*; one added by hand stays through ReadAs, SE_ContentLength_AddedByHandBeforeRead.)",
+        tests: "Code that sets Content-Length by hand and then rewrites the content.",
+        probe: "Add('Content-Length', '3') then WriteFrom('a longer text') and GetValues, and the length a request sends.",
     },
     HttpTypedHeaderValueShapes => {
         id: "http-typed-header-value-shapes",
@@ -607,17 +564,6 @@ registry! {
         tests: "No Microsoft test: the reporter shape with RunPageLink is pinned; RunPageOnRec and RunPageView alone keep the same rule.",
         probe: "RunPageOnRec, and RunPageView without RunPageLink, to a List with SourceTableView = sorting(...) order(descending), = where(...), and both: the open row, the rows from First/Next and Filter.GetFilter of the view's field.",
     },
-    StaleInsertBufferOwnModify => {
-        id: "stale-insert-buffer-own-modify",
-        assumed: "A record variable that did its own Insert and then one own Modify(false) in the same transaction, made stale by the next Commit, follows the rule of a buffer from its own Insert (TestRecordStaleBufferWrite.al:395-690): written, the stale buffer winning, once the new transaction modified the row (changed or not); refused with DB:RecordChanged with nothing in between. Measured by the reporter on real BC on Windows (the newest major) (al-runner issue 5823). A Modify(true), a second own Modify or an own Modify in a later transaction keep the rule of a buffer of another origin.",
-        tests: "No Microsoft test: al-runner issue 5823 (3 tests of a partner app).",
-        probe: "Insert(true), own Modify(false), another variable's Modify and a Commit, then a changed and an unchanged Modify in the new transaction, then a Modify through the buffer: accepted and the stored row, or DB:RecordChanged with nothing in between. Wanted beside it: own Modify(true), two own Modifies, own Rename, own Modify then Delete, LockTable Get and a plain Get in the new transaction.",
-        awaiting: Awaiting {
-            issues: &[5823],
-            files: &["tests/al-language/record/lt-sb-stale-own-modify/SbStaleOwnModify.al"],
-            since: "2026-10-25",
-        },
-    },
     FormatWeekCodeIso => {
         id: "format-week-code-iso",
         assumed: "`<Week>` and `<Week,2>` of a Date give the ISO 8601 week number (weeks start on Monday, week 1 holds the year's first Thursday) for every week, and `<Weekday>` the ISO day number, Monday 1 to Sunday 7. Pinned are the weeks 1, 3, 10, 19, 28, 40, 52 and 53 at year boundaries and mid-year (types/lt-format-week-code/FormatWeekCodeIso.al:21-123, types/lt-datetime/DateFuncs.al:415-427) and the days 3 and 7 (DateFuncs.al:415,425; FormatWeekCodeIso.al:121,128); a Format of another week or day is a flagged pass.",
@@ -632,58 +578,6 @@ registry! {
         awaiting: Awaiting {
             issues: &[5748],
             files: &["tests/al-language/codeunit/lt-outside-onrun-error/RlOnRunError.al"],
-            since: "2026-10-25",
-        },
-    },
-    PageControlFieldArrayElementSource => {
-        id: "page-control-field-array-element-source",
-        assumed: "The Page Control Field row of a page's own control bound to an expression has the page's source table as TableNo, FieldNo 0 and SourceExpression the source as written, for three forms: an element of a page array with a number index (`Costs[1]`), a field of a page record variable (`OtherLine.Amount`) and an arithmetic expression (`Costs[1] + Costs[2]`). An undeclared Editable is `True` for the first two and `False` for the third; a declared one is its text. Text with a quote or irregular spacing, and every other expression, stay refused. Measured on the three supported majors by the corpus writer's probe (corpus branch al-runtime-rs-staging-pub-sc @2150ff97, cu 89002), from al-runner issue 5842.",
-        tests: "No Microsoft test: al-runner issue 5842 (1 test of a partner app).",
-        probe: "Written (record/TestPageControlFieldArraySource.al on al-runtime-rs-staging-pub-sc); remove this entry when the corpus bump brings it.",
-        awaiting: Awaiting {
-            issues: &[5842],
-            files: &["tests/al-language/record/TestPageControlFieldArraySource.al"],
-            since: "2026-10-25",
-        },
-    },
-    TestPageLookupUpdateFalseRefresh => {
-        id: "testpage-lookup-update-false-refresh",
-        assumed: "TestField.Lookup through a control's own OnLookup trigger, on a page with no parts, whose code calls no `CurrPage` method but `CurrPage.Update(false)` of that page, refreshes the page: a read of an expression control afterwards (`field(ResourceNo; Setting.\"Resource No.\")`) gives its value as it is now. That is the picked value when OnLookup answers true (with and without the Update in OnValidate), and the value kept when the modal page is cancelled or OnLookup sets Text and answers false. Measured on the three supported majors by the corpus writer's probe (corpus branch al-runtime-rs-staging-pub-sc @2150ff97, cu 89008), from al-runner issue 5843.",
-        tests: "No Microsoft test: al-runner issue 5843 (1 test of a partner app).",
-        probe: "Written (pages/lt-sc-outside-pages/ScLookupGlobalRecordField.al on al-runtime-rs-staging-pub-sc); remove this entry when the corpus bump brings it.",
-        awaiting: Awaiting {
-            issues: &[5843],
-            files: &["tests/al-language/pages/lt-sc-outside-pages/ScLookupGlobalRecordField.al"],
-            since: "2026-10-25",
-        },
-    },
-    DrilldownMarkedOnlyUpdateRefresh => {
-        id: "drilldown-marked-only-update-refresh",
-        assumed: "A field's OnDrillDown that turns MarkedOnly on for Rec (after setting marks) on a list without OnFindRecord and OnNextRecord: with `CurrPage.Update(false)` the page shows only the marked rows, also when it declares OnAfterGetRecord or OnAfterGetCurrRecord (First/Next walk the marked rows, GoToRecord of an unmarked row answers false); without the Update a page without those triggers still shows every row of the view (First/Next list both rows, GoToRecord of the unmarked row answers true) until it closes; another TestPage call before that is refused. Measured on the three supported majors by the corpus writer's probe (corpus branch al-runtime-rs-staging-pub-sc @2150ff97, cu 89016), from al-runner issue 5844.",
-        tests: "No Microsoft test: al-runner issue 5844 (1 test of a partner app).",
-        probe: "Written (pages/lt-sc-outside-pages/ScDrillDownMarkedOnly.al on al-runtime-rs-staging-pub-sc); remove this entry when the corpus bump brings it. Not in it, so refused: no Update on a page with the row triggers (every TestPage call but Close), other TestPage calls before Close.",
-        awaiting: Awaiting {
-            issues: &[5844],
-            files: &["tests/al-language/pages/lt-sc-outside-pages/ScDrillDownMarkedOnly.al"],
-            since: "2026-10-25",
-        },
-    },
-    RunnerTestIsolation => {
-        id: "runner-test-isolation",
-        assumed: "What a test runner codeunit's TestIsolation does for a whole run (al-runner --isolation test and --isolation disabled, a corpus runner without the property). Function: each test is rolled back to the state after OnRun, a Commit() inside it included, and so are an IsolatedStorage.Set of a new key and a NumberSequence.Insert; AutoIncrement and row versions are not reset. Disabled (and a runner without the property): nothing is rolled back but a failed test's writes since its last Commit(); the later test codeunits, in id order, see the rest; StartSession starts a session (refused here). RequiredTestIsolation has no effect under a runner. Measured by corpus writer SD on Windows containers of every supported BC major (identical) with the isolation probe app under four runners (branch al-runtime-rs-staging-pub-sd, commit 95c66e62, corpus PR 735); the corpus nightly does not run runners 61304 and 61305 yet.",
-        tests: "No Microsoft test: al-runner issues 5607 (Commit under --isolation test) and 5609 (--isolation disabled).",
-        probe: "The isolation probe app of corpus PR 735 (codeunits 61302-61320) under runners 61300, 61301, 61304 and 61305 in the corpus Windows nightly, with its JUnit files in oracle/.",
-        awaiting: Awaiting {
-            issues: &[5607, 5609],
-            files: &[
-                "tests/al-language-isolation-probe/src/SdIsolCommitError.Codeunit.al",
-                "tests/al-language-isolation-probe/src/SdIsolCommitReader.Codeunit.al",
-                "tests/al-language-isolation-probe/src/IsolProbeWriter.Codeunit.al",
-                "tests/al-language-isolation-probe/src/IsolProbeReader.Codeunit.al",
-                "tests/al-language-isolation-probe/src/IsolProbeCommit.Codeunit.al",
-                "tests/al-language-isolation-probe/src/IsolProbeAfterRollback.Codeunit.al",
-                "tests/al-language-isolation-probe/src/SdIsolStartSession.Codeunit.al",
-            ],
             since: "2026-10-25",
         },
     },

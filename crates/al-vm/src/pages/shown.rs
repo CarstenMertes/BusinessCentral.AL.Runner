@@ -60,10 +60,9 @@ const DOUBT_OTHER: u16 = 64;
 /// it is now, under an assumption (module comment).
 const DOUBT_ASSUMED: u16 = 128;
 /// TestField.Lookup through the control's own OnLookup trigger, on a page with no parts, whose code calls no `CurrPage` method
-/// but `CurrPage.Update(false)` of that page: a read of an expression the page does not keep is computed as it is now, under
-/// assumption testpage-lookup-update-false-refresh (al-runner issue 5843, corpus writer's probe
-/// pages/lt-sc-outside-pages/ScLookupGlobalRecordField.al: the picked value with and without the Update, the kept one after a
-/// cancel or a false answer; not on the pinned corpus yet).
+/// but `CurrPage.Update(false)` of that page: a read of an expression the page does not keep is computed as it is now
+/// (al-runner issue 5843, pinned by pages/lt-sc-outside-pages/ScLookupGlobalRecordField.al: the picked value with and without
+/// the Update, the kept one after a cancel or a false answer).
 const DOUBT_LOOKUP: u16 = 256;
 /// The kinds after which a control of an expression the page does not keep is read as it is now (module comment).
 const DOUBT_KEPT: u16 =
@@ -358,11 +357,8 @@ impl Session {
                     st.borrow().shown_doubt_call.unwrap_or("a call")
                 ));
             }
-            if doubts & DOUBT_LOOKUP != 0 {
-                al_builtins::assumptions::assume(
-                    al_builtins::assumptions::Assumption::TestPageLookupUpdateFalseRefresh,
-                );
-            }
+            // DOUBT_LOOKUP: a Lookup through OnLookup with `CurrPage.Update(false)` refreshes the page (pinned:
+            // pages/lt-sc-outside-pages/ScLookupGlobalRecordField.al, codeunit 89008).
             if doubts & DOUBT_ASSUMED != 0 {
                 al_builtins::assumptions::assume(
                     al_builtins::assumptions::Assumption::PageExpressionControlLiveReadAfterNextFilterActivate,

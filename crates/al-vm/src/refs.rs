@@ -687,6 +687,13 @@ impl Session {
     }
 
     fn recordref_op(&mut self, method: &str, lib: &Lib, args: &mut [Value]) -> Result<Value, Signal> {
+        // A RecordRef on a table whose filter group 1 another record set (records.rs `global_group_check`).
+        if !self.global_group1.is_empty() && method != "FilterGroup" {
+            if let LibraryValue::RecordRef(rec) = &*lib.borrow() {
+                let table = rec.borrow().table;
+                self.global_group_check(rec, table, &format!("RecordRef.{method}"))?;
+            }
+        }
         let r = self.recordref_op_inner(method, lib, args);
         // What the ref read or wrote is what IsDirty compares with. A read that found nothing leaves the buffer alone.
         let snapshot = match (&r, method) {
@@ -1480,7 +1487,7 @@ impl Session {
             "SetRange" | "SetFilter" => {
                 let mut a = vec![Value::Integer(pos as i32)];
                 a.extend(args.iter().cloned());
-                self.record_op(record_method(method), &rec, &mut a)
+                self.record_op_from_al(record_method(method), &rec, &mut a)
             }
             other => unsupported(format!("FieldRef.{other}")),
         }

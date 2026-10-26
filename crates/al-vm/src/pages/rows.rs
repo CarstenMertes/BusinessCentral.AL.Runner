@@ -561,6 +561,12 @@ impl Session {
         st.borrow_mut().window_top_unread = false;
         st.borrow_mut().opened_on_moved_rec = false;
         let rec = self.page_rec(st);
+        // The rows of a page whose table holds a global filter (filter group 1) another record set (records.rs
+        // `global_group_check`).
+        if !self.global_group1.is_empty() {
+            let table = rec.borrow().table;
+            self.global_group_check(&rec, table, "A page reading its rows")?;
+        }
         let start = self.row_key(&rec)?;
         let mut keys = Vec::new();
         let mut walked = 0;

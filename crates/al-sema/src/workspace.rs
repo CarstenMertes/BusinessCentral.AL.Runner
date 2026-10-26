@@ -325,9 +325,7 @@ impl Workspace {
                     (scanned_file(src, symbols), Vec::new())
                 } else {
                     match crate::pages::expand_or_parse(src, symbols) {
-                        crate::pages::Expansion::Expanded(text, added) => {
-                            (with_tree_cache(|cache| parse_file(&text, symbols, cache)), added)
-                        }
+                        crate::pages::Expansion::Expanded(_, added, parse) => (parsed_file(parse), added),
                         // The parse that looked for expressions is the file's parse.
                         crate::pages::Expansion::Unchanged(parse) => (parsed_file(parse), Vec::new()),
                     }
@@ -437,11 +435,10 @@ impl Workspace {
         let (ai, file_in_app, path) = (file.app, file.file_in_app, file.path.clone());
         let old_green = file.green.get().cloned().ok_or("the file was never parsed")?;
         let symbols = &self.symbols[ai];
-        let (src, added): (String, Vec<ByteRange>) = match crate::pages::expand_ranges(&text, symbols) {
-            Some((expanded, added)) => (expanded, added),
-            None => (text.clone(), Vec::new()),
+        let (parsed, added): (ParsedFile, Vec<ByteRange>) = match crate::pages::expand_or_parse(&text, symbols) {
+            crate::pages::Expansion::Expanded(_, added, parse) => (parsed_file(parse), added),
+            crate::pages::Expansion::Unchanged(parse) => (parsed_file(parse), Vec::new()),
         };
-        let parsed = with_tree_cache(|cache| parse_file(&src, symbols, cache));
         if !parsed.errors.is_empty() {
             return Err("the new text does not parse cleanly".into());
         }
@@ -738,14 +735,17 @@ impl Workspace {
     /// parse error if there is one. `fresh` starts from an empty token cache.
     fn parse_lazy(&self, fi: usize, f: &SourceFileData, fresh: bool) -> Attempt<(rowan::GreenNode, Vec<ByteRange>)> {
         let src = self.text(fi);
-        // Only a page, report or table can have properties to turn into routines; skip the extra parse otherwise. When there is nothing to
-        // add, the parse that looked is the file's parse; a `fresh` parse (the second one, of a file whose first parse had
-        // a problem) is made anew.
+        // Only a page, report or table can have properties to turn into routines; skip the extra parse otherwise. The parse that looked
+        // is the file's parse, with the added routines spliced in when there are any; a `fresh` parse (the second one, of a
+        // file whose first parse had a problem) is made anew.
         let (expanded, reused) = match f
             .has_page
             .then(|| crate::pages::expand_or_parse(src, &self.symbols[f.app]))
         {
-            Some(crate::pages::Expansion::Expanded(text, added)) => (Some((text, added)), None),
+            Some(crate::pages::Expansion::Expanded(text, added, parse)) => {
+                let reused = (!fresh).then(|| parsed_file(parse));
+                (Some((text, added)), reused)
+            }
             Some(crate::pages::Expansion::Unchanged(parse)) if !fresh => (None, Some(parsed_file(parse))),
             _ => (None, None),
         };

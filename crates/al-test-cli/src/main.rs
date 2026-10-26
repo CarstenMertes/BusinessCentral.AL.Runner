@@ -135,8 +135,10 @@ fn run() -> Result<ExitCode, String> {
 
     let mut code = 0u8;
     let mut runs = Vec::new();
-    for v in versions {
-        let r = run_version(&args, &root, &oracle_path, &cfg, v, None)?;
+    let last = versions.len() - 1;
+    for (i, v) in versions.into_iter().enumerate() {
+        // The process ends after the last version's run: its compile is not freed (`RunOptions::process_ends_after`).
+        let r = run_version(&args, &root, &oracle_path, &cfg, v, None, i == last)?;
         code = code.max(r.code);
         runs.push((v.major, r));
     }
@@ -197,7 +199,7 @@ fn awaiting_assumptions(
     args.no_ratchet = true;
     args.update_baseline = false;
     let mut cases = Vec::new();
-    run_version(args, root, oracle_path, cfg, version, Some(&mut cases))?;
+    run_version(args, root, oracle_path, cfg, version, Some(&mut cases), true)?;
     println!();
     for e in &landed {
         let v = awaiting::verdict(e.id, &e.awaiting, &cases);
@@ -315,6 +317,7 @@ fn run_version(
     cfg: &config::OracleFile,
     version: &config::VersionEntry,
     awaited: Option<&mut Vec<al_test_cli::awaiting::AwaitedCase>>,
+    process_ends_after: bool,
 ) -> Result<VersionRun, String> {
     // ADR-007: the oracle may be recorded for an older corpus commit when the pin only added files.
     pin::check(
@@ -667,6 +670,7 @@ fn run_version(
         run_only: None,
         entries: Vec::new(),
         skipped_dependencies,
+        process_ends_after,
     };
     let load_time = started.elapsed();
     let rt = runtime::CorpusRuntime::try_run_suites_with(

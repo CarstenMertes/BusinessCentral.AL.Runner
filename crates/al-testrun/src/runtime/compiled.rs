@@ -121,6 +121,10 @@ pub struct RunOptions {
     /// The dependency apps the run skipped, as the log names them (`deps::Dependencies::skipped`): a lookup by id of an
     /// object no loaded app declares is then refused, as it may land in one of them (`al_vm::Engine::skipped_apps`).
     pub skipped_dependencies: Vec<String>,
+    /// The process ends right after this run (the one-shot command lines `al-test-cli` and `al-runner test`): the
+    /// compile and the engines are not freed at the end of the run (`retire_at_end`). Never set by a server or by a
+    /// caller that runs again in the same process. Default `false`: they are freed on another thread.
+    pub process_ends_after: bool,
 }
 
 /// One entry of a run (`RunOptions::entries`).

@@ -171,7 +171,7 @@ An item is **pinned** when it occurs in a corpus file in a routine that static r
 
 | Dimension | Catalog | Pinned | Used by Microsoft | Microsoft-used and unpinned | of those, runtime does not read |
 |---|---:|---:|---:|---:|---:|
-| Triggers per object kind | 191 | 187 | 128 | 0 | 0 |
+| Triggers per object kind | 188 | 187 | 128 | 0 | 0 |
 | Object properties per object kind | 1346 | 801 | 1074 | 545 | 515 |
 | Platform and system events | 123 | 37 | 17 | 0 | 0 |
 | Statements and expressions | 64 | 60 | 58 | 0 | 0 |
@@ -180,14 +180,11 @@ An item is **pinned** when it occurs in a corpus file in a routine that static r
 
 Presentation-only properties (Caption, ToolTip, ApplicationArea, ... ) are left out of the property catalog.
 
-## Triggers per object kind: unpinned items (4)
+## Triggers per object kind: unpinned items (1)
 
 | Group | Name | MS uses | Runtime reads | Corpus uses (not reached) |
 |---|---|---:|---|---:|
-| (any) | `OnAfter` | 0 | yes | 0 |
-| (any) | `OnBefore` | 0 | yes | 0 |
 | (any) | `OnPrem` | 0 | yes | 0 |
-| (any) | `OnResolveCaptionClass` | 0 | yes | 0 |
 
 ## Object properties per object kind: unpinned items (545)
 

@@ -314,7 +314,8 @@ pub trait Ctx: FormatCtx {
     fn isolation_from_hub(&self) -> bool {
         false
     }
-    /// The TestRunnerHub runs the test codeunit under RequiredTestIsolation = Disabled.
+    /// The test codeunit runs under Disabled isolation: the TestRunnerHub's RequiredTestIsolation = Disabled, or a test
+    /// runner's TestIsolation = Disabled.
     fn hub_disabled(&self) -> bool {
         false
     }
@@ -1978,13 +1979,16 @@ fn start_session(c: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]) -> Res
             Value::Null
         });
     }
-    // Under RequiredTestIsolation = Disabled on the TestRunnerHub BC starts the session, it runs and its writes are seen
-    // (codeunit/lt-qu-commit-isolation/RqIsolationModes.al:573-600, al-runner issue 5609); a second session is not modelled.
-    // Under Function it fails as under Codeunit (:454-462).
-    if c.in_test_run() && c.isolation_from_hub() && c.hub_disabled() {
+    // Under Disabled isolation BC starts the session, it runs and its writes are seen: on the TestRunnerHub under
+    // RequiredTestIsolation = Disabled (codeunit/lt-qu-commit-isolation/RqIsolationModes.al:573-600, al-runner issue 5609)
+    // and under a test runner codeunit's TestIsolation = Disabled or none (corpus PR 735,
+    // tests/al-language-isolation-probe/src/SdIsolStartSession.Codeunit.al:20-22); a second session is not modelled.
+    // Under Function it fails as under Codeunit (RqIsolationModes.al:454-462; SdIsolStartSession.Codeunit.al:20-21).
+    if c.in_test_run() && c.hub_disabled() {
         return unsupported(
-            "StartSession in a test codeunit run under its RequiredTestIsolation = Disabled (--isolation required): BC \
-             starts the session there, and a second session is not modelled",
+            "StartSession in a test codeunit run under Disabled test isolation (--isolation disabled, or \
+             RequiredTestIsolation = Disabled with --isolation required): BC starts the session there, and a second \
+             session is not modelled",
         );
     }
     if c.in_test_run() {

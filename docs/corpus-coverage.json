@@ -2,7 +2,7 @@
   "corpus_commit": "80711c1b1ee4c1ea25ac3cbaff7faf729ddeca4b",
   "language": {
     "bc": "27-29",
-    "implemented": 1517,
+    "implemented": 1532,
     "methods": [
       {
         "bc": [
@@ -10808,7 +10808,7 @@
         "scope": "",
         "sig": "(Integer)",
         "site": "platform/lt-xmlport-session-navapp-cookie/P94NavApp.al:87",
-        "state": "implemented",
+        "state": "refused",
         "type": "NavApp"
       },
       {
@@ -10824,7 +10824,7 @@
         "scope": "",
         "sig": "(Integer, var RecordRef)",
         "site": "platform/lt-xmlport-session-navapp-cookie/P94NavApp.al:26",
-        "state": "implemented",
+        "state": "refused",
         "type": "NavApp"
       },
       {
@@ -10840,7 +10840,7 @@
         "scope": "",
         "sig": "()",
         "site": "platform/lt-xmlport-session-navapp-cookie/P94NavApp.al:20",
-        "state": "implemented",
+        "state": "refused",
         "type": "NavApp"
       },
       {
@@ -11042,7 +11042,7 @@
         "scope": "",
         "sig": "([Guid])",
         "site": "platform/lt-xmlport-session-navapp-cookie/P94NavApp.al:200",
-        "state": "implemented",
+        "state": "refused",
         "type": "NavApp"
       },
       {
@@ -11102,7 +11102,7 @@
         "scope": "",
         "sig": "(Integer)",
         "site": "platform/lt-xmlport-session-navapp-cookie/P94NavApp.al:163",
-        "state": "implemented",
+        "state": "refused",
         "type": "NavApp"
       },
       {
@@ -11118,7 +11118,7 @@
         "scope": "",
         "sig": "(Integer, [Boolean])",
         "site": "platform/lt-xmlport-session-navapp-cookie/P94NavApp.al:115",
-        "state": "implemented",
+        "state": "refused",
         "type": "NavApp"
       },
       {
@@ -23413,7 +23413,7 @@
         "scope": "",
         "sig": "(OutStream)",
         "site": "xml/lt-xml-attr-doc-http-members/P97AttrWrite.al:168",
-        "state": "refused",
+        "state": "implemented",
         "type": "XmlAttribute"
       },
       {
@@ -23445,7 +23445,7 @@
         "scope": "",
         "sig": "(XmlWriteOptions, var Text)",
         "site": "xml/lt-xml-attr-doc-http-members/P97AttrWrite.al:123",
-        "state": "refused",
+        "state": "implemented",
         "type": "XmlAttribute"
       },
       {
@@ -23541,7 +23541,7 @@
         "scope": "",
         "sig": "(Text)",
         "site": "xml/XmlAttributes.al:265",
-        "state": "refused",
+        "state": "implemented",
         "type": "XmlAttributeCollection"
       },
       {
@@ -23557,7 +23557,7 @@
         "scope": "",
         "sig": "(Text, Text)",
         "site": "xml/XmlAttributes.al:293",
-        "state": "refused",
+        "state": "implemented",
         "type": "XmlAttributeCollection"
       },
       {
@@ -23573,7 +23573,7 @@
         "scope": "",
         "sig": "(XmlAttribute)",
         "site": "xml/lt-xml-remaining-node-methods/P104AttrCollection.al:41",
-        "state": "refused",
+        "state": "implemented",
         "type": "XmlAttributeCollection"
       },
       {
@@ -23877,7 +23877,7 @@
         "scope": "",
         "sig": "(XmlWriteOptions, var Text)",
         "site": "xml/lt-xml-remaining-node-methods/P104WriteCData.al:50",
-        "state": "refused",
+        "state": "implemented",
         "type": "XmlCData"
       },
       {
@@ -24149,7 +24149,7 @@
         "scope": "",
         "sig": "(XmlWriteOptions, var Text)",
         "site": "xml/lt-xml-remaining-node-methods/P104WriteComment.al:50",
-        "state": "refused",
+        "state": "implemented",
         "type": "XmlComment"
       },
       {
@@ -24421,7 +24421,7 @@
         "scope": "",
         "sig": "(OutStream)",
         "site": "xml/lt-xml-remaining-node-methods/P104WriteDecl.al:84",
-        "state": "refused",
+        "state": "implemented",
         "type": "XmlDeclaration"
       },
       {
@@ -24437,7 +24437,7 @@
         "scope": "",
         "sig": "(XmlWriteOptions, OutStream)",
         "site": "xml/lt-xml-remaining-node-methods/P104WriteDecl.al:88",
-        "state": "refused",
+        "state": "implemented",
         "type": "XmlDeclaration"
       },
       {
@@ -24453,7 +24453,7 @@
         "scope": "",
         "sig": "(XmlWriteOptions, var Text)",
         "site": "xml/lt-xml-remaining-node-methods/P104WriteDecl.al:50",
-        "state": "refused",
+        "state": "implemented",
         "type": "XmlDeclaration"
       },
       {
@@ -25061,7 +25061,7 @@
         "scope": "",
         "sig": "(XmlWriteOptions, var Text)",
         "site": "xml/XmlDocReadWrite.al:404",
-        "state": "refused",
+        "state": "implemented",
         "type": "XmlDocument"
       },
       {
@@ -25461,7 +25461,7 @@
         "scope": "",
         "sig": "(OutStream)",
         "site": "xml/lt-xml-remaining-node-methods/P104DocTypeCreate.al:153",
-        "state": "refused",
+        "state": "implemented",
         "type": "XmlDocumentType"
       },
       {
@@ -25477,7 +25477,7 @@
         "scope": "",
         "sig": "(XmlWriteOptions, OutStream)",
         "site": "xml/lt-xml-remaining-node-methods/P104DocTypeCreate.al:167",
-        "state": "refused",
+        "state": "implemented",
         "type": "XmlDocumentType"
       },
       {
@@ -25493,7 +25493,7 @@
         "scope": "",
         "sig": "(XmlWriteOptions, var Text)",
         "site": "xml/lt-xml-remaining-node-methods/P104DocTypeCreate.al:144",
-        "state": "refused",
+        "state": "implemented",
         "type": "XmlDocumentType"
       },
       {
@@ -26053,7 +26053,7 @@
         "scope": "",
         "sig": "(Text, Text)",
         "site": "xml/XmlAttributes.al:298",
-        "state": "refused",
+        "state": "implemented",
         "type": "XmlElement"
       },
       {
@@ -26261,7 +26261,7 @@
         "scope": "",
         "sig": "(XmlWriteOptions, var Text)",
         "site": "xml/XmlElement.al:746",
-        "state": "refused",
+        "state": "implemented",
         "type": "XmlElement"
       },
       {
@@ -26933,7 +26933,7 @@
         "scope": "",
         "sig": "(XmlWriteOptions, var Text)",
         "site": "xml/lt-xml-remaining-node-methods/P104WriteNode.al:50",
-        "state": "refused",
+        "state": "implemented",
         "type": "XmlNode"
       },
       {
@@ -27221,7 +27221,7 @@
         "scope": "",
         "sig": "(Text)",
         "site": "xml/XmlNodes.al:199",
-        "state": "refused",
+        "state": "implemented",
         "type": "XmlProcessingInstruction"
       },
       {
@@ -27237,7 +27237,7 @@
         "scope": "",
         "sig": "(Text)",
         "site": "xml/XmlNodes.al:201",
-        "state": "refused",
+        "state": "implemented",
         "type": "XmlProcessingInstruction"
       },
       {
@@ -27285,7 +27285,7 @@
         "scope": "",
         "sig": "(XmlWriteOptions, var Text)",
         "site": "xml/lt-xml-remaining-node-methods/P104WritePI.al:50",
-        "state": "refused",
+        "state": "implemented",
         "type": "XmlProcessingInstruction"
       },
       {
@@ -27573,7 +27573,7 @@
         "scope": "",
         "sig": "(XmlWriteOptions, var Text)",
         "site": "xml/lt-xml-remaining-node-methods/P104WriteText.al:50",
-        "state": "refused",
+        "state": "implemented",
         "type": "XmlText"
       },
       {
@@ -27947,7 +27947,7 @@
     ],
     "overloads": 1750,
     "pinned": 1706,
-    "refused": 205,
+    "refused": 190,
     "runtime_only": [
       "ErrorInfo.Create#3",
       "FieldRef.FieldError#2",

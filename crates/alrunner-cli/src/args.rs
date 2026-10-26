@@ -563,10 +563,13 @@ ISOLATION
     --isolation MODE     (`--test-isolation MODE` is the same) `codeunit` (default): the database
                          is rolled back when a test codeunit ends. `test` (also `function`, `method`): it is rolled back to its state after OnRun
                          after every test method; the codeunit's AL variables are kept, as BC's
-                         TestIsolation = Function does. A test that calls Commit() under `test`
-                         is reported as not run: whether BC keeps the committed rows for the next
-                         test is not pinned yet; run that codeunit with `codeunit`. `disabled`:
-                         not pinned yet, so every test is reported as not run. `required`: each
+                         TestIsolation = Function does; a Commit() inside a test is rolled back
+                         too, and so are IsolatedStorage.Set and NumberSequence.Insert. `disabled`:
+                         nothing is rolled back but a failed test's writes since its last Commit();
+                         the test codeunits run one after the other in id order and each sees what
+                         the ones before it left. StartSession is reported as not run there.
+                         Under `test` and `disabled` RequiredTestIsolation has no effect, as under
+                         a test runner codeunit with that TestIsolation. `required`: each
                          test codeunit runs under its own RequiredTestIsolation, as Business
                          Central runs it without a test runner codeunit from version 28 (on
                          version 27 as `codeunit`).

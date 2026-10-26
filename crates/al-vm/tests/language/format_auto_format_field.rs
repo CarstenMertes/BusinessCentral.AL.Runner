@@ -91,3 +91,66 @@ fn format_in_code_applies_the_fields_auto_format_expression() {
 fn format_in_code_of_auto_format_type_four_takes_the_amount_places() {
     assert_eq!(text(al_testkit::run_in(SRC, "QI AF Test", "TypeFour")), "1,234.568");
 }
+
+const LITERAL_SRC: &str = r#"
+table 4 Currency
+{
+    fields { field(1; Code; Code[10]) { } field(2; "Amount Decimal Places"; Text[5]) { } field(3; "Unit-Amount Decimal Places"; Text[5]) { } }
+    keys { key(PK; Code) { } }
+}
+table 98 "General Ledger Setup"
+{
+    fields { field(1; "Primary Key"; Code[10]) { } field(2; "Amount Decimal Places"; Text[5]) { } field(3; "Unit-Amount Decimal Places"; Text[5]) { } }
+    keys { key(PK; "Primary Key") { } }
+}
+table 50110 "AF Lit"
+{
+    fields
+    {
+        field(1; PK; Integer) { }
+        field(4; Dec4; Decimal) { AutoFormatType = 4; AutoFormatExpression = 'GBP'; }
+        field(5; Dec5; Decimal) { AutoFormatType = 5; AutoFormatExpression = 'GBP'; }
+    }
+    keys { key(PK; PK) { } }
+}
+codeunit 50111 "AF Lit Test"
+{
+    procedure Run(WithCurrency: Boolean): Text
+    var
+        GL: Record "General Ledger Setup";
+        Cur: Record Currency;
+        R: Record "AF Lit";
+    begin
+        GL."Amount Decimal Places" := '2:2';
+        GL."Unit-Amount Decimal Places" := '2:5';
+        GL.Insert();
+        if WithCurrency then begin
+            Cur.Code := 'GBP';
+            Cur.Insert();
+        end;
+        R.Dec4 := 1234.56789;
+        R.Dec5 := 1234.56789;
+        exit(Format(R.Dec4) + '|' + Format(R.Dec5) + '|' + Format(R.Dec4, 0, 9));
+    end;
+}
+"#;
+
+/// AutoFormatType 4 and 5 with a constant code that is no currency take the places of an amount and a unit amount
+/// (types/lt-ax-text-format-dates/AxFillerBuilderAutoFormat.al:193-260); with a currency that exists they are refused.
+#[test]
+fn auto_format_types_four_and_five_with_a_code_that_is_no_currency() {
+    let r = al_testkit::run_with(
+        LITERAL_SRC,
+        "AF Lit Test",
+        "Run",
+        vec![al_builtins::value::Value::Boolean(false)],
+    );
+    assert_eq!(text(r.map(|(v, _)| v)), "1,234.57|1,234.56789|1234.57");
+    let r = al_testkit::run_with(
+        LITERAL_SRC,
+        "AF Lit Test",
+        "Run",
+        vec![al_builtins::value::Value::Boolean(true)],
+    );
+    assert!(matches!(r, Err(al_builtins::native::Signal::Unsupported(_))), "{r:?}");
+}

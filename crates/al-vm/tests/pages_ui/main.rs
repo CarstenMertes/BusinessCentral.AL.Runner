@@ -54,6 +54,7 @@ mod run_record_group2;
 mod trap_reopen;
 mod trigger_errors;
 mod trust_refusals;
+mod unopened_page_var;
 mod unpinned_testpage_paths;
 mod update_filter_away_row;
 mod update_new_line_filter;

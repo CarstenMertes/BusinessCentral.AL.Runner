@@ -1004,6 +1004,22 @@ fn calcfields_of_a_blob_of_a_rolled_back_row_empties_the_blob() {
     );
 }
 
+#[test]
+fn random_of_a_decimal() {
+    // types/lt-aj-probes/AjScalars.al:375-433: a whole Decimal draws as that Integer, a fraction is the conversion error.
+    assert_eq!(text("D: Decimal;", "D := 1.0; exit(Format(Random(D)));"), "1");
+    match run("procedure F(): Text var D: Decimal; I: Integer; begin D := 2.5; I := Random(D); exit(''); end;") {
+        Err(Signal::Error(e)) => {
+            assert_eq!(e.code, "ConversionCast");
+            assert_eq!(
+                e.message,
+                "Overflow under conversion of Microsoft.Dynamics.Nav.Runtime.Decimal18 value 2.5 to System.Int32."
+            );
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
 // platform/lt-t-geturl/TGetUrl.al:248-285 (GetUrl_ClientPhone, Tablet, Desktop): `ms-dynamicsnav://` and the address, then the
 // web query without a `/`; TGetUrl.al:233-240 (GetUrl_ClientWindows): the Default text; GetUrlCtBackground.al,
 // GetUrlCtManagement.al, GetUrlCtNAS.al:69-73: the empty text.

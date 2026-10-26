@@ -482,6 +482,17 @@ impl Lowerer<'_> {
                     // one-character literals compares as a Char (`'K' in ['a' .. 'z']` is No:
                     // types/lt-expression-operators-literals/ExpressionBinaryOperators.al:288, :303). Another literal on the left of a
                     // range is not pinned.
+                    // A BigInteger on the left of a set of Integers converts to an Integer, so one beyond the Integer range raises
+                    // the conversion error (types/lt-implicit-conversions/P79BigOption.al:401, 511-529 Compare_InSet,
+                    // `Big in [0, 1, 2]`). A set with other elements is compared as it is.
+                    if matches!(self.ty_of(&kids[0]), Ty::BigInteger)
+                        && set.children().count() > 0
+                        && set
+                            .children()
+                            .all(|e| e.kind() != SyntaxKind::RangeExpr && matches!(self.ty_of(&e), Ty::Integer))
+                    {
+                        l = self.convert_to(&Ty::Integer, &Ty::BigInteger, l)?;
+                    }
                     let ranged = set.children().any(|e| e.kind() == SyntaxKind::RangeExpr);
                     if ranged && is_string_literal(&kids[0]) {
                         let ends: Vec<SyntaxNode> = set

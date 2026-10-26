@@ -606,15 +606,9 @@ impl Session {
         // That the Before event sees the new value is docs/probes-needed.md.
         self.table_event(t, "onbeforevalidateevent", rec, Some(xrec), false, Some(&field.name))?;
         // The triggers table extensions attach to the field bracket its own OnValidate
-        // (record/TestTriggerDispatchOrder.al:TriggerOrder_Validate_FieldPipeline_IsStable). The
-        // order of two extensions' triggers on one field is not pinned.
-        if field.ext_before_validate.len() > 1 || field.ext_after_validate.len() > 1 {
-            return unsupported(format!(
-                "Validate of {}.{}: more than one table extension declares OnBeforeValidate or OnAfterValidate for it (their order is not pinned)",
-                t.name, field.name
-            ));
-        }
-        for &(object, routine) in &field.ext_before_validate {
+        // (record/TestTriggerDispatchOrder.al:TriggerOrder_Validate_FieldPipeline_IsStable).
+        let (before, after) = self.ext_validate_order(t, field)?;
+        for &(object, routine) in &before {
             self.run_trigger(object, routine, rec, Some(xrec))?;
         }
         if let Some((object, routine)) = field.on_validate {
@@ -630,10 +624,57 @@ impl Session {
                 return Err(e);
             }
         }
-        for &(object, routine) in &field.ext_after_validate {
+        for &(object, routine) in &after {
             self.run_trigger(object, routine, rec, Some(xrec))?;
         }
         self.table_event(t, "onaftervalidateevent", rec, Some(xrec), false, Some(&field.name))
+    }
+
+    /// The OnBeforeValidate and OnAfterValidate triggers table extensions declare for `field`, in the order they run. Two
+    /// extensions of one app run in the order of their object ids, both before and after the field's own OnValidate
+    /// (record/lt-modify-field-two/ModifyFieldTwoExtensions.al:148-169, P163_Validate_TwoExtensionsOnOneField_Order: 73328 "Ext A"
+    /// then 73329 "Ext B"; events/W4ValidateOrderAndCurrFieldNo.al:331 `ext1.before;ext2.before;base.onvalidate;ext1.after;ext2.after;`,
+    /// 68065 "Ext One" then 68066 "Ext Two"). In both pins the id order is also the order of the names; when the two orders differ,
+    /// or with more than two extensions or extensions of different apps, the order is not pinned and the Validate is refused.
+    #[allow(clippy::type_complexity)]
+    fn ext_validate_order(
+        &self,
+        t: &TableDef,
+        field: &al_ir::Field,
+    ) -> Result<(Vec<(usize, usize)>, Vec<(usize, usize)>), Signal> {
+        let (mut before, mut after) = (field.ext_before_validate.clone(), field.ext_after_validate.clone());
+        if before.len() <= 1 && after.len() <= 1 {
+            return Ok((before, after));
+        }
+        let refuse = || {
+            unsupported(format!(
+                "Validate of {}.{}: more than one table extension declares OnBeforeValidate or OnAfterValidate for it (their order is not pinned)",
+                t.name, field.name
+            ))
+        };
+        let objects = &self.engine.program.objects;
+        let mut involved: Vec<usize> = before.iter().chain(&after).map(|&(o, _)| o).collect();
+        involved.sort_unstable();
+        involved.dedup();
+        if involved.len() > 2
+            || before.len() > 2
+            || after.len() > 2
+            || involved.iter().any(|&o| objects[o].app != objects[involved[0]].app)
+            || [&before, &after].iter().any(|l| l.len() == 2 && l[0].0 == l[1].0)
+        {
+            return refuse();
+        }
+        let mut by_id = involved.clone();
+        by_id.sort_by_key(|&o| objects[o].id);
+        let mut by_name = involved.clone();
+        by_name.sort_by_key(|&o| objects[o].name.to_ascii_lowercase());
+        if by_id != by_name || by_id.windows(2).any(|w| objects[w[0]].id == objects[w[1]].id) {
+            return refuse();
+        }
+        let rank = |o: usize| by_id.iter().position(|&x| x == o);
+        before.sort_by_key(|&(o, _)| rank(o));
+        after.sort_by_key(|&(o, _)| rank(o));
+        Ok((before, after))
     }
 
     /// `Record.Delete(run)` of the row `rec` holds: Before event, OnDelete, the
@@ -3139,6 +3180,12 @@ impl Session {
             RecordOp::Delete => {
                 let run = arg_bool(args, 0)?;
                 self.tenant_license_state_refuses(&t, "delete")?;
+                // A Delete loads the missing fields of a partially loaded record first: afterwards they read as loaded, with the
+                // values of the row it deleted (record/lt-load-fields-fetched/LoadFieldsFetched.al:270-289,
+                // P170_JitLoad_After_Delete_Of_The_Same_Partial_Record_BQ, Delete without triggers). With triggers it is not pinned.
+                if !run && !rec.borrow().temporary {
+                    self.load_missing_fields(rec, None)?;
+                }
                 self.delete_row(&t, rec, run)
             }
             RecordOp::DeleteAll => {
@@ -3709,8 +3756,16 @@ impl Session {
                                 ));
                             }
                             if self.global_language == 1033 && args.len() <= 2 {
+                                let failing = parsed
+                                    .as_ref()
+                                    .err()
+                                    .and_then(|e| al_builtins::filter::not_evaluated_value(e))
+                                    .unwrap_or_default()
+                                    .to_string();
                                 if let Some(fixed) =
-                                    self.repair_word_filter_text(event, param, &text, &|t| parse(t).is_ok())?
+                                    self.repair_word_filter_text(event, param, &text, &failing, &|t| {
+                                        parse(t).map(|_| ())
+                                    })?
                                 {
                                     parsed = parse(&fixed);
                                 }

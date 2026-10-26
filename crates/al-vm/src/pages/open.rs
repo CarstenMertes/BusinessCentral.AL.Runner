@@ -90,7 +90,40 @@ impl Session {
         }
         st.borrow_mut().ext_instances = exts;
         st.borrow_mut().instance = Some(inst.clone());
+        self.seed_unopened_rec(st);
         Ok(inst)
+    }
+
+    /// The Rec of a Page variable that never ran holds what SetRecord and SetTableView handed it: its own procedures read the
+    /// row SetRecord gave (pages/lt-bl-unopened-currpage/UnopenedCurrPage.al:214 SetRecord_Then_Update_List `[2] []`) and the
+    /// filters SetTableView gave, on the blank row (:233 SetTableView_Then_Update_Card `[0] [Id: 2]`).
+    pub(super) fn seed_unopened_rec(&mut self, st: &St) {
+        if !self.never_ran_page_var(st) {
+            return;
+        }
+        let (Some(inst), Some(given), view) = ({
+            let s = st.borrow();
+            (s.instance.clone(), s.set_record.clone(), s.set_view)
+        }) else {
+            return;
+        };
+        let object = st.borrow().object as usize;
+        let Some(slot) = self.engine.program.objects[object].rec_slot else {
+            return;
+        };
+        let Value::Record(rec) = inst.borrow().globals[slot].clone() else {
+            return;
+        };
+        if rec.borrow().table != given.borrow().table {
+            return;
+        }
+        let given = given.borrow();
+        let mut rec = rec.borrow_mut();
+        if view {
+            rec.filters = given.filters.clone();
+        } else {
+            rec.fields = given.fields.clone();
+        }
     }
 
     /// A call on a `Page` variable constructs the page on first use: its instance, and OnInit once
@@ -1480,6 +1513,8 @@ impl Session {
             };
             if vetoed_in_handler {
                 st.borrow_mut().test_close_vetoed = true;
+            } else if st.borrow().modal && self.ui_state.page_handler_depth > 0 && !st.borrow().close_vetoed {
+                st.borrow_mut().test_closed_in_handler = true;
             } else if st.borrow().close_vetoed {
                 // A Close() the page's own OnQueryClosePage refused returns, and the veto is the last error, also inside a
                 // TryFunction and over an earlier error (handlers/TestPageCloseVeto_Tests.al:245 RP_PlainVeto_LastErrorAfterClose,
@@ -2017,6 +2052,23 @@ impl Session {
     }
 
     // ---- rows ---------------------------------------------------------------------------
+
+    /// The page is a part its host left out of the control tree (`hidden_parts`: Visible came out false).
+    pub(super) fn is_hidden_part(&self, st: &St) -> bool {
+        let host = st.borrow().host.as_ref().and_then(|(h, _)| h.upgrade());
+        host.is_some_and(|h| h.borrow().hidden_parts.iter().any(|(_, c)| Rc::ptr_eq(c, st)))
+    }
+
+    /// A Page variable the test client does not show: it never ran, or its page closed. Not a part, not a typed handler's page.
+    pub(super) fn page_var_not_shown(&self, st: &St) -> bool {
+        let s = st.borrow();
+        !s.open && !s.typed_handler && s.host.is_none()
+    }
+
+    /// A Page variable that never ran (see `page_var_not_shown`).
+    pub(super) fn never_ran_page_var(&self, st: &St) -> bool {
+        self.page_var_not_shown(st) && !st.borrow().ran
+    }
 
     /// Whether the page declares trigger `name` (lower case) of its own.
     pub(super) fn declares(&self, st: &St, name: &str) -> bool {

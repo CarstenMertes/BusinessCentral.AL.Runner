@@ -574,7 +574,9 @@ fn all_versions_runs_each_oracle_writes_per_version_files_and_compares() {
     // runner 130450 runs every codeunit and StartSession fails as pinned. On BC 28 and 29 the hub runs 88510 under Disabled,
     // where BC starts the session (:573-600) and the runtime does not run a second session, so RQ_D03 is refused and what
     // the Disabled codeunits leave is not known: RQ_D04, RQ_D11 and the 130450 codeunits after them (88512-88515) are not run.
-    assert!(out.contains("runtime: 19 case(s) differ between versions"), "{out}");
+    // Branch refuse-types makes it 18: 81959 BM_CalcFormula_IntegerFilterFromBigInteger now passes on BC 29 too (an Integer
+    // parameter takes a BigInteger argument by value).
+    assert!(out.contains("runtime: 18 case(s) differ between versions"), "{out}");
     assert!(out.contains("71500 Get_Uses_Primary_Key_Not_Current_Key: 27"), "{out}");
 }
 

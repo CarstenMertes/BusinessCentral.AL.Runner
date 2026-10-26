@@ -176,7 +176,7 @@ An item is **pinned** when it occurs in a corpus file in a routine that static r
 | Platform and system events | 123 | 37 | 17 | 0 | 0 |
 | Statements and expressions | 64 | 60 | 58 | 0 | 0 |
 | Method attributes | 34 | 33 | 13 | 1 | 1 |
-| Runtime error sites (text pinned) | 88 | 86 | - | 2 | - |
+| Runtime error sites (text pinned) | 90 | 88 | - | 2 | - |
 
 Presentation-only properties (Caption, ToolTip, ApplicationArea, ... ) are left out of the property catalog.
 
@@ -552,7 +552,7 @@ Presentation-only properties (Caption, ToolTip, ApplicationArea, ... ) are left 
 |---|---|---:|---|---:|
 | procedure | `Native` | 25 | no | 0 |
 
-## Runtime error sites without a corpus test (2 of 88; 0 have too little fixed text to match)
+## Runtime error sites without a corpus test (2 of 90; 0 have too little fixed text to match)
 
 A site is pinned when a corpus string literal holds the message text. Codes are not matched. Sites with a computed message are not listed.
 

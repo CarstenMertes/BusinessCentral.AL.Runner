@@ -3041,6 +3041,7 @@ impl Session {
         let (hobject, hroutine, hinst) = handler;
         let st = st.clone();
         st.borrow_mut().test_close_vetoed = false;
+        st.borrow_mut().test_closed_in_handler = false;
         self.ui_state.page_handler_depth += 1;
         let handled = self.call(hobject, hroutine, hinst, vec![Value::TestPage(st.clone())]);
         self.ui_state.page_handler_depth -= 1;
@@ -3057,6 +3058,41 @@ impl Session {
             // Modal_HandlerOkThenClose_VetoAlways). Only a veto by the page's own trigger is pinned.
             self.refuse_unpinned_modal_veto(&st)?;
             st.borrow_mut().modal = false;
+            let id = self.engine.program.objects[st.borrow().object as usize].id.unwrap_or(0);
+            return Err(error_code(
+                format!("The RunModal procedure could not close the page {id} as it has already been closed."),
+                "TestCodeUnit",
+            ));
+        }
+        // A plain `TestPage.Close()` in the handler of a modal page: RunModal raises; the static RunModal of a Dialog page, with
+        // and without a record (misc/lt-cb-odd-leads/CbHandlerTests.al:181 ModalHandler_CallsClose_RunModalOutcome), and a Page
+        // variable's RunModal of a Card given SetRecord, whose Rec is the blank record without filters afterwards
+        // (pages/lt-bl-unopened-currpage/UnopenedCurrPage.al:273 Update_Then_RunModal_Card_HandlerCloses `rec-after-close`).
+        if modal && std::mem::take(&mut st.borrow_mut().test_closed_in_handler) {
+            let page_type = self.engine.object_facts[st.borrow().object as usize]
+                .page_type_lower()
+                .to_string();
+            let pinned = matches!(
+                (page_type.as_str(), st.borrow().run_static),
+                ("standarddialog", Some(true)) | ("card", Some(false))
+            );
+            if !pinned {
+                return unsupported(
+                    "a TestPage.Close() in a ModalPageHandler of a page type or run other than a static RunModal of a StandardDialog or a Page variable's RunModal of a Card (not pinned)",
+                );
+            }
+            st.borrow_mut().modal = false;
+            if let Some(inst) = st.borrow().instance.clone() {
+                let object = st.borrow().object as usize;
+                if let Some(slot) = self.engine.program.objects[object].rec_slot {
+                    if let Value::Record(r) = inst.borrow().globals[slot].clone() {
+                        let initial = self.initial_fields(r.borrow().table as usize);
+                        let mut r = r.borrow_mut();
+                        r.fields = initial;
+                        r.filters.clear();
+                    }
+                }
+            }
             let id = self.engine.program.objects[st.borrow().object as usize].id.unwrap_or(0);
             return Err(error_code(
                 format!("The RunModal procedure could not close the page {id} as it has already been closed."),

@@ -163,6 +163,7 @@ impl Session {
                 // (errors/lt-ms-refusals-132/P132TwoModalHandlers.al:466 PW_ProbeB_Statement, :508 PW_ProbeB_InIf).
                 if method == PageOp::PageRunModalStatic {
                     let mut s = st.borrow_mut();
+                    s.run_static = Some(true);
                     s.lookup = used;
                     s.lookup_set = used;
                     s.static_lookup = used;
@@ -800,6 +801,8 @@ impl Session {
                     let mut s = st.borrow_mut();
                     s.set_record = Some(copy);
                     s.set_view = false;
+                    drop(s);
+                    self.seed_unopened_rec(st);
                     Ok(Value::Null)
                 }
                 other => unsupported(format!("Page.SetRecord with {}", other.describe())),
@@ -808,6 +811,15 @@ impl Session {
             // filtered to that row (handlers/TestPageCloseTriggersSelectionCardPageContracts.al:239-250). A
             // record that already has filters, and a page on no row, are not pinned.
             PageMethod::SetSelectionFilter => {
+                // A Page variable that never ran and has no OnInit is built here for its blank record (the blank-row path below;
+                // pages/lt-page-runtime/P82PageVar.al:86 BeforeRun_Members `selectionfilter = Yes`). One with OnInit is not pinned.
+                if st.borrow().instance.is_none()
+                    && self.never_ran_page_var(st)
+                    && matches!(args.first(), Some(Value::Record(_)))
+                    && !self.declares(st, "oninit")
+                {
+                    self.construct_page(st)?;
+                }
                 let (Some(Value::Record(dst)), Some(inst)) = (args.first(), st.borrow().instance.clone()) else {
                     return unsupported("Page.SetSelectionFilter of a page that never ran (not pinned)");
                 };
@@ -895,8 +907,14 @@ impl Session {
                                     }
                             })
                     };
-                    // Pinned for the page of a part only.
-                    if !(blank_rec && plain_dst && st.borrow().host.is_some()) {
+                    // Pinned for the page of a part, and for a Page variable that never ran and was handed no record or view: a
+                    // ListPart over a temporary Integer (`Number: 0`, count 1 of the Integer table), a List and a Card (`Id: 0`,
+                    // count 0) (pages/lt-bl-unopened-currpage/UnopenedCurrPage.al:110, :159, :208 Never_Opened_*_TryFunction).
+                    let unopened_var = self.never_ran_page_var(st) && {
+                        let s = st.borrow();
+                        s.set_record.is_none() && !s.set_view
+                    };
+                    if !(blank_rec && plain_dst && (st.borrow().host.is_some() || unopened_var)) {
                         return unsupported(
                             "Page.SetSelectionFilter of a page on no row of a table that has rows (not pinned)",
                         );
@@ -1070,6 +1088,8 @@ impl Session {
                     let mut s = st.borrow_mut();
                     s.set_record = Some(copy);
                     s.set_view = true;
+                    drop(s);
+                    self.seed_unopened_rec(st);
                     Ok(Value::Null)
                 }
                 other => unsupported(format!("Page.SetTableView with {}", other.describe())),
@@ -1092,19 +1112,14 @@ impl Session {
             }
             PageMethod::RunModal => {
                 let record = st.borrow().set_record.clone();
+                st.borrow_mut().run_static = Some(false);
                 self.run_page_ui(st, record, true)
             }
             // `CurrPage.Close()` in a procedure of a Page variable that never ran does nothing and the procedure goes on
-            // (pages/lt-closed-page-variable-currpage/ClosedPageVariableCurrPageClose.al:98-114, Close_NeverRun). A page that
-            // ran and closed stays refused here (Close_AfterModalClosed pins it, but which runs count is not settled).
-            PageMethod::Close
-                if method.recv() == PageRecv::Page && {
-                    let s = st.borrow();
-                    !s.open && !s.ran && !s.typed_handler && s.host.is_none()
-                } =>
-            {
-                Ok(Value::Null)
-            }
+            // (pages/lt-closed-page-variable-currpage/ClosedPageVariableCurrPageClose.al:98-114, Close_NeverRun), and so does
+            // `Close()` of a Page variable whose modal page closed: after its handler failed (ClosedPageVariableCurrPageClose.al:70
+            // Close_AfterModalClosed) and after it closed with OK (pages/lt-page-runtime/P82PageVar.al:138 AfterRunModal_Members).
+            PageMethod::Close if method.recv() == PageRecv::Page && self.page_var_not_shown(st) => Ok(Value::Null),
             PageMethod::Close if method.recv() == PageRecv::Page => {
                 self.require_open(st)?;
                 self.restore_shown_row_on_close(st)?;
@@ -1162,13 +1177,23 @@ impl Session {
             // HiddenPartCurrPageUpdateTrue.al:UpdateTrue_LiteralInvisible_OpenEdit). Base Application's Approval FactBox ends
             // `UpdateApprovalEntriesFromSourceRecord` with it.
             PageMethod::Update if st.borrow().host.is_some() && !st.borrow().open => Ok(Value::Null),
-            // A Page variable that never ran has no client either: `CurrPage.Update(false)` in a procedure of it does nothing
-            // and the procedure goes on (pages/lt-closed-page-variable-currpage/ClosedPageVariableCurrPageUpdate.al:98-114,
-            // Update_NeverRun). `Update()` and `Update(true)` there, and a page that ran and closed, stay refused (not pinned).
-            PageMethod::Update
-                if method.recv() == PageRecv::Page && matches!(args.first(), Some(Value::Boolean(false))) && {
-                    let s = st.borrow();
-                    !s.open && !s.ran && !s.typed_handler && s.host.is_none()
+            // A Page variable the client does not show has no client either; called directly or from its own procedure:
+            // - never ran: `Update(false)`, `Update(true)` and `SaveRecord()` do nothing and the code goes on
+            //   (pages/lt-closed-page-variable-currpage/ClosedPageVariableCurrPageUpdate.al:98-114 Update_NeverRun;
+            //   pages/lt-page-runtime/P82PageVar.al:76-81 BeforeRun_Members; pages/lt-bl-unopened-currpage/UnopenedCurrPage.al:101-103,
+            //   :150-152, :199-201, :227 and :246 after SetRecord and SetTableView);
+            // - its modal page closed: `Update(false)` and `SaveRecord()` do nothing (ClosedPageVariableCurrPageUpdate.al:70
+            //   Update_AfterModalClosed; P82PageVar.al:136-142 AfterRunModal_Members).
+            // `Update()` without an argument, and `Update(true)` after the page closed, stay refused (not pinned).
+            PageMethod::Update | PageMethod::SaveRecord
+                if method.recv() == PageRecv::Page && self.page_var_not_shown(st) && {
+                    let ran = st.borrow().ran;
+                    match (method, args.first()) {
+                        (PageOp::PageSaveRecord, _) => true,
+                        (_, Some(Value::Boolean(false))) => true,
+                        (_, Some(Value::Boolean(true))) => !ran,
+                        _ => false,
+                    }
                 } =>
             {
                 Ok(Value::Null)
@@ -1211,6 +1236,45 @@ impl Session {
                 }
                 self.save_record_now(st)?;
                 Ok(Value::Null)
+            }
+            // `Page.Activate([Refresh])` answers Yes and raises nothing where the test client shows no page:
+            // - a Page variable that never ran, with and without Refresh, called directly and from its own procedure
+            //   (pages/lt-page-runtime/P82PageVar.al:82 BeforeRun_Members; pages/lt-bl-unopened-currpage/UnopenedCurrPage.al:104-105,
+            //   :153-154, :202-203 Never_Opened_*_TryFunction);
+            // - a Page variable whose modal page closed (P82PageVar.al:140 AfterRunModal_Members);
+            // - a part its host hid, by a literal `Visible = false` (never opened) or by an expression (opened, not shown), called
+            //   from the host's OnAfterGetCurrRecord; no part trigger runs (pages/lt-hidden-part-currpage/HiddenPartCurrPageActivate.al:145
+            //   Activate_LiteralInvisible_OpenEdit, :174 Activate_ExprInvisible_OpenEdit);
+            // - the page of a typed ModalPageHandler (`var P: Page`), with and without Refresh
+            //   (platform/lt-xmlport-session-navapp-cookie/P94PageModal.al:338 Activate_InsideModalHandler, :355 ..Refresh).
+            // A page the test client shows, and a Refresh of an open page whose row triggers would run again, are not pinned.
+            PageMethod::Activate if method.recv() == PageRecv::Page => {
+                let refresh = matches!(args.first(), Some(Value::Boolean(true)));
+                let (open, typed) = {
+                    let s = st.borrow();
+                    (s.open, s.typed_handler)
+                };
+                if !open && !typed {
+                    return Ok(Value::Boolean(true));
+                }
+                if !(typed || self.is_hidden_part(st)) {
+                    return unsupported("Page.Activate on a page the test client shows (not pinned)");
+                }
+                if refresh
+                    && [
+                        "onaftergetrecord",
+                        "onaftergetcurrrecord",
+                        "onfindrecord",
+                        "onnextrecord",
+                    ]
+                    .iter()
+                    .any(|t| self.declares(st, t))
+                {
+                    return unsupported(
+                        "Page.Activate(true) on an open page with row triggers (whether they run again is not pinned)",
+                    );
+                }
+                Ok(Value::Boolean(true))
             }
             PageMethod::GoToRecord => {
                 self.require_open(st)?;

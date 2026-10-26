@@ -693,6 +693,140 @@ fn the_test_session_starts_on_the_login_work_date() {
     }
 }
 
+// The login code runs once per engine while the tables it reads stay as they were (`install::LoginMemo`): a later test
+// session gets the same WorkDate and the same LogInManagement global (read later by Base Application's LogInEnd,
+// LogInManagement.Codeunit.al:148) as a session that ran the code. Codeunit 40 stands in for Base Application's.
+const LOGIN_SRC: &str = "table 60900 Entry { fields { field(1; No; Integer) { } field(2; D; Date) { } } }
+    codeunit 60910 Seed { trigger OnRun() var E: Record Entry; begin E.No := 1; E.D := 20240115D; E.Insert(); end; }
+    codeunit 40 LogInManagement { SingleInstance = true;
+        var LogInWorkDate: Date;
+        procedure GetDefaultWorkDate(): Date var E: Record Entry; begin
+            if E.FindLast() then begin LogInWorkDate := NormalDate(E.D); exit(NormalDate(E.D)); end;
+            exit(WorkDate()); end;
+        procedure LoginDate(): Date begin exit(LogInWorkDate); end; }
+    codeunit 60102 T1 { Subtype = Test;
+        [Test] procedure SeesTheLoginDate() var L: Codeunit LogInManagement; begin
+            if WorkDate() <> 20240115D then Error('WorkDate %1', WorkDate());
+            if L.LoginDate() <> 20240115D then Error('LogInWorkDate %1', L.LoginDate()); end; }
+    codeunit 60103 T2 { Subtype = Test;
+        [Test] procedure SeesTheLoginDate() var L: Codeunit LogInManagement; begin
+            if WorkDate() <> 20240115D then Error('WorkDate %1', WorkDate());
+            if L.LoginDate() <> 20240115D then Error('LogInWorkDate %1', L.LoginDate()); end; }";
+
+fn login_engine(src: &str) -> (Arc<Engine>, Lowered) {
+    let (ws, l) = al_sema::lower::compile(
+        vec![AppSource {
+            id: "a".into(),
+            name: "a".into(),
+            dependencies: vec![],
+            files: vec![("f.al".into(), src.into())],
+        }],
+        &Default::default(),
+    );
+    assert!(ws.diagnostics.is_empty(), "{:?}", ws.diagnostics);
+    let blocked = l
+        .unsupported
+        .iter()
+        .map(|o| o.iter().map(|r| r.first().cloned()).collect())
+        .collect();
+    (Engine::new(l.program.clone(), blocked), l)
+}
+
+fn object_named(l: &Lowered, name: &str) -> usize {
+    l.program.objects.iter().position(|o| o.name == name).unwrap()
+}
+
+fn login_replays(engine: &Engine) -> u64 {
+    engine
+        .derived(crate::install::LoginMemo::default)
+        .replays
+        .load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// The baseline of a session that ran codeunit `seed`'s OnRun.
+fn seeded_baseline(engine: &Arc<Engine>, l: &Lowered, seed: &str) -> al_vm::Baseline {
+    let mut session = al_vm::Session::new(engine.clone());
+    let s = object_named(l, seed);
+    let on_run = l.program.objects[s]
+        .routines
+        .iter()
+        .position(|r| r.name == "OnRun")
+        .unwrap();
+    let inst = session.instance(s);
+    assert!(session.call(s, on_run, inst, Vec::new()).is_ok());
+    session.capture_baseline()
+}
+
+#[test]
+fn the_login_code_runs_once_while_the_tables_it_reads_stay() {
+    let (engine, l) = login_engine(LOGIN_SRC);
+    let baseline = seeded_baseline(&engine, &l, "Seed");
+    for (i, t) in ["T1", "T2", "T1"].into_iter().enumerate() {
+        let o = run_codeunit_from(&engine, &l, object_named(&l, t), Some(&baseline));
+        assert_eq!(o, vec![("SeesTheLoginDate".to_string(), Outcome::Pass)], "{t}");
+        assert_eq!(login_replays(&engine), i as u64, "{t}");
+    }
+}
+
+// A session whose tables changed since its baseline runs the login code again: here install code adds a later entry in
+// every session, and each session sees the date of that entry.
+#[test]
+fn the_login_code_runs_again_when_a_table_changed_since_the_baseline() {
+    let src = LOGIN_SRC.replace("20240115D", "20240301D").replace(
+        "codeunit 60910 Seed { trigger OnRun() var E: Record Entry; begin E.No := 1; E.D := 20240301D; E.Insert(); end; }",
+        "codeunit 60910 Seed { trigger OnRun() var E: Record Entry; begin E.No := 1; E.D := 20240115D; E.Insert(); end; }
+        codeunit 60911 Inst { Subtype = Install;
+            trigger OnInstallAppPerCompany() var E: Record Entry; begin E.No := 2; E.D := 20240301D; E.Insert(); end; }",
+    );
+    assert!(src.contains("Inst"));
+    let (engine, l) = login_engine(&src);
+    let baseline = seeded_baseline(&engine, &l, "Seed");
+    for t in ["T1", "T2"] {
+        let o = run_codeunit_from(&engine, &l, object_named(&l, t), Some(&baseline));
+        assert_eq!(o, vec![("SeesTheLoginDate".to_string(), Outcome::Pass)], "{t}");
+    }
+    assert_eq!(login_replays(&engine), 0);
+}
+
+// Login code that writes is run in every session: what it wrote is in each of them.
+#[test]
+fn login_code_that_writes_is_not_replayed() {
+    let src = LOGIN_SRC
+        .replace(
+            "if E.FindLast() then begin",
+            "E.No := 7; E.D := 20240210D; if E.Insert() then; if E.FindLast() then begin",
+        )
+        .replace("20240115D then Error", "20240210D then Error");
+    let (engine, l) = login_engine(&src);
+    let baseline = seeded_baseline(&engine, &l, "Seed");
+    for t in ["T1", "T2", "T1"] {
+        let o = run_codeunit_from(&engine, &l, object_named(&l, t), Some(&baseline));
+        assert_eq!(o, vec![("SeesTheLoginDate".to_string(), Outcome::Pass)], "{t}");
+    }
+    assert_eq!(login_replays(&engine), 0);
+}
+
+// Login code that may change a record global is not replayed: the record's state is not a plain value to put back.
+#[test]
+fn login_code_that_may_change_a_record_global_is_not_replayed() {
+    let src = LOGIN_SRC
+        .replace(
+            "var LogInWorkDate: Date;",
+            "var LogInWorkDate: Date; Last: Record Entry;",
+        )
+        .replace(
+            "if E.FindLast() then begin",
+            "if Last.FindLast() then; if E.FindLast() then begin",
+        );
+    let (engine, l) = login_engine(&src);
+    let baseline = seeded_baseline(&engine, &l, "Seed");
+    for t in ["T1", "T2"] {
+        let o = run_codeunit_from(&engine, &l, object_named(&l, t), Some(&baseline));
+        assert_eq!(o, vec![("SeesTheLoginDate".to_string(), Outcome::Pass)], "{t}");
+    }
+    assert_eq!(login_replays(&engine), 0);
+}
+
 // ADR-046 amendment 1, A5: in the per-database part, IsEmpty and FindFirst of a per-company table fail with the text BC
 // gives (install/lt-bf-install-probes/BfInstallTests.al:138-139; reads in TryFunctions at BfInstallFixtures.al:131-146).
 // The code BC gave (DB:Ok) is not pinned yet, so a read of it is refused.

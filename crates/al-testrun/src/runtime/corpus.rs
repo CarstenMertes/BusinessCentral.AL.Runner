@@ -1320,6 +1320,7 @@ impl CorpusRuntime {
                         .flatten()
                 });
                 encode_time = encode_started.elapsed();
+                let first_origin = baseline.as_ref().map(al_vm::Baseline::origin);
                 let next = std::sync::atomic::AtomicUsize::new(0);
                 let pull = |baseline: Option<&al_vm::Baseline>| {
                     let mut done = Vec::new();
@@ -1344,7 +1345,11 @@ impl CorpusRuntime {
                                     snapshot
                                         .as_deref()
                                         .and_then(al_vm::Baseline::from_bytes)
-                                        .map(|b| b.backed_by(e))
+                                        // The bytes are those of the first run's baseline.
+                                        .map(|b| match first_origin {
+                                            Some(origin) => b.backed_by(e).with_origin(origin),
+                                            None => b.backed_by(e),
+                                        })
                                         .or_else(|| {
                                             crate::baseline::run(e, lowered, opts.company_data.as_ref())
                                                 .map(|b| b.baseline)

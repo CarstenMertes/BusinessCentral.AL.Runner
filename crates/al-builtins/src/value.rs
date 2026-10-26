@@ -1647,6 +1647,9 @@ pub enum LibraryValue {
     },
     XmlWriteOptions {
         preserve_whitespace: bool,
+        /// Whether a document or element is written without indentation. A setter changes it only when it changes
+        /// `preserve_whitespace`, and a new value starts unindented (see xml.rs `write_options_preserve_whitespace`).
+        unindented: bool,
     },
     /// A `File` that was created or opened, or had a mode set (an untouched one is `Empty`).
     File(crate::file::FileState),

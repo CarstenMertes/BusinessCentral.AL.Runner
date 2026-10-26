@@ -41,7 +41,7 @@ from the Actions tab (workflow_dispatch), or push `release` by hand:
 1. Check that CI is green on the `main` commit you want.
 2. `git fetch origin`
 3. `git push origin origin/main:refs/heads/release`
-4. CI runs on `release`. When it passes, the Edge workflow builds the three
+4. CI runs on `release`. When it passes, the Edge workflow builds the four
    targets, smoke tests them and replaces the `edge` assets.
 5. If the push is refused (not a fast-forward), see "Hotfix" below.
 

@@ -983,6 +983,18 @@ impl Session {
         Ok(None)
     }
 
+    /// Whether table `t` declares a Blob field (a duplicate Insert into it fails at once).
+    fn has_blob_field(&self, t: &TableDef) -> bool {
+        self.engine.program.objects[t.object as usize]
+            .table
+            .as_ref()
+            .is_some_and(|s| {
+                s.fields
+                    .iter()
+                    .any(|f| matches!(&f.ty, RtType::Library(al_builtins::library_kind::LibraryKind::Blob)))
+            })
+    }
+
     /// The refusal of a unique index; only the start of BC's message is pinned.
     fn fail_unique(&mut self, t: &TableDef, key: usize, row: &[Value]) -> Result<Value, Signal> {
         if self.ret_used {
@@ -2795,7 +2807,16 @@ impl Session {
                             self.note_explicit_key(&t, a, &row, &cx.company);
                         }
                     }
-                    return self.fail_unique(&t, unique_key, &row);
+                    let r = self.fail_unique(&t, unique_key, &row);
+                    // The flag hides the values of a unique index an Insert into a table with a Blob field breaks
+                    // (error-handling/lt-last-error-text-forms/InsertDuplicateKeyExcludeFlag.al:121). Other tables are not pinned.
+                    if self.has_blob_field(&t) && !rec.borrow().temporary {
+                        return r.map_err(|s| redact_error(s, format!(
+                            "There is already a record in table {} that has the same values in a unique index for the following fields: <redacted>",
+                            self.caption(&t)
+                        )));
+                    }
+                    return r;
                 }
                 let mut stored = Self::to_store(rec, self.stored_view(&t, &row));
                 if let Some(e) = self.sql_columns(rec, &t, &mut stored)? {
@@ -2901,14 +2922,7 @@ impl Session {
                         // answers false at once, and a Blob field makes it fail at once (corpus
                         // record/TestRecordRuntimeTextsAndViews.al:Record_Insert_DuplicateKey_*).
                         // A temporary table's behaviour is not pinned: it fails at once.
-                        let has_blob = self.engine.program.objects[t.object as usize]
-                            .table
-                            .as_ref()
-                            .is_some_and(|s| {
-                                s.fields.iter().any(|f| {
-                                    matches!(&f.ty, RtType::Library(al_builtins::library_kind::LibraryKind::Blob))
-                                })
-                            });
+                        let has_blob = self.has_blob_field(&t);
                         // A table with an AutoIncrement field needs the platform's answer at once
                         // (record/TestAutoIncrementContracts.al:AutoIncrement_SecondInsert_...).
                         if !self.ret_used
@@ -2935,7 +2949,17 @@ impl Session {
                             }
                             return Ok(Value::Boolean(true));
                         }
-                        self.fail(&t, &row, true)
+                        let r = self.fail(&t, &row, true);
+                        // The flag hides the key of a duplicate Insert into a table with a Blob field (error-handling/
+                        // lt-last-error-text-forms/InsertDuplicateKeyExcludeFlag.al:68, :85, :102). Other tables are not pinned.
+                        if has_blob && auto.is_none() && !rec.borrow().temporary {
+                            r.map_err(|s| redact_error(s, format!(
+                                "The record in table {} already exists. Identification fields and values: <redacted>",
+                                self.caption(&t)
+                            )))
+                        } else {
+                            r
+                        }
                     }
                 }
             }
@@ -3385,19 +3409,13 @@ impl Session {
                                 // reads 'Three', not the ordinal the enum lacks
                                 // (corpus types/PEOptionEnumBigText.al:225-259, probed on BC 27.5).
                                 (Some(o @ Value::Option(..)), RtType::Enum(_)) => o.clone(),
-                                // Whether the message names an enum of another type, or an Integer, by the
-                                // caller's value or by the key's is not pinned (docs/probes-needed.md); found
-                                // and not found are (types/PXEnumRecordRef.al:123,127,154,156).
-                                (Some(Value::Enum(from, _)), RtType::Enum(to)) if from != to && !self.ret_used => {
-                                    return Err(Signal::Unsupported(
-                                        "the not-found error of a Get keyed by an enum of another type: the identification text is not pinned (docs/probes-needed.md)".into(),
-                                    ));
-                                }
-                                (Some(Value::Integer(_)), RtType::Enum(_)) if !self.ret_used => {
-                                    return Err(Signal::Unsupported(
-                                        "the not-found error of a Get keyed by an Integer on an Enum field: the identification text is not pinned (docs/probes-needed.md)".into(),
-                                    ));
-                                }
+                                // An enum of another type is named by the caller's value, its caption in its own enum, also
+                                // for an ordinal the key's enum lacks (errors/lt-ms-refusals-138/P138EnumGetNotFound.al:82-86,
+                                // :103, :178-180).
+                                (Some(e @ Value::Enum(from, _)), RtType::Enum(to)) if from != to => e.clone(),
+                                // An Integer is named as the key's enum value: its caption, or the number for an ordinal the
+                                // enum lacks (P138EnumGetNotFound.al:126-130, :153-155).
+                                (Some(Value::Integer(n)), RtType::Enum(to)) => Value::Enum(*to, *n),
                                 _ => pk[n].clone(),
                             };
                         }
@@ -3543,10 +3561,22 @@ impl Session {
                             && (matches!(method, RecordOp::FindFirst | RecordOp::FindLast | RecordOp::FindSet)
                                 || (method == RecordOp::Find && matches!(which.as_str(), "-" | "+")))
                         {
+                            // The flag leaves the text as it is, from BC 28 (error-handling/lt-last-error-text-forms/
+                            // FindEmptyTableExcludeFlag.al:99-121: FindFirst, FindLast, FindSet, FindSet(true), Find('-'),
+                            // Find('+'); guarded with BC28PLUS). On every version for FindFirst and FindLast
+                            // (types/lt-evaluate-format-lasterror-setview/P86LastError.al:339-353, not guarded).
+                            let pinned = self.has(al_version::Gate::EmptyTableFindExcludeFlagFrom28)
+                                || matches!(method, RecordOp::FindFirst | RecordOp::FindLast);
+                            let origin = if !rec.borrow().temporary && pinned {
+                                al_builtins::native::ErrorOrigin::SameText
+                            } else {
+                                al_builtins::native::ErrorOrigin::Unknown
+                            };
                             return Err(Signal::Error(Box::new(AlError {
                                 message: format!("The {} table is empty.", self.caption(&t)),
                                 code: "DB:TableIsEmpty".into(),
                                 call_stack: String::new(),
+                                origin,
                                 ..Default::default()
                             })));
                         }
@@ -3581,10 +3611,24 @@ impl Session {
                                     self.caption(&t)
                                 )
                             };
+                            // The flag hides the key of `Find('=')`, from BC 28 (FindEmptyTableExcludeFlag.al:123; guarded with
+                            // BC28PLUS). The other search strings are not pinned.
+                            let origin = if which == "="
+                                && !rec.borrow().temporary
+                                && self.has(al_version::Gate::EmptyTableFindExcludeFlagFrom28)
+                            {
+                                al_builtins::native::ErrorOrigin::Redacted(format!(
+                                    "The {} does not exist. Identification fields and values: <redacted>",
+                                    self.caption(&t)
+                                ))
+                            } else {
+                                al_builtins::native::ErrorOrigin::Unknown
+                            };
                             return Err(Signal::Error(Box::new(AlError {
                                 message,
                                 code: "DB:RecordNotFound".into(),
                                 call_stack: String::new(),
+                                origin,
                                 ..Default::default()
                             })));
                         }
@@ -3596,6 +3640,21 @@ impl Session {
                                 t.name
                             ));
                         }
+                        // The flag hides the filters (error-handling/lt-last-error-text-forms/FindEmptyTableExcludeFlag.al:148,
+                        // :152, :156: FindFirst, FindLast and FindSet of a table with rows). An empty table is not pinned.
+                        let empty = self
+                            .store_for(rec)
+                            .count(&cx, &t, &[])
+                            .map_err(|e| Signal::Unsupported(format!("{e}")))?
+                            == 0;
+                        let origin = if rec.borrow().temporary || empty {
+                            al_builtins::native::ErrorOrigin::Unknown
+                        } else {
+                            al_builtins::native::ErrorOrigin::Redacted(format!(
+                                "There is no {} within the filter.{BR}{BR}Filters: <redacted>",
+                                self.caption(&t)
+                            ))
+                        };
                         Err(Signal::Error(Box::new(AlError {
                             message: format!(
                                 "There is no {} within the filter.{BR}{BR}Filters: {filters}",
@@ -3603,6 +3662,7 @@ impl Session {
                             ),
                             code: "DB:NothingInsideFilter".into(),
                             call_stack: String::new(),
+                            origin,
                             ..Default::default()
                         })))
                     }
@@ -4405,4 +4465,15 @@ enum StaleVerdict {
     Written,
     /// Stale: the write fails with DB:RecordChanged.
     Refused,
+}
+
+/// `s` with the text `GetLastErrorText(true)` answers for it, when it is an AL error.
+fn redact_error(s: Signal, redacted: String) -> Signal {
+    match s {
+        Signal::Error(mut e) => {
+            e.origin = al_builtins::native::ErrorOrigin::Redacted(redacted);
+            Signal::Error(e)
+        }
+        other => other,
+    }
 }

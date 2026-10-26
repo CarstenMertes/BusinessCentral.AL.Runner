@@ -115,12 +115,12 @@ fn under_a_function_runner_a_commit_inside_a_test_is_rolled_back() {
         outcome(&plain, "E2_CommitsThenFails"),
         &Outcome::Fail("E2 fails on purpose after Commit".into())
     );
-    // Measured outside the corpus: the test that committed is a flagged pass.
+    // The probe of corpus writer SD pins it: the test that committed is a clean pass.
     let c1 = o
         .iter()
         .find(|(_, t, _, _)| t == "C1_InsertsCommitsAndInsertsAgain")
         .unwrap();
-    assert!(c1.3.contains(&"runner-test-isolation"), "{c1:?}");
+    assert!(c1.3.is_empty(), "{c1:?}");
 }
 
 // IsolProbeAfterRollback.Codeunit.al:31-128 (S1-S9), runner 61300: the rollback after each test undoes an
@@ -226,7 +226,7 @@ fn under_a_disabled_runner_what_passed_or_was_committed_stays_for_the_later_test
         }
     }
     let r1 = o.iter().find(|(_, t, _, _)| t == "R1_SeesWhatStayed").unwrap();
-    assert!(r1.3.contains(&"runner-test-isolation"), "{r1:?}");
+    assert!(r1.3.is_empty(), "{r1:?}");
 }
 
 // SdIsolStartSession.Codeunit.al:38-63 (S2, S3): under the Disabled runner BC starts the session and its row is seen;

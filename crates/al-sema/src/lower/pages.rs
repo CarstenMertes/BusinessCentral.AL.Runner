@@ -21,29 +21,51 @@ impl Lowerer<'_> {
         for &e in &extensions {
             unsupported.extend(super::shared::over_max_length_of(self.ws, e));
         }
-        // The code a control's text names lives in its owner: the page, or the extension.
+        // The code a control's text names lives in its owner: the page, or the extension. Each owner is built once per
+        // page and shared by its controls (built per control, the global-name set and the syntax tree of an extension
+        // cost a walk of the whole object for every control).
         struct Owner {
             object: usize,
             obj: ast::Object,
             names: std::collections::BTreeSet<String>,
             base: usize,
+            /// The index of the first routine of `object` with each name, made when first asked for.
+            routines: std::cell::OnceCell<HashMap<String, usize>>,
         }
-        let owner_of = |o: Option<usize>| {
-            let object = o.unwrap_or(oi);
-            let obj = if o.is_none() {
-                obj.clone()
-            } else {
-                self.ws.object_ast(object)
-            };
-            Owner {
-                object,
-                names: crate::pages::global_names(&obj),
-                base: usize::from(obj.syntax().text_range().start()),
-                obj,
-            }
+        let owners: std::cell::RefCell<HashMap<Option<usize>, std::rc::Rc<Owner>>> = Default::default();
+        let owner_of = |o: Option<usize>| -> std::rc::Rc<Owner> {
+            owners
+                .borrow_mut()
+                .entry(o)
+                .or_insert_with(|| {
+                    let object = o.unwrap_or(oi);
+                    let obj = if o.is_none() {
+                        obj.clone()
+                    } else {
+                        self.ws.object_ast(object)
+                    };
+                    std::rc::Rc::new(Owner {
+                        object,
+                        names: crate::pages::global_names(&obj),
+                        base: usize::from(obj.syntax().text_range().start()),
+                        obj,
+                        routines: std::cell::OnceCell::new(),
+                    })
+                })
+                .clone()
         };
-        let routine_named =
-            |ow: &Owner, name: &str| self.routine_nodes.get(ow.object).iter().position(|r| r.name() == name);
+        let routine_named = |ow: &Owner, name: &str| {
+            ow.routines
+                .get_or_init(|| {
+                    let mut map = HashMap::default();
+                    for (i, r) in self.routine_nodes.get(ow.object).iter().enumerate() {
+                        map.entry(r.name()).or_insert(i);
+                    }
+                    map
+                })
+                .get(name)
+                .copied()
+        };
         let routine_of = |ow: &Owner, r: &ast::Routine| {
             self.routine_at
                 .get(&(ow.object, usize::from(r.syntax().text_range().start())))

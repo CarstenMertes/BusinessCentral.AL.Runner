@@ -126,6 +126,9 @@ pub(super) struct State {
     catalogs: u8,
     /// Per object: the names of `MENTION_NAMES` its text holds, with `SCANNED` once searched (`Checker::mentions`).
     mentions: Vec<u8>,
+    /// Per object: `reach_run_targets` has walked its `RunObject` actions. What a walk reaches only rises, so a
+    /// second walk of the same page reaches nothing new.
+    run_targets: Vec<bool>,
 }
 
 impl State {
@@ -149,6 +152,7 @@ impl State {
             save_as_events: false,
             catalogs: 0,
             mentions: vec![0; objects],
+            run_targets: vec![false; objects],
         }
     }
 }
@@ -822,6 +826,15 @@ impl Checker<'_> {
     /// `driven_edges`).
     pub(super) fn reach_run_targets(&self, i: usize) {
         if self.demand.borrow().is_none() || !self.ws.usable(i) {
+            return;
+        }
+        // Once per object: every `TestPage` type and page call met would walk the page's sections again.
+        let first = self
+            .demand
+            .borrow_mut()
+            .as_mut()
+            .is_some_and(|st| !std::mem::replace(&mut st.run_targets[i], true));
+        if !first {
             return;
         }
         let file = self.ws.objects[i].file;
@@ -2178,6 +2191,50 @@ mod tests {
         assert!(compiled(&l, "Lib", "OnRun"));
         assert!(!compiled(&l, "Lib", "Other"));
         assert!(l.program.objects[object(&l, "Unused")].routines.is_empty());
+    }
+
+    /// `reach_run_targets` walks a page once: a page named by several `TestPage` variables, in several
+    /// objects and on several check threads, still reaches what its actions run, and the program is the
+    /// one a single thread compiles.
+    #[test]
+    fn a_page_named_by_many_test_pages_reaches_its_run_targets_once_and_the_same() {
+        let dep = vec![
+            (
+                "c.al".to_string(),
+                "codeunit 10 Lib { trigger OnRun() begin end; procedure Other() begin end; } \
+                 codeunit 11 Lib2 { trigger OnRun() begin end; }"
+                    .to_string(),
+            ),
+            (
+                "p.al".to_string(),
+                "page 20 P { PageType = Card; layout { area(Content) { } } \
+                 actions { area(Processing) { action(A) { RunObject = Codeunit Lib; } \
+                 action(B) { RunObject = Page Q; } } } } \
+                 page 21 Q { PageType = Card; layout { area(Content) { } } \
+                 actions { area(Processing) { action(C) { RunObject = Codeunit Lib2; } } } }"
+                    .to_string(),
+            ),
+        ];
+        let main = (0..6)
+            .map(|k| {
+                format!(
+                    "codeunit {} M{k} {{ procedure A() var P: TestPage P; begin P.OpenView(); end; \
+                     procedure B() var P1: TestPage P; P2: TestPage P; begin P1.OpenEdit(); P2.OpenView(); end; }}",
+                    k + 1
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let (_, l) = compile(
+            &main,
+            &dep.iter().map(|(a, b)| (a.as_str(), b.as_str())).collect::<Vec<_>>(),
+        );
+        assert!(compiled(&l, "Lib", "OnRun"));
+        assert!(!compiled(&l, "Lib", "Other"));
+        // The page an action opens is driven through a variable of its own, so what its actions run is not reached.
+        assert!(l.program.objects[object(&l, "Lib2")].routines.is_empty());
+        let one = compile_with_workers(&main, &dep, 1);
+        assert_eq!(one, compile_with_workers(&main, &dep, 4));
     }
 
     #[test]

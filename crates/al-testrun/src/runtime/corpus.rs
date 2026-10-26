@@ -116,7 +116,18 @@ impl CorpusRuntime {
         // A lean compile leaves workspace objects out: `--affected` needs the hash of each.
         let lean = !opts.object_hashes;
         let compiled = Self::compile_suites_with(apps, kinds, manifests, symbols, target, suites, opts, lean)?;
-        let rt = Self::run_compiled(&compiled, target, dotnet.clone(), opts);
+        // A lean run may be run again below: its engines are freed then, the process does not end after it.
+        let first_opts;
+        let first = if compiled.lean.is_some() && opts.process_ends_after {
+            first_opts = RunOptions {
+                process_ends_after: false,
+                ..opts.clone()
+            };
+            &first_opts
+        } else {
+            opts
+        };
+        let rt = Self::run_compiled(&compiled, target, dotnet.clone(), first);
         // A lean compile left out the workspace objects no selected test names (`Roots::lean`). A run that met one of
         // their routines was compiled for less than it needs: the apps are compiled completely and the tests run again,
         // so the outcomes are the complete compile's.
@@ -128,12 +139,12 @@ impl CorpusRuntime {
             rt.phases.lean_redone = true;
             rt.phases.compile += lean_time;
             rt.phases.compiles += 1;
-            retire(compiled);
+            retire_at_end(compiled, opts.process_ends_after);
             return Ok(rt);
         }
         // The workspace and the lowered program are big: dropping them takes as long as lowering
-        // a tenth of the corpus, and nothing waits for it.
-        retire(compiled);
+        // a tenth of the corpus, and nothing waits for it. When the process ends right after, they are not freed.
+        retire_at_end(compiled, opts.process_ends_after);
         Ok(rt)
     }
 
@@ -1605,8 +1616,8 @@ impl CorpusRuntime {
             None => (Some(engine), baseline_engine, spare_engine),
         };
         // The engines hold every compiled routine and the baseline's tables: freeing them on this
-        // thread kept the report waiting after the last test.
-        retire((engine, baseline_engine, spare_engine));
+        // thread kept the report waiting after the last test. When the process ends right after, they are not freed.
+        retire_at_end((engine, baseline_engine, spare_engine), opts.process_ends_after);
         CorpusRuntime {
             outcomes,
             times: times_by_case,

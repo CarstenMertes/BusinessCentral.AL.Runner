@@ -526,7 +526,8 @@ pub fn test(a: &TestArgs) -> Result<u8, String> {
     if !a.impact_of.is_empty() {
         return crate::impact::run(a);
     }
-    test_with(a, None)
+    // `al-runner test`: the process ends after this one run (main.rs), so its compile is not freed.
+    test_inner(a, None, None, None, true)
 }
 
 /// What one side of an impact run (ADR-043), or the run that builds its index, asks for and keeps of its run.
@@ -555,7 +556,7 @@ pub struct Collected {
 /// A run whose selected tests and coverage statements are handed back in `into` (one side of an impact run).
 /// Prints the summary line of the run but no verdict.
 pub fn test_collect(a: &TestArgs, into: &mut Collected) -> Result<u8, String> {
-    test_inner(a, None, Some(into), None)
+    test_inner(a, None, Some(into), None, false)
 }
 
 /// What the server hears for each test as it finishes: the event, and its capture as JSON.
@@ -740,7 +741,7 @@ fn warm_key(
 }
 
 pub fn test_with(a: &TestArgs, warm: Option<&mut WarmCtx>) -> Result<u8, String> {
-    test_inner(a, warm, None, None)
+    test_inner(a, warm, None, None, false)
 }
 
 /// What `al-runner debug` adds to a run (ADR-048).
@@ -759,7 +760,7 @@ pub struct DebugSetup {
 
 /// `al-runner debug`: the run of `al-runner test` with a debugger. The report goes to stderr.
 pub fn test_debug(a: &TestArgs, debug: DebugSetup) -> Result<u8, String> {
-    test_inner(a, None, None, Some(debug))
+    test_inner(a, None, None, Some(debug), false)
 }
 
 fn test_inner(
@@ -767,6 +768,8 @@ fn test_inner(
     mut warm: Option<&mut WarmCtx>,
     collect: Option<&mut Collected>,
     debug: Option<DebugSetup>,
+    // The process ends right after this run (`RunOptions::process_ends_after`).
+    process_ends_after: bool,
 ) -> Result<u8, String> {
     let started = Instant::now();
     REPORT_TO_STDERR.store(
@@ -1468,6 +1471,7 @@ fn test_inner(
         stop_on_compile_errors: true,
         entries: Vec::new(),
         skipped_dependencies: dependencies.skipped.clone(),
+        process_ends_after,
         // `--run-selected-only` (issue 5611): the selected tests of the selected codeunits; the rest do not run.
         run_only: (a.run_selected_only && selection.active() && !a.execute).then(|| {
             Arc::new(

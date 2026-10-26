@@ -2044,6 +2044,21 @@ fn retire_drops_the_value_on_another_thread() {
 }
 
 #[test]
+fn retire_at_the_end_leaks_the_value_when_the_process_ends_after_the_run() {
+    // The one-shot command lines end the process right after the run: nothing is freed then.
+    let held = std::sync::Arc::new(());
+    super::retire_at_end(held.clone(), true);
+    assert_eq!(std::sync::Arc::strong_count(&held), 2, "never dropped");
+    // Any other caller (a server, a test that runs again) still frees it, on another thread.
+    super::retire_at_end(held.clone(), false);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while std::sync::Arc::strong_count(&held) != 2 {
+        assert!(std::time::Instant::now() < deadline, "the retired value is dropped");
+        std::thread::yield_now();
+    }
+}
+
+#[test]
 fn retiring_derefs_to_the_value_and_drops_it_on_another_thread_when_it_goes() {
     struct Marker {
         value: u32,

@@ -452,9 +452,8 @@ fn field_expression_routines(obj: &ast::Object, prop: &str) -> Vec<(String, Stri
         } else {
             continue;
         };
-        let Some(field) = sec.args().get(at).cloned() else {
-            continue;
-        };
+        // The arguments are split only for a section that sets `prop`: most sections set neither property.
+        let mut field = None;
         for p in sec.properties() {
             if !p.name().eq_ignore_ascii_case(prop) {
                 continue;
@@ -463,6 +462,13 @@ fn field_expression_routines(obj: &ast::Object, prop: &str) -> Vec<(String, Stri
             if is_literal(PropType::Text, &value) {
                 continue;
             }
+            let field = match &field {
+                Some(f) => f,
+                None => match sec.args().get(at).cloned() {
+                    Some(f) => field.insert(f),
+                    None => break,
+                },
+            };
             let off = usize::from(p.syntax().text_range().start()) - base;
             out.push((field.clone(), synthetic_name(prop, off), value));
         }
@@ -482,10 +488,10 @@ pub fn field_caption_class_settings(obj: &ast::Object) -> Vec<String> {
         } else {
             continue;
         };
-        let Some(field) = sec.args().get(at).cloned() else {
+        if !sec.properties().any(|p| p.name().eq_ignore_ascii_case("CaptionClass")) {
             continue;
-        };
-        if sec.properties().any(|p| p.name().eq_ignore_ascii_case("CaptionClass")) {
+        }
+        if let Some(field) = sec.args().get(at).cloned() {
             out.push(field);
         }
     }
@@ -546,6 +552,15 @@ fn expansion(src: &str, parse: &al_syntax::Parse) -> Option<(String, Vec<(usize,
         };
         // A table field's CaptionClass expression becomes a routine of the table or table extension that writes it.
         if kind == "table" || kind == "tableextension" {
+            // Most tables set neither property: a search of the object's source is cheaper than the walk of its sections.
+            let range = obj.syntax().text_range();
+            let own = src
+                .get(usize::from(range.start())..usize::from(range.end()))
+                .unwrap_or(src)
+                .to_ascii_lowercase();
+            if !own.contains("captionclass") && !own.contains("autoformatexpression") {
+                continue;
+            }
             let text: String = field_caption_class_routines(&obj)
                 .into_iter()
                 .chain(field_auto_format_routines(&obj))

@@ -2,7 +2,7 @@
   "corpus_commit": "7eceb6bb3b4056985e6853458b9f22d9ae3269da",
   "dimensions": [
     {
-      "catalog": 191,
+      "catalog": 188,
       "dimension": "triggers",
       "items": [
         {
@@ -1161,34 +1161,7 @@
           "corpus_uses": 0,
           "group": "(any)",
           "ms_uses": 0,
-          "name": "OnAfter",
-          "pinned": false,
-          "runtime_reads": true,
-          "site": null
-        },
-        {
-          "corpus_uses": 0,
-          "group": "(any)",
-          "ms_uses": 0,
-          "name": "OnBefore",
-          "pinned": false,
-          "runtime_reads": true,
-          "site": null
-        },
-        {
-          "corpus_uses": 0,
-          "group": "(any)",
-          "ms_uses": 0,
           "name": "OnPrem",
-          "pinned": false,
-          "runtime_reads": true,
-          "site": null
-        },
-        {
-          "corpus_uses": 0,
-          "group": "(any)",
-          "ms_uses": 0,
-          "name": "OnResolveCaptionClass",
           "pinned": false,
           "runtime_reads": true,
           "site": null

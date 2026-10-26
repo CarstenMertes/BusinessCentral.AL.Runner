@@ -756,6 +756,17 @@ pub fn retire<T: Send + 'static>(value: T) {
     std::thread::spawn(move || drop(value));
 }
 
+/// What a run holds at its end: with `leak` ([`RunOptions::process_ends_after`]) it is never freed, as the process ends
+/// right after and the system takes the memory back at once; otherwise it is [`retire`]d. Nothing in these values has a
+/// drop the outside sees (the sidecar processes are shut down by their host, which the caller holds).
+pub(crate) fn retire_at_end<T: Send + 'static>(value: T, leak: bool) {
+    if leak {
+        std::mem::forget(value);
+    } else {
+        retire(value);
+    }
+}
+
 /// Holds `value` and [`retire`]s it when it goes out of scope, so the end of a function that
 /// holds a big runtime does not wait for the drop.
 pub struct Retiring<T: Send + 'static>(Option<T>);

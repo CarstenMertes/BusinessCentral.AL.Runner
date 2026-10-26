@@ -950,7 +950,7 @@ fn big_text() {
 }
 
 // streams/StTBigText.al:120 GetSubTextForms and :157 GetSubTextErrors: a length past the end gives the rest; a start one past
-// the end gives nothing; a start below 1 or a negative length raise CopyStr's range errors. A start further out is refused.
+// the end or further gives nothing; a start below 1 or a negative length raise CopyStr's range errors.
 // streams/StTBigText.al:240 ConvertTextAndBack: Format gives the whole text.
 #[test]
 fn big_text_get_sub_text_clips_at_the_end() {
@@ -977,10 +977,12 @@ fn big_text_get_sub_text_clips_at_the_end() {
     );
     let (m, _) = raised(v, "B.AddText('0123456789'); N := B.GetSubText(S, 1, -1); exit('');");
     assert!(m.starts_with("The value of COPYSTR parameter 3 is outside of the permitted range. The current value is: -1. The permitted range is: from 0"), "{m}");
-    assert!(unsupported(
+    // A start further out gives nothing too (corpus StTBigText.al:169 GetSubTextErrors and the cases of main that pass on it).
+    let t = text_of(
         v,
-        "B.AddText('0123456789'); N := B.GetSubText(S, 20); exit(S);"
-    ));
+        "B.AddText('0123456789'); N := B.GetSubText(S, 20); exit(S + '/' + Format(N));",
+    );
+    assert_eq!(t, "/0");
 }
 
 #[test]

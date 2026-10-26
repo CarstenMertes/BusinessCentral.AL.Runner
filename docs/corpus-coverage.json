@@ -2,7 +2,7 @@
   "corpus_commit": "80711c1b1ee4c1ea25ac3cbaff7faf729ddeca4b",
   "language": {
     "bc": "27-29",
-    "implemented": 1588,
+    "implemented": 1589,
     "methods": [
       {
         "bc": [
@@ -27781,7 +27781,7 @@
         "scope": "",
         "sig": "([Boolean])",
         "site": "xmlport/lt-xmlport-query-datatransfer/XmlPortFixtures.al:265",
-        "state": "refused",
+        "state": "implemented",
         "type": "Xmlport"
       },
       {
@@ -27947,7 +27947,7 @@
     ],
     "overloads": 1750,
     "pinned": 1706,
-    "refused": 134,
+    "refused": 133,
     "runtime_only": [
       "ErrorInfo.Create#3",
       "FieldRef.FieldError#2",

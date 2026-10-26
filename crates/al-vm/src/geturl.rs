@@ -291,11 +291,10 @@ impl Session {
                     // A report or a query with a record has no address: the empty text (TGetUrl.al:383-384,386-387,
                     // 389-394 GetUrl_Web_ReportQueryCodeunitWithRecord: a report with UseFilters false and true, with
                     // and without filters on the record; a query with UseFilters false). Other forms are not pinned.
-                    let pinned = match (key, args.len(), args.get(5)) {
-                        ("report", 6, Some(Value::Boolean(_))) => true,
-                        ("query", 6, Some(Value::Boolean(false))) => true,
-                        _ => false,
-                    };
+                    let pinned = matches!(
+                        (key, args.len(), args.get(5)),
+                        ("report", 6, Some(Value::Boolean(_))) | ("query", 6, Some(Value::Boolean(false)))
+                    );
                     if !pinned {
                         return unsupported(format!(
                             "GetUrl of a {key} with a record: only \"no query part\" is pinned, not the value"

@@ -2,7 +2,7 @@
   "corpus_commit": "80711c1b1ee4c1ea25ac3cbaff7faf729ddeca4b",
   "language": {
     "bc": "27-29",
-    "implemented": 1511,
+    "implemented": 1517,
     "methods": [
       {
         "bc": [
@@ -10808,7 +10808,7 @@
         "scope": "",
         "sig": "(Integer)",
         "site": "platform/lt-xmlport-session-navapp-cookie/P94NavApp.al:87",
-        "state": "refused",
+        "state": "implemented",
         "type": "NavApp"
       },
       {
@@ -10824,7 +10824,7 @@
         "scope": "",
         "sig": "(Integer, var RecordRef)",
         "site": "platform/lt-xmlport-session-navapp-cookie/P94NavApp.al:26",
-        "state": "refused",
+        "state": "implemented",
         "type": "NavApp"
       },
       {
@@ -10840,7 +10840,7 @@
         "scope": "",
         "sig": "()",
         "site": "platform/lt-xmlport-session-navapp-cookie/P94NavApp.al:20",
-        "state": "refused",
+        "state": "implemented",
         "type": "NavApp"
       },
       {
@@ -11042,7 +11042,7 @@
         "scope": "",
         "sig": "([Guid])",
         "site": "platform/lt-xmlport-session-navapp-cookie/P94NavApp.al:200",
-        "state": "refused",
+        "state": "implemented",
         "type": "NavApp"
       },
       {
@@ -11102,7 +11102,7 @@
         "scope": "",
         "sig": "(Integer)",
         "site": "platform/lt-xmlport-session-navapp-cookie/P94NavApp.al:163",
-        "state": "refused",
+        "state": "implemented",
         "type": "NavApp"
       },
       {
@@ -11118,7 +11118,7 @@
         "scope": "",
         "sig": "(Integer, [Boolean])",
         "site": "platform/lt-xmlport-session-navapp-cookie/P94NavApp.al:115",
-        "state": "refused",
+        "state": "implemented",
         "type": "NavApp"
       },
       {
@@ -27947,7 +27947,7 @@
     ],
     "overloads": 1750,
     "pinned": 1706,
-    "refused": 211,
+    "refused": 205,
     "runtime_only": [
       "ErrorInfo.Create#3",
       "FieldRef.FieldError#2",

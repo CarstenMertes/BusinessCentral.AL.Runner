@@ -83,7 +83,7 @@ pub struct Engine {
     /// Per object, per routine: why it cannot run, if it cannot.
     pub blocked: Vec<Vec<Option<String>>>,
     /// Store schema per table object.
-    pub tables: Vec<Option<Arc<al_data::TableDef>>>,
+    pub tables: Arc<[Option<Arc<al_data::TableDef>>]>,
     /// Event publishers and their subscribers, resolved by name.
     pub events: events::Registry,
     /// The BC version this program runs as; `None` gets the newest behaviour (ADR-015 3.4).
@@ -247,7 +247,7 @@ impl Engine {
         dotnet: dotnet::DotNetConfig,
     ) -> Arc<Engine> {
         let program: Arc<ir::Program> = program.into();
-        let tables = program
+        let tables: Vec<Option<Arc<al_data::TableDef>>> = program
             .objects
             .iter()
             .enumerate()
@@ -370,7 +370,7 @@ impl Engine {
         Arc::new(Engine {
             program,
             blocked,
-            tables,
+            tables: tables.into(),
             events,
             target,
             dotnet,
@@ -397,6 +397,58 @@ impl Engine {
             derived: Default::default(),
             install_facts: Default::default(),
         })
+    }
+
+    /// Puts back what a run sets on an engine after [`Engine::with_config`], so that a warm server can run its next
+    /// request on the engine of the last one (al-runner issue 5856) as on a new engine. Every field is named here: a new
+    /// field fails to compile until it is either reset or listed as worked out from the program and the config alone.
+    /// The .NET host is the caller's to set again (`dotnet`).
+    pub fn reset_run_state(&mut self) {
+        let Engine {
+            // Set by a run.
+            unseeded,
+            demo_tables,
+            company_refusal,
+            skipped_apps,
+            resource_overrides,
+            resources_read,
+            test_data,
+            // From the program and the config of `with_config` (and al-testrun's `global_triggers_find_unavailable`,
+            // which reads only the compile): the same for every run over this program.
+            program: _,
+            blocked: _,
+            tables: _,
+            events: _,
+            target: _,
+            dotnet: _,
+            platform_unseeded: _,
+            unevaluable_init: _,
+            table_facts: _,
+            object_facts: _,
+            field_facts: _,
+            facts: _,
+            exec: _,
+            codeunits: _,
+            // Caches that are worked out from the program on first use.
+            profile_seeds: _,
+            delete_subscribed: _,
+            positions_by_object: _,
+            served_tables: _,
+            derived: _,
+            install_facts: _,
+            // Kept: the listings shared under it depend on the program only (`platform::SharedListings`).
+            uid: _,
+        } = self;
+        unseeded.clear();
+        demo_tables.clear();
+        *company_refusal = None;
+        skipped_apps.clear();
+        match resource_overrides.get_mut() {
+            Ok(o) => o.clear(),
+            Err(e) => e.into_inner().clear(),
+        }
+        *resources_read.get_mut() = false;
+        *test_data = None;
     }
 
     /// The first compiled codeunit with this id, in program order: the object `Codeunit.Run(Id)` runs. Found in an index
@@ -769,7 +821,7 @@ impl Session {
             media.clone(),
         )));
         if let Some(td) = &engine.test_data {
-            store = store.with_backing(Rc::new(testdata::TestBacking::new(engine.clone(), td.clone())));
+            store = store.with_backing(Rc::new(testdata::TestBacking::new(&engine, td.clone())));
         }
         let sequences = restored_sequences(&engine, &company);
         al_builtins::ops::set_turkic_code(al_builtins::native::is_turkic_language(host.identity.global_language()));

@@ -606,6 +606,7 @@ impl CorpusRuntime {
                 try_skip,
                 symbols: symbols.clone(),
             }),
+            kept: Default::default(),
         })
     }
 
@@ -616,6 +617,18 @@ impl CorpusRuntime {
         target: Option<&al_version::Target>,
         dotnet: al_vm::dotnet::DotNetConfig,
         opts: &RunOptions,
+    ) -> CorpusRuntime {
+        Self::run_compiled_kept(compiled, target, dotnet, opts, false)
+    }
+
+    /// [`CorpusRuntime::run_compiled`]; with `keep` (a warm server, al-runner issue 5856) the engines and the install
+    /// baseline of the run are kept for the next run over `compiled`, and those an earlier run kept are used.
+    pub(crate) fn run_compiled_kept(
+        compiled: &Compiled,
+        target: Option<&al_version::Target>,
+        dotnet: al_vm::dotnet::DotNetConfig,
+        opts: &RunOptions,
+        keep: bool,
     ) -> CorpusRuntime {
         let Compiled {
             ws,
@@ -633,6 +646,7 @@ impl CorpusRuntime {
             lean,
             compiles,
             incr: _,
+            kept: kept_engines,
         } = compiled;
         let (baseline_wanted, baseline, compile_cache_skipped, source_index) =
             (*baseline_wanted, *baseline, *compile_cache_skipped, *source_index);
@@ -645,6 +659,8 @@ impl CorpusRuntime {
             }
             v.iter().map(|&(a, id)| (new_of[a], id)).collect::<Vec<_>>()
         };
+        // The selection the compile was made for: a warm server's request may select less of it.
+        let compiled_only = opts_only.as_deref();
         let mut opts_only = match &opts.only {
             Some(v) => Some(in_program_order(v)),
             None => opts_only.clone(),
@@ -717,7 +733,14 @@ impl CorpusRuntime {
             }
             engine
         };
-        let mut engine = make_engine();
+        // A warm server's engines of the last request over this compile, set again for this one (al-runner issue 5856).
+        let engine_key = keep.then(|| kept_engine_key(target, &dotnet, opts));
+        let (reused_install, mut reused_tests) = match &engine_key {
+            Some(key) => take_kept_engines(kept_engines, key, &dotnet, opts),
+            None => (None, None),
+        };
+        let engine_kept = reused_install.is_some();
+        let mut engine = reused_install.unwrap_or_else(make_engine);
         let engine_time = engine_started.elapsed();
         let compile_time = *compile_phase + engine_time;
         let started = std::time::Instant::now();
@@ -726,12 +749,14 @@ impl CorpusRuntime {
         // The baseline of an earlier run of the same program, when the compile cache is on and nothing outside the
         // program can have changed what the install code reads (`baseline_key`).
         let baseline_key = if baseline {
+            // The install baseline depends on the compile, not on which of its tests a request runs: a warm server's
+            // requests over one compile share it (al-runner issue 5856). In a run of one request the two are the same.
             baseline_key(
                 ws,
                 lowered,
                 cache_report.as_ref(),
                 suites,
-                opts_only.as_deref(),
+                compiled_only,
                 target,
                 &dotnet,
                 opts,
@@ -753,19 +778,29 @@ impl CorpusRuntime {
             // An entry with resource files of its own (issue 5635): whether the install code read resources is known
             // only when it runs here.
             .filter(|_| opts.entries.iter().all(|e| e.resources.is_empty()))
-            .and_then(|(key, cc)| crate::baseline_cache::read(&cc.dir, key))
-            .filter(|(_, at)| {
+            .and_then(|(key, cc)| {
+                // Over test data the file holds the tables the install code wrote to; the rest is the restored database.
+                let backed = |mut run: crate::baseline::BaselineRun| {
+                    run.baseline = run.baseline.backed_by(&engine);
+                    run
+                };
+                match keep {
+                    // A warm server reads the file once and keeps what it holds, over the test data as far as its
+                    // tests read it (al-runner issue 5856). The test data and the program must be the same.
+                    true => crate::baseline_cache::read_kept(&cc.dir, key, &kept_backing(&engine), backed),
+                    false => crate::baseline_cache::read(&cc.dir, key).map(|(run, at)| (backed(run), at, false)),
+                }
+            })
+            .filter(|(_, at, _)| {
                 crate::host::SystemClock::begin_at(*at)
                     || (crate::host::SystemClock::started() && crate::host::SystemClock::run_start() == *at)
             })
-            // Over test data the file holds the tables the install code wrote to; the rest is the restored database.
-            .map(|(mut run, _)| {
-                run.baseline = run.baseline.backed_by(&engine);
-                run
-            });
+            .map(|(run, _, hit)| (run, hit));
+        let baseline_kept = kept.as_ref().is_some_and(|(_, hit)| *hit);
+        let kept = kept.map(|(run, _)| run);
         let from_cache = kept.is_some();
         let (baseline_run, mut spare_engine) = std::thread::scope(|scope| {
-            let spare = (baseline && workers > 1)
+            let spare = (baseline && workers > 1 && reused_tests.is_none())
                 .then(|| {
                     std::thread::Builder::new()
                         .stack_size(64 << 20)
@@ -785,8 +820,19 @@ impl CorpusRuntime {
             } else {
                 None
             };
-            (run, spare.map(|h| h.join().expect("the second engine is built")))
+            (
+                run,
+                spare
+                    .map(|h| h.join().expect("the second engine is built"))
+                    .or_else(|| reused_tests.take()),
+            )
         });
+        let baseline_source = match (&baseline_run, from_cache, baseline_kept) {
+            (None, _, _) => None,
+            (Some(_), true, true) => Some("kept"),
+            (Some(_), true, false) => Some("cache"),
+            (Some(_), false, _) => Some("ran"),
+        };
         // The engine the install code ran on (the tests may get another below).
         let install_read_resources =
             baseline_run.is_some() && engine.resources_read.load(std::sync::atomic::Ordering::Relaxed);
@@ -798,6 +844,13 @@ impl CorpusRuntime {
         ) {
             // The clock has started by now if the install code read it; if not, no row carries it and it starts here.
             crate::baseline_cache::write(&cc.dir, key, run, crate::host::SystemClock::run_start());
+            // A warm server's next request takes the baseline as the file holds it (al-runner issue 5856).
+            if keep {
+                let _ = crate::baseline_cache::read_kept(&cc.dir, key, &kept_backing(&engine), |mut run| {
+                    run.baseline = run.baseline.backed_by(&engine);
+                    run
+                });
+            }
         }
         // The tests run against an engine that knows which tables the install baseline could not
         // seed. The baseline itself ran before it knew; with several test threads, which each run
@@ -966,11 +1019,9 @@ impl CorpusRuntime {
             .collect();
         let mut suite_work: Vec<(usize, std::time::Duration)> = Vec::new();
         // Each test thread starts from its own copy of the baseline (a baseline holds `Rc`s and cannot be shared
-        // between threads), and reading a snapshot is far cheaper than running the install code again.
-        let snapshot: Option<Vec<u8>> = baseline_engine
-            .is_some()
-            .then(|| baseline.as_ref().and_then(al_vm::Baseline::to_bytes))
-            .flatten();
+        // between threads), and reading a snapshot is far cheaper than running the install code again. It is written
+        // when a pass first runs on several threads.
+        let snapshot_once: std::cell::OnceCell<Option<Vec<u8>>> = std::cell::OnceCell::new();
         // The passes of the run: one, or one per entry (issue 5635), each over the same compile and install baseline.
         let passes: Vec<Pass> = if opts.entries.is_empty() {
             vec![Pass {
@@ -998,8 +1049,14 @@ impl CorpusRuntime {
                 .collect()
         };
         let mut entry_ranges: Vec<std::ops::Range<usize>> = Vec::new();
+        let mut pass_times: Vec<PassTime> = Vec::new();
         for pass in &passes {
             let start = list.len();
+            let pass_started = std::time::Instant::now();
+            // The longest time a test thread took to set up its copy of the baseline (`PassTime::reset`), in ns.
+            let reset_ns = std::sync::atomic::AtomicU64::new(0);
+            // Writing the snapshot the test threads read (the first pass on several threads does it).
+            let mut encode_time = std::time::Duration::ZERO;
             if let Ok(mut o) = engine.resource_overrides.write() {
                 o.clone_from(&pass.resources);
             }
@@ -1255,6 +1312,14 @@ impl CorpusRuntime {
                 // Test codeunits run on a session each and do not share anything (the install
                 // baseline is put back for each), so worker threads take them in turn. A worker
                 // sets up its own copy of the baseline.
+                let encode_started = std::time::Instant::now();
+                let snapshot: &Option<Vec<u8>> = snapshot_once.get_or_init(|| {
+                    baseline_engine
+                        .is_some()
+                        .then(|| baseline.as_ref().and_then(al_vm::Baseline::to_bytes))
+                        .flatten()
+                });
+                encode_time = encode_started.elapsed();
                 let next = std::sync::atomic::AtomicUsize::new(0);
                 let pull = |baseline: Option<&al_vm::Baseline>| {
                     let mut done = Vec::new();
@@ -1274,6 +1339,7 @@ impl CorpusRuntime {
                             .spawn_scoped(scope, || {
                                 // The baseline the first run left, as its snapshot says (over the engine's test data, if
                                 // it has any); only a baseline that has no snapshot is run again, once per thread.
+                                let reset_started = std::time::Instant::now();
                                 let own = baseline_engine.as_ref().and_then(|e| {
                                     snapshot
                                         .as_deref()
@@ -1284,6 +1350,8 @@ impl CorpusRuntime {
                                                 .map(|b| b.baseline)
                                         })
                                 });
+                                let took = reset_started.elapsed().as_nanos().min(u64::MAX as u128) as u64;
+                                reset_ns.fetch_max(took, std::sync::atomic::Ordering::Relaxed);
                                 pull(own.as_ref())
                             });
                         match spawned {
@@ -1482,6 +1550,11 @@ impl CorpusRuntime {
             if !opts.entries.is_empty() {
                 entry_ranges.push(start..list.len());
             }
+            pass_times.push(PassTime {
+                reset: encode_time
+                    + std::time::Duration::from_nanos(reset_ns.load(std::sync::atomic::Ordering::Relaxed)),
+                wall: pass_started.elapsed(),
+            });
         }
         if let Ok(mut o) = engine.resource_overrides.write() {
             o.clear();
@@ -1509,6 +1582,23 @@ impl CorpusRuntime {
         } else {
             Vec::new()
         };
+        // A warm server keeps the engines for its next request over this compile: the engine the install baseline ran
+        // on, and the one the tests ran on when that was another.
+        let (engine, baseline_engine, spare_engine) = match engine_key {
+            Some(key) => {
+                let (install, tests) = match baseline_engine {
+                    Some(b) => (b, Some(engine)),
+                    None => (engine, spare_engine),
+                };
+                if let Ok(mut k) = kept_engines.lock() {
+                    if let Some(old) = k.replace(KeptEngines { key, install, tests }) {
+                        retire(old);
+                    }
+                }
+                (None, None, None)
+            }
+            None => (Some(engine), baseline_engine, spare_engine),
+        };
         // The engines hold every compiled routine and the baseline's tables: freeing them on this
         // thread kept the report waiting after the last test.
         retire((engine, baseline_engine, spare_engine));
@@ -1535,6 +1625,10 @@ impl CorpusRuntime {
                 lean: *lean,
                 lean_redone: false,
                 compiles: *compiles,
+                warm_compile: None,
+                baseline_source,
+                passes: pass_times,
+                engine_kept,
             },
             details,
             results: list,
@@ -1651,6 +1745,61 @@ impl CorpusRuntime {
     }
 }
 
+/// What a baseline a warm server keeps over the test data of `engine` depends on (`baseline_cache::read_kept`): the
+/// test data and the program the rows read from it are built for.
+fn kept_backing(engine: &Engine) -> String {
+    format!(
+        "{:?} {:p}",
+        engine.test_data.as_ref().map(|td| td.provider.identity()),
+        Arc::as_ptr(&engine.program)
+    )
+}
+
+/// What the kept engines of a warm server were built for besides the program ([`KeptEngines::key`]): the target, whether
+/// .NET can run, the test data and the skipped dependency apps. The engines serve only a run with the same.
+fn kept_engine_key(
+    target: Option<&al_version::Target>,
+    dotnet: &al_vm::dotnet::DotNetConfig,
+    opts: &RunOptions,
+) -> String {
+    format!(
+        "target={target:?} dotnet={} test_data={:?} skipped={:?}",
+        dotnet.host.availability().is_ok(),
+        opts.test_data.as_ref().map(|td| td.provider.identity()),
+        opts.skipped_dependencies,
+    )
+}
+
+/// The engines a warm server kept for runs with `key` (al-runner issue 5856), set for this run as a new engine is:
+/// its .NET host, test data and skipped apps, and nothing of what the last run set (the unseeded and demo tables, the
+/// company refusal, the resources it gave or read). An engine something still holds is not taken.
+fn take_kept_engines(
+    kept: &std::sync::Mutex<Option<KeptEngines>>,
+    key: &str,
+    dotnet: &al_vm::dotnet::DotNetConfig,
+    opts: &RunOptions,
+) -> (Option<Arc<Engine>>, Option<Arc<Engine>>) {
+    let Some(k) = kept.lock().ok().and_then(|mut k| k.take()) else {
+        return (None, None);
+    };
+    if k.key != key {
+        retire(k);
+        return (None, None);
+    }
+    let reset = |mut engine: Arc<Engine>| -> Option<Arc<Engine>> {
+        let e = Arc::get_mut(&mut engine)?;
+        // Every field a run sets, back to what `Engine::with_config` makes; then what `make_engine` sets.
+        e.reset_run_state();
+        e.dotnet = dotnet.clone();
+        e.test_data = opts.test_data.clone();
+        e.skipped_apps = opts.skipped_dependencies.clone();
+        Some(engine)
+    };
+    let install = reset(k.install);
+    let tests = install.as_ref().and(k.tests).and_then(reset);
+    (install, tests)
+}
+
 /// The key under which the install baseline of this run is kept on disk, or `None` when it must run every time.
 /// The baseline is what the install code of the dependency apps and `Company-Initialize` write, followed by the
 /// workspace's own install codeunits. It is the same for the same program and the same world around it, which is
@@ -1733,9 +1882,10 @@ fn baseline_key(
             }
         }
     }
+    let only_set = only.is_some();
     let only: Vec<String> = only.unwrap_or(&[]).iter().map(|(a, id)| format!("{a}/{id}")).collect();
     key.text("only", &only.join(","));
-    key.text("only_set", if opts.only.is_some() { "yes" } else { "no" });
+    key.text("only_set", if only_set { "yes" } else { "no" });
     match target {
         Some(t) => key.text("target", &format!("{}/{}", t.bc, t.runtime)),
         None => key.text("target", "none"),

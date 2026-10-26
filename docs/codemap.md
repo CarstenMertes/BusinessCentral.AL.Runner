@@ -249,7 +249,7 @@ al-deps        dependency apps: .alpackages, Microsoft artifact feed, cache, pac
 - `reach.rs` (415): The reach report (`AL_REACH_REPORT=1`): which roots and edges pull the routines in, how many are refused, how many only matter through a refused routine. Entry: `report`.
 - `refusals.rs` (222): Ranking not-run reasons with names and numbers folded (`--top-refusals` of both command lines). Entry: `normalise_reason`, `rank`, `render_top`.
 - `runtime/mod.rs` (491): Runs test codeunits the way BC's test runner does; one Session per codeunit. Holds the app and manifest loading, `CorpusRuntime`, `TestResult`, `Phases` and the single-unit run. Entry: `CorpusRuntime` 112, `load_app` 17, `Phases` 162.
-- `runtime/compiled.rs` (418): What a compile produces and keeps (`Compiled`, `into_apps` for another compile of the same run), the warm slot (`Warm`), and what a run asks for. Entry: `RunOptions` 6, `Compiled` 42, `Warm` 228, `SuiteRun` 398.
+- `runtime/compiled.rs` (418): What a compile produces and keeps (`Compiled`, `into_apps` for another compile of the same run), the warm slot (`Warm`; the engines a request kept for the next one over the same compile, `KeptEngines`, issue 5856; the install baseline it read is kept per thread by `baseline_cache::read_kept`), and what a run asks for. Entry: `RunOptions` 6, `Compiled` 42, `Warm` 228, `SuiteRun` 398.
 - `runtime/corpus.rs` (927): `CorpusRuntime`: compiling suites of apps and running them. A selection of pure tests is compiled lean (`compile_suites_with`, `Roots::lean`) and run again on the complete compile when a test met what was left out (`met_left_out`). Entry: `run_suites_with` 89, `compile_suites` 127, `run_compiled` 448.
 - `runtime/cache.rs` (226): Compiling through the compile cache. Entry: `compile_with_cache` 70, `lazy_index` 7.
 - `runtime/run.rs` (741): Running the test codeunits of one compiled program, each test on a session of its own. Entry: `run_codeunit` 5, `run_codeunit_isolated` 21, `run_codeunit_observed` 46, `run_codeunit_core` 156.
@@ -279,7 +279,7 @@ al-deps        dependency apps: .alpackages, Microsoft artifact feed, cache, pac
 - `impact_index.rs` (660): The impact index (ADR-043 step 2): format (gzip JSON, `FORMAT`), cache key and path (`<cache>/impact/<key>/index.json.gz`), `al-runner impact-index build`, and `al-runner impact-index check-static` (step 5: every key a test recorded must be in its static reach; ratios per kind of key; `AL_IMPACT_WHY=<key>` prints the paths). Entry: `Index`, `key`, `lookup`, `build`, `check_static`.
 - `main.rs` (51): The `al-runner` binary: runs on a thread with a large stack, maps results to exit codes. Entry: `main`.
 - `output.rs` (182): Counts, exit codes (0, 1, 6, 7), the summary line, the one-line warnings shown by default (`baseline_warning`, `dependency_line_is_problem`; the rest is `--verbose`) and JUnit XML of a run. Entry: `exit_code`, `junit`.
-- `run.rs` (433): `al-runner test`: load APPs, select test codeunits, resolve dependencies, compile, run, print. Entry: `test`.
+- `run.rs` (433): `al-runner test`: load APPs, select test codeunits, resolve dependencies, compile, run, print. A serve request keeps the dependency apps it read (`WarmCtx::dependencies`, checked by `file_stamps`) and says where its time went (`RequestTimings`, the summary's `timings`). Entry: `test`.
 
 ### al-version
 

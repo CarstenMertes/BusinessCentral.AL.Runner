@@ -7858,8 +7858,10 @@
 70655 QP_CodeunitRun_VariantRecordRef_Guarded
 70655 QP_CodeunitRun_VariantRecordRef_OtherTable
 70655 QP_CodeunitRun_VariantRecordRef_Plain
+70655 RecordFromVariant_ClosedRecordRef_Result
 70655 RecordFromVariant_IsCopy_Result
 70655 RecordFromVariant_OpenedNoCurrentRow_Result
+70655 RecordFromVariant_OtherTable_Result
 70655 RecordFromVariant_SameTable_Result
 70657 FieldRefSetValue_NumberOnCodeAndText_Result
 70657 FieldRefValue_ToText_Result
@@ -13936,6 +13938,7 @@
 79921 ChangeFilterAndRowOfA_ReadB
 79921 ChangeValueOfA_ReadB
 79921 FromFilteredFoundRow
+79921 FromNotOpen
 79921 IntoRefOpenOnOtherTable
 79921 ModifyThroughB_ReadA
 79923 MarkedOnly_DeleteAll

@@ -216,18 +216,18 @@ fn dt2date(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
     Ok(Value::Date(ms.div_euclid(MS_PER_DAY) as i32 + 1, false))
 }
 
-/// `DateTime.Date()` is `DT2Date` of the receiver (assumed, docs/probes-needed.md).
+/// `DateTime.Date()` is `DT2Date` of the receiver, the undefined DateTime included
+/// (types/lt-datetime-date-time-methods/DateTimeDateTimeMethods.al:27 DateTime_DateAndTimeMethods_SetValue, :51 _Undefined).
 fn datetime_date(c: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Out {
-    crate::assumptions::assume(crate::assumptions::Assumption::DateTimeDateTimeMethods);
     let Some(v) = r else {
         return unsupported("DateTime.Date without a receiver");
     };
     dt2date(c, None, &mut [v.clone()])
 }
 
-/// `DateTime.Time()` is `DT2Time` of the receiver (assumed, docs/probes-needed.md).
+/// `DateTime.Time()` is `DT2Time` of the receiver, the undefined DateTime included
+/// (types/lt-datetime-date-time-methods/DateTimeDateTimeMethods.al:27 DateTime_DateAndTimeMethods_SetValue, :51 _Undefined).
 fn datetime_time(c: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Out {
-    crate::assumptions::assume(crate::assumptions::Assumption::DateTimeDateTimeMethods);
     let Some(v) = r else {
         return unsupported("DateTime.Time without a receiver");
     };

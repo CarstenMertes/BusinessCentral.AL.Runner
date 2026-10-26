@@ -358,17 +358,15 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
                 _ => Value::BigInteger(n),
             }
         }
-        // A Boolean for a Text or Code (a Boolean handed to `Get` of a Code key): as `Format` writes it, Yes or No (the
-        // Code upper-cased). Not pinned; Microsoft's tests need the call not to be refused (assumption
-        // `boolean-to-text-as-format`).
+        // A Boolean for a Code (a Boolean handed to `Get` of a Code key): as `Format` writes it, upper-cased: Get(true)
+        // finds the row YES and not 1 or TRUE (types/lt-ax-text-format-dates/AxEvaluateText.al:348 GetTrue_CodeKey_Yes).
+        // An assignment of a Boolean to a Text or Code does not compile (must-not-compile cases 1190, 1191). For a Text
+        // (`Get` of a Text key) the text is not pinned (assumption `boolean-to-text-as-format`).
         (Value::Boolean(b), T::Text(max)) => {
             crate::assumptions::assume(crate::assumptions::Assumption::BooleanToTextAsFormat);
             Value::Text(fit(if b { "Yes" } else { "No" }.to_string(), *max)?.into())
         }
-        (Value::Boolean(b), T::Code(max)) => {
-            crate::assumptions::assume(crate::assumptions::Assumption::BooleanToTextAsFormat);
-            Value::Code(fit(if b { "YES" } else { "NO" }.to_string(), *max)?.into())
-        }
+        (Value::Boolean(b), T::Code(max)) => Value::Code(fit(if b { "YES" } else { "NO" }.to_string(), *max)?.into()),
         // A Date into a DateTime is that day at midnight, the blank Date the blank DateTime (as CreateDateTime(D, 0T)). Not
         // pinned; Microsoft's production order code assigns a Date to a DateTime (Tests-SCM-Manufacturing, 20 tests;
         // assumption date-to-datetime-is-midnight).
@@ -580,35 +578,55 @@ fn variant_text_decimal(text: &str) -> Option<Result<Decimal, ()>> {
     text.parse::<Decimal>().ok().map(Ok)
 }
 
+/// The error text of a RecordRef that is not open where a record is wanted (record/lt-ar-records/ArRecordProbes.al
+/// SG_VariantRecordRef_NotOpen_Assign, record/lt-as-records/AsRecRefGetTable.al:110 FromNotOpen; code Conversion).
+pub const RECORD_REF_NOT_OPEN: &str = "Unable to convert from Microsoft.Dynamics.Nav.Runtime.NavRecordRef to Microsoft.Dynamics.Nav.Runtime.INavRecordHandle.";
+
+/// The Record a RecordRef (held by a Variant) of the same table gives, assigned or passed by value: the field values of the
+/// ref's buffer, an unsaved value too, on the ref's row; not its filters, key, sort order or marks; and a temporary ref gives
+/// a Record that is not temporary (record/lt-ar-records/ArRecordProbes.al:333 VariantRecordRef_AssignedToRecord `filters` empty,
+/// `count` 4, `next` from the ref's row in the primary key; :366 VariantRecordRef_PassedToRecordParameter `3|r3||4`; and the
+/// SG_VariantRecordRef_KeyViewAndUnsavedValue `view` = `VERSION(1) SORTING(Field1)`, `ascending` Yes, `row` 3|unsaved, and
+/// SG_VariantRecordRef_Temporary_Assign `istemp` No, `count` 4, `db_has_77` No, corpus bump PR 738). A ref of another company is
+/// not pinned.
+pub fn record_ref_into_record(rec: &crate::value::RecordState) -> Result<Value, Signal> {
+    if rec.company.is_some() {
+        return unsupported("a RecordRef of another company into a Record (not pinned)".to_string());
+    }
+    let mut st = rec.clone();
+    st.key = 0;
+    st.adhoc = None;
+    st.ascending = true;
+    st.field_descending = 0;
+    st.marks.clear();
+    st.marked_only = false;
+    st.filters.clear();
+    st.filter_group = 0;
+    st.temporary = false;
+    st.temp_id = None;
+    st.run_page_link = None;
+    Ok(Value::Record(Rc::new(RefCell::new(st))))
+}
+
 /// The conversions no hot path reaches: a Date into a DateTime, else the refusal.
 #[cold]
 #[inline(never)]
 fn convert_rare(v: Value, t: &RtType) -> Result<Value, Signal> {
     match (&v, t) {
         (Value::Date(n, false), RtType::DateTime) if *n >= 0 => Ok(date_to_datetime(*n)),
-        // A RecordRef a Variant holds, into a record of its own table: the record with the RecordRef's row, a copy
-        // (Base Application's Approvals Mgmt.InformUserOnStatusChange passes its Variant to a `Record "Sales Header"` parameter;
-        // 73 Tests-Workflow tests; assumption recordref-into-record). Another table is not pinned.
-        (Value::Library(_, h), RtType::Record(table, _)) => {
-            let copy = match &*h.borrow() {
-                // Without the ref's filters: a Record parameter gets the row and no filters (record/lt-ar-records/
-                // ArRecordProbes.al:366 VariantRecordRef_PassedToRecordParameter `3|r3||4`); an assignment takes the fields only
-                // (:333 VariantRecordRef_AssignedToRecord `filters` empty, `count` 4).
-                LibraryValue::RecordRef(rec) if rec.borrow().table == *table => Some({
-                    let mut st = rec.borrow().clone();
-                    st.filters.clear();
-                    st
-                }),
-                _ => None,
-            };
-            match copy {
-                Some(state) => {
-                    crate::assumptions::assume(crate::assumptions::Assumption::RecordRefIntoRecord);
-                    Ok(Value::Record(std::rc::Rc::new(std::cell::RefCell::new(state))))
-                }
-                None => unsupported(format!("conversion of {} to {t}", v.describe(), t = t.describe())),
-            }
-        }
+        // A RecordRef a Variant holds, assigned to a Record (record/lt-ar-records/ArRecordProbes.al:333 VariantRecordRef_AssignedToRecord
+        // and the SG_VariantRecordRef_* tests after it): see `record_ref_into_record`. A RecordRef of another table raises
+        // NotSupportedOperation and one that is not open a Conversion error, the Record left as it was
+        // (SG_VariantRecordRef_OtherTable_AssignAndParameter `assign`, SG_VariantRecordRef_NotOpen_Assign). Passed to a Record
+        // parameter it goes through `Session::record_ref_into_record_param` instead.
+        (Value::Library(name, h), RtType::Record(table, _)) if name.eq_ignore_ascii_case("RecordRef") => match &*h
+            .borrow()
+        {
+            LibraryValue::RecordRef(rec) if rec.borrow().table == *table => record_ref_into_record(&rec.borrow()),
+            LibraryValue::RecordRef(_) => raise("The requested operation is not supported.", "NotSupportedOperation"),
+            LibraryValue::Empty => raise(RECORD_REF_NOT_OPEN, "Conversion"),
+            _ => unsupported(format!("conversion of {} to {t}", v.describe(), t = t.describe())),
+        },
         // A Variant holding true assigned to a Decimal is 1 (types/lt-variant-time-enum/VariantTextTimeEnumFilter.al:
         // Variant_CodeAndOtherTypes_ToDecimal `boolean`); false is not pinned.
         (Value::Boolean(true), RtType::Decimal) => Ok(Value::Decimal(Decimal::ONE)),
@@ -1020,12 +1038,11 @@ fn arith_general(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
             {
                 return duration_divide(op, *d, r);
             }
-            // Duration / Decimal: the Duration counts as its milliseconds and the quotient is a Decimal. Microsoft's
-            // Calculate Routing Line CalcDuration (Time difference / CalendarMgt.TimeFactor) needs it; Tests-SCM-Manufacturing,
-            // about 20 tests. Assumption duration-divided-by-decimal.
+            // Duration / Decimal: the Duration counts as its milliseconds and the quotient is a Decimal; a zero divisor
+            // raises DivideByZero (types/lt-ax-text-format-dates/AxDurationDateTime.al:21 Duration_DividedBy_IntegerAndDecimal,
+            // :53 Duration_DividedBy_ZeroDecimal).
             if op == Arith::Div {
                 if let V::Decimal(b) = r {
-                    crate::assumptions::assume(crate::assumptions::Assumption::DurationDividedByDecimal);
                     if b.is_zero() {
                         return raise("Attempted to divide by zero.", "AL:DivideByZero");
                     }

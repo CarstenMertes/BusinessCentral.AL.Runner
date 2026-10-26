@@ -105,3 +105,5 @@
 99445 RA_GetEncoding_UnknownCodePage
 99445 RA_GetEncoding_WindowsCodePage1252
 99473 Kinds_GetMissing
+99473 ToString_NestedProcedure
+99473 ToString_OtherCodeunit

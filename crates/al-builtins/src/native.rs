@@ -688,15 +688,24 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("Record.SetAutoCalcFields#1", |c, r, a| {
         c.record(RecordOp::SetAutoCalcFields, r, a)
     }),
-    // record/PZFindDirections.al:106 pins `ToText` of 5, 20, 25 and 35. Whether a larger value gets a thousands separator is
-    // not pinned, so it is refused (docs/probes-needed.md "Integer.ToText").
+    // `ToText` of an Integer, a BigInteger, a Guid and a Byte: no thousands separator (`1000`, `2147483647`, `-9223372036854775808`),
+    // a Guid with braces in upper case whatever the argument, a Byte as `Format` shows it (types/lt-totext-bigtext-codeunit-run/
+    // P93ScalarToText.al:180-300, P93Guid.al:28-102; record/PZFindDirections.al:106).
     ("Integer.ToText#1", |_, r, _| match r.as_deref() {
-        Some(Value::Integer(n)) if n.unsigned_abs() < 1000 => Ok(Value::Text(n.to_string().into())),
-        Some(Value::Integer(n)) => Err(Signal::Unsupported(format!(
-            "Integer.ToText of {n}: whether the text has a thousands separator is not pinned (docs/probes-needed.md)"
-        ))),
+        Some(Value::Integer(n)) => Ok(Value::Text(n.to_string().into())),
         other => Err(Signal::Unsupported(format!("Integer.ToText on {}", other.describe()))),
     }),
+    ("BigInteger.ToText#1", |_, r, _| match r.as_deref() {
+        Some(Value::BigInteger(n)) => Ok(Value::Text(n.to_string().into())),
+        other => Err(Signal::Unsupported(format!(
+            "BigInteger.ToText on {}",
+            other.describe()
+        ))),
+    }),
+    ("Guid.ToText#1", |_, r, _| guid_to_text(r)),
+    ("Guid.ToText#2", |_, r, _| guid_to_text(r)),
+    ("Byte.ToText#1", |c, r, _| byte_to_text(c, r)),
+    ("Byte.ToText#2", |c, r, _| byte_to_text(c, r)),
     // `Date.ToText()` and `Boolean.ToText()` (Base Application's Customer Mgt. CalcLastPaymentInfo puts them in a Dictionary
     // of [Text, Text]): Format(value) with the default format, pinned by types/lt-conversions-hidden-parts-doctype/
     // P142ToTextLang.al:P142_Date_Language and P142_Boolean_Language.
@@ -2499,6 +2508,23 @@ pub(crate) fn method_lower(s: &str) -> String {
 
 pub(crate) fn simple_lower(s: &str) -> String {
     s.chars().map(|c| c.to_lowercase().next().unwrap_or(c)).collect()
+}
+
+fn guid_to_text(r: Option<&mut Value>) -> Result<Value, Signal> {
+    match r.as_deref() {
+        Some(Value::Guid(g)) => Ok(Value::Text(crate::format::format_guid(g).into())),
+        other => Err(Signal::Unsupported(format!("Guid.ToText on {}", other.describe()))),
+    }
+}
+
+fn byte_to_text(c: &mut dyn Ctx, r: Option<&mut Value>) -> Result<Value, Signal> {
+    match r.as_deref() {
+        Some(v @ Value::Byte(_)) => match crate::format::try_format(v, 0, 0, &*c) {
+            Ok(t) => Ok(Value::Text(t.into())),
+            Err(e) => Err(Signal::Unsupported(e)),
+        },
+        other => Err(Signal::Unsupported(format!("Byte.ToText on {}", other.describe()))),
+    }
 }
 
 fn primitive_to_text(c: &mut dyn Ctx, r: Option<&mut Value>, what: &str, a: &[Value]) -> Result<Value, Signal> {

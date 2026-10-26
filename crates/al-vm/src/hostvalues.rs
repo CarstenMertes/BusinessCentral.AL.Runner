@@ -209,6 +209,24 @@ impl Session {
                 ));
             }
             Some(Value::Integer(n)) => n.abs().max(1),
+            // A Decimal: a whole one draws as that Integer (`Random(1.0)` is always 1, `Random(3.0)` 1 to 3), one with a fraction
+            // is the conversion error (types/lt-aj-probes/AjScalars.al:375-433, Random_Decimal_*: 0.4, 1.5, 2.5, 2.9). A whole
+            // Decimal beyond an Integer is not pinned.
+            Some(Value::Decimal(d)) if !d.fract().is_zero() => {
+                return Err(crate::transactions::al_error_code(
+                    &format!(
+                        "Overflow under conversion of Microsoft.Dynamics.Nav.Runtime.Decimal18 value {d} to System.Int32."
+                    ),
+                    "ConversionCast",
+                ));
+            }
+            Some(Value::Decimal(d)) if i32::try_from(d.trunc().mantissa() / 10i128.pow(d.trunc().scale())).is_ok() => {
+                let n = i32::try_from(d.trunc().mantissa() / 10i128.pow(d.trunc().scale())).unwrap_or(1);
+                if n == i32::MIN {
+                    return unsupported("Random with the smallest Integer as a Decimal (not pinned)");
+                }
+                n.abs().max(1)
+            }
             other => return unsupported(format!("Random with {}", other.describe())),
         };
         self.random_draws += 1;

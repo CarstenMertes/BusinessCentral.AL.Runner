@@ -243,6 +243,15 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
                 T::Integer => match i32::try_from(d.mantissa() / 10i128.pow(d.scale())) {
                     Ok(n) => Value::Integer(n),
                     Err(_) if matches!(v, Value::Decimal(_)) => return cast_error("Int32"),
+                    // A BigInteger beyond an Integer (types/lt-scalars/ScT70057.al:140-160; types/lt-implicit-conversions/
+                    // P79BigOption.al:129-132, P79Enums.al:116-118; calcfields/lt-bm-flowfield-conversions/BmFlowFieldConversions.al:
+                    // 159-161).
+                    Err(_) if matches!(v, Value::BigInteger(_)) => {
+                        return raise(
+                            format!("Overflow under conversion of System.Int64 value {d} to System.Int32."),
+                            "ConversionCast",
+                        );
+                    }
                     Err(_) => return unsupported(format!("{d} overflows Integer")),
                 },
                 T::BigInteger => match i64::try_from(d.mantissa() / 10i128.pow(d.scale())) {
@@ -308,18 +317,17 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
         }
         // A Text assigns into a Guid, with or without braces (record/TestRecordGetBySystemId*.al uses
         // `'00000000-0000-0000-0000-000000000000'`; the system-id tests use the braced form).
-        (Value::Text(s) | Value::Code(s), T::Guid) => match parse_guid(&s) {
+        // 32 hexadecimal digits without hyphens or braces are a Guid too; any other text is the InvalidGuidFormat error, the empty
+        // and a blank text included (types/W7Scalars.al:46-76 TextToGuid_AssignmentForms; types/lt-filter-enum-relation-duration-guid/
+        // E_Guid.al:101-158; types/lt-notification-id-text/NotificationIdFromText.al:30-65).
+        (Value::Text(s) | Value::Code(s), T::Guid) => match parse_guid(&s).or_else(|| parse_guid_without_hyphens(&s)) {
             Some(g) => Value::Guid(g),
-            // The empty text and a text with a character that is no hex digit, brace or dash raise
-            // (platform/lt-platform-members/PlTGuid.al:190-203 Assignment_FromText: `nonsense` and ''). Other malformed
-            // texts are not pinned.
-            None if s.is_empty() || s.chars().any(|c| !(c.is_ascii_hexdigit() || "{}-".contains(c))) => {
+            None => {
                 return raise(
                     "Invalid format of GUID string. The correct format of the GUID string is: CDEF7890-ABCD-0123-1234-567890ABCDEF where 0-9, A-F symbolizes hexadecimal digits.",
                     "InvalidGuidFormat",
                 );
             }
-            None => return unsupported(format!("text `{s}` into a Guid (error text not pinned yet)")),
         },
         // An Option converts to an Enum by its ordinal, with or without `AssignmentCompatibility`, blank member
         // ' ' giving 0; an ordinal the enum lacks raises no error, the enum holds that number
@@ -375,6 +383,22 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
 }
 
 /// `8-4-4-4-12` hexadecimal digits, with or without surrounding braces.
+/// 32 hexadecimal digits, without hyphens or braces, with blanks around them (W7Scalars.al:53,60 `no_hyphens`; E_Guid.al:122).
+fn parse_guid_without_hyphens(text: &str) -> Option<[u8; 16]> {
+    let t = text.trim();
+    if t.len() != 32 || !t.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    parse_guid(&format!(
+        "{}-{}-{}-{}-{}",
+        &t[..8],
+        &t[8..12],
+        &t[12..16],
+        &t[16..20],
+        &t[20..]
+    ))
+}
+
 pub fn parse_guid(text: &str) -> Option<[u8; 16]> {
     let t = text.trim();
     let inner = match (t.strip_prefix('{'), t.strip_suffix('}')) {
@@ -642,6 +666,19 @@ fn convert_rare(v: Value, t: &RtType) -> Result<Value, Signal> {
             ),
             None => unsupported(format!("conversion of {} to {t}", v.describe(), t = t.describe())),
         },
+        // A Variant holding an empty Text or two letters or more assigned to an Integer raises TypeConversion:Format, also into an Integer
+        // parameter (types/lt-variant/VaTConvert.al:13-38, 310-338; ScT70063 Variant_Types `text_to_int`); digits are read
+        // in `convert` (assumption text-digits-to-integer). Other forms, a single letter included (a Char literal may stand there),
+        // are refused.
+        (Value::Text(s) | Value::Code(s), RtType::Integer)
+            if s.as_str().is_empty()
+                || (s.as_str().len() > 1 && s.as_str().bytes().all(|b| b.is_ascii_alphabetic())) =>
+        {
+            raise(
+                "The expression Variant cannot be type-converted to a Integer value.".to_string(),
+                "TypeConversion:Format",
+            )
+        }
         // A Variant holding an Integer assigned to a Text variable raises TypeConversion (corpus
         // types/lt-variant/VaTCompare.al:Concat_After_Conversion, af117). The other numbers and a Code target are not pinned.
         // The same for an Enum (types/lt-filter-enum-relation-duration-guid/B_EnumOptionVariant.al:EnumVariant_To_Integer, `text_big`).
@@ -933,7 +970,12 @@ fn arith_general(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
             };
             // A BigInteger beyond the Int32 range raises the conversion error with the signed amount moved
             // (types/lt-time-big-integer/TimeBigIntegerArithmetic.al:P170_TimePlusMinusBigInteger `plus_over_int32`, `minus_over_int32`).
-            if matches!(n, V::BigInteger(_)) && i32::try_from(ms).is_err() {
+            // A Duration beyond the Int32 range likewise when added (types/lt-filter-enum-relation-duration-guid/D_Duration.al:
+            // 463-474 `af373`: 100000T + 5000000000 ms). Subtracting one is not pinned.
+            if matches!(n, V::Duration(_)) && i32::try_from(ms).is_err() && op == Arith::Sub {
+                return unsupported("Time minus a Duration beyond the Integer range (not pinned)".to_string());
+            }
+            if matches!(n, V::BigInteger(_) | V::Duration(_)) && i32::try_from(ms).is_err() {
                 let delta = if op == Arith::Add { ms } else { -ms };
                 return raise(
                     format!("Overflow under conversion of System.Int64 value {delta} to System.Int32."),
@@ -1207,6 +1249,14 @@ pub fn compare_operator(l: &Value, r: &Value, ordered: bool) -> Result<Ordering,
             });
         }
     }
+    // An Enum value against an Integer is equal when the ordinal is the number (types/lt-implicit-conversions/P79AcceptedShapes.al:
+    // 116-119, 204-234 EnumEqualsInteger, both orders, `=` and `<>`; types/lt-enum-option-conversions/P67EnumCompare.al:117-123).
+    // Their order is not pinned.
+    if !ordered {
+        if let (Value::Enum(_, a), Value::Integer(b)) | (Value::Integer(b), Value::Enum(_, a)) = (l, r) {
+            return Ok(if a == b { Ordering::Equal } else { a.cmp(b) });
+        }
+    }
     if ordered { compare_order(l, r) } else { compare(l, r) }
 }
 
@@ -1424,6 +1474,10 @@ fn compare_general(l: &Value, r: &Value) -> Result<Ordering, Signal> {
         (V::Guid(a), V::Guid(b)) => a.cmp(b),
         (V::Option(a, _), V::Option(b, _)) => a.cmp(b),
         (V::Option(a, _), V::Integer(b)) | (V::Integer(a), V::Option(b, _)) => a.cmp(b),
+        // An Option against a BigInteger compares the ordinal with the number, beyond an Integer too, in `=`, `<>`, `<`, `>=`,
+        // `>`, `if`, `case` and `in` (types/lt-implicit-conversions/P79BigOption.al:326-470).
+        (V::Option(a, _), V::BigInteger(b)) => i64::from(*a).cmp(b),
+        (V::BigInteger(a), V::Option(b, _)) => a.cmp(&i64::from(*b)),
         // An Option against a Decimal compares the ordinal with the Decimal, a fraction included, in both orders and for
         // variables, members and fields (types/PROptionInteger.al:175-218 QS_OptionVariable_VersusDecimal `Quantity vs 1.5`
         // is `<`, :220-251 QS_OptionMember_VersusDecimalConstant, :253-271 QS_OptionField_VersusDecimalField); `case D of
@@ -2230,10 +2284,7 @@ mod tests {
         assert!(
             matches!((&braced, &plain), (Value::Guid(a), Value::Guid(b)) if a == b && a[0] == 0x11 && a[15] == 0x55)
         );
-        // platform/lt-platform-members/PlTGuid.al:190-203: a text with a character no guid has raises; a malformed text of
-        // guid characters is not pinned.
-        assert!(matches!(g("not a guid"), Err(Signal::Error(e)) if e.code == "InvalidGuidFormat"));
-        assert!(matches!(g("1234-ABCD"), Err(Signal::Unsupported(_))));
+        assert!(matches!(g("not a guid"), Err(Signal::Error(_))));
         assert!(matches!(
             convert(
                 Value::Code("11111111-1111-1111-1111-111111111111".into()),
@@ -2428,5 +2479,58 @@ mod tests {
         check_total_order("compare_key_value(Text)", &generated_texts(), &|a, b| {
             compare_key_value(&Value::Text(a.into()), &Value::Text(b.into())).unwrap()
         });
+    }
+    // types/W7Scalars.al:46-76: texts into a Guid.
+    #[test]
+    fn texts_into_a_guid() {
+        let into = |t: &str| convert(Value::Text(t.into()), &RtType::Guid);
+        let g = into("0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d").unwrap();
+        assert!(matches!(&g, Value::Guid(b) if b[0] == 0x0a && b[15] == 0x5d), "{g:?}");
+        for bad in [
+            "",
+            "   ",
+            "hello",
+            "{0a1b2c3d-4e5f-6a7b-8c9d-0e1f2a3b4c5d",
+            "0a1b2c3d-4e5f-6a7b-8c9d-0e1f2a3b4c5g",
+        ] {
+            assert!(
+                matches!(into(bad), Err(Signal::Error(ref e)) if e.code == "InvalidGuidFormat"),
+                "{bad}"
+            );
+        }
+    }
+    #[test]
+    fn a_big_integer_beyond_an_integer_is_the_conversion_error() {
+        // types/lt-scalars/ScT70057.al:140-160.
+        match convert(Value::BigInteger(-3_000_000_000), &RtType::Integer) {
+            Err(Signal::Error(e)) => {
+                assert_eq!(
+                    e.message,
+                    "Overflow under conversion of System.Int64 value -3000000000 to System.Int32."
+                );
+                assert_eq!(e.code, "ConversionCast");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+    #[test]
+    fn an_option_against_a_big_integer_and_an_enum_against_an_integer() {
+        // P79BigOption.al:326-470; P79AcceptedShapes.al:204-234.
+        let b = Value::Option(
+            1,
+            std::sync::Arc::from(vec!["A".to_string(), "B".to_string(), "C".to_string()]),
+        );
+        use super::{compare, compare_operator};
+        use std::cmp::Ordering;
+        assert_eq!(compare(&b, &Value::BigInteger(4_294_967_296)).unwrap(), Ordering::Less);
+        assert_eq!(compare(&Value::BigInteger(1), &b).unwrap(), Ordering::Equal);
+        assert_eq!(
+            compare_operator(&Value::Enum(7, 5), &Value::Integer(5), false).unwrap(),
+            Ordering::Equal
+        );
+        assert_ne!(
+            compare_operator(&Value::Integer(0), &Value::Enum(7, 5), false).unwrap(),
+            Ordering::Equal
+        );
     }
 }

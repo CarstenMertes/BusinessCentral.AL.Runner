@@ -38,7 +38,7 @@ gate a pipeline on it yet.
 
 ## Install
 
-`al-runner` is built for Linux x64, Windows x64 and macOS arm64. With [mise](https://mise.jdx.dev):
+`al-runner` is built for Linux x64, Linux arm64, Windows x64 and macOS arm64. With [mise](https://mise.jdx.dev):
 
 ```
 mise use -g github:aldevtools/BusinessCentral.AL.Runner    # the newest numbered alpha

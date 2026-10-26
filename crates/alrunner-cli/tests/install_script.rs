@@ -1,5 +1,5 @@
 //! `release/install.sh` against a local folder that looks like a release (ALRUNNER_DOWNLOAD_BASE). The binary
-//! is a fake shell script; nothing is downloaded. Linux x64 and macOS arm64 only, as the script.
+//! is a fake shell script; nothing is downloaded. Linux x64 and arm64, and macOS arm64 only, as the script.
 
 #![cfg(unix)]
 
@@ -10,6 +10,7 @@ use std::process::{Command, Output};
 fn target() -> Option<&'static str> {
     match (std::env::consts::OS, std::env::consts::ARCH) {
         ("linux", "x86_64") => Some("x86_64-unknown-linux-musl"),
+        ("linux", "aarch64") => Some("aarch64-unknown-linux-musl"),
         ("macos", "aarch64") => Some("aarch64-apple-darwin"),
         _ => None,
     }

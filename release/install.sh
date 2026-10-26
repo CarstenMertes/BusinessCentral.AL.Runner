@@ -1,5 +1,5 @@
 #!/bin/sh
-# Installs al-runner from GitHub releases (Linux x64, macOS arm64).
+# Installs al-runner from GitHub releases (Linux x64 and arm64, macOS arm64).
 #   install.sh [VERSION]
 # VERSION: "edge" (newest build of the release branch), "latest-alpha" (default: the newest numbered
 # alpha), or a tag such as v3.0.0-alpha.2.
@@ -12,6 +12,7 @@ want="${1:-latest-alpha}"
 
 case "$(uname -s)-$(uname -m)" in
   Linux-x86_64) target=x86_64-unknown-linux-musl ;;
+  Linux-aarch64|Linux-arm64) target=aarch64-unknown-linux-musl ;;
   Darwin-arm64) target=aarch64-apple-darwin ;;
   *) echo "error: no al-runner build for $(uname -s) $(uname -m)" >&2; exit 1 ;;
 esac

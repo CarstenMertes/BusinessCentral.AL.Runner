@@ -1108,13 +1108,9 @@ fn bt_length(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> NResult
 fn bt_text_pos(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
     let h = string_of(r)?;
     let (hay, needle) = (with_string(&h, |s| u16s(s)), u16s(&text(a, 0)?));
-    // An empty text is found nowhere in a BigText that holds text (P93BigText.al:363,381 `pos-empty`); in an empty one it is not
-    // pinned.
-    if needle.is_empty() && !hay.is_empty() {
-        return Ok(Value::Integer(0));
-    }
+    // An empty text is not found, in an empty BigText and in one with text (streams/StTBigText.al:39 `textpos-empty`, :198 `empty`).
     if needle.is_empty() {
-        return unsupported("BigText.TextPos of an empty text in an empty BigText (not pinned)");
+        return Ok(Value::Integer(0));
     }
     Ok(Value::Integer(find(&hay, &needle, 0).map_or(0, |p| p as i32 + 1)))
 }

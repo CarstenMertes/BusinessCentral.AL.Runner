@@ -407,11 +407,13 @@ pub fn format_value(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) 
         // A byte from 0x80 up reads as the default (code page 437) stream encoding reads it: the bytes of a UTF-8 text
         // `C3 A9 E2 82 AC` format as the characters `\u201C \u0014 \u00CB \u00E9 \u00BC` (misc/lt-probes-needed-3/
         // PnC20JsonStreams.al:WriteTo_NonAscii_PerEncoding).
+        // Byte 200 formats as U+02DC (streams/lt-stream-length/StreamLengthIntegers.al:Byte_WriteReadLength_1 `n200_rd` 1/˜/Yes/2,
+        // streams/lt-stream-read-write-media/P102ReadTyped.al:187-188 `r1_v`).
+        // Also in every standard format that exists for it (types/lt-scalars/ScT70052.al:173-187).
+        Value::Byte(200) => "\u{2DC}".into(),
         Value::Byte(b) if *b >= 0x80 && crate::stream::Encoding::MsDos.decode_pinned(&[*b]) => {
             crate::stream::Encoding::MsDos.decode(&[*b])
         }
-        // Byte 200 shows as `˜` (U+02DC) in every standard format that exists for it (types/lt-scalars/ScT70052.al:173-187).
-        Value::Byte(200) => "\u{02DC}".to_string(),
         // Kept, not pinned: a byte from 0x80 up whose character no corpus test pins shows as the Latin-1 character of its
         // code; json/TestJsonComplete.al:JsonObject_GetByte_ReturnsValue (Assert.AreEqual of Byte 200) passes through it.
         Value::Byte(b) => char::from(*b).to_string(),
@@ -610,6 +612,18 @@ pub fn format_value(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) 
                         // {"a":1} formats as `{"a":1}` (streams/ProbeJsonAndInStreamBytes.al:ReadFrom_InStream_WithBomAndWithout).
                         crate::json::JsonNode::Object(_) | crate::json::JsonNode::Array(_) => String::new(),
                         crate::json::JsonNode::Scalar(crate::json::Scalar::Null) => "null".to_string(),
+                        // A JsonToken holding a whole number formats as its digits (json/lt-ay-json/AyJsonTokenSelectTokens.al:
+                        // 64-66 `1@a[0].n`, :116 `7@`).
+                        crate::json::JsonNode::Scalar(crate::json::Scalar::Val(Value::Integer(n)))
+                            if name == "JsonToken" && standard == 0 =>
+                        {
+                            n.to_string()
+                        }
+                        crate::json::JsonNode::Scalar(crate::json::Scalar::Val(Value::BigInteger(n)))
+                            if name == "JsonToken" && standard == 0 =>
+                        {
+                            n.to_string()
+                        }
                         _ => {
                             return Err(format!(
                                 "Format of {name} with content (standard format {standard}) is not pinned yet"
@@ -699,6 +713,12 @@ pub fn format_value(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) 
                 }
             }
             _ => String::new(),
+        },
+        // A BigText formats as its text (streams/StTBigText.al:ConvertTextAndBack `format` direct).
+        Value::Library(name, l) if name.as_str() == "BigText" && standard == 0 => match &*l.borrow() {
+            crate::value::LibraryValue::Text(t) => t.clone(),
+            crate::value::LibraryValue::Empty => String::new(),
+            _ => return Err("Format of a BigText with a capacity".to_string().into()),
         },
         // Duration and the other reference types get their formats with
         // the corpus tests that pin them.

@@ -826,30 +826,30 @@ impl Session {
         {
             self.page_trigger(st, "onaftergetrecord", vec![])?;
         }
-        // In a key other than the primary key the row is read once more (`reads_once_more_in_its_key`): pinned for an open whose
-        // view of more than one row ends inside the window.
+        // In a key other than the primary key each row is read once more than in the primary key (`reads_once_more_in_its_key`);
+        // the reads of a refill of the window there are not pinned (the pinned moves and the refresh after an action do not
+        // refill it: pages/lt-sg-list-key-moves/SgListKeyMovesTests.al, corpus bump PR 738).
         if !opening && self.still_reads_once_more(st) {
-            // A refill in that key reads as in the primary key: not pinned (assumed).
-            al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::ListOtherKeyOtherMoves);
+            return unsupported(
+                "a refill of the rows of a list in a key other than the primary key (its reads are not pinned)",
+            );
         }
         if opening && st.borrow().open_read && self.reads_once_more_in_its_key(st) {
             // The rows above a row OnOpenPage left Rec on count (QrMovedTests.al QS_KeyAsc_List_FindLast, Rec on the last row:
             // `O:A;R:A;R:A;R:B;R:C;R:D;R:A;R:A;R:A;C:A;`).
-            if end_reached && st.borrow().window.len() >= 2 {
-                self.page_trigger(st, "onaftergetrecord", vec![])?;
-                let rec = self.page_rec(st);
-                let at = (rec.borrow().key, rec.borrow().ascending);
-                st.borrow_mut().reads_once_more_in = Some(at);
-            } else if moved_open {
+            let pinned = end_reached && st.borrow().window.len() >= 2;
+            if !pinned && moved_open {
                 // A list on the row OnOpenPage left Rec on, in such a key, whose view has one row or more than a window: not pinned.
                 return unsupported(
                     "the open read of a list on the row its OnOpenPage left Rec on, in a key other than the primary key, with one row or more rows than a window holds (not pinned)",
                 );
-            } else {
-                // Any other open in such a key (one row, or more rows than a window) keeps the reads of the primary key: not
-                // pinned (assumed; Tests-ERM O365 Correct Sales Invoice and Payments using Creditor Number open such lists).
-                al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::ListOtherKeyOtherMoves);
             }
+            // A view of one row and one of more rows than a window holds read the row once more too (SgListKeyMovesTests.al
+            // SG_Key_OneRow_Open `open` = `R:A;R:A;R:A;C:A;`, SG_Key_ThirtyRows_Moves `open`: the window, then R30 three times).
+            self.page_trigger(st, "onaftergetrecord", vec![])?;
+            let rec = self.page_rec(st);
+            let at = (rec.borrow().key, rec.borrow().ascending);
+            st.borrow_mut().reads_once_more_in = Some(at);
         }
         Ok(())
     }
@@ -1604,6 +1604,19 @@ impl Session {
         {
             return Ok(Some(false));
         }
+        // First on a plain list (OnAfterGetRecord and OnAfterGetCurrRecord, rows from the table) whose cursor stands on the first
+        // row reads nothing, in the primary key and in another key (pages/lt-sg-list-key-moves/SgListKeyMovesTests.al
+        // SG_Pk_OneRow_Open, SG_Key_OneRow_Open `first` = `A|`, corpus bump PR 738; three rows: misc/lt-probes-needed-7/
+        // PnGRunObjectOptions.al:132 LinkAndViewOnAList `plain-list`, the handler's First right after the open).
+        if how == PageMethod::First
+            && at == 0
+            && st.borrow().host.is_none()
+            && !find_page
+            && !self.declares(st, "onnextrecord")
+            && self.declares(st, "onaftergetcurrrecord")
+        {
+            return Ok(Some(true));
+        }
         let target = match how {
             PageMethod::First => 0,
             PageMethod::Last => window.len() - 1,
@@ -1686,6 +1699,11 @@ impl Session {
             self.nav_find(st, "=")?;
         }
         self.populate_current(st)?;
+        // In a key other than the primary key the row is read once more (SgListKeyMovesTests.al SG_Key_ThirtyRows_Moves `last`:
+        // the block, then R01 three times; corpus bump PR 738).
+        if self.still_reads_once_more(st) {
+            self.populate_current(st)?;
+        }
         self.current_record_trigger(st, before)?;
         Ok(Some(true))
     }
@@ -1753,11 +1771,10 @@ impl Session {
 
     /// The reads of a move onto row `target` of the rows the client holds (see `move_in_client_rows`).
     pub(super) fn read_client_row(&mut self, st: &St, target: usize) -> Result<(), Signal> {
-        if self.still_reads_once_more(st) {
-            // First, Last, GoToKey and GoToRecord in that key read as in the primary key: not pinned (assumed).
-            al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::ListOtherKeyOtherMoves);
-        }
-        self.read_client_row_in(st, target, false)
+        // First, Last, GoToKey and GoToRecord in a key other than the primary key read the row once more too
+        // (pages/lt-sg-list-key-moves/SgListKeyMovesTests.al SG_Key_FourRows_Moves `last`, `first`, `gotokey_b`, `gotorecord_c`).
+        let once_more = self.still_reads_once_more(st);
+        self.read_client_row_in(st, target, once_more)
     }
 
     /// A plain list (no OnFindRecord or OnNextRecord, with OnAfterGetRecord and OnAfterGetCurrRecord) on a page of its own whose

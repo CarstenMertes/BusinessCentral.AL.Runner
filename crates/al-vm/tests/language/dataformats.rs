@@ -652,11 +652,12 @@ fn xml_select_nodes_by_xpath() {
         "XmlDocument.ReadFrom('<r><a/><a/><a/></r>', D); D.GetRoot(E); E.SelectNodes('a', L); exit(Format(L.Count()));",
     );
     assert_eq!(t, "3");
-    // Prefixed names need a namespace manager, which the corpus never uses: refused.
-    assert!(unsupported(
+    // A prefixed name without a namespace manager raises (xml/XmlXPathNamespaces.al:314 `prefix_without_manager`).
+    let t = text_of(
         "D: XmlDocument; N: XmlNode;",
-        "XmlDocument.ReadFrom('<a:r xmlns:a=\"u\"/>', D); D.SelectSingleNode('/a:r', N); exit('');"
-    ));
+        "XmlDocument.ReadFrom('<a:r xmlns:a=\"u\"/>', D); asserterror D.SelectSingleNode('/a:r', N); exit(GetLastErrorCode());",
+    );
+    assert_eq!(t, "Xml:XPath");
 }
 
 #[test]

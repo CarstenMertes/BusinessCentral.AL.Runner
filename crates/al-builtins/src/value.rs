@@ -499,6 +499,13 @@ pub struct PageState {
     pub xrec_after_validate: Option<Vec<Value>>,
     /// CurrPage.Update ran while the page's row was stored but outside the view the action had just set (list refresh).
     pub view_left: bool,
+    /// An OnDrillDown turned MarkedOnly on for Rec without `CurrPage.Update`: the client still shows the rows of the view
+    /// without MarkedOnly (assumption drilldown-marked-only-update-refresh).
+    pub marked_only_unshown: bool,
+    /// The same OnDrillDown on a list WITH OnAfterGetRecord or OnAfterGetCurrRecord: what the page shows then is not pinned
+    /// (corpus pages/lt-sc-outside-pages/ScDrillDownMarkedOnly.al:422 covers only a page without them); every TestPage call
+    /// but Close is refused until Close.
+    pub marked_only_unpinned: bool,
     /// A TestPage GoToKey moved the cursor of a list without OnAfterGetCurrRecord: the client reads the row once more before
     /// every later action (pages/lt-ai-list-order/AiListOrderTests.al:39 Keep_Nav `update` = `R:R1002;R:R1002;A:filter...`;
     /// QgGoToKeyNextCall.al:297 Plain_GoToKey_ThenActionWithoutUpdate_Twice `second_action_log`), until a move clears it.
@@ -715,7 +722,7 @@ pub struct PageState {
     /// Since that refresh only events happened that are pinned to leave this page as it is.
     pub shown_current: bool,
     /// The kinds of unpinned events since that refresh (bits of al-vm `pages/shown.rs`).
-    pub shown_doubts: u8,
+    pub shown_doubts: u16,
     /// The first call since that refresh after which a read of an expression it does not keep is refused.
     pub shown_doubt_call: Option<&'static str>,
 }
@@ -797,6 +804,8 @@ impl PageState {
             read_keeps_xrec: false,
             xrec_after_validate: None,
             view_left: false,
+            marked_only_unshown: false,
+            marked_only_unpinned: false,
             read_after_goto: false,
             read_after_goto_doubt: false,
             read_after_goto_quiet: false,
@@ -1649,6 +1658,9 @@ pub enum LibraryValue {
     },
     XmlWriteOptions {
         preserve_whitespace: bool,
+        /// Whether a document or element is written without indentation. A setter changes it only when it changes
+        /// `preserve_whitespace`, and a new value starts unindented (see xml.rs `write_options_preserve_whitespace`).
+        unindented: bool,
     },
     /// A `File` that was created or opened, or had a mode set (an untouched one is `Empty`).
     File(crate::file::FileState),

@@ -189,6 +189,27 @@ fn text_of(vars: &str, body: &str) -> Result<String, Signal> {
     }
 }
 
+// platform/lt-platform-members/PlTNumberSequence.al:372-394 (UpperLimit_NoCycle): a Next past the BigInteger range raises the
+// SQL error and the sequence is gone afterwards.
+#[test]
+fn number_sequence_next_past_the_range_raises_and_drops_the_sequence() {
+    let src = "codeunit 50100 C {
+        procedure F(): Text var a: Text; B: BigInteger; begin
+            Evaluate(B, '9223372036854775807');
+            NumberSequence.Insert('S', B, 1);
+            a := Format(NumberSequence.Next('S'));
+            if not TryNext() then a += '|' + GetLastErrorText() + '|' + GetLastErrorCode();
+            exit(a + '|' + Format(NumberSequence.Exists('S')));
+        end;
+        [TryFunction] local procedure TryNext() begin NumberSequence.Next('S'); end;
+    }";
+    let r = run(src, "F");
+    assert!(
+        matches!(&r, Ok(Value::Text(t)) if &**t == "9223372036854775807|An unexpected error occurred after a database command was cancelled.|Sql:Sql|No"),
+        "{r:?}"
+    );
+}
+
 #[test]
 fn number_sequence_honours_seed_and_increment_per_scope() {
     // session/TestNumberSequence.al:15-60: the default scope is company specific, a global one is

@@ -185,6 +185,15 @@ impl Lowerer<'_> {
                             out.push(ir::Arg::Value(value));
                             continue;
                         }
+                        // A Variant handed to a by-value Record parameter goes in as it is too: the binding gives a RecordRef of
+                        // another table the ObjectDefinitionChanged error, where an assignment raises NotSupportedOperation
+                        // (record/lt-ar-records/ArRecordProbes.al:410-436 SG_VariantRecordRef_OtherTable_AssignAndParameter `param`;
+                        // al-vm `record_ref_into_record_param`). A Record is a Record of any table there as before. For a
+                        // TryFunction callee the conversion stays at the call: whether it runs inside the try is not pinned.
+                        if !try_call && matches!(p.ty, Ty::Record { .. }) && matches!(self.ty_ref(a), Ty::Variant) {
+                            out.push(ir::Arg::Value(value));
+                            continue;
+                        }
                         // A Notification handed to a by-value parameter is the caller's own (the binding in al-vm lib.rs shares it too): no copy.
                         let is_notification =
                             |t: &Ty| matches!(t, Ty::Builtin(n) if n.eq_ignore_ascii_case("notification"));

@@ -165,7 +165,7 @@ mod tests {
     fn markdown_counts_flagged_passes_inside_the_passed_number() {
         let marks = |c: &CaseId| {
             if c.name == "a" {
-                vec![Assumption::QueryClosedAfterLastRow]
+                vec![Assumption::TextDigitsToInteger]
             } else {
                 Vec::new()
             }
@@ -181,14 +181,14 @@ mod tests {
     fn a_flagged_pass_is_still_a_pass_in_junit_and_lists_its_ids() {
         let marks = |c: &CaseId| {
             if c.name == "a" {
-                vec![Assumption::QueryClosedAfterLastRow, Assumption::NextWholeDecimal]
+                vec![Assumption::TextDigitsToInteger, Assumption::NextWholeDecimal]
             } else {
                 Vec::new()
             }
         };
         let xml = junit_with(&oracle(), &outcome, &|_| 0.0, &marks, None);
         assert!(
-            xml.contains(r#"<property name="assumptions" value="query-closed-after-last-row,next-whole-decimal" />"#),
+            xml.contains(r#"<property name="assumptions" value="text-digits-to-integer,next-whole-decimal" />"#),
             "{xml}"
         );
         // The same cases pass and fail as without the property.

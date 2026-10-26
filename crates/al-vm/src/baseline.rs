@@ -199,10 +199,7 @@ impl Baseline {
         if let Some(td) = &engine.test_data {
             self.store = self
                 .store
-                .with_backing(std::rc::Rc::new(crate::testdata::TestBacking::new(
-                    engine.clone(),
-                    td.clone(),
-                )));
+                .with_backing(std::rc::Rc::new(crate::testdata::TestBacking::new(engine, td.clone())));
         }
         self
     }

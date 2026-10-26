@@ -406,14 +406,14 @@ fn global_language_accepts_only_positive_ids() {
     }
 }
 
-// session/TestSessionComplete.al:45-52: an id no session has is not active. The running session's
-// own id is not pinned: refused.
+// session/TestSessionComplete.al:45-52: an id no session has is not active; platform/lt-platform-members/PlTSession.al:294
+// (SessionId_Relations): the running session is.
 #[test]
-fn is_session_active_is_false_for_an_unknown_id_and_refused_for_the_running_session() {
+fn is_session_active_is_false_for_an_unknown_id_and_true_for_the_running_session() {
     let r = run("procedure F(): Boolean begin exit(Session.IsSessionActive(99999)); end;");
     assert!(matches!(r, Ok(Value::Boolean(false))), "{r:?}");
     let r = run("procedure F(): Boolean begin exit(Session.IsSessionActive(Database.SessionId())); end;");
-    assert!(matches!(r, Err(Signal::Unsupported(_))), "{r:?}");
+    assert!(matches!(r, Ok(Value::Boolean(true))), "{r:?}");
 }
 
 // ------------------------------------------------------------------ the transaction type
@@ -917,9 +917,12 @@ fn geturl_default_with_a_company_or_an_object_builds_the_pinned_path() {
 #[test]
 fn geturl_of_another_client_type_or_an_unpinned_character_is_refused() {
     for body in [
-        "exit(GetUrl(ClientType::Phone));",
-        "exit(GetUrl(ClientType::Tablet, 'C', ObjectType::Page, 21));",
-        "exit(GetUrl(ClientType::Web, 'A,B'));",
+        "exit(GetUrl(ClientType::Phone, 'C', ObjectType::Table, 18));",
+        "exit(GetUrl(ClientType::Tablet, 'C', ObjectType::Page, 0));",
+        "exit(GetUrl(ClientType::Desktop, 'A&B'));",
+        "exit(GetUrl(ClientType::Background, 'C', ObjectType::Page, 21));",
+        "exit(GetUrl(ClientType::SOAP));",
+        "exit(GetUrl(ClientType::Web, 'A`B'));",
     ] {
         let r = get_url(body, None);
         assert!(
@@ -965,21 +968,26 @@ fn secret_str_subst_no_takes_a_text_variable() {
     assert!(matches!(r, Ok(Value::Boolean(false))), "{r:?}");
 }
 
-// GetUrlBookmarkFilter.al:`report`, `query` pin only that the result has no '?'; an empty text is a guess, so a Report,
-// Query or Codeunit with a record is refused.
+// platform/lt-t-geturl/TGetUrl.al:383-388 GetUrl_Web_ReportQueryCodeunitWithRecord: a report, a query or a codeunit
+// with a record and UseFilters false has no address, the empty text. A query with UseFilters true is not pinned.
 #[test]
-fn geturl_of_report_query_or_codeunit_with_a_record_is_refused() {
+fn geturl_of_report_query_or_codeunit_with_a_record_is_empty_and_a_query_with_filters_is_refused() {
     for obj in ["Report, 6", "Query, 9150", "Codeunit, 80"] {
         let body = format!(
             "var R: Record \"ALT T\"; begin exit(GetUrl(ClientType::Web, 'C', ObjectType::{obj}, R, false)); end;"
         );
         let (engine, oi) = compile(&format!("procedure F(): Text {body}"));
         let r = call(&mut Session::with_host(engine, al_host::Host::deterministic()), oi, "F");
-        assert!(
-            matches!(&r, Err(Signal::Unsupported(w)) if w.contains("no query part")),
-            "{obj}: {r:?}"
-        );
+        assert!(matches!(&r, Ok(Value::Text(t)) if t.is_empty()), "{obj}: {r:?}");
     }
+    let body =
+        "var R: Record \"ALT T\"; begin exit(GetUrl(ClientType::Web, 'C', ObjectType::Query, 9150, R, true)); end;";
+    let (engine, oi) = compile(&format!("procedure F(): Text {body}"));
+    let r = call(&mut Session::with_host(engine, al_host::Host::deterministic()), oi, "F");
+    assert!(
+        matches!(&r, Err(Signal::Unsupported(w)) if w.contains("no query part")),
+        "{r:?}"
+    );
 }
 
 // misc/lt-probes-needed-5/PnE08RecordMisc.al:TestField_Blob `af219`: an error inside ASSERTERROR rolls the Insert back, and a
@@ -1009,5 +1017,56 @@ fn random_of_a_decimal() {
             );
         }
         other => panic!("{other:?}"),
+    }
+}
+
+// platform/lt-t-geturl/TGetUrl.al:248-285 (GetUrl_ClientPhone, Tablet, Desktop): `ms-dynamicsnav://` and the address, then the
+// web query without a `/`; TGetUrl.al:233-240 (GetUrl_ClientWindows): the Default text; GetUrlCtBackground.al,
+// GetUrlCtManagement.al, GetUrlCtNAS.al:69-73: the empty text.
+#[test]
+fn geturl_of_the_other_client_types_builds_the_pinned_text() {
+    for (body, want) in [
+        ("exit(GetUrl(ClientType::Phone));", "ms-dynamicsnav://localhost:8080/BC"),
+        (
+            "exit(GetUrl(ClientType::Tablet, 'My Company'));",
+            "ms-dynamicsnav://localhost:8080/BC?company=My%20Company",
+        ),
+        (
+            "exit(GetUrl(ClientType::Desktop, '', ObjectType::Page, 21));",
+            "ms-dynamicsnav://localhost:8080/BC?page=21",
+        ),
+        (
+            "exit(GetUrl(ClientType::Phone, 'My Company', ObjectType::Report, 69367));",
+            "ms-dynamicsnav://localhost:8080/BC?company=My%20Company&report=69367",
+        ),
+        (
+            "exit(GetUrl(ClientType::Windows, 'My Company', ObjectType::Page, 21));",
+            "dynamicsnav://localhost:8080/BC/My%20Company/runpage?page=21",
+        ),
+        ("exit(GetUrl(ClientType::Background));", ""),
+        ("exit(GetUrl(ClientType::Management, 'My Company'));", ""),
+        ("exit(GetUrl(ClientType::NAS, ''));", ""),
+    ] {
+        let r = get_url(body, None);
+        assert!(matches!(&r, Ok(Value::Text(t)) if &**t == want), "{body}: {r:?}");
+    }
+}
+
+// platform/lt-t-geturl/TGetUrl.al:310-329 (GetUrl_Web_CompanyCharacters): only letters, digits and - . _ ~ stay unencoded.
+#[test]
+fn geturl_web_encodes_every_other_printable_character() {
+    for (company, want) in [
+        ("CRONUS USA, Inc.", "CRONUS%20USA%2C%20Inc."),
+        ("A_B", "A_B"),
+        ("A-B.C~D", "A-B.C~D"),
+        ("A*B$C", "A%2AB%24C"),
+        ("A[B]{C}", "A%5BB%5D%7BC%7D"),
+        ("A|B^C", "A%7CB%5EC"),
+        ("A\"B", "A%22B"),
+    ] {
+        let body = format!("exit(GetUrl(ClientType::Web, '{company}'));");
+        let want = format!("http://localhost:8080/BC/?company={want}");
+        let r = get_url(&body, None);
+        assert!(matches!(&r, Ok(Value::Text(t)) if **t == *want), "{body}: {r:?}");
     }
 }

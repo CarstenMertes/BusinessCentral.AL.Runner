@@ -370,17 +370,19 @@ impl Session {
 
     /// `SessionSettings.RequestSessionUpdate(false)`: the bound `[SessionSettingsHandler]` gets the
     /// settings and must answer true. Without a handler the platform raises "Unhandled UI:
-    /// SessionSettings" (the header of session/TestSessionSettings.al); the full text is not
-    /// pinned, so that is refused. What a handler's `false` means is not pinned either.
+    /// SessionSettings " (see below).
     pub(crate) fn ui_session_settings(&mut self, settings: Value) -> Result<Option<Value>, Signal> {
         let bound = self
             .ui_state
             .scope
             .as_ref()
             .is_some_and(|s| s.handlers.iter().any(|h| h.kind == UiKind::SessionSettings));
-        if !bound {
+        // In a test method without a handler: "Unhandled UI: SessionSettings " (one space, nothing after it) with the
+        // code MissingUIHandler (platform/lt-platform-members/PlTSessionSettings.al:159-178 RequestSessionUpdate_False, the
+        // same text and code as the other kinds). Outside a test method it is not pinned.
+        if !bound && self.ui_state.scope.is_none() {
             return Err(Signal::Unsupported(
-                "SessionSettings.RequestSessionUpdate without a [SessionSettingsHandler] (the Unhandled UI text is not pinned)"
+                "SessionSettings.RequestSessionUpdate without a [SessionSettingsHandler] outside a test method (not pinned)"
                     .into(),
             ));
         }

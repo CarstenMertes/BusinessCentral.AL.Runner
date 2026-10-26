@@ -166,6 +166,46 @@ pub fn read(dir: &Path, key: &str) -> Option<(BaselineRun, i64)> {
     }
 }
 
+thread_local! {
+    /// The last baseline [`read_kept`] read on this thread: its file, what `prepare` was given, and what came of it.
+    static KEPT: std::cell::RefCell<Option<(PathBuf, String, BaselineRun, i64)>> = const { std::cell::RefCell::new(None) };
+}
+
+/// [`read`] for a warm server, whose requests run on one thread (al-runner issue 5856): the file of `key` is read and
+/// decoded once and given to `prepare` (which puts the test data under it), and a later read of the same file with the
+/// same `prepared` (what `prepare` depends on) answers what came of it, as a copy: the rows are persistent maps, so the
+/// copy shares them, and the rows read from the test data stay read. The file's content follows from its key, so it
+/// cannot differ from what was read. The flag says that the answer is the kept one.
+pub fn read_kept(
+    dir: &Path,
+    key: &str,
+    prepared: &str,
+    prepare: impl FnOnce(BaselineRun) -> BaselineRun,
+) -> Option<(BaselineRun, i64, bool)> {
+    let path = file(dir, key);
+    let hit = KEPT.with(|k| {
+        k.borrow()
+            .as_ref()
+            .filter(|(p, by, _, _)| *p == path && by == prepared)
+            .map(|(_, _, run, at)| (run.clone(), *at, true))
+    });
+    if hit.is_some() {
+        return hit;
+    }
+    // What is kept goes first: two baselines are not kept together.
+    forget_kept();
+    let (run, at) = read(dir, key)?;
+    let run = prepare(run);
+    KEPT.with(|k| *k.borrow_mut() = Some((path, prepared.to_string(), run.clone(), at)));
+    Some((run, at, false))
+}
+
+/// Drops what [`read_kept`] keeps on this thread (the program it was prepared for is about to change).
+pub fn forget_kept() {
+    let old = KEPT.with(|k| k.borrow_mut().take());
+    drop(old);
+}
+
 /// Keeps `run` under `key`, with the instant it began. Best effort: a folder that cannot be written costs the next
 /// run its install code, nothing else. The cleanup is the compile cache's (`compile_cache::prune`).
 pub fn write(dir: &Path, key: &str, run: &BaselineRun, started_at: i64) {

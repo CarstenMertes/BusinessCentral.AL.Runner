@@ -195,12 +195,17 @@ impl Session {
             Some(Value::TestPage(st)) => {
                 let st = st.clone();
                 let arg_false = matches!(args.first(), Some(Value::Boolean(false)));
-                self.shown_client_call(method, &st, None, arg_false, |s| s.test_page_op(method, &st, args))
+                self.marked_only_unshown_call(method, &st, |s| {
+                    s.shown_client_call(method, &st, None, arg_false, |s| s.test_page_op(method, &st, args))
+                })
             }
             Some(Value::TestControl(c)) => {
                 let c = c.clone();
-                self.shown_client_call(method, &c.page, Some(&c.target), false, |s| {
-                    s.test_control_op(method, &c, args)
+                let page = c.page.clone();
+                self.marked_only_unshown_call(method, &page, |s| {
+                    s.shown_client_call(method, &c.page, Some(&c.target), false, |s| {
+                        s.test_control_op(method, &c, args)
+                    })
                 })
             }
             other => unsupported(format!("{method} on {}", other.describe())),

@@ -1,5 +1,6 @@
 //! Lowering of expressions, places and constants.
 use super::*;
+use smallvec::SmallVec;
 
 impl Lowerer<'_> {
     /// The page or report that the page or report extension being lowered extends, with the noun
@@ -385,7 +386,12 @@ impl Lowerer<'_> {
 
     fn expr_raw(&mut self, n: &SyntaxNode) -> L<ir::Expr> {
         use SyntaxKind::*;
-        let kids: Vec<SyntaxNode> = n.children().collect();
+        // A literal and a bare name read no child node here (the `NameRef` arms below read `kids` only for a
+        // `MemberExpr`): walking their children was most of the cost of this list (about 1% of a cold compile).
+        let kids: SmallVec<[SyntaxNode; 4]> = match n.kind() {
+            Literal | NameRef => SmallVec::new(),
+            _ => n.children().collect(),
+        };
         match n.kind() {
             Literal => Ok(ir::Expr::Const(self.constant(n)?)),
             // `this` in a codeunit is the running instance (corpus handlers/ProbeEventSubscriberOrder.al:
@@ -622,7 +628,7 @@ impl Lowerer<'_> {
                 Ok(ir::Expr::Ternary(Box::new(cond), Box::new(yes), Box::new(no)))
             }
             CallExpr => {
-                let args: Vec<SyntaxNode> = kids.get(1).map(|a| a.children().collect()).unwrap_or_default();
+                let args: SmallVec<[SyntaxNode; 6]> = kids.get(1).map(|a| a.children().collect()).unwrap_or_default();
                 self.call(n, &kids[0], &args)
             }
             ScopeExpr => match self.res(n).cloned() {

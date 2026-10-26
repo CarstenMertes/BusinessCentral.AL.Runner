@@ -170,6 +170,8 @@ pub struct Catalog {
     /// Every overload of every version, in id order: untagged first, then by tag (ADR-015 3.3).
     pub signatures: Vec<Signature>,
     by_method: HashMap<(String, String), Vec<usize>>,
+    /// Per signature (same index): its overload id (`Catalog::id`), built once; the checker asks for it per candidate.
+    ids: Vec<String>,
     globals: HashMap<String, Vec<usize>>,
     /// The app runtime this catalog serves; `None` shows every overload (the newest).
     runtime: Option<Runtime>,
@@ -236,9 +238,17 @@ impl Catalog {
                 globals.entry(s.name.to_lowercase()).or_default().push(i);
             }
         }
+        let mut ids = vec![String::new(); signatures.len()];
+        for all in by_method.values() {
+            for (n, &i) in all.iter().enumerate() {
+                let s = &signatures[i];
+                ids[i] = format!("{}.{}#{}", s.receiver, s.name, n + 1);
+            }
+        }
         Catalog {
             signatures,
             by_method,
+            ids,
             globals,
             runtime,
             alc,
@@ -380,13 +390,21 @@ impl Catalog {
 
     /// Stable overload id: `Receiver.Method#n`, n counting from 1 in catalog order.
     pub fn id(&self, sig: &Signature) -> String {
-        let all = &self.by_method[&(sig.receiver.to_lowercase(), sig.name.to_lowercase())];
-        let n = all
+        self.ids[self.index_of(sig)].clone()
+    }
+
+    /// The index of `sig` in `signatures`: found by address for a reference into the catalog, else by equality
+    /// among the overloads of its method (a copy of a catalog signature).
+    fn index_of(&self, sig: &Signature) -> usize {
+        let size = std::mem::size_of::<Signature>();
+        let at = (sig as *const Signature as usize).wrapping_sub(self.signatures.as_ptr() as usize);
+        if at % size == 0 && at / size < self.signatures.len() {
+            return at / size;
+        }
+        *self.by_method[&(sig.receiver.to_lowercase(), sig.name.to_lowercase())]
             .iter()
-            .position(|&i| &self.signatures[i] == sig)
+            .find(|&&i| &self.signatures[i] == sig)
             .expect("signature from this catalog")
-            + 1;
-        format!("{}.{}#{n}", sig.receiver, sig.name)
     }
 }
 
@@ -480,6 +498,18 @@ mod tests {
     fn every_catalog_line_round_trips() {
         for l in SIGNATURES.lines().filter(|l| !l.starts_with('#')) {
             assert_eq!(Signature::from_line(l).unwrap().to_line(), l);
+        }
+    }
+
+    #[test]
+    fn the_precomputed_id_is_the_position_among_equal_overloads_also_for_a_copy() {
+        let c = Catalog::load();
+        for s in &c.signatures {
+            let all = &c.by_method[&(s.receiver.to_lowercase(), s.name.to_lowercase())];
+            let n = all.iter().position(|&i| &c.signatures[i] == s).unwrap() + 1;
+            let want = format!("{}.{}#{n}", s.receiver, s.name);
+            assert_eq!(c.id(s), want);
+            assert_eq!(c.id(&s.clone()), want);
         }
     }
 

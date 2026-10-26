@@ -168,15 +168,12 @@ impl Session {
     }
 
     /// Before a Company row goes: the session company's row stays (not pinned). A company deleted
-    /// with triggers takes its data with it and a new company of the name starts empty
-    /// (record/TestChangeCompanyFiltersCopyDeleteContracts.al:170-212); without triggers what happens
-    /// to its data is not pinned, so a company that holds rows is refused.
-    pub(crate) fn before_company_row_delete(&mut self, name: &str, run_trigger: bool) -> Result<(), Signal> {
+    /// with or without triggers takes its data with it and a new company of the name starts empty
+    /// (record/TestChangeCompanyFiltersCopyDeleteContracts.al:170-212 with triggers, :425-461
+    /// DeleteWithoutTriggers_OfACompanyWithRows_RemovesTheCompany_AndANewOneStartsEmpty without).
+    pub(crate) fn before_company_row_delete(&mut self, name: &str, _run_trigger: bool) -> Result<(), Signal> {
         if !self.cx.company.is_empty() && name == &*self.cx.company {
             return unsupported("Delete of the session company's row in the Company table (not pinned)");
-        }
-        if !run_trigger && self.store.has_company_rows(name) {
-            return unsupported("Delete(false) of a company that holds rows (not pinned)");
         }
         Ok(())
     }

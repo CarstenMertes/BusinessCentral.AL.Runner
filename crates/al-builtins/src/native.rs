@@ -2330,6 +2330,15 @@ fn clear(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result
         // A cleared BigText is empty (streams/StTBigText.al:ClearBigText `len-after-clear` 0, `len-after-add` 1).
         // A cleared HttpClient is a new one: no base address, the default timeout, no default headers; the next call
         // starts it fresh (network/lt-http-relative-request/HttpRelativeRequestPath.al:NewClient clears, then sets the base address).
+        // A cleared ErrorInfo is a fresh one, and so is every variable assigned from it, which shares it: `Error` of it raises ''
+        // with code Dialog (misc/lt-system-functions/ErrorMessage.al:184-206), its SystemId is the empty Guid
+        // (errorinfo/lt-bc-errorinfo-systemid/BcErrorInfoSystemId.al:55-66), TestField given it raises the plain text
+        // (record/lt-testfield-value-types/RecordTestFieldGroupA.al:59-72), and `B := A; Clear(A)` empties B's Message too
+        // (errorinfo Copy_Semantics, codeunit 73026).
+        Value::Library(name, cell) if name.as_str() == "ErrorInfo" => {
+            *cell.borrow_mut() = crate::value::LibraryValue::Empty;
+            return Ok(Value::Null);
+        }
         Value::Library(name, _)
             if matches!(
                 name.as_str(),

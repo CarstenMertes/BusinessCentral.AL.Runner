@@ -696,7 +696,12 @@ impl<'a> Checker<'a> {
 
     pub(crate) fn infer(&mut self, sc: &mut Scope, node: &SyntaxNode) -> E {
         use SyntaxKind::*;
-        let kids: Vec<SyntaxNode> = node.children().collect();
+        // A literal and a bare name read no child node here: walking their children was most of the
+        // cost of this function's child list (about 2% of a cold compile).
+        let kids: Vec<SyntaxNode> = match node.kind() {
+            Literal | NameRef => Vec::new(),
+            _ => node.children().collect(),
+        };
         match node.kind() {
             Literal => E::Val(literal_ty(node)),
             ParenExpr => E::Val(kids.first().map(|k| self.ty(sc, k)).unwrap_or(Ty::Unknown)),

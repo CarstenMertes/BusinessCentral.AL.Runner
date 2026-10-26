@@ -385,7 +385,12 @@ impl Lowerer<'_> {
 
     fn expr_raw(&mut self, n: &SyntaxNode) -> L<ir::Expr> {
         use SyntaxKind::*;
-        let kids: Vec<SyntaxNode> = n.children().collect();
+        // A literal and a bare name read no child node here (the `NameRef` arms below read `kids` only for a
+        // `MemberExpr`): walking their children was most of the cost of this list (about 1% of a cold compile).
+        let kids: Vec<SyntaxNode> = match n.kind() {
+            Literal | NameRef => Vec::new(),
+            _ => n.children().collect(),
+        };
         match n.kind() {
             Literal => Ok(ir::Expr::Const(self.constant(n)?)),
             // `this` in a codeunit is the running instance (corpus handlers/ProbeEventSubscriberOrder.al:

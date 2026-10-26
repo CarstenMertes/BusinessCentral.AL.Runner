@@ -730,7 +730,7 @@ impl Lowerer<'_> {
                 key_props,
                 per_company,
                 extensions,
-                unsupported: super::shared::over_max_length(obj),
+                unsupported: super::shared::over_max_length_of(self.ws, oi),
             },
             key_owners,
         )

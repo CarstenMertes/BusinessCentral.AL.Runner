@@ -131,7 +131,7 @@ impl al_builtins::native::Ctx for Session {
         match rec {
             Some(Value::Record(rc)) => {
                 let rc = rc.clone();
-                self.record_op(method, &rc, args)
+                self.record_op_from_al(method, &rc, args)
             }
             other => Err(Signal::Unsupported(format!(
                 "record method {method} on {}",

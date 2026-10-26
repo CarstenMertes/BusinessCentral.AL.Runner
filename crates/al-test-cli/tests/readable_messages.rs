@@ -10,6 +10,11 @@ use std::path::{Path, PathBuf};
 /// `(file suffix, the trimmed source line, why the debug format is fine here)`.
 const KEPT: &[(&str, &str, &str)] = &[
     (
+        "al-vm/src/records.rs",
+        r#".map(|f| format!("{}={:?}", f.field, f.expr))"#,
+        "the filter group 1 filters of a record, compared for equality with the session's, never shown",
+    ),
+    (
         "al-testrun/src/runtime/corpus.rs",
         r#""{:?} {:p}","#,
         "the identity of a kept test-data backing, compared for equality between serve requests, never shown",

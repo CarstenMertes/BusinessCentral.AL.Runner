@@ -37,6 +37,17 @@ fn text(a: &[Value], i: usize) -> Result<crate::text::Txt, Signal> {
         .ok_or_else(|| Signal::Unsupported(format!("text argument {i} of type {}", a.get(i).describe())))
 }
 
+/// A Text argument that may be a Guid: the Guid's upper-case text form, as in an assignment. Pinned for the functions that
+/// call this (types/lt-guid-as-text-argument/GuidAsTextArgument.al:108-146, Guid_AsTextArgument_MoreStringFunctions: DelStr,
+/// PadStr, ConvertStr, IncStr, SelectStr, InsStr, DelChr, Contains, IndexOf, StartsWith, Replace). Other text functions keep
+/// refusing a Guid.
+fn text_or_guid(a: &[Value], i: usize) -> Result<crate::text::Txt, Signal> {
+    if let Some(Value::Guid(g)) = a.get(i) {
+        return Ok(crate::format::format_guid(g).into());
+    }
+    text(a, i)
+}
+
 /// The receiver of a text method: a shared handle, no copy of the text.
 fn recv_text(r: &Option<&mut Value>) -> Result<crate::text::Txt, Signal> {
     match r.as_deref().and_then(text_of) {
@@ -75,13 +86,13 @@ fn find(hay: &[u16], needle: &[u16], from: usize) -> Option<usize> {
 // ------------------------------------------------------ searching
 
 fn contains(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
-    let (s, sub) = (recv_text(&r)?, text(a, 0)?);
+    let (s, sub) = (recv_text(&r)?, text_or_guid(a, 0)?);
     // An empty text is found (types/TestFormatEvaluateTextContracts.al:Text_EmptyArguments_ContainsStartsEndsAreTrueIndexOfIsOne).
     Ok(Value::Boolean(s.contains(sub.as_str())))
 }
 
 fn starts_with(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
-    let (s, sub) = (recv_text(&r)?, text(a, 0)?);
+    let (s, sub) = (recv_text(&r)?, text_or_guid(a, 0)?);
     // types/TestFormatEvaluateTextContracts.al:Text_EmptyArguments_ContainsStartsEndsAreTrueIndexOfIsOne.
     Ok(Value::Boolean(s.starts_with(sub.as_str())))
 }
@@ -131,7 +142,7 @@ const INT_MAX: &str = "2,147,483,647";
 
 /// 1-based, 0 when absent (TestTextExtended.al TextIndexOf_*).
 fn index_of(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
-    let (st, sb) = (recv_text(&r)?, text(a, 0)?);
+    let (st, sb) = (recv_text(&r)?, text_or_guid(a, 0)?);
     // Text of ASCII only is searched where it lies, with no copy of it (the length and the flag are cached).
     if st.is_ascii() && sb.is_ascii() {
         let from = if a.len() > 1 {
@@ -358,7 +369,7 @@ fn trim_end(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult 
 }
 
 fn replace(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
-    let (s, old, new) = (recv_text(&r)?, text(a, 0)?, text(a, 1)?);
+    let (s, old, new) = (recv_text(&r)?, text_or_guid(a, 0)?, text(a, 1)?);
     if old.is_empty() {
         // types/TestFormatEvaluateTextContracts.al:Text_EmptyArguments_ContainsStartsEndsAreTrueIndexOfIsOne.
         return raise(
@@ -493,7 +504,7 @@ fn split(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
 /// Simultaneous mapping: each character of `FromCharacters` becomes the character at the same
 /// position of `ToCharacters` (TestTextProcessingContracts.al ConvertStr_Swap_IsSimultaneous).
 fn convert_str(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> NResult {
-    let (s, from, to) = (text(a, 0)?, u16s(&text(a, 1)?), u16s(&text(a, 2)?));
+    let (s, from, to) = (text_or_guid(a, 0)?, u16s(&text(a, 1)?), u16s(&text(a, 2)?));
     if from.len() != to.len() {
         // types/TestFormatEvaluateTextContracts.al:Text_OutOfRangeArguments.
         return raise(
@@ -516,7 +527,7 @@ fn convert_str(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> NResu
 /// `=` (all); `Which` is the set of characters (a space when omitted: TestTextExtended.al
 /// DelChr_TrimLeadingAndTrailingSpaces).
 fn del_chr(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> NResult {
-    let s = text(a, 0)?;
+    let s = text_or_guid(a, 0)?;
     let wh = if a.len() > 1 { text(a, 1)? } else { "=".into() };
     let which: Vec<char> = if a.len() > 2 {
         text(a, 2)?.chars().collect()
@@ -552,7 +563,7 @@ fn del_chr(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> NResult {
 /// `IncStr('A1B') = 'A2B'`).
 fn inc_str(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> NResult {
     let by: i128 = if a.len() > 1 { i128::from(int(a, 1)?) } else { 1 };
-    let s = text(a, 0)?;
+    let s = text_or_guid(a, 0)?;
     let chars: Vec<char> = s.chars().collect();
     let Some(last) = chars.iter().rposition(char::is_ascii_digit) else {
         return Ok(Value::Text(String::new().into()));
@@ -581,7 +592,7 @@ fn inc_str(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> NResult {
 }
 
 fn pad_str(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> NResult {
-    let s = text(a, 0)?;
+    let s = text_or_guid(a, 0)?;
     let len = int(a, 1)?;
     let fill = if a.len() > 2 { text(a, 2)? } else { " ".into() };
     let mut it = fill.chars();
@@ -607,7 +618,7 @@ fn pad_str(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> NResult {
 }
 
 fn del_str(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> NResult {
-    let s = u16s(&text(a, 0)?);
+    let s = u16s(&text_or_guid(a, 0)?);
     let pos = int(a, 1)?;
     // text/TestProbeTextDateFormatContracts.al:Text_DelStrInsStr: the position must be 1 or more (the upper bound the
     // message names is 2048 without a length and the largest Integer with one); a length must be 0 or more.
@@ -642,7 +653,7 @@ fn del_str(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> NResult {
 }
 
 fn ins_str(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> NResult {
-    let s = u16s(&text(a, 0)?);
+    let s = u16s(&text_or_guid(a, 0)?);
     let sub = u16s(&text(a, 1)?);
     let pos = int(a, 2)?;
     if pos < 1 {
@@ -660,7 +671,7 @@ fn ins_str(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> NResult {
 /// types/TestFormatEvaluateTextContracts.al:SelectStr_IndexOutsideTheList_Throws (indexes 4, 0 and -1).
 fn select_str(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> NResult {
     let n = int(a, 0)?;
-    let list = text(a, 1)?;
+    let list = text_or_guid(a, 1)?;
     let parts: Vec<&str> = list.split(',').collect();
     match usize::try_from(n - 1).ok().and_then(|i| parts.get(i)) {
         Some(p) => Ok(Value::Text((*p).to_string().into())),

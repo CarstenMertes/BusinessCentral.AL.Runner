@@ -1,8 +1,8 @@
 //! Test isolation: what the test runner resets between the test methods of a test codeunit.
 //!
 //! BC's test runner codeunits carry a `TestIsolation` property. The corpus nightly pins two of its three
-//! values; all three and a runner without the property were measured by corpus writer SD (corpus PR 735,
-//! registered assumption `runner-test-isolation`).
+//! values; all three and a runner without the property are the probe of corpus writer SD (tests/al-language-isolation-probe,
+//! runners 61300, 61301, 61304 and 61305, measured on real BC 27.5, 28.5 and 29.0 on Windows containers).
 //!
 //! | Value | Database between test methods | Pinned by |
 //! |---|---|---|
@@ -94,7 +94,7 @@ pub fn runner_isolation(lowered: &al_sema::lower::Lowered, runner: u32) -> Resul
             .ok_or_else(|| format!("test runner {runner} {}: unknown TestIsolation `{v}`", o.name)),
         // A runner without the property gave exactly the rows of the Disabled runner on BC 27.5, 28.5 and 29.0 (corpus PR
         // 735, tests/al-language-isolation-probe/src/IsolProbeRunnerNoProperty.Codeunit.al, runner 61305 against 61304;
-        // registered assumption `runner-test-isolation` until the nightly measures it).
+        // measured on Windows containers by writer SD; the nightly does not run it yet).
         None => Ok(TestIsolation::Disabled),
     }
 }

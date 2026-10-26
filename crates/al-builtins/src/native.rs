@@ -2318,12 +2318,20 @@ fn clear(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result
         // A cleared SecretText is an empty one and a copy taken before keeps its content
         // (fieldref/lt-fieldref-testfield-types/SystemClearArraySecret.al:69-90, errorinfo/lt-errnotif/EnTSecret.al:15-26).
         // A cleared ModuleInfo reads as one nobody filled (platform/lt-platform-members/PlTNavApp.al:69-81).
+        // A cleared BigText is empty (streams/StTBigText.al:ClearBigText `len-after-clear` 0, `len-after-add` 1).
         // A cleared HttpClient is a new one: no base address, the default timeout, no default headers; the next call
         // starts it fresh (network/lt-http-relative-request/HttpRelativeRequestPath.al:NewClient clears, then sets the base address).
         Value::Library(name, _)
             if matches!(
                 name.as_str(),
-                "OutStream" | "InStream" | "FileUpload" | "HttpClient" | "HttpHeaders" | "SecretText" | "ModuleInfo"
+                "OutStream"
+                    | "InStream"
+                    | "FileUpload"
+                    | "HttpClient"
+                    | "HttpHeaders"
+                    | "SecretText"
+                    | "ModuleInfo"
+                    | "BigText"
             ) =>
         {
             Value::Library(

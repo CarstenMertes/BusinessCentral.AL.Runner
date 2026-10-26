@@ -141,3 +141,106 @@ fn set_current_key_on_a_flow_field_that_depends_on_the_row_is_refused() {
     let r = al_testkit::run_in(FLOW, "C", "ByRowFlowField");
     assert!(matches!(r, Err(Signal::Unsupported(_))), "{r:?}");
 }
+
+const MEDIA: &str = r#"
+table 69994 "KT Media Row"
+{
+    fields { field(1; Id; Integer) { } field(2; Pic; Media) { } field(3; Pics; MediaSet) { } }
+    keys { key(PK; Id) { } }
+}
+codeunit 69995 C
+{
+    local procedure Seed()
+    var Row: Record "KT Media Row"; I: Integer;
+    begin
+        for I := 1 to 3 do begin
+            Row.Init(); Row.Id := I; Row.Insert();
+        end;
+    end;
+
+    local procedure KeyOfCopy(Row: Record "KT Media Row"): Text
+    begin
+        exit(Row.CurrentKey());
+    end;
+
+    local procedure FindOnCopy(Row: Record "KT Media Row"): Text
+    begin
+        Row.FindFirst();
+        exit(Format(Row.Id));
+    end;
+
+    procedure DirectMedia(): Text
+    var Row: Record "KT Media Row";
+    begin
+        Seed();
+        Row.SetCurrentKey(Pic);
+        exit(Row.CurrentKey());
+    end;
+
+    procedure DirectMediaSet(): Text
+    var Row: Record "KT Media Row";
+    begin
+        Seed();
+        Row.SetCurrentKey(Pics);
+        exit(Row.CurrentKey());
+    end;
+
+    procedure ThroughCopy(): Text
+    var Row: Record "KT Media Row";
+    begin
+        Seed();
+        Row.SetCurrentKey(Pic);
+        exit(KeyOfCopy(Row));
+    end;
+
+    procedure ResetClears(): Text
+    var Row: Record "KT Media Row";
+    begin
+        Seed();
+        Row.SetCurrentKey(Pic);
+        Row.Reset();
+        Row.FindLast();
+        exit(Row.CurrentKey() + Format(Row.Id));
+    end;
+
+    procedure FindsInMediaKey(): Text
+    var Row: Record "KT Media Row";
+    begin
+        Seed();
+        Row.SetCurrentKey(Pic);
+        Row.FindFirst();
+        exit('');
+    end;
+
+    procedure ViewOfMediaKey(): Text
+    var Row: Record "KT Media Row";
+    begin
+        Row.SetCurrentKey(Pic);
+        exit(Row.GetView());
+    end;
+
+    procedure FindsOnCopy(): Text
+    var Row: Record "KT Media Row";
+    begin
+        Seed();
+        Row.SetCurrentKey(Pic);
+        exit(FindOnCopy(Row));
+    end;
+}
+"#;
+
+// SetCurrentKey on a Media or MediaSet field that no key holds: the record itself answers the field as its key
+// (record/lt-ar-records/ArRecordProbes.al:198-229 SetCurrentKey_Media `Pic`, SetCurrentKey_MediaSet `Pics`), a by-value copy of it
+// answers the primary key (records/W4SortKeys.al:440-471 `media` `ok:[Id]`). The order of the rows, the view and the rest of
+// what such a record answers are not pinned: refused.
+#[test]
+fn set_current_key_on_a_media_field_answers_the_field_and_its_copy_the_primary_key() {
+    assert_eq!(text(al_testkit::run_in(MEDIA, "C", "DirectMedia")), "Pic");
+    assert_eq!(text(al_testkit::run_in(MEDIA, "C", "DirectMediaSet")), "Pics");
+    assert_eq!(text(al_testkit::run_in(MEDIA, "C", "ThroughCopy")), "Id");
+    assert_eq!(text(al_testkit::run_in(MEDIA, "C", "ResetClears")), "Id3");
+    for p in ["FindsInMediaKey", "ViewOfMediaKey", "FindsOnCopy"] {
+        let r = al_testkit::run_in(MEDIA, "C", p);
+        assert!(matches!(r, Err(Signal::Unsupported(_))), "{p}: {r:?}");
+    }
+}

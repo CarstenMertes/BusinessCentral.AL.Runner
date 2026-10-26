@@ -56,9 +56,20 @@ pub(crate) const RUN_PAGE_LINK_OPEN_FILLED: &str = "in the OnOpenPage of a page 
 /// (handlers/TestActionRunPageLinkFilterGroup.al:292-369, `Describe(Child: Record ...)` in QzRunPageLinkOnOpen.al).
 pub(crate) const RUN_PAGE_LINK_COPY: &str = "a by-value copy of Rec of a page an action opened through RunPageLink: real BC hands it Rec's fields and no link filter, whether it reads rows without the link is not pinned";
 
+/// The `RecordState::unpinned_buffer` reason of a record after `SetCurrentKey` on Media or MediaSet fields that no key holds, and
+/// of a by-value copy of it. Only `CurrentKey` is pinned: the record answers the fields (record/lt-ar-records/ArRecordProbes.al:198-229
+/// SetCurrentKey_Media `Pic`, SetCurrentKey_MediaSet `Pics`), a by-value copy answers the primary key (records/W4SortKeys.al:440-471
+/// SetCurrentKey_NotStoredFields `media` `ok:[Id]`, read in `Outcome(Ok, R: Record)`). Its methods in [`Session::media_key_op`].
+pub(crate) const MEDIA_KEY: &str = "after SetCurrentKey on a Media or MediaSet field only CurrentKey is pinned (the record answers the field, a by-value copy the primary key): the order of the rows and the rest of the view are not";
+
+/// Whether `rec` carries [`MEDIA_KEY`].
+pub(crate) fn media_key_marked(rec: &Rec) -> bool {
+    rec.borrow().unpinned_buffer == Some(MEDIA_KEY)
+}
+
 /// Whether field reads of a record whose buffer has the reason `why` run.
 pub(crate) fn run_page_link_fields_read(why: &str) -> bool {
-    why == RUN_PAGE_LINK_OPEN_FILLED || why == RUN_PAGE_LINK_COPY
+    why == RUN_PAGE_LINK_OPEN_FILLED || why == RUN_PAGE_LINK_COPY || why == MEDIA_KEY
 }
 
 /// Whether two filter lists are the same filters, in any order.
@@ -1935,6 +1946,9 @@ impl Session {
         if why == RUN_PAGE_LINK_COPY {
             return self.run_page_link_copy_op(method, rec, args);
         }
+        if why == MEDIA_KEY {
+            return self.media_key_op(method, rec, args);
+        }
         let refill = match method {
             RecordOp::Get | RecordOp::FindFirst | RecordOp::FindLast | RecordOp::FindSet => true,
             RecordOp::Find => matches!(args.first(), Some(Value::Text(w)) if w.as_str() == "-" || w.as_str() == "+"),
@@ -2092,6 +2106,40 @@ impl Session {
         let flag = rec.borrow_mut().unpinned_buffer.take();
         let r = self.record_op_inner(method, rec, args);
         rec.borrow_mut().unpinned_buffer = flag;
+        r
+    }
+
+    /// A record method on a record with a key on a Media or MediaSet field, or on a by-value copy of it ([`MEDIA_KEY`]):
+    /// `CurrentKey` and the methods that do not depend on the key or the order of the rows run; `SetCurrentKey` and `Reset` give
+    /// the record a key of its own again; every other method refuses.
+    fn media_key_op(&mut self, method: RecordOp, rec: &Rec, args: &mut [Value]) -> Result<Value, Signal> {
+        let rekeys = matches!(method, RecordOp::Reset | RecordOp::SetCurrentKey);
+        let runs = rekeys
+            || matches!(
+                method,
+                RecordOp::CurrentKey
+                    | RecordOp::FieldNo
+                    | RecordOp::IsTemporary
+                    | RecordOp::TableName
+                    | RecordOp::TableCaption
+                    | RecordOp::Count
+                    | RecordOp::IsEmpty
+                    | RecordOp::SetRange
+                    | RecordOp::SetFilter
+                    | RecordOp::GetFilter
+                    | RecordOp::GetFilters
+                    | RecordOp::HasFilter
+                    | RecordOp::Init
+            );
+        if !runs {
+            return unsupported(format!("Record.{}(): {MEDIA_KEY}", method.name()));
+        }
+        let flag = rec.borrow_mut().unpinned_buffer.take();
+        let r = self.record_op_inner(method, rec, args);
+        // SetCurrentKey sets the mark again itself when the new key is on Media fields too.
+        if !(rekeys && r.is_ok()) {
+            rec.borrow_mut().unpinned_buffer = flag;
+        }
         r
     }
 
@@ -3911,6 +3959,36 @@ impl Session {
                                 "SetCurrentKey on the FlowField {}, whose value depends on the row: whether it orders the rows is not pinned (probe wanted)",
                                 t.fields[p].name
                             ));
+                        }
+                        let media = |p: usize| {
+                            matches!(
+                                &t.fields[p].ty,
+                                RtType::Library(
+                                    al_builtins::library_kind::LibraryKind::Media
+                                        | al_builtins::library_kind::LibraryKind::MediaSet
+                                )
+                            )
+                        };
+                        // Media and MediaSet fields: the record answers them as its key (ArRecordProbes.al:198-229), a by-value
+                        // copy the primary key (W4SortKeys.al:471); the rest is refused ([`MEDIA_KEY`]). Together with a
+                        // FlowField: not pinned.
+                        if wanted.iter().all(|&p| media(p)) {
+                            let index = self.engine.tables[t.object as usize]
+                                .as_ref()
+                                .map_or(0, |e| e.keys.len());
+                            let mut r = rec.borrow_mut();
+                            r.field_descending = 0;
+                            r.key = index;
+                            r.adhoc = Some((index, wanted));
+                            if r.unpinned_buffer.is_none() {
+                                r.unpinned_buffer = Some(MEDIA_KEY);
+                            }
+                            return Ok(Value::Boolean(true));
+                        }
+                        if wanted.iter().any(|&p| media(p)) && wanted.iter().all(|&p| unordered(p)) {
+                            return unsupported(
+                                "SetCurrentKey on a Media field together with a FlowField: what the key is is not pinned",
+                            );
                         }
                         if wanted.iter().all(|&p| unordered(p)) {
                             let mut r = rec.borrow_mut();

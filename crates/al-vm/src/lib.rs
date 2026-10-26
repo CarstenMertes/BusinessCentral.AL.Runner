@@ -1461,6 +1461,13 @@ impl Session {
         if st.temporary {
             st.temp_id = Some(self.new_temp_id());
         }
+        // A by-value copy of a record with a key on a Media field answers the primary key as its key (records/W4SortKeys.al:471);
+        // the rest stays refused (`records::MEDIA_KEY`).
+        if st.unpinned_buffer == Some(crate::records::MEDIA_KEY) {
+            st.key = 0;
+            st.adhoc = None;
+            st.field_descending = 0;
+        }
         // A copy of Rec of a page an action opened through `RunPageLink` holds Rec's fields and not the link's filters
         // (handlers/TestActionRunPageLinkFilterGroup.al:292-369, `filters=` in OnOpenPage and OnAfterGetCurrRecord); what else it
         // answers is not pinned (`records::RUN_PAGE_LINK_COPY`). Filters Rec's own code added stay and refuse GetFilters.

@@ -694,6 +694,9 @@ impl Session {
             // A ref that was never opened takes its table from the record (Assert.RecordIsEmpty does this).
             "GetTable" => {
                 let from_variant = std::mem::take(&mut self.get_table_from_variant);
+                if matches!(args.first(), Some(Value::Record(src)) if crate::records::media_key_marked(src)) {
+                    return unsupported(format!("RecordRef.GetTable of a record {}", crate::records::MEDIA_KEY));
+                }
                 let src = match args.first() {
                     // Through a Variant the record keeps its filters and loses its ChangeCompany
                     // (types/lt-cw-variant-leads/CwVariantChangeCompany.al:CW_Variant_KeepsOrDropsChangeCompany `variant to recordref`,

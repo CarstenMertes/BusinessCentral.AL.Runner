@@ -345,87 +345,108 @@ impl CorpusRuntime {
         let require_cache = opts.compile_cache.as_ref().is_some_and(|c| c.require);
         let mut source_index: Option<&'static str> = None;
         if try_skip && !require_cache && crate::observe::text_looks_pure(&apps, &kinds, symbols, only.as_deref()) {
-            let started = std::time::Instant::now();
-            let kinds_again = kinds.clone();
-            // The dependency apps that were read lazily are loaded from their index when the cache folder
-            // has one: no source is read or scanned. Without one the sources are read, scanned, and the
-            // index is saved for the next run.
-            let cc = opts.compile_cache.as_ref();
-            let (ws, filled) = match (any_lazy, cc) {
-                (true, Some(cc)) => match lazy_index(cc, &apps, manifests, &lazy, &identities) {
-                    Ok(deps) => {
-                        source_index = Some("read");
+            // The second round compiles the login code too (see `no_login_root` below).
+            let mut login_root = false;
+            loop {
+                let started = std::time::Instant::now();
+                let kinds_again = kinds.clone();
+                // The dependency apps that were read lazily are loaded from their index when the cache folder
+                // has one: no source is read or scanned. Without one the sources are read, scanned, and the
+                // index is saved for the next run.
+                let cc = opts.compile_cache.as_ref();
+                let (ws, filled) = match (any_lazy, cc) {
+                    (true, Some(cc)) => match lazy_index(cc, &apps, manifests, &lazy, &identities) {
+                        Ok(deps) => {
+                            source_index = Some("read");
+                            (
+                                al_sema::Workspace::load_apps_symbols(apps, kinds, symbols, &dep_symbols, deps),
+                                false,
+                            )
+                        }
+                        Err(key) => {
+                            fill_all(&mut apps);
+                            let ws =
+                                al_sema::Workspace::load_apps_symbols(apps, kinds, symbols, &dep_symbols, Vec::new());
+                            save_index(cc, &ws, &lazy, &key);
+                            source_index = Some("built");
+                            (ws, true)
+                        }
+                    },
+                    _ => {
+                        fill_all(&mut apps);
                         (
-                            al_sema::Workspace::load_apps_symbols(apps, kinds, symbols, &dep_symbols, deps),
-                            false,
+                            al_sema::Workspace::load_apps_symbols(apps, kinds, symbols, &dep_symbols, Vec::new()),
+                            true,
                         )
                     }
-                    Err(key) => {
-                        fill_all(&mut apps);
-                        let ws = al_sema::Workspace::load_apps_symbols(apps, kinds, symbols, &dep_symbols, Vec::new());
-                        save_index(cc, &ws, &lazy, &key);
-                        source_index = Some("built");
-                        (ws, true)
-                    }
-                },
-                _ => {
-                    fill_all(&mut apps);
-                    (
-                        al_sema::Workspace::load_apps_symbols(apps, kinds, symbols, &dep_symbols, Vec::new()),
-                        true,
-                    )
-                }
-            };
-            let load = started.elapsed();
-            // A lean compile is tried only when the code it would compile looks free of data too: when what the
-            // tests name reads a table, the demand reaches the dependency apps, the compile costs as much as the
-            // complete one, and the rule says "may observe" after it. The apps then go straight to the compile
-            // with the baseline; without the compile cache it starts from this load.
-            if lean
-                && !only
-                    .as_deref()
-                    .is_none_or(|keep| crate::observe::lean_closure_looks_pure(&ws, keep))
-            {
-                if use_cache {
-                    let mut ws = ws;
-                    apps = std::mem::take(&mut ws.apps);
-                    kinds = kinds_again;
-                    retire(ws);
-                } else {
-                    preloaded = Some((ws, load));
-                    apps = Vec::new();
-                    kinds = Vec::new();
-                }
-            } else {
-                // Without the baseline's roots, and without the workspace's procedures no selected test names:
-                // a helper beside the tests that touches tables must not pull the dependency apps in. Lean, also
-                // without the workspace objects no selected test names: the corpus's tables, pages, listeners and
-                // install code reach most of Base Application through the demand (98 000 of its 155 000 routines).
-                let first_roots = al_sema::check::Roots {
-                    baseline: false,
-                    reach_only: true,
-                    lean,
-                    ..roots.clone()
                 };
-                let (mut ws, lowered) = al_sema::lower::compile_loaded(ws, load, &catalog, first_roots);
-                let selected = selected_tests(&lowered, suites, &only);
-                weighed = true;
-                baseline_note = crate::observe::may_observe_baseline(&lowered, &selected);
-                baseline = baseline_note.is_some();
-                if baseline {
-                    // Back to the apps as they were; a file not read yet is read when the compile that
-                    // follows needs it.
-                    let _ = filled;
-                    apps = std::mem::take(&mut ws.apps);
-                    kinds = kinds_again;
-                    retire((ws, lowered));
-                    compiles += 1;
+                let load = started.elapsed();
+                // A lean compile is tried only when the code it would compile looks free of data too: when what the
+                // tests name reads a table, the demand reaches the dependency apps, the compile costs as much as the
+                // complete one, and the rule says "may observe" after it. The apps then go straight to the compile
+                // with the baseline; without the compile cache it starts from this load.
+                if lean
+                    && !only
+                        .as_deref()
+                        .is_none_or(|keep| crate::observe::lean_closure_looks_pure(&ws, keep))
+                {
+                    if use_cache {
+                        let mut ws = ws;
+                        apps = std::mem::take(&mut ws.apps);
+                        kinds = kinds_again;
+                        retire(ws);
+                    } else {
+                        preloaded = Some((ws, load));
+                        apps = Vec::new();
+                        kinds = Vec::new();
+                    }
                 } else {
-                    compile_cache_skipped = use_cache;
-                    compiled = Some((ws, lowered));
-                    apps = Vec::new();
-                    kinds = Vec::new();
+                    // Without the baseline's roots, and without the workspace's procedures no selected test names:
+                    // a helper beside the tests that touches tables must not pull the dependency apps in. Lean, also
+                    // without the workspace objects no selected test names: the corpus's tables, pages, listeners and
+                    // install code reach most of Base Application through the demand (98 000 of its 155 000 routines).
+                    // Base Application's login code is left out first: its demand reaches most of Base Application
+                    // (al-runner issue 5872), and a test sees what it does only through WorkDate. A test that reads
+                    // WorkDate may observe the baseline as before (the rule counts the login code of the apps); one that
+                    // calls Evaluate, which reads WorkDate for a Date, is compiled again with the login code.
+                    let first_roots = al_sema::check::Roots {
+                        baseline: false,
+                        reach_only: true,
+                        lean,
+                        no_login_root: !login_root,
+                        ..roots.clone()
+                    };
+                    let (mut ws, lowered) = al_sema::lower::compile_loaded(ws, load, &catalog, first_roots);
+                    let selected = selected_tests(&lowered, suites, &only);
+                    let login_left_out = !login_root && !al_sema::check::demand::login_work_date_roots(&ws).is_empty();
+                    let observed = crate::observe::may_observe_baseline_with(&lowered, &selected, login_left_out);
+                    if login_left_out && observed.why.is_none() && observed.evaluates {
+                        apps = std::mem::take(&mut ws.apps);
+                        kinds = kinds_again;
+                        retire((ws, lowered));
+                        compiles += 1;
+                        login_root = true;
+                        continue;
+                    }
+                    weighed = true;
+                    baseline_note = observed.why;
+                    baseline = baseline_note.is_some();
+                    if baseline {
+                        // Back to the apps as they were; a file not read yet is read when the compile that
+                        // follows needs it.
+                        let _ = filled;
+                        apps = std::mem::take(&mut ws.apps);
+                        kinds = kinds_again;
+                        retire((ws, lowered));
+                        compiles += 1;
+                    } else {
+                        compile_cache_skipped = use_cache;
+                        compiled = Some((ws, lowered));
+                        apps = Vec::new();
+                        kinds = Vec::new();
+                    }
                 }
+                break;
             }
         }
         let (ws, mut lowered, cache_report, layers) = match compiled {

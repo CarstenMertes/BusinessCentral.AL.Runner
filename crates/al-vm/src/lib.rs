@@ -62,6 +62,7 @@ mod reports;
 mod sessionops;
 mod sqlcount;
 mod sqltime;
+mod tasks;
 mod testdata;
 mod transactions;
 mod translations;
@@ -518,6 +519,14 @@ pub(crate) enum EncryptionKey {
     Recreated,
 }
 
+/// The isolated storage and the number sequences of a session at a test runner's checkpoint
+/// ([`Session::storage_checkpoint`]).
+#[derive(Debug, Clone, Default)]
+pub struct StorageCheckpoint {
+    isolated: std::collections::HashMap<(String, String), (String, bool, bool)>,
+    sequences: std::collections::HashMap<(String, String), sessionops::Sequence>,
+}
+
 pub struct Session {
     pub engine: Arc<Engine>,
     pub last_error: AlError,
@@ -545,6 +554,8 @@ pub struct Session {
     pub(crate) isolated_committed: std::collections::HashMap<(String, String), (String, bool, bool)>,
     /// The isolated storage keys the running test method set (a page background task reads them differently, sessionops.rs Get).
     pub(crate) isolated_set_in_test: std::collections::HashSet<(String, String)>,
+    /// The TaskScheduler tasks this session created (`tasks.rs`).
+    pub(crate) tasks: tasks::Tasks,
     /// An install codeunit is running.
     install_scope: bool,
     /// The company data codeunit (Microsoft's DemoTool) builds the company (`set_company_build`).
@@ -638,7 +649,8 @@ pub struct Session {
     /// The test codeunit runs under its RequiredTestIsolation = Function or Disabled, as BC's TestRunnerHub runs it
     /// (al-testrun `RunOptions::required_isolation`), not under a test runner codeunit's TestIsolation.
     pub isolation_from_hub: bool,
-    /// That isolation is Disabled (`isolation_from_hub` set).
+    /// The test codeunit runs under Disabled isolation: from the hub (`isolation_from_hub` set) or from a test runner's
+    /// TestIsolation = Disabled.
     pub hub_disabled: bool,
     /// The test runner's step that assigns the permission sets of a test method runs (codeunit 130302 "Set State Test
     /// Run", al-testrun `runner_reset.rs`): `PermissionTestHelper.AddEffectivePermissionSet` runs there on the assumption
@@ -869,6 +881,7 @@ impl Session {
             isolated_storage: Default::default(),
             isolated_committed: Default::default(),
             isolated_set_in_test: Default::default(),
+            tasks: Default::default(),
             install_scope: false,
             company_build: false,
             no_client: false,
@@ -1034,6 +1047,7 @@ impl Session {
         // A transaction a lock opened counts as one that wrote: MinimumActiveRowVersion after it is not pinned.
         self.tx.last_commit_wrote = self.tx.tx_phase == crate::transactions::TX_WRITE || self.tx.lock_tx;
         self.isolated_committed = self.isolated_storage.clone();
+        self.tasks.commit();
         let removed = std::mem::take(&mut self.media_removed.0);
         self.media_removed.1.extend(removed);
         self.end_write_phase();
@@ -1057,6 +1071,31 @@ impl Session {
     pub fn restore_media_checkpoint(&mut self) {
         let removed = std::mem::take(&mut self.media_removed.1);
         self.restore_media(removed);
+    }
+
+    /// The isolated storage and the number sequences now, for [`Session::restore_storage_checkpoint`] (a test runner's
+    /// TestIsolation = Function, al-testrun `isolation::Checkpoint`).
+    pub fn storage_checkpoint(&self) -> StorageCheckpoint {
+        StorageCheckpoint {
+            isolated: self.isolated_storage.clone(),
+            sequences: self.sequences.clone(),
+        }
+    }
+
+    /// Puts the isolated storage and the number sequences back as they were at `cp`. A key or a sequence that `cp`
+    /// already held and that changed or went away since is put back too, but the answer is `false`: only a new key's
+    /// `IsolatedStorage.Set` and a new sequence's `NumberSequence.Insert` are measured to be rolled back. `None`: nothing
+    /// changed since `cp`.
+    pub fn restore_storage_checkpoint(&mut self, cp: &StorageCheckpoint) -> Option<bool> {
+        if self.isolated_storage == cp.isolated && self.sequences == cp.sequences {
+            return None;
+        }
+        let kept_storage = cp.isolated.iter().all(|(k, v)| self.isolated_storage.get(k) == Some(v));
+        let kept_sequences = cp.sequences.iter().all(|(k, v)| self.sequences.get(k) == Some(v));
+        self.isolated_storage = cp.isolated.clone();
+        self.isolated_committed = cp.isolated.clone();
+        self.sequences = cp.sequences.clone();
+        Some(kept_storage && kept_sequences)
     }
 
     /// The transaction a write call started has ended (record/TestProbeRecordRefContracts.al:WriteTransaction_State starts
@@ -1097,6 +1136,7 @@ impl Session {
         self.tx.locked_tables.clear();
         self.tx.rolled_back = true;
         self.isolated_storage = self.isolated_committed.clone();
+        self.tasks.rollback();
         // The Tenant Media rows a Modify or Delete of this transaction removed come back with the rows.
         let removed = std::mem::take(&mut self.media_removed.0);
         self.restore_media(removed);
@@ -1472,6 +1512,13 @@ impl Session {
         let mut st = rc.borrow().clone();
         if st.temporary {
             st.temp_id = Some(self.new_temp_id());
+        }
+        // A by-value copy of a record with a key on a Media field answers the primary key as its key (records/W4SortKeys.al:471);
+        // the rest stays refused (`records::MEDIA_KEY`).
+        if st.unpinned_buffer == Some(crate::records::MEDIA_KEY) {
+            st.key = 0;
+            st.adhoc = None;
+            st.field_descending = 0;
         }
         // A copy of Rec of a page an action opened through `RunPageLink` holds Rec's fields and not the link's filters
         // (handlers/TestActionRunPageLinkFilterGroup.al:292-369, `filters=` in OnOpenPage and OnAfterGetCurrRecord); what else it

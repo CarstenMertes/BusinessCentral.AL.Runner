@@ -149,3 +149,43 @@ fn an_unopened_recordref_is_refused() {
     let r = run(&src, "Plain");
     assert!(matches!(r, Err(Signal::Unsupported(_))), "{r:?}");
 }
+
+const PARAM: &str = r#"
+table 50110 "Rep P"
+{
+    fields { field(1; K; Integer) { } }
+    keys { key(PK; K) { } }
+}
+codeunit 50111 C
+{
+    local procedure Describe(R: Record "Rep P"): Text
+    begin
+        exit(Format(R.K) + '|' + R.GetFilters());
+    end;
+
+    procedure Passed(): Text
+    var
+        T: Record "Rep P";
+        RR: RecordRef;
+        V: Variant;
+        I: Integer;
+    begin
+        for I := 1 to 4 do begin
+            T.K := I;
+            T.Insert();
+        end;
+        RR.Open(Database::"Rep P");
+        RR.Field(1).SetRange(2, 3);
+        RR.FindLast();
+        V := RR;
+        exit(Describe(V));
+    end;
+}
+"#;
+
+// A Variant holding a RecordRef, passed by value to a Record parameter: real BC hands the procedure the ref's row without its
+// filters (record/lt-ar-records/ArRecordProbes.al:366 VariantRecordRef_PassedToRecordParameter `3|r3||4`).
+#[test]
+fn a_variant_record_ref_passed_to_a_record_parameter_drops_the_filters() {
+    assert_eq!(text(al_testkit::run_in(PARAM, "C", "Passed")), "3|");
+}

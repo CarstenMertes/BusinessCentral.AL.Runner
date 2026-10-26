@@ -28,7 +28,84 @@ pub const REGISTRY: &[(&str, NativeFn)] = &[
     ("NavApp.ListResources#1", list_resources),
     // True while an install codeunit runs (session/TestNavAppExtended.al, TestBCPlatformContracts.al: false in a test).
     ("NavApp.IsInstalling#1", |c, _, _| Ok(Value::Boolean(c.install_scope()))),
+    ("NavApp.GetArchiveVersion#1", get_archive_version),
+    ("NavApp.GetArchiveRecordRef#1", get_archive_record_ref),
+    ("NavApp.DeleteArchiveData#1", |c, _, a| {
+        archive_data(c, a, "DeleteArchiveData")
+    }),
+    ("NavApp.RestoreArchiveData#1", |c, _, a| {
+        archive_data(c, a, "RestoreArchiveData")
+    }),
+    ("NavApp.LoadPackageData#1", |c, _, a| {
+        archive_data(c, a, "LoadPackageData")
+    }),
+    ("NavApp.IsUnlicensed#1", is_unlicensed),
 ];
+
+/// Outside install and upgrade code there is no archive: `GetArchiveVersion` is the empty text
+/// (platform/lt-xmlport-session-navapp-cookie/P94NavApp.al:31-42). Install code is refused (not pinned).
+fn get_archive_version(c: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]) -> Out {
+    if c.install_scope() {
+        return unsupported("NavApp.GetArchiveVersion in install code (not pinned)");
+    }
+    Ok(Value::Text("".into()))
+}
+
+/// Outside install and upgrade code `GetArchiveRecordRef` answers false and leaves a closed RecordRef closed, for the
+/// app's own table, table 0, an unknown and a negative number (P94NavApp.al:44-81). An open RecordRef is not pinned.
+fn get_archive_record_ref(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
+    if c.install_scope() {
+        return unsupported("NavApp.GetArchiveRecordRef in install code (not pinned)");
+    }
+    if !matches!(a.first(), Some(Value::Integer(_))) {
+        return unsupported(format!("NavApp.GetArchiveRecordRef of table {}", a.first().describe()));
+    }
+    match a.get(1) {
+        Some(Value::Library(_, l)) if matches!(&*l.borrow(), LibraryValue::Empty) => Ok(Value::Boolean(false)),
+        other => unsupported(format!(
+            "NavApp.GetArchiveRecordRef into {} (only a closed RecordRef is pinned)",
+            other.describe()
+        )),
+    }
+}
+
+/// `DeleteArchiveData`, `RestoreArchiveData` and `LoadPackageData` outside install and upgrade code: no error for table 0
+/// and an unknown table (P94NavApp.al:93-109, 138-154, 165-181). For a table of the workspace Delete and Restore do nothing
+/// too: there is no archive (GetArchiveRecordRef of the same table answers false, P94NavApp.al:44-57; P94NavApp.al:83-91,
+/// 111-136). What `LoadPackageData` loads into a table of the workspace is not pinned (P94NavApp.al:156-163 asserts only
+/// that it returns), and install code is not pinned: both are refused.
+fn archive_data(c: &mut dyn Ctx, a: &mut [Value], what: &str) -> Out {
+    if c.install_scope() {
+        return unsupported(format!("NavApp.{what} in install code (not pinned)"));
+    }
+    let Some(Value::Integer(table)) = a.first() else {
+        return unsupported(format!("NavApp.{what} of table {}", a.first().describe()));
+    };
+    if !matches!(a.get(1), None | Some(Value::Boolean(_))) {
+        return unsupported(format!("NavApp.{what} with RunTrigger {}", a.get(1).describe()));
+    }
+    let known = *table > 0 && c.workspace_table(*table);
+    if known && what == "LoadPackageData" {
+        return unsupported("NavApp.LoadPackageData of a table of the workspace (what it loads is not pinned)");
+    }
+    Ok(Value::Null)
+}
+
+/// `NavApp.IsUnlicensed` is false without an argument, for the running app's id, the null id and an id no app has
+/// (P94NavApp.al:200-253). Another installed app is not pinned.
+fn is_unlicensed(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
+    let Some(arg) = a.first() else {
+        return Ok(Value::Boolean(false));
+    };
+    let Some(id) = guid_arg(arg) else {
+        return unsupported(format!("NavApp.IsUnlicensed with {} as the app id", arg.describe()));
+    };
+    let own = c.module_at_frame(0).is_some_and(|m| m.id == id);
+    if own || id == [0; 16] || matches!(c.module_by_id(&id), ModuleLookup::NotInstalled) {
+        return Ok(Value::Boolean(false));
+    }
+    unsupported("NavApp.IsUnlicensed of another installed app (not pinned)")
+}
 
 fn unsupported<T>(what: impl Into<String>) -> Result<T, Signal> {
     Err(Signal::Unsupported(what.into()))
@@ -137,6 +214,17 @@ fn state_of(r: Option<&mut Value>, _synthesized_ok: bool) -> Result<ModuleInfoSt
     match r {
         Some(Value::Library(_, cell)) => match &*cell.borrow() {
             LibraryValue::ModuleInfo(m) => Ok(m.clone()),
+            // A ModuleInfo nobody filled, or one cleared: the null id, empty texts, versions 0.0.0.0, the null package
+            // id and no dependencies (platform/lt-platform-members/PlTNavApp.al:86-115 ModuleInfo_Uninitialized,
+            // :57-83 CurrentModuleInfo_RepeatableAndIndependent after Clear).
+            LibraryValue::Empty => Ok(ModuleInfoState {
+                id: [0; 16],
+                name: String::new(),
+                publisher: String::new(),
+                version: Some([0; 4]),
+                dependencies: Vec::new(),
+                synthesized: false,
+            }),
             other => unsupported(format!("a ModuleInfo nobody filled ({})", other.describe())),
         },
         other => unsupported(format!("a ModuleInfo method on {}", other.describe())),
@@ -248,14 +336,35 @@ fn dependency_app(c: &mut dyn Ctx, r: Option<&mut Value>) -> Result<ModuleInfoSt
     }
 }
 
+/// Whether a `ModuleDependencyInfo` is one nobody filled: its id is the null id and its name and publisher are empty
+/// (platform/lt-platform-members/PlTNavApp.al:218-231 DependencyInfo_Uninitialized).
+fn untouched_dependency(r: &Option<&mut Value>) -> bool {
+    matches!(r, Some(Value::Library(_, cell)) if matches!(&*cell.borrow(), LibraryValue::Empty))
+}
+
 pub fn native_for_dependency(sig: &Signature) -> Option<NativeFn> {
     if sig.receiver != "ModuleDependencyInfo" || !sig.instance {
         return None;
     }
     let f: NativeFn = match sig.name.as_str() {
-        "Id" => |_, r, _| Ok(Value::Guid(dependency_id(r)?)),
-        "Name" => |c, r, _| Ok(Value::Text(dependency_app(c, r)?.name.into())),
-        "Publisher" => |c, r, _| Ok(Value::Text(dependency_app(c, r)?.publisher.into())),
+        "Id" => |_, r, _| {
+            if untouched_dependency(&r) {
+                return Ok(Value::Guid([0; 16]));
+            }
+            Ok(Value::Guid(dependency_id(r)?))
+        },
+        "Name" => |c, r, _| {
+            if untouched_dependency(&r) {
+                return Ok(Value::Text("".into()));
+            }
+            Ok(Value::Text(dependency_app(c, r)?.name.into()))
+        },
+        "Publisher" => |c, r, _| {
+            if untouched_dependency(&r) {
+                return Ok(Value::Text("".into()));
+            }
+            Ok(Value::Text(dependency_app(c, r)?.publisher.into()))
+        },
         _ => return None,
     };
     Some(f)

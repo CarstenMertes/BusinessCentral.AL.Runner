@@ -314,7 +314,8 @@ pub trait Ctx: FormatCtx {
     fn isolation_from_hub(&self) -> bool {
         false
     }
-    /// The TestRunnerHub runs the test codeunit under RequiredTestIsolation = Disabled.
+    /// The test codeunit runs under Disabled isolation: the TestRunnerHub's RequiredTestIsolation = Disabled, or a test
+    /// runner's TestIsolation = Disabled.
     fn hub_disabled(&self) -> bool {
         false
     }
@@ -510,20 +511,7 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     // False in a test: measured on real BC by session/TestEnvironmentUserTenantContracts.al:238
     // (Assert.IsFalse(TaskScheduler.CanCreateTask())).
     ("TaskScheduler.CanCreateTask#1", |_, _, _| Ok(Value::Boolean(false))),
-    // CreateTask hands back a new task id (session/TestTaskSchedulerCloudBehavior.al:9-20 pins that
-    // and nothing more). A task starts in a session of its own after the creating transaction
-    // commits, which a test does not wait for, so the task is not run (docs/probes-needed.md).
-    ("TaskScheduler.CreateTask#1", |c, _, _| Ok(Value::Guid(c.new_guid()))),
-    ("TaskScheduler.CreateTask#2", |c, _, _| Ok(Value::Guid(c.new_guid()))),
-    ("TaskScheduler.SetTaskReady#1", |_, _, _| {
-        unsupported("TaskScheduler.SetTaskReady (not pinned)")
-    }),
-    ("TaskScheduler.TaskExists#1", |_, _, _| {
-        unsupported("TaskScheduler.TaskExists (not pinned)")
-    }),
-    ("TaskScheduler.CancelTask#1", |_, _, _| {
-        unsupported("TaskScheduler.CancelTask (not pinned)")
-    }),
+    // CreateTask, TaskExists, CancelTask and SetTaskReady keep the session's tasks: `Ctx::session_op` (al-vm tasks.rs).
     ("Session.StartSession#1", start_session),
     ("Session.StartSession#2", start_session),
     ("Session.StartSession#3", start_session),
@@ -1991,13 +1979,16 @@ fn start_session(c: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]) -> Res
             Value::Null
         });
     }
-    // Under RequiredTestIsolation = Disabled on the TestRunnerHub BC starts the session, it runs and its writes are seen
-    // (codeunit/lt-qu-commit-isolation/RqIsolationModes.al:573-600, al-runner issue 5609); a second session is not modelled.
-    // Under Function it fails as under Codeunit (:454-462).
-    if c.in_test_run() && c.isolation_from_hub() && c.hub_disabled() {
+    // Under Disabled isolation BC starts the session, it runs and its writes are seen: on the TestRunnerHub under
+    // RequiredTestIsolation = Disabled (codeunit/lt-qu-commit-isolation/RqIsolationModes.al:573-600, al-runner issue 5609)
+    // and under a test runner codeunit's TestIsolation = Disabled or none (corpus PR 735,
+    // tests/al-language-isolation-probe/src/SdIsolStartSession.Codeunit.al:20-22); a second session is not modelled.
+    // Under Function it fails as under Codeunit (RqIsolationModes.al:454-462; SdIsolStartSession.Codeunit.al:20-21).
+    if c.in_test_run() && c.hub_disabled() {
         return unsupported(
-            "StartSession in a test codeunit run under its RequiredTestIsolation = Disabled (--isolation required): BC \
-             starts the session there, and a second session is not modelled",
+            "StartSession in a test codeunit run under Disabled test isolation (--isolation disabled, or \
+             RequiredTestIsolation = Disabled with --isolation required): BC starts the session there, and a second \
+             session is not modelled",
         );
     }
     if c.in_test_run() {
@@ -2326,12 +2317,21 @@ fn clear(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result
         // A cleared stream is one that was never created again (streams/TestProbeStreamContracts.al:RecordAssign_CopiesBlobBytes).
         // A cleared SecretText is an empty one and a copy taken before keeps its content
         // (fieldref/lt-fieldref-testfield-types/SystemClearArraySecret.al:69-90, errorinfo/lt-errnotif/EnTSecret.al:15-26).
+        // A cleared ModuleInfo reads as one nobody filled (platform/lt-platform-members/PlTNavApp.al:69-81).
+        // A cleared BigText is empty (streams/StTBigText.al:ClearBigText `len-after-clear` 0, `len-after-add` 1).
         // A cleared HttpClient is a new one: no base address, the default timeout, no default headers; the next call
         // starts it fresh (network/lt-http-relative-request/HttpRelativeRequestPath.al:NewClient clears, then sets the base address).
         Value::Library(name, _)
             if matches!(
                 name.as_str(),
-                "OutStream" | "InStream" | "FileUpload" | "HttpClient" | "HttpHeaders" | "SecretText"
+                "OutStream"
+                    | "InStream"
+                    | "FileUpload"
+                    | "HttpClient"
+                    | "HttpHeaders"
+                    | "SecretText"
+                    | "ModuleInfo"
+                    | "BigText"
             ) =>
         {
             Value::Library(

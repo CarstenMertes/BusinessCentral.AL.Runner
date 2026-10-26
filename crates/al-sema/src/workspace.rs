@@ -105,6 +105,8 @@ pub struct SourceFileData {
     /// Byte ranges of the text the compiler added to the file (page expression routines). The
     /// green tree holds that text; source positions leave it out. Known once the file is parsed.
     synthetic: OnceLock<Vec<ByteRange>>,
+    /// Whether the file's text names `MaxLength` anywhere (`Workspace::names_max_length`), found once per file.
+    max_length: OnceLock<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -364,6 +366,7 @@ impl Workspace {
                 namespace: file.namespace.clone(),
                 usings: file.usings,
                 synthetic: if lazy { OnceLock::new() } else { OnceLock::from(added) },
+                max_length: OnceLock::new(),
             });
             for decl in file.dotnet {
                 ws.dotnet.push(DotNetSym {
@@ -650,6 +653,16 @@ impl Workspace {
     }
 
     /// The text of file `fi` as it was given: for a file of a lazy dependency app, read now (once).
+    /// Whether the text of file `fi` names `MaxLength` anywhere, in any case. Searched once per file.
+    pub fn names_max_length(&self, fi: usize) -> bool {
+        *self.files[fi].max_length.get_or_init(|| {
+            self.text(fi)
+                .as_bytes()
+                .windows(9)
+                .any(|w| w.eq_ignore_ascii_case(b"maxlength"))
+        })
+    }
+
     pub fn text(&self, fi: usize) -> &str {
         let f = &self.files[fi];
         match &self.loaders[f.app] {

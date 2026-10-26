@@ -519,10 +519,7 @@ pub(crate) fn build_shared<'a>(
             source_slot: n,
             destination_slot: n + 1,
         };
-        xml_irs[oi] = Some(crate::xmlports::build(
-            &cx,
-            super::shared::over_max_length(&ws.object_ast(oi)),
-        ));
+        xml_irs[oi] = Some(crate::xmlports::build(&cx, super::shared::over_max_length_of(ws, oi)));
         xml_layouts[oi] = Some(l);
     }
     // Reports: the dataset, and the reasons the runtime cannot run one yet. The data item records
@@ -643,9 +640,9 @@ pub(crate) fn build_shared<'a>(
             extension_reasons,
             extensions: exts.clone(),
         };
-        let mut over = super::shared::over_max_length(&obj);
+        let mut over = super::shared::over_max_length_of(ws, oi);
         for &e in &exts {
-            over.extend(super::shared::over_max_length(&ws.object_ast(e)));
+            over.extend(super::shared::over_max_length_of(ws, e));
         }
         report_irs[oi] = Some(crate::reports::build(&cx, &obj, over));
         report_layouts[oi] = Some(l);
@@ -1182,7 +1179,7 @@ pub(crate) fn lower_core(
     };
     let over_max_length = |e: usize| {
         if ws.usable(e) {
-            super::shared::over_max_length(&ws.object_ast(e))
+            super::shared::over_max_length_of(ws, e)
         } else {
             Vec::new()
         }

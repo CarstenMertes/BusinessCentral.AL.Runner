@@ -5305,6 +5305,15 @@
           "site": "events/lt-cm-trigger-leads/CmTriggerObjects.al:236"
         },
         {
+          "corpus_uses": 5,
+          "group": "xmlport",
+          "ms_uses": 6,
+          "name": "DefaultNamespace",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "pages/lt-report-page-properties/06-xmlport-dnsfalse.al:11"
+        },
+        {
           "corpus_uses": 7,
           "group": "xmlport",
           "ms_uses": 6,
@@ -5357,15 +5366,6 @@
           "pinned": true,
           "runtime_reads": false,
           "site": "pages/lt-page-presentation-properties/P119Grid.al:29"
-        },
-        {
-          "corpus_uses": 5,
-          "group": "xmlport",
-          "ms_uses": 6,
-          "name": "DefaultNamespace",
-          "pinned": true,
-          "runtime_reads": false,
-          "site": "pages/lt-report-page-properties/06-xmlport-dnsfalse.al:11"
         },
         {
           "corpus_uses": 0,
@@ -16072,7 +16072,7 @@
         "code": "InvalidOperation",
         "file": "crates/al-builtins/src/native.rs",
         "generic": false,
-        "line": 843,
+        "line": 844,
         "pinned": true,
         "site": "codeunit/TestInterfaceRuntimeContracts.al:85",
         "template": "Interface not initialized"
@@ -16679,10 +16679,19 @@
         "pinned": true,
         "site": "record/TestRecordViewCopyMarkContracts.al:145",
         "template": "Invalid expression of type: table view.%%"
+      },
+      {
+        "code": "",
+        "file": "crates/al-vm/src/xmlports.rs",
+        "generic": false,
+        "line": 1360,
+        "pinned": true,
+        "site": "errors/lt-ms-refusals-131/P131EvalScalars.al:376",
+        "template": "The date is not valid."
       }
     ],
-    "pinned": 89,
-    "sites": 91
+    "pinned": 90,
+    "sites": 92
   },
   "language": {
     "bc": "27-29",
@@ -28343,7 +28352,7 @@
         "pinned": true,
         "scope": "",
         "site": "pages/lt-report-page-properties/06-xmlport-dnsfalse.al:11",
-        "state": "refused"
+        "state": "implemented"
       },
       {
         "area": "properties",

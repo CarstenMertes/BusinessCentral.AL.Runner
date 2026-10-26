@@ -77,13 +77,42 @@ fn an_import_does_not_run_the_trigger_of_a_sum_flowfield_element() {
     assert_eq!(al_testkit::text(run(&s, "F")), "before=0;A");
 }
 
+// AyXmlPortLookupFlowField.al:364 PYD_Import_Xml_ExistMinMaxAverage: an Exist FlowField is skipped too; :402 a text that is
+// no Boolean is skipped without an error, :377 one that is no Integer fails the schema check.
 #[test]
-fn an_import_into_an_exist_flowfield_is_refused() {
+fn an_import_skips_an_exist_flowfield_and_checks_an_integer_one() {
     let s = src(r#"exist("XF Master" where(Code = field(MasterCode)))"#, "")
         .replace("field(3; Flow; Text[30])", "field(3; Flow; Boolean)")
-        .replace("<Flow>Typed</Flow>", "<Flow>true</Flow>");
+        .replace("<Flow>Typed</Flow>", "<Flow>maybe</Flow>");
+    assert_eq!(al_testkit::text(run(&s, "F")), "before=No;A");
+    let s = src(r#"count("XF Master" where(Code = field(MasterCode)))"#, "")
+        .replace("field(3; Flow; Text[30])", "field(3; Flow; Integer)")
+        .replace("<Flow>Typed</Flow>", "<Flow>many</Flow>");
     match run(&s, "F") {
-        Err(Signal::Unsupported(r)) => assert!(r.contains("FlowField"), "{r}"),
+        Err(Signal::Error(e)) => assert_eq!(
+            e.message,
+            "Imported XML cannot validate with the schema: The 'Flow' element is invalid - The value 'many' is invalid according \
+             to its datatype 'http://www.w3.org/2001/XMLSchema:int' - The string 'many' is not a valid Int32 value."
+        ),
         other => panic!("{other:?}"),
     }
+}
+
+// xmlport/lt-xmlport-flowfield-element/XmlPortFlowFilterElement.al:224 Import_FlowFilterElement_AssignedWithoutSave: a field
+// element bound to a FlowFilter is skipped too, its OnAfterAssignField does not run, and the import goes on.
+#[test]
+fn an_import_skips_a_flowfilter_element() {
+    let s = src(r#"lookup("XF Master".Name where(Code = field(MasterCode)))"#, "")
+        .replace(
+            "field(3; Flow; Text[30]) { FieldClass = FlowField; CalcFormula = lookup(\"XF Master\".Name where(Code = field(MasterCode))); }",
+            "field(3; Flow; Integer) { FieldClass = FlowFilter; }",
+        )
+        .replace(
+            "fieldelement(Flow; Rw.Flow) {  }",
+            "fieldelement(Flow; Rw.Flow) { trigger OnAfterAssignField() begin Seen += 'assigned;'; end; }",
+        )
+        .replace("<Flow>Typed</Flow>", "<Flow>2</Flow>")
+        .replace("Format(Rw.Flow)", "''");
+    assert!(s.contains("FlowFilter") && s.contains("'assigned;'"), "{s}");
+    assert_eq!(al_testkit::text(run(&s, "F")), "before=;A");
 }

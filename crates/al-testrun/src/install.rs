@@ -658,7 +658,6 @@ pub(crate) fn login_work_date(engine: &Engine, lowered: &Lowered, session: &mut 
         session.set_work_date(run.day);
         return Ok(());
     }
-    let globals_before: Vec<String> = instance.borrow().globals.iter().map(|v| format!("{v:?}")).collect();
     let hits_before = al_builtins::assumptions::take_hit_bits();
     let before = (
         session.store_mut().change_counter(),
@@ -680,7 +679,7 @@ pub(crate) fn login_work_date(engine: &Engine, lowered: &Lowered, session: &mut 
     );
     let recorded = match &called {
         Ok((Value::Date(day, false), _)) if before == after => {
-            replayable(engine, lowered, object, session, &touches, &globals_before, &instance).map(|globals| MemoRun {
+            replayable(engine, lowered, object, session, &touches, &instance).map(|globals| MemoRun {
                 key,
                 day: *day,
                 globals,
@@ -764,7 +763,7 @@ struct MemoKey {
 struct MemoRun {
     key: MemoKey,
     day: i32,
-    /// The globals of LogInManagement the run changed, and their Date values after it.
+    /// The globals of LogInManagement the run may have changed, and their Date values after it.
     globals: Vec<(usize, i32, bool)>,
     /// The assumption marks the run made.
     hits: u128,
@@ -788,16 +787,15 @@ fn memo_key(session: &mut Session) -> Option<MemoKey> {
     })
 }
 
-/// The globals of LogInManagement a run changed, when the run can be replayed: it raised no event, wrote nothing,
+/// The globals of LogInManagement a run may have changed and their values after it, when the run can be replayed: it raised no event, wrote nothing,
 /// used no page, report or .NET, read only stored tables, and the routines it called read no session state but
-/// WorkDate, change none, are all known, and name no global of another codeunit; the globals it changed hold Dates.
+/// WorkDate, change none, are all known, and name no global of another codeunit; the globals they may change hold Dates.
 fn replayable(
     engine: &Engine,
     lowered: &Lowered,
     object: usize,
     session: &Session,
     touches: &al_vm::impact::Touches,
-    globals_before: &[String],
     instance: &Rc<RefCell<al_builtins::value::Instance>>,
 ) -> Option<Vec<(usize, i32, bool)>> {
     use crate::runtime::written::state;
@@ -827,13 +825,16 @@ fn replayable(
     if !clean {
         return None;
     }
+    // The globals the routines may change (assign, hand to a `var` parameter, call a method on, clear) are taken as
+    // they are after the run, and must all hold Dates, which are plain values; the others kept their new instance's
+    // values. A record or another handle among them turns the replay off.
     let inst = instance.borrow();
-    inst.globals
-        .iter()
-        .enumerate()
-        .filter(|(g, v)| globals_before.get(*g).is_none_or(|k| *k != format!("{v:?}")))
-        .map(|(g, v)| match v {
-            Value::Date(d, f) if facts.globals_written.contains(&(object, g)) => Some((g, *d, *f)),
+    let mut written: Vec<usize> = facts.globals_written.iter().map(|&(_, g)| g).collect();
+    written.sort_unstable();
+    written
+        .into_iter()
+        .map(|g| match inst.globals.get(g) {
+            Some(Value::Date(d, f)) => Some((g, *d, *f)),
             _ => None,
         })
         .collect()

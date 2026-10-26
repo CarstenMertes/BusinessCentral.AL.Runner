@@ -806,6 +806,27 @@ fn login_code_that_writes_is_not_replayed() {
     assert_eq!(login_replays(&engine), 0);
 }
 
+// Login code that may change a record global is not replayed: the record's state is not a plain value to put back.
+#[test]
+fn login_code_that_may_change_a_record_global_is_not_replayed() {
+    let src = LOGIN_SRC
+        .replace(
+            "var LogInWorkDate: Date;",
+            "var LogInWorkDate: Date; Last: Record Entry;",
+        )
+        .replace(
+            "if E.FindLast() then begin",
+            "if Last.FindLast() then; if E.FindLast() then begin",
+        );
+    let (engine, l) = login_engine(&src);
+    let baseline = seeded_baseline(&engine, &l, "Seed");
+    for t in ["T1", "T2"] {
+        let o = run_codeunit_from(&engine, &l, object_named(&l, t), Some(&baseline));
+        assert_eq!(o, vec![("SeesTheLoginDate".to_string(), Outcome::Pass)], "{t}");
+    }
+    assert_eq!(login_replays(&engine), 0);
+}
+
 // ADR-046 amendment 1, A5: in the per-database part, IsEmpty and FindFirst of a per-company table fail with the text BC
 // gives (install/lt-bf-install-probes/BfInstallTests.al:138-139; reads in TryFunctions at BfInstallFixtures.al:131-146).
 // The code BC gave (DB:Ok) is not pinned yet, so a read of it is refused.

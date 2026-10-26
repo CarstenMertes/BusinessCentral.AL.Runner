@@ -4,7 +4,7 @@
 Docker or SQL Server.
 
 This package is version 3: a small .NET tool around the native `al-runner`
-binary. The binaries for linux-x64, osx-arm64 and win-x64 are in the package,
+binary. The binaries for linux-x64, linux-arm64, osx-arm64 and win-x64 are in the package,
 so nothing is downloaded on the first run. Version 3 is an alpha, published as a
 prerelease:
 

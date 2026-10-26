@@ -61,7 +61,7 @@ from the Actions tab (workflow_dispatch), or push `release` by hand:
    and `install.ps1`. The notes are a short fixed text plus the commit list.
 7. The same run packs the .NET tool `MSDyn365BC.AL.Runner` from the archives
    (`packaging/dotnet-tool/pack.sh`; the package carries the binaries for
-   linux-x64, osx-arm64 and win-x64), installs it on Linux, Windows and macOS and
+   linux-x64, linux-arm64, osx-arm64 and win-x64), installs it on Linux (x64 and arm64), Windows and macOS and
    runs the smoke test through it, all before the GitHub release. After the
    release it pushes the package to nuget.org with the repository secret
    `NUGET_API_KEY` (owner decision 2026-10-25). A version with a suffix such as

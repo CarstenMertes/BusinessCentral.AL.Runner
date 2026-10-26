@@ -25,7 +25,7 @@ internal static unsafe class Program
     private const string ForceSpawn = "ALRUNNER_DOTNET_TOOL_SPAWN";
 
     // Release targets of build-packages.yml, by .NET runtime identifier.
-    private static readonly string[] Shipped = ["linux-x64", "osx-arm64", "win-x64"];
+    private static readonly string[] Shipped = ["linux-x64", "linux-arm64", "osx-arm64", "win-x64"];
 
     private const int UsageError = 2; // al-runner's own exit code for an error before any test runs
 
@@ -74,6 +74,7 @@ internal static unsafe class Program
     private static string? Pick(string platform) => platform switch
     {
         "linux-x64" => "linux-x64", // the musl build is static: it runs on glibc and musl systems
+        "linux-arm64" => "linux-arm64", // likewise static
         "osx-arm64" => "osx-arm64",
         "win-x64" => "win-x64",
         "win-arm64" => "win-x64", // Windows 11 on Arm runs x64 programs

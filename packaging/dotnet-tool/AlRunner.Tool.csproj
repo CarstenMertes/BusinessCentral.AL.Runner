@@ -24,7 +24,7 @@
     <!-- pack.sh passes the release version (-p:Version=...). This default only marks a local build. -->
     <Version>0.0.0-local</Version>
     <Authors>Stefan Maron</Authors>
-    <Description>Runs the tests of Business Central AL apps without a BC server, Docker or SQL Server. Version 3 is a wrapper around the native al-runner binary, which is in the package for linux-x64, osx-arm64 and win-x64.</Description>
+    <Description>Runs the tests of Business Central AL apps without a BC server, Docker or SQL Server. Version 3 is a wrapper around the native al-runner binary, which is in the package for linux-x64, linux-arm64, osx-arm64 and win-x64.</Description>
     <PackageTags>business-central;al;unit-test;runner</PackageTags>
     <PackageProjectUrl>https://aldev.tools/al-runner/</PackageProjectUrl>
     <RepositoryUrl>https://github.com/aldevtools/BusinessCentral.AL.Runner</RepositoryUrl>
@@ -44,8 +44,8 @@
 
   <!-- A package without binaries would install and then fail on every run: refuse to pack it. -->
   <Target Name="CheckNativeBinaries" BeforeTargets="Build">
-    <Error Condition="!Exists('native/linux-x64/al-runner') Or !Exists('native/osx-arm64/al-runner') Or !Exists('native/win-x64/al-runner.exe')"
-           Text="native/ must hold linux-x64/al-runner, osx-arm64/al-runner and win-x64/al-runner.exe. Run pack.sh, which unpacks them from the release archives." />
+    <Error Condition="!Exists('native/linux-x64/al-runner') Or !Exists('native/linux-arm64/al-runner') Or !Exists('native/osx-arm64/al-runner') Or !Exists('native/win-x64/al-runner.exe')"
+           Text="native/ must hold linux-x64/al-runner, linux-arm64/al-runner, osx-arm64/al-runner and win-x64/al-runner.exe. Run pack.sh, which unpacks them from the release archives." />
   </Target>
 
 </Project>

@@ -17,7 +17,8 @@ use std::collections::{BTreeMap, BTreeSet};
 /// workspace apps' files name.
 pub fn named_columns(ws: &Workspace, checked: &CheckResult, tables: &[u32]) -> BTreeMap<u32, BTreeSet<u32>> {
     let mut out: BTreeMap<u32, BTreeSet<u32>> = tables.iter().map(|t| (*t, BTreeSet::new())).collect();
-    for ((file, _, _), res) in checked.resolutions.iter() {
+    for (key, res) in checked.resolutions.iter() {
+        let (file, _, _) = &key;
         let Res::Field { table, id } = res.inner() else {
             continue;
         };

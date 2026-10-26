@@ -29,7 +29,8 @@ pub fn collect_calls(ws: &Workspace, checked: &CheckResult, catalog: &Catalog) -
     let mut lines: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
     let mut args: BTreeMap<usize, CallArgs> = BTreeMap::new();
     let mut out = std::collections::BTreeSet::new();
-    for ((file, start, end), res) in checked.resolutions.iter() {
+    for (key, res) in checked.resolutions.iter() {
+        let (file, start, end) = &key;
         let Res::Builtin(id) = res else { continue };
         let f = &ws.files[*file];
         if ws.kinds[f.app] != al_sema::AppKind::Workspace {
@@ -196,7 +197,8 @@ fn type_word(t: &Ty) -> Option<String> {
 pub fn microsoft_calls(ws: &Workspace, checked: &CheckResult, catalog: &Catalog) -> BTreeMap<String, usize> {
     let mut out = BTreeMap::new();
     let mut args: BTreeMap<usize, CallArgs> = BTreeMap::new();
-    for ((file, start, end), res) in checked.resolutions.iter() {
+    for (key, res) in checked.resolutions.iter() {
+        let (file, start, end) = &key;
         let Res::Builtin(id) = res else { continue };
         let app = ws.files[*file].app;
         if ws.kinds[app] == al_sema::AppKind::Dependency && !ws.apps[app].name.contains("AL Language") {

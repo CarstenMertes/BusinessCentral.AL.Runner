@@ -660,7 +660,8 @@ fn build_reach(ws: &Workspace, checked: &CheckResult) -> Reach {
         routines,
     };
     let mut edges: Vec<Vec<usize>> = vec![Vec::new(); reach.routines.len()];
-    for ((file, start, _), res) in checked.resolutions.iter() {
+    for (key, res) in checked.resolutions.iter() {
+        let (file, start, _) = &key;
         let Res::Proc { object, offset } = res else { continue };
         let Some(&to) = ids.get(&(*object, *offset)) else {
             continue;

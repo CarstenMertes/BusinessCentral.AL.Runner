@@ -124,6 +124,8 @@ pub(super) struct State {
     /// Bits per object kind: the catalog tables that list the objects of that kind are used, and
     /// every object of the kind is compiled to its shape (`touch_object_catalog`).
     catalogs: u8,
+    /// Per object: the names of `MENTION_NAMES` its text holds, with `SCANNED` once searched (`Checker::mentions`).
+    mentions: Vec<u8>,
 }
 
 impl State {
@@ -146,8 +148,52 @@ impl State {
             filter_helper: false,
             save_as_events: false,
             catalogs: 0,
+            mentions: vec![0; objects],
         }
     }
+}
+
+/// The names whose presence in an object's text gates a platform event's subscribers (`reach_*_if_used`).
+pub(super) const CAPTION_CLASS: u8 = 1;
+pub(super) const RENDERING: u8 = 2;
+pub(super) const CUSTOM: u8 = 4;
+pub(super) const SAVE_AS: u8 = 8;
+pub(super) const SET_FILTER: u8 = 16;
+/// The object's text has been searched.
+const SCANNED: u8 = 128;
+/// The names `mentions` looks for, for its test against `ast::text_contains_ignore_case`.
+#[cfg(test)]
+pub(super) const MENTION_NAMES: [(u8, &str); 5] = [
+    (CAPTION_CLASS, "captionclass"),
+    (RENDERING, "rendering"),
+    (CUSTOM, "custom"),
+    (SAVE_AS, "saveas"),
+    (SET_FILTER, "setfilter"),
+];
+
+/// The gating names (`CAPTION_CLASS` ... `SET_FILTER`) the source text of `node` holds, whatever the case, in one pass. As with
+/// `ast::text_contains_ignore_case`, a name is a run of letters and so cannot span two tokens.
+pub(super) fn mentions(node: &SyntaxNode) -> u8 {
+    const ALL: u8 = CAPTION_CLASS | RENDERING | CUSTOM | SAVE_AS | SET_FILTER;
+    let mut found = 0u8;
+    let _ = node.text().try_for_each_chunk(|chunk| {
+        let b = chunk.as_bytes();
+        for i in 0..b.len() {
+            let candidates: &[(u8, &[u8])] = match b[i].to_ascii_lowercase() {
+                b'c' => &[(CAPTION_CLASS, b"captionclass"), (CUSTOM, b"custom")],
+                b'r' => &[(RENDERING, b"rendering")],
+                b's' => &[(SAVE_AS, b"saveas"), (SET_FILTER, b"setfilter")],
+                _ => continue,
+            };
+            for &(bit, name) in candidates {
+                if found & bit == 0 && b[i..].len() >= name.len() && b[i..i + name.len()].eq_ignore_ascii_case(name) {
+                    found |= bit;
+                }
+            }
+        }
+        if found == ALL { Err(()) } else { Ok(()) }
+    });
+    found
 }
 
 /// Write operations on a table, each of which fires its own triggers and events.
@@ -806,13 +852,29 @@ impl Checker<'_> {
         }
     }
 
+    /// Whether the event gated by `done` still waits for an object that names it: demand is on and the
+    /// subscribers are not reached yet. Checked before the object's text is searched.
+    fn pending(&self, done: impl Fn(&State) -> bool) -> bool {
+        self.demand.borrow().as_ref().is_some_and(|st| !done(st))
+    }
+
+    /// The gating names the text of object `i` holds: searched once per object, in one pass.
+    fn mentions(&self, i: usize) -> u8 {
+        let known = self.demand.borrow().as_ref().map_or(0, |st| st.mentions[i]);
+        if known & SCANNED != 0 {
+            return known;
+        }
+        let found = mentions(self.ws.object_ast(i).syntax()) | SCANNED;
+        if let Some(st) = self.demand.borrow_mut().as_mut() {
+            st.mentions[i] = found;
+        }
+        found
+    }
+
     /// Object `i` (a page or report the client can open) declares a `CaptionClass`: the subscribers
     /// to `OnResolveCaptionClass` run when it opens.
     pub(super) fn reach_caption_class_if_used(&self, i: usize) {
-        if self.demand.borrow().is_none() {
-            return;
-        }
-        if !ast::text_contains_ignore_case(self.ws.object_ast(i).syntax(), "captionclass") {
+        if !self.pending(|st| st.caption_class) || self.mentions(i) & CAPTION_CLASS == 0 {
             return;
         }
         let first = self.demand.borrow_mut().as_mut().is_some_and(|st| {
@@ -835,11 +897,10 @@ impl Checker<'_> {
     /// Object `i` (a report) declares a layout of `Type = Custom`: a render of it raises the platform's
     /// `CustomDocumentMergerEx`, so its subscribers are reached.
     pub(super) fn reach_reporting_triggers_if_used(&self, i: usize) {
-        if self.demand.borrow().is_none() || self.ws.objects[i].kind != ObjKind::Report {
+        if self.ws.objects[i].kind != ObjKind::Report || !self.pending(|st| st.reporting_triggers) {
             return;
         }
-        let syntax = self.ws.object_ast(i).syntax().clone();
-        if !ast::text_contains_ignore_case(&syntax, "rendering") || !ast::text_contains_ignore_case(&syntax, "custom") {
+        if self.mentions(i) & (RENDERING | CUSTOM) != RENDERING | CUSTOM {
             return;
         }
         let first = self.demand.borrow_mut().as_mut().is_some_and(|st| {
@@ -862,10 +923,7 @@ impl Checker<'_> {
     /// Object `i` calls `SaveAs`: an Xml `SaveAs` raises the platform's `SubstituteReport` and `OnDocumentReady`
     /// (events/lt-platform-events-v/PeVTests.al:432), so their subscribers are reached.
     pub(super) fn reach_save_as_events_if_used(&self, i: usize) {
-        if self.demand.borrow().is_none() {
-            return;
-        }
-        if !ast::text_contains_ignore_case(self.ws.object_ast(i).syntax(), "saveas") {
+        if !self.pending(|st| st.save_as_events) || self.mentions(i) & SAVE_AS == 0 {
             return;
         }
         let first = self.demand.borrow_mut().as_mut().is_some_and(|st| {
@@ -886,10 +944,7 @@ impl Checker<'_> {
     /// Object `i` sets filters from text: a Date text with a piece that does not read raises the platform's
     /// `MakeDateFilter`, so its subscribers are reached (events/lt-platform-triggers/PtObserve.al:157).
     pub(super) fn reach_filter_helper_if_used(&self, i: usize) {
-        if self.demand.borrow().is_none() {
-            return;
-        }
-        if !ast::text_contains_ignore_case(self.ws.object_ast(i).syntax(), "setfilter") {
+        if !self.pending(|st| st.filter_helper) || self.mentions(i) & SET_FILTER == 0 {
             return;
         }
         let first = self.demand.borrow_mut().as_mut().is_some_and(|st| {
@@ -1552,6 +1607,37 @@ pub fn uncompiled_subscriber_sites(ws: &Workspace, active: &dyn Fn(usize) -> boo
 #[cfg(test)]
 mod tests {
     use crate::lower::{Lowered, compile_apps};
+
+    /// One pass over an object's text finds the same names as one `text_contains_ignore_case` per name.
+    #[test]
+    fn one_pass_finds_each_name_as_a_search_per_name_does() {
+        let src = "codeunit 50100 X { procedure P() var r: Record Item; begin r.SETFILTER(\"No.\", 'a'); \
+                   // Rendering Custom\n end; }\npage 50101 Y { CaptionClass = '1'; }\ncodeunit 50102 Z { }";
+        let file = al_syntax::parse(src, &Default::default());
+        let objects: Vec<_> = file
+            .syntax()
+            .children()
+            .filter_map(al_syntax::ast::Object::cast)
+            .collect();
+        assert_eq!(objects.len(), 3);
+        for o in &objects {
+            let got = super::mentions(o.syntax());
+            for (bit, name) in super::MENTION_NAMES {
+                assert_eq!(
+                    got & bit != 0,
+                    al_syntax::ast::text_contains_ignore_case(o.syntax(), name),
+                    "{name} in {}",
+                    o.syntax()
+                );
+            }
+        }
+        assert_eq!(
+            super::mentions(objects[0].syntax()),
+            super::SET_FILTER | super::RENDERING | super::CUSTOM
+        );
+        assert_eq!(super::mentions(objects[1].syntax()), super::CAPTION_CLASS);
+        assert_eq!(super::mentions(objects[2].syntax()), 0);
+    }
     use crate::workspace::{AppKind, AppSource, Workspace};
 
     /// A workspace app `main` over a dependency app `dep`, compiled with demand-driven dependencies.

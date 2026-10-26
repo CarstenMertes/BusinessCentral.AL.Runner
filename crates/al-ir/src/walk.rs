@@ -998,6 +998,7 @@ fn walk_xmlport<V: RefVisitor>(x: &mut XmlPort, v: &mut V) {
         record_separator: _,
         table_separator: _,
         text_encoding_declared: _,
+        text_encoding: _,
         utf8: _,
         xml_utf8: _,
         namespaces: _,
@@ -1007,6 +1008,7 @@ fn walk_xmlport<V: RefVisitor>(x: &mut XmlPort, v: &mut V) {
         format_evaluate_xml: _,
         format_evaluate_declared: _,
         no_default_fields_validation: _,
+        preserve_whitespace: _,
         nodes,
         source_slot: _,
         destination_slot: _,
@@ -1039,6 +1041,7 @@ fn walk_xmlport<V: RefVisitor>(x: &mut XmlPort, v: &mut V) {
             unbound: _,
             required: _,
             field_validate: _,
+            big_text: _,
             source_view: _,
             triggers: _,
         } = n;

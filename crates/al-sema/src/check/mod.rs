@@ -196,6 +196,10 @@ pub struct Roots {
     /// they do not: the tables, pages, listeners and install code beside them reach most of Base Application through the
     /// demand. The caller must run the tests again on a complete compile when one of them meets a routine left out.
     pub lean: bool,
+    /// Leave out the root of Base Application's login code (`demand::LOGIN_WORK_DATE`, which the test session calls when
+    /// it opens the company). For the lean compile of tests that do not read WorkDate (al-testrun `observe.rs`): the
+    /// login code's demand reaches most of Base Application (al-runner issue 5872).
+    pub no_login_root: bool,
     /// Check and lower every dependency routine instead of what the workspace reaches. The
     /// environment variable `AL_EAGER_DEPENDENCIES` does the same for a whole process. Used to
     /// compare the demand-driven compile with the complete one (outcomes must not differ).
@@ -351,7 +355,9 @@ pub fn check_with(ws: &Workspace, members: &MemberTable<'_>, catalog: &Catalog, 
                 .any(|(o, _)| !ws.is_dependency(o) && !skip(o));
             c.reach_install_events(roots.baseline, install_code);
             c.reach_test_runner();
-            c.reach_login_work_date();
+            if !roots.no_login_root {
+                c.reach_login_work_date();
+            }
             timings.baseline = started.elapsed();
             let started = std::time::Instant::now();
             let demand = c.run_demand(roots.workers.map_or_else(check_workers, |w| w.clamp(1, 32)), objects);

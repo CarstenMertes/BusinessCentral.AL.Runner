@@ -7,5 +7,7 @@ mod gzip;
 mod http_headers;
 mod last_error_object;
 mod media;
+mod platform_members;
 mod streams;
+mod task_scheduler;
 mod xml_read_bom;

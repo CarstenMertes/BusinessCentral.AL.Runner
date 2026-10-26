@@ -10,8 +10,8 @@
 //!
 //! Not pinned, so refused (a registry type refuses every member it does not list): `Name`, `Equals`,
 //! `StackTrace`, `Source`, `Data`, `HResult`, the members of the inner exception, `GetBaseException`.
-//! The stack frames themselves are .NET's and are free to differ (ADR-009: diagnostics): each frame line here is
-//! an AL frame of the error, in the form of `GetLastErrorCallStack`.
+//! The stack frames are .NET's, which AL code can read: only the shapes the corpus pins are written (see `exception_text`);
+//! any other trace makes the text unreadable.
 
 use super::registry::{MemberKind, Pin, RegistryMember, RegistryType};
 use crate::Session;
@@ -124,41 +124,75 @@ fn get_type(_: &mut Session, this: Option<&Rc<DotNetObject>>, _: &[Value]) -> Re
     }))))
 }
 
-/// `<class>: <message>`, then one `   at <frame>` line per AL frame of the error.
-pub(crate) fn exception_text(this: &Rc<DotNetObject>) -> Result<String, Signal> {
+/// The codeunit id and routine name of one AL frame of an error's call stack (`"Name"(CodeUnit 61480).OnRun(Trigger) line 3 - ...`,
+/// see `callstack.rs`); `None` for a frame of another object type.
+fn codeunit_frame(frame: &str) -> Option<(u32, &str)> {
+    let (_, rest) = frame.split_once("(CodeUnit ")?;
+    let (id, rest) = rest.split_once(").")?;
+    let name = rest.split([' ', '(']).next()?;
+    Some((id.parse().ok()?, name))
+}
+
+const DO_RUN_ASYNC: &str =
+    "\n   at Microsoft.Dynamics.Nav.Runtime.NavCodeunit.DoRunAsync(DataError errorLevel, NavRecord record)";
+
+/// `<class>: <message>`, then the .NET frames BC writes. Pinned only for a dialog exception (Error()) caught by the Codeunit.Run
+/// that started the codeunit (the trace ends at that run, whatever calls it):
+/// - raised in the OnRun itself: GetLastErrorObjectKinds.al:384 ToString_DialogException_Lines (the NavDialog.ALError frame, then
+///   OnRunAsync and DoRunAsync);
+/// - raised in a procedure without parameters or return value of the same codeunit that the OnRun calls: AzLastErrorObject.al:180
+///   ToString_NestedProcedure (`Codeunit99472.Nested()`, no ALError frame);
+/// - raised in such a procedure of another codeunit that the OnRun calls: AzLastErrorObject.al:199 ToString_OtherCodeunit
+///   (`Codeunit99471.Raise()`, from BC 29 a ValueTaskExtensions frame after it).
+///
+/// Any other trace is not pinned, and BC's frames are .NET's, not AL's. Refusing those reads would lose four baseline cases that
+/// read only the first line and look for `   at ` (GetLastErrorObject.al:188 _AfterErrorInTryFunction, :212 _AfterErrorInAsserterror,
+/// :233 _AfterGetWithoutRow, :258 _AfterDivisionByZero), so the text keeps one AL frame per line there under the registered
+/// assumption `exception-tostring-stack-frames`; a trace with a frame the runtime does not track carries the untracked call-stack
+/// mark instead, so every read of it is refused.
+pub(crate) fn exception_text(session: &Session, this: &Rc<DotNetObject>) -> Result<String, Signal> {
     let (type_name, msg, stack) = parts(Some(this))?;
     let (Value::Text(msg), Value::Text(stack)) = (msg, stack) else {
         return unsupported("a last-error exception without its message");
     };
     let mut out = format!("{type_name}: {msg}");
-    // A dialog exception raised by Error() directly in the OnRun of a codeunit that Codeunit.Run started (the exception's trace ends
-    // at that run, whatever calls it) has the three .NET frames the corpus shows (GetLastErrorObjectKinds.al:ToString_DialogException_Lines). Other shapes are not pinned.
     if type_name == NCL_DIALOG_EXCEPTION {
-        let one: Vec<&str> = stack.split('\n').filter(|f| !f.is_empty()).collect();
-        if let Some(frame) = one.first() {
-            if let Some(id) = frame
-                .split_once("(CodeUnit ")
-                .and_then(|(_, r)| r.split_once(").OnRun"))
-                .and_then(|(n, _)| n.parse::<u32>().ok())
-            {
+        let frames: Vec<&str> = stack.split('\n').filter(|f| !f.is_empty()).collect();
+        let first = frames.first().and_then(|f| codeunit_frame(f));
+        let second = frames.get(1).and_then(|f| codeunit_frame(f));
+        let on_run_async = |id: u32| {
+            format!(
+                "\n   at Microsoft.Dynamics.Nav.BusinessApplication.Codeunit{id}.OnRunAsync(INavRecordHandle \u{3b5}rec)"
+            )
+        };
+        match (first, second) {
+            (Some((id, "OnRun")), _) => {
                 out.push_str("\n   at Microsoft.Dynamics.Nav.Runtime.NavDialog.ALError(NavSession session, Guid automationId, String message, NavValue[] values)");
-                out.push_str(&format!(
-                    "\n   at Microsoft.Dynamics.Nav.BusinessApplication.Codeunit{id}.OnRunAsync(INavRecordHandle \u{3b5}rec)"
-                ));
-                out.push_str("\n   at Microsoft.Dynamics.Nav.Runtime.NavCodeunit.DoRunAsync(DataError errorLevel, NavRecord record)");
+                out.push_str(&on_run_async(id));
+                out.push_str(DO_RUN_ASYNC);
                 return Ok(out);
             }
+            (Some((inner, proc)), Some((outer, "OnRun"))) if plain_procedure(session, inner, proc) => {
+                out.push_str(&format!(
+                    "\n   at Microsoft.Dynamics.Nav.BusinessApplication.Codeunit{inner}.{proc}()"
+                ));
+                if inner != outer && session.has(al_version::Gate::ExceptionTraceValueTaskFrameFrom29) {
+                    out.push_str("\n   at Microsoft.Dynamics.Nav.Types.ValueTaskExtensions.ManualResetValueTaskSource`1.GetResult(Int16 token)");
+                }
+                out.push_str(&on_run_async(outer));
+                out.push_str(DO_RUN_ASYNC);
+                return Ok(out);
+            }
+            _ => {}
         }
     }
-    // Not pinned past the first line and the `   at ` marker: registered assumption.
-    al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::ExceptionToStringStackFrames);
-    let frames: Vec<&str> = stack
-        .split('\n')
-        .filter(|f| !f.is_empty() && *f != UNTRACKED_CALL_STACK)
-        .collect();
-    if frames.is_empty() {
-        out.push_str("\n   at (the AL call stack of this error is not tracked)");
+    let frames: Vec<&str> = stack.split('\n').filter(|f| !f.is_empty()).collect();
+    if frames.is_empty() || frames.contains(&UNTRACKED_CALL_STACK) {
+        out.push_str("\n   at ");
+        out.push_str(UNTRACKED_CALL_STACK);
+        return Ok(out);
     }
+    al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::ExceptionToStringStackFrames);
     for f in frames {
         out.push_str("\n   at ");
         out.push_str(f);
@@ -166,11 +200,26 @@ pub(crate) fn exception_text(this: &Rc<DotNetObject>) -> Result<String, Signal> 
     Ok(out)
 }
 
-fn to_string(_: &mut Session, this: Option<&Rc<DotNetObject>>, _: &[Value]) -> Result<Value, Signal> {
+/// Whether codeunit `id` has a procedure `name` with no parameters and no return value, whose name is a plain identifier: the
+/// shape whose .NET frame the corpus pins (`Codeunit99472.Nested()`, `Codeunit99471.Raise()`).
+fn plain_procedure(session: &Session, id: u32, name: &str) -> bool {
+    if name.is_empty() || !name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_') {
+        return false;
+    }
+    session.engine.program.objects.iter().any(|o| {
+        o.kind == al_ir::ObjKind::Codeunit
+            && o.id == Some(id)
+            && o.routines
+                .iter()
+                .any(|r| r.name == name && !r.is_trigger && r.params == 0 && r.ret.is_none())
+    })
+}
+
+fn to_string(session: &mut Session, this: Option<&Rc<DotNetObject>>, _: &[Value]) -> Result<Value, Signal> {
     let Some(this) = this else {
         return unsupported("DotNet exception ToString without an object");
     };
-    Ok(Value::Text(exception_text(this)?.into()))
+    Ok(Value::Text(exception_text(session, this)?.into()))
 }
 
 fn full_name(_: &mut Session, this: Option<&Rc<DotNetObject>>, _: &[Value]) -> Result<Value, Signal> {

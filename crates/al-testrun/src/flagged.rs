@@ -141,22 +141,25 @@ mod tests {
 
     #[test]
     fn rank_counts_flagged_passes_and_other_tests_and_orders_by_flagged() {
-        let a = [Assumption::QueryClosedAfterLastRow, Assumption::NextWholeDecimal];
-        let b = [Assumption::NextWholeDecimal];
+        let a = [
+            Assumption::TextDigitsToInteger,
+            Assumption::CodeCoverageSnapshotWhileLogging,
+        ];
+        let b = [Assumption::CodeCoverageSnapshotWhileLogging];
         let c: [Assumption; 0] = [];
         let rows = rank([(true, &a[..]), (true, &b[..]), (false, &b[..]), (true, &c[..])]);
         assert_eq!(rows.len(), 2);
         assert_eq!(
             (rows[0].assumption, rows[0].flagged, rows[0].other),
-            (Assumption::NextWholeDecimal, 2, 1)
+            (Assumption::CodeCoverageSnapshotWhileLogging, 2, 1)
         );
         assert_eq!(
             (rows[1].assumption, rows[1].flagged, rows[1].other),
-            (Assumption::QueryClosedAfterLastRow, 1, 0)
+            (Assumption::TextDigitsToInteger, 1, 0)
         );
         let text = render_top(&rows, 1);
         assert!(
-            text.contains("next-whole-decimal") && !text.contains("query-closed-after-last-row"),
+            text.contains("code-coverage-snapshot-while-logging") && !text.contains("text-digits-to-integer"),
             "{text}"
         );
         assert!(text.contains("... 1 more"), "{text}");
@@ -166,8 +169,11 @@ mod tests {
     #[test]
     fn id_list_joins_the_ids() {
         assert_eq!(
-            id_list(&[Assumption::QueryClosedAfterLastRow, Assumption::NextWholeDecimal]),
-            "query-closed-after-last-row,next-whole-decimal"
+            id_list(&[
+                Assumption::TextDigitsToInteger,
+                Assumption::CodeCoverageSnapshotWhileLogging
+            ]),
+            "text-digits-to-integer,code-coverage-snapshot-while-logging"
         );
     }
 
@@ -175,19 +181,22 @@ mod tests {
     fn the_counts_of_a_run_are_read_back() {
         let dir = std::env::temp_dir().join(format!("al-flagged-{}", std::process::id()));
         let rows = [Row {
-            assumption: Assumption::QueryClosedAfterLastRow,
+            assumption: Assumption::TextDigitsToInteger,
             flagged: 3,
             other: 1,
         }];
         save_hits(&dir, &rows);
         let loaded = load_hits(&dir);
-        assert_eq!(loaded.get("query-closed-after-last-row"), Some(&(3, 1)));
+        assert_eq!(loaded.get("text-digits-to-integer"), Some(&(3, 1)));
         let text = list(&dir);
         assert!(
-            text.contains("query-closed-after-last-row  (3 flagged passes, 1 other tests)"),
+            text.contains("text-digits-to-integer  (3 flagged passes, 1 other tests)"),
             "{text}"
         );
-        assert!(text.contains("next-whole-decimal  (not hit in the last run)"), "{text}");
+        assert!(
+            text.contains("code-coverage-snapshot-while-logging  (not hit in the last run)"),
+            "{text}"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

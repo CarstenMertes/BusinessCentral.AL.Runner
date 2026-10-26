@@ -58,6 +58,186 @@ enum Parsed {
     Value(Value),
     /// The text is not a value of the type: `Evaluate` returns false.
     Rejected,
+    /// Rejected, and the statement form raises this error (text, code) instead of the type's own.
+    RejectedWith(&'static str, &'static str),
+}
+
+/// A Duration as `Evaluate` reads it (types/lt-datetime/Evaluate.al:380-447 Duration_Evaluate, :566-605 BT_Duration_UnitAbbreviations,
+/// :640-670 BT_Duration_BeyondTimeSpan; types/lt-filter-enum-relation-duration-guid/D_Duration.al:421-443). Only the pinned forms are
+/// read; every other text is refused.
+/// - Format 0: the empty text is 0; a plain whole number counts hours (`1500` is 62 days 12 hours, `-1500`, numbers beyond an
+///   Integer), and so does an unsigned decimal (`1.5` is 90 minutes). Otherwise terms of a number and a unit, in any order, with or
+///   without a blank between them (`1h`, `2days 4hours`): the units spelled `day`, `days`, `d`, `D`, `hour`, `hours`, `h`, `HOUR`,
+///   `minute`, `minutes`, `min`, `m`, `second`, `seconds`, `sec`, `s`, `millisecond`, `milliseconds`, `milli`, `millis`; a fraction of
+///   hours and of seconds (`1.5 hours`, `3.7 seconds`); a minus before a single hour or second term (`-1 hour`, `-1 second`). A plain
+///   number may have blanks around it (`  7 `). Rejected: the same unit word twice (`1 hour 1 hour`), the words `mins`, `ms`, `week`
+///   and `abc` (`12abc`), a fraction of milliseconds, a text of lower-case letters only (`abc`), a plus sign (`+5`), a comma or an
+///   exponent in a number (`1,5`, `1e3`) (errors/lt-ms-refusals-131/P131EvalScalars.al:144-226).
+/// - Formats 1 to 3: a plain unsigned whole number, read as with format 0.
+/// - Format 9: the form Format 9 gives (`P0DT1H30M0.0S`), unsigned. Rejected: the empty text, a text that starts with a digit or
+///   with `-` and a digit, and a text of lower-case letters only.
+fn duration(text: &str, number: i64) -> Result<Parsed, Signal> {
+    let refuse = || {
+        unsupported(format!(
+            "Evaluate of `{text}` into Duration with format {number} (not pinned)"
+        ))
+    };
+    let ms_of = |d: Decimal| -> Option<i64> {
+        if !d.fract().is_zero() {
+            return None;
+        }
+        i64::try_from(d.mantissa() / 10i128.pow(d.scale())).ok()
+    };
+    let digits = |t: &str| !t.is_empty() && t.bytes().all(|b| b.is_ascii_digit());
+    let lower_letters = |t: &str| !t.is_empty() && t.bytes().all(|b| b.is_ascii_lowercase());
+    let hours = |t: &str| -> Result<Parsed, Signal> {
+        match t
+            .parse::<Decimal>()
+            .ok()
+            .and_then(|d| d.checked_mul(Decimal::from(3_600_000)))
+            .and_then(ms_of)
+        {
+            Some(ms) => Ok(Parsed::Value(Value::Duration(ms))),
+            None => refuse(),
+        }
+    };
+    if number == 9 {
+        if let Some(body) = text.strip_prefix('P') {
+            let parse = || -> Option<Decimal> {
+                let (d, rest) = body.split_once("DT")?;
+                let (h, rest) = rest.split_once('H')?;
+                let (m, rest) = rest.split_once('M')?;
+                let sec = rest.strip_suffix('S')?;
+                let (whole, frac) = sec.split_once('.').unwrap_or((sec, "0"));
+                if !(digits(d) && digits(h) && digits(m) && digits(whole) && digits(frac)) {
+                    return None;
+                }
+                let n = |t: &str| t.parse::<Decimal>().ok();
+                Some(
+                    n(d)? * Decimal::from(86_400_000)
+                        + n(h)? * Decimal::from(3_600_000)
+                        + n(m)? * Decimal::from(60_000)
+                        + n(&format!("{whole}.{frac}"))? * Decimal::from(1000),
+                )
+            };
+            return match parse().and_then(ms_of) {
+                Some(ms) => Ok(Parsed::Value(Value::Duration(ms))),
+                None => refuse(),
+            };
+        }
+        let first_digit = |t: &str| t.as_bytes().first().is_some_and(u8::is_ascii_digit);
+        let rejected = text.is_empty()
+            || first_digit(text)
+            || text.strip_prefix('-').is_some_and(first_digit)
+            || (lower_letters(text) && !text.starts_with('p'));
+        return if rejected { Ok(Parsed::Rejected) } else { refuse() };
+    }
+    if number != 0 {
+        // Formats 1 to 3: `1500` only (Evaluate.al:440-446).
+        return if digits(text) { hours(text) } else { refuse() };
+    }
+    if text.is_empty() {
+        return Ok(Parsed::Value(Value::Duration(0)));
+    }
+    let plain = text.trim_matches(' ');
+    if digits(plain.strip_prefix('-').unwrap_or(plain)) {
+        return hours(plain);
+    }
+    if let Some((w, f)) = plain.split_once('.') {
+        if digits(w) && digits(f) {
+            return hours(plain);
+        }
+    }
+    let split_by = |c: char| plain.split_once(c).is_some_and(|(a, b)| digits(a) && digits(b));
+    if lower_letters(text) || plain.strip_prefix('+').is_some_and(digits) || split_by(',') || split_by('e') {
+        return Ok(Parsed::Rejected);
+    }
+    let b = text.as_bytes();
+    let mut i = 0;
+    let mut total = Decimal::ZERO;
+    let mut words: Vec<&str> = Vec::new();
+    let mut units: Vec<i64> = Vec::new();
+    let mut negative = false;
+    let mut rejected = false;
+    let mut terms = 0;
+    while i < b.len() {
+        while b.get(i) == Some(&b' ') {
+            i += 1;
+        }
+        if i == b.len() {
+            break;
+        }
+        if b[i] == b'-' {
+            if terms > 0 || negative {
+                return refuse();
+            }
+            negative = true;
+            i += 1;
+        }
+        let start = i;
+        while b.get(i).is_some_and(|c| c.is_ascii_digit() || *c == b'.') {
+            i += 1;
+        }
+        if start == i {
+            return refuse();
+        }
+        let num = &text[start..i];
+        let (w, f) = num.split_once('.').unwrap_or((num, "0"));
+        if !digits(w) || !digits(f) {
+            return refuse();
+        }
+        let Ok(n) = num.parse::<Decimal>() else {
+            return refuse();
+        };
+        while b.get(i) == Some(&b' ') {
+            i += 1;
+        }
+        let ustart = i;
+        while b.get(i).is_some_and(u8::is_ascii_alphabetic) {
+            i += 1;
+        }
+        let word = &text[ustart..i];
+        let per: i64 = match word {
+            "day" | "days" | "d" | "D" => 86_400_000,
+            "hour" | "hours" | "h" | "HOUR" => 3_600_000,
+            "minute" | "minutes" | "min" | "m" => 60_000,
+            "second" | "seconds" | "sec" | "s" => 1000,
+            "millisecond" | "milliseconds" | "milli" | "millis" => 1,
+            "mins" | "ms" | "week" | "abc" => {
+                rejected = true;
+                terms += 1;
+                continue;
+            }
+            _ => return refuse(),
+        };
+        let fraction = !n.fract().is_zero();
+        if fraction && matches!(per, 86_400_000 | 60_000) {
+            return refuse();
+        }
+        if fraction && per == 1 {
+            rejected = true;
+        }
+        if words.contains(&word) {
+            rejected = true;
+        } else if units.contains(&per) {
+            // The same unit in another spelling (`1 h 1 hour`) is not pinned.
+            return refuse();
+        }
+        words.push(word);
+        units.push(per);
+        terms += 1;
+        total += n * Decimal::from(per);
+    }
+    if negative && (terms > 1 || !matches!(units.as_slice(), [3_600_000 | 1000])) {
+        return refuse();
+    }
+    if rejected {
+        return Ok(Parsed::Rejected);
+    }
+    let Some(ms) = ms_of(total) else {
+        return refuse();
+    };
+    Ok(Parsed::Value(Value::Duration(if negative { -ms } else { ms })))
 }
 
 /// A whole number as `Evaluate` reads it into an Integer. Spaces around it are dropped, one sign is allowed and the
@@ -494,6 +674,40 @@ fn guid(text: &str) -> Result<Parsed, Signal> {
         *b = u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).expect("hex digits checked");
     }
     Ok(Parsed::Value(Value::Guid(out)))
+}
+
+/// `Evaluate` into a Byte or a Char (types/lt-scalars/ScT70055.al:205-249, EvaluateByte_Char; misc/lt-system-functions/
+/// EvalLastError.al:342-343): one character is its code (`0` is 48, `x`, `A`); a number of two or more characters (`255`,
+/// `256`, `-1`, `65`, `70000`) and, for a Char, the empty text are rejected. Every other text is not pinned and is refused.
+fn byte_or_char(target: &Value, text: &str) -> Result<Parsed, Signal> {
+    let mut chars = text.chars();
+    if let (Some(ch), None) = (chars.next(), chars.next()) {
+        return match target {
+            Value::Byte(_) => match u8::try_from(u32::from(ch)) {
+                Ok(b) if ch.is_ascii() => Ok(Parsed::Value(Value::Byte(b))),
+                _ => unsupported(format!(
+                    "Evaluate of `{text}` into a Byte (only an ASCII character is pinned)"
+                )),
+            },
+            _ => match u16::try_from(u32::from(ch)) {
+                Ok(c) if ch.is_ascii() => Ok(Parsed::Value(Value::Char(c))),
+                _ => unsupported(format!(
+                    "Evaluate of `{text}` into a Char (only an ASCII character is pinned)"
+                )),
+            },
+        };
+    }
+    let digits = text.strip_prefix('-').unwrap_or(text);
+    if text.len() >= 2 && !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()) {
+        return Ok(Parsed::Rejected);
+    }
+    if text.is_empty() && matches!(target, Value::Char(_)) {
+        return Ok(Parsed::Rejected);
+    }
+    unsupported(format!(
+        "Evaluate of `{text}` into a {} (not pinned)",
+        target.describe()
+    ))
 }
 
 /// Number 0: the inverse of `Format(Date)` as the runtime formats it (`MM/DD/YY`,
@@ -996,10 +1210,10 @@ fn datetime(text: &str, number: i64) -> Result<Parsed, Signal> {
         return Ok(Parsed::Rejected);
     }
     if iso && t.as_bytes().get(10) == Some(&b'T') {
+        // Without a zone it is rejected, and the statement form raises `The date is not valid.` (P86Eval.al:933-1110, `t2`
+        // `2024-01-15T10:20:30` without a number and with 0).
         if !(t.ends_with(['Z', 'z']) || t[11..].contains(['+', '-'])) {
-            return unsupported(format!(
-                "Evaluate of `{text}` into DateTime without a zone (BC raises another error)"
-            ));
+            return Ok(Parsed::RejectedWith("The date is not valid.", "DateInvalid"));
         }
         return Ok(match crate::iso::parse_datetime(t) {
             Some(v) => Parsed::Value(Value::DateTime(v)),
@@ -1040,7 +1254,7 @@ pub fn read_text(ty: &crate::value::RtType, text: &str) -> Option<Value> {
     };
     match parsed {
         Parsed::Value(v) => Some(v),
-        Parsed::Rejected => None,
+        Parsed::Rejected | Parsed::RejectedWith(..) => None,
     }
 }
 
@@ -1308,7 +1522,13 @@ fn evaluate_with_max(
     max: Option<u32>,
     any_date_text: bool,
 ) -> Result<Value, Signal> {
-    let Some(text) = crate::native::text_of(&a[1]) else {
+    // A Guid source reads as its text `{XXXXXXXX-...}`: into a Text, a Code and a Guid (types/lt-filter-enum-relation-duration-guid/
+    // E_Guid.al:224-311). Other sources that are not text are not pinned.
+    let text = match &a[1] {
+        Value::Guid(g) => Some(crate::text::Txt::from(crate::format::format_guid(g))),
+        other => crate::native::text_of(other),
+    };
+    let Some(text) = text else {
         return unsupported("Evaluate of a source that is not text");
     };
     let number = match a.get(2) {
@@ -1321,6 +1541,7 @@ fn evaluate_with_max(
         && number != 9
         && !(number == 2 && matches!(a[0], Value::DateFormula(_)))
         && !(matches!(number, 1 | 2) && matches!(a[0], Value::Text(_) | Value::Code(_)))
+        && !(matches!(number, 1..=3) && matches!(a[0], Value::Duration(_)))
         && !matches!(a[0], Value::Date(..))
     {
         return unsupported(format!(
@@ -1338,8 +1559,10 @@ fn evaluate_with_max(
         Value::Integer(_) => integer(&text, number)?,
         Value::BigInteger(_) => big_integer(&text, number)?,
         Value::Decimal(_) => decimal(&text, number)?,
+        Value::Duration(_) => duration(&text, number)?,
         Value::Boolean(_) => boolean(&text, number)?,
         Value::Guid(_) => guid(&text)?,
+        Value::Byte(_) | Value::Char(_) if number == 0 => byte_or_char(&a[0], &text)?,
         // Every number but 9 reads a Date as the default does (types/lt-datetime/Evaluate.al:Date_Other_Formats `fmt 1` to `fmt 8`,
         // `fmt 10`, `fmt -1`; errors/lt-ms-refusals-130/P130EvaluateDate.al:P130_EvaluateDate_EveryFormat_*).
         Value::Date(..) => date(
@@ -1499,6 +1722,14 @@ fn evaluate_with_max(
             let by_name = members.iter().position(|m| m.eq_ignore_ascii_case(t));
             match (t.parse::<usize>().ok().filter(|n| *n < members.len()), by_name) {
                 (Some(n), _) | (None, Some(n)) => Parsed::Value(Value::Option(n as i32, members.clone())),
+                // A platform option without an OptionCaption rejects a number past its members, as far as measured:
+                // TableConnectionType 5 to 10 (misc/W5TableConnections.al:117-136, TableConnectionType_Members), ExecutionMode
+                // 2 to 12 (misc/lt-probes-needed-3/PnC11SystemEnums.al:13-52, ExecutionMode_Members). Larger numbers are not pinned.
+                _ if crate::sysenum::rejected_number_past_members(members)
+                    .is_some_and(|last| t.parse::<usize>().is_ok_and(|n| (members.len()..=last).contains(&n))) =>
+                {
+                    Parsed::Rejected
+                }
                 // An OptionCaption may name it (fieldref/TestPrecompiledFieldOptionCaption.al:Evaluate_Caption_SelectsThatMember);
                 // the value does not carry the captions.
                 _ => {
@@ -1530,7 +1761,8 @@ fn evaluate_with_max(
             a[0] = v;
             Ok(Value::Boolean(true))
         }
-        Parsed::Rejected if c.ret_used() => Ok(Value::Boolean(false)),
+        Parsed::Rejected | Parsed::RejectedWith(..) if c.ret_used() => Ok(Value::Boolean(false)),
+        Parsed::RejectedWith(message, code) => crate::native::raise(message, code),
         // The error of a failed statement form (session/TestProbeSessionMiscContracts.al:Arithmetic_ErrorTexts,
         // `evaluate_int_overflow_statement`; types/TestProbeScalarContracts.al:Evaluate_BooleanFailureError).
         Parsed::Rejected
@@ -1575,13 +1807,29 @@ fn evaluate_with_max(
                         .bytes()
                         .all(|b| b.is_ascii_digit() || matches!(b, b'-' | b'.' | b'/'))) =>
         {
-            crate::native::raise(
-                format!(
-                    "The format of the Date '{text}' does not match your device's date settings.\\\\Make sure that the day, month, and year are in the correct order and use the correct separator (such as - or /). Alternatively, you can always use the format 'yyyy-mm-dd'."
+            // In German (misc/lt-system-functions/EvalLastError.al:463-481, BT_Evaluate_DottedDate_Language1031). Another
+            // language is not pinned.
+            match c.language() {
+                1033 => crate::native::raise(
+                    format!(
+                        "The format of the Date '{text}' does not match your device's date settings.\\\\Make sure that the day, month, and year are in the correct order and use the correct separator (such as - or /). Alternatively, you can always use the format 'yyyy-mm-dd'."
+                    ),
+                    "Evaluate",
                 ),
-                "Evaluate",
-            )
+                1031 => crate::native::raise(
+                    format!(
+                        "Das Format Date \u{201e}{text}\u{201c} stimmt nicht mit den Datumseinstellungen Ihres Ger\u{e4}ts \u{fc}berein.\\\\Stellen Sie sicher, dass Tag, Monat und Jahr die richtige Reihenfolge aufweisen und das richtige Trennzeichen verwendet wird (z. b. - oder /). Alternativ k\u{f6}nnen Sie das Format \u{201e}jjjj-mm-tt\u{201c} verwenden."
+                    ),
+                    "Evaluate",
+                ),
+                n => unsupported(format!("the Evaluate error of a Date in the language {n} (not pinned)")),
+            }
         }
+        // With format 9 (types/lt-datetime/Evaluate.al:640-661 `eval 3000000000 fmt 9`). With another format it is not pinned.
+        Parsed::Rejected if matches!(a[0], Value::Duration(_)) && number == 9 => crate::native::raise(
+            format!("The value \"{text}\" can't be evaluated into type Duration."),
+            "Evaluate",
+        ),
         Parsed::Rejected if matches!(a[0], Value::Guid(_)) => crate::native::raise(
             "Invalid format of GUID string. The correct format of the GUID string is: CDEF7890-ABCD-0123-1234-567890ABCDEF where 0-9, A-F symbolizes hexadecimal digits.",
             "InvalidGuidFormat",
@@ -1779,5 +2027,63 @@ mod tests {
         assert_eq!(ms("12/19/21", 0), Ok(Some(((12 * 60 + 19) * 60 + 21) * 1000)));
         assert_eq!(ms("2021-12-19", 9), Ok(None));
         assert!(ms("2099-12-19", 0).is_err());
+    }
+    // types/lt-datetime/Evaluate.al:380-447, 566-605, 640-670.
+    #[test]
+    fn evaluate_into_a_duration() {
+        let ms = |t: &str, n: i64| match duration(t, n) {
+            Ok(Parsed::Value(Value::Duration(ms))) => Some(ms),
+            Ok(Parsed::Rejected) => None,
+            other => panic!("{t}: {}", other.is_err()),
+        };
+        assert_eq!(ms("1500", 0), Some(1500 * 3_600_000));
+        assert_eq!(ms("1.5", 0), Some(5_400_000));
+        assert_eq!(ms("", 0), Some(0));
+        assert_eq!(ms("-1 hour", 0), Some(-3_600_000));
+        assert_eq!(ms("1 minute 1 hour", 0), Some(3_660_000));
+        assert_eq!(
+            ms("2days 4hours 3.7 seconds 17 milliseconds", 0),
+            Some(2 * 86_400_000 + 4 * 3_600_000 + 3717)
+        );
+        assert_eq!(ms("1 HOUR", 0), Some(3_600_000));
+        assert_eq!(ms("5 millis", 0), Some(5));
+        assert_eq!(ms("1 hour 1 hour", 0), None);
+        assert_eq!(ms("1 mins", 0), None);
+        assert_eq!(ms("1.5 milliseconds", 0), None);
+        assert_eq!(ms("abc", 0), None);
+        assert_eq!(ms("P0DT1H30M0.0S", 9), Some(5_400_000));
+        assert_eq!(ms("1500", 9), None);
+        assert_eq!(ms("", 9), None);
+        assert_eq!(ms("-1500", 9), None);
+        assert_eq!(ms("2 days 3 h 4 min 5 sec 6 ms", 0), None);
+        assert_eq!(ms("1500", 2), Some(1500 * 3_600_000));
+        // errors/lt-ms-refusals-131/P131EvalScalars.al:144-226.
+        assert_eq!(ms("  7 ", 0), Some(7 * 3_600_000));
+        for t in ["+5", "12abc", "0 ms", "1,5", "1e3"] {
+            assert_eq!(ms(t, 0), None, "{t}");
+        }
+        assert_eq!(ms("1 millisecond", 0), Some(1));
+        assert_eq!(ms("-1 second", 0), Some(-1000));
+        assert_eq!(ms("1 day 1 hour 1 minute 1 second 1 millisecond", 0), Some(90_061_001));
+        // Forms no corpus test pins are refused.
+        for (t, n) in [
+            ("1 Hour", 0),
+            ("1.5 days", 0),
+            ("1.5 minutes", 0),
+            ("-1 minute", 0),
+            ("+5 hours", 0),
+            ("1;5", 0),
+            ("-1 hour 2 minutes", 0),
+            ("-1.5", 0),
+            ("1 h 1 hour", 0),
+            ("5 ms 1 foo", 0),
+            ("hour 1", 0),
+            ("Abc", 0),
+            ("1 hour", 1),
+            ("-P0DT1H0M0.0S", 9),
+            ("Abc", 9),
+        ] {
+            assert!(matches!(duration(t, n), Err(Signal::Unsupported(_))), "{t} {n}");
+        }
     }
 }

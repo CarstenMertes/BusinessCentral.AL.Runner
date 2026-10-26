@@ -166,6 +166,29 @@ const PUBLISHER_ATTRIBUTES: &[&str] = &[
 /// baseline, or `None` when none of them can. The reason names the first routine and construct
 /// that could.
 pub fn may_observe_baseline(lowered: &Lowered, tests: &[usize]) -> Option<String> {
+    may_observe_baseline_with(lowered, tests, false).why
+}
+
+/// What [`may_observe_baseline_with`] found.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Observed {
+    /// Why a test may observe the install baseline (see [`may_observe_baseline`]); `None` when none can.
+    pub why: Option<String>,
+    /// With `why` `None`: the reach calls `Evaluate`, which reads the session's WorkDate for a Date target (`w` in
+    /// `evaluate.rs` `date`) without naming `WorkDate`.
+    pub evaluates: bool,
+}
+
+/// [`may_observe_baseline`] for a compile that may have left Base Application's login code out
+/// (`al_sema::check::Roots::no_login_root`). With `login_left_out` the apps have that code although the program does
+/// not, and a read of WorkDate counts as it does when the program has it.
+pub fn may_observe_baseline_with(lowered: &Lowered, tests: &[usize], login_left_out: bool) -> Observed {
+    let mut evaluates = false;
+    let why = walk_tests(lowered, tests, login_left_out, &mut evaluates);
+    Observed { why, evaluates }
+}
+
+fn walk_tests(lowered: &Lowered, tests: &[usize], login_left_out: bool, evaluates: &mut bool) -> Option<String> {
     let objects = &lowered.program.objects;
     let mock = (lowered.program.dotnet_types.iter().enumerate())
         .filter(|(_, d)| {
@@ -181,11 +204,13 @@ pub fn may_observe_baseline(lowered: &Lowered, tests: &[usize]) -> Option<String
         seen_objects: HashSet::new(),
         seen_routines: HashSet::new(),
         queue: Vec::new(),
-        login: objects.iter().any(|o| {
-            o.is_kind(al_ir::ObjKind::Codeunit)
-                && o.id == Some(al_sema::check::demand::LOGIN_MANAGEMENT)
-                && o.name.eq_ignore_ascii_case("LogInManagement")
-        }),
+        login: login_left_out
+            || objects.iter().any(|o| {
+                o.is_kind(al_ir::ObjKind::Codeunit)
+                    && o.id == Some(al_sema::check::demand::LOGIN_MANAGEMENT)
+                    && o.name.eq_ignore_ascii_case("LogInManagement")
+            }),
+        evaluates: false,
     };
     for &t in tests {
         if walk.seen_objects.insert(t) {
@@ -233,6 +258,7 @@ pub fn may_observe_baseline(lowered: &Lowered, tests: &[usize]) -> Option<String
             return Some(at(why));
         }
     }
+    *evaluates = walk.evaluates;
     None
 }
 
@@ -355,6 +381,8 @@ struct Walk<'a> {
     /// The program has Base Application's login code, which sets the test session's WorkDate from the G/L entries
     /// (`install::login_work_date`): a read of WorkDate can then see what the baseline wrote.
     login: bool,
+    /// The reach calls `Evaluate` (see [`Observed::evaluates`]).
+    evaluates: bool,
 }
 
 type Check = Result<(), String>;
@@ -577,6 +605,9 @@ impl Walk<'_> {
             Expr::Builtin { id, receiver, args, .. } => {
                 if self.login && id.name().starts_with("System.WorkDate#") {
                     return Err("reads WorkDate, which the login code takes from the G/L entries".into());
+                }
+                if id.name().starts_with("System.Evaluate") {
+                    self.evaluates = true;
                 }
                 builtin(id.name())?;
                 if let Some(r) = receiver {

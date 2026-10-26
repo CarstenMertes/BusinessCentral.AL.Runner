@@ -219,12 +219,12 @@ impl Session {
                 if qs.borrow().run.as_ref().is_some_and(|r| r.started) {
                     // After a filter changed mid-read it runs again with the new filters
                     // (misc/lt-probes-needed-1/PnAQueryOpenRead.al:125-170, SetRangeAndOpenAfterRead: `next-entry` 4).
-                    // After the last row (with or without a filter set since) it runs again too: not pinned
-                    // (assumption query-closed-after-last-row).
+                    // After the last row (with or without a SetRange or SetFilter since) it runs again too,
+                    // with the new filters (query/lt-query-read-to-end/QueryReadToEnd.al:88,130,172:
+                    // SetRange_AfterLastRow_ThenOpenAndRead, SetFilter_AfterLastRow_ThenOpenAndRead,
+                    // Open_Twice_AfterLastRow).
                     let filters_changed = qs.borrow().run.as_ref().is_some_and(|r| r.filters_changed);
-                    if Self::query_read_to_the_end(&qs) {
-                        al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::QueryClosedAfterLastRow);
-                    } else if !filters_changed {
+                    if !Self::query_read_to_the_end(&qs) && !filters_changed {
                         return unsupported("Open on a query that is already open and was read from (not pinned)");
                     }
                     qs.borrow_mut().run = None;
@@ -1157,9 +1157,8 @@ impl Session {
             }
             let item = &def.items[c.item];
             let field = c.field.expect("a column over a field");
-            if matches!(c.ty, RtType::Library(al_builtins::library_kind::LibraryKind::RecordId)) {
-                al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::QueryColumnRecordId);
-            }
+            // A column over a RecordId field returns the stored RecordId and groups and orders by it like the field
+            // (query/lt-az-query/AzQueryTests.al:212 RecordIdColumn_GroupAndOrderBy).
             let row = &self.filled(item.table, &joined[c.item]);
             let schema = &engine.program.objects[item.table].table.as_ref().expect("table").fields[field];
             let mut v = if schema.stored {

@@ -531,9 +531,12 @@ mod tests {
     #[test]
     fn a_pass_that_ran_through_an_assumption_is_flagged_and_still_a_pass() {
         let marks = |c: &CaseId| match c.name.as_str() {
-            "a" => vec![Assumption::QueryClosedAfterLastRow, Assumption::NextWholeDecimal],
+            "a" => vec![
+                Assumption::TextDigitsToInteger,
+                Assumption::CodeCoverageSnapshotWhileLogging,
+            ],
             // A failing test that hit one is not a flagged pass.
-            "b" => vec![Assumption::QueryClosedAfterLastRow],
+            "b" => vec![Assumption::TextDigitsToInteger],
             _ => Vec::new(),
         };
         let r = build_with(&oracle(), &areas, &outcome, &marks);
@@ -545,7 +548,7 @@ mod tests {
             vec![FlaggedPass {
                 codeunit: 1,
                 test: "a".into(),
-                assumptions: vec!["query-closed-after-last-row", "next-whole-decimal"]
+                assumptions: vec!["text-digits-to-integer", "code-coverage-snapshot-while-logging"]
             }]
         );
         assert_eq!(build(&oracle(), &areas, &outcome).overall.flagged, 0);

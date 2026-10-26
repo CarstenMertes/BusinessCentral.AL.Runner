@@ -48,7 +48,7 @@ Accepted with the v2 meaning unless the "Difference" column says otherwise.
 |---|---|
 | `--output-json [FILE]` | See section 4. With no FILE, stdout holds only the JSON document. v2 mixed banner lines before it. |
 | `--output-json=FILE` | Same, with a FILE of any name. Without the `=`, a file name is taken only if it ends in `.json`. |
-| `--isolation codeunit\|test\|disabled` (also `--test-isolation`) | `codeunit`: the database is rolled back when a test codeunit ends (the default, as in Microsoft's test runner). `test` (aliases `function`, `method`): the database goes back to its state after `OnRun` after every test method, **the codeunit's AL variables are kept** (BC's `TestIsolation = Function`). v2's `test` also reset the codeunit's state; a tool that relied on that must not. `disabled`: not pinned, so every test is reported as not run (exit 7). `required` (not in v2): each test codeunit runs under its own `RequiredTestIsolation`, as BC 28 and later runs it without a test runner codeunit; on BC 27 as `codeunit`. Use it for suites that set `RequiredTestIsolation = Function` or `Disabled`. |
+| `--isolation codeunit\|test\|disabled` (also `--test-isolation`) | `codeunit`: the database is rolled back when a test codeunit ends (the default, as in Microsoft's test runner). `test` (aliases `function`, `method`): the database goes back to its state after `OnRun` after every test method, **the codeunit's AL variables are kept** (BC's `TestIsolation = Function`). v2's `test` also reset the codeunit's state; a tool that relied on that must not. `disabled`: nothing is rolled back but a failed test's writes since its last `Commit()`; the test codeunits run in id order and see what the earlier ones left. Under `test` and `disabled` a codeunit's `RequiredTestIsolation` has no effect. `required` (not in v2): each test codeunit runs under its own `RequiredTestIsolation`, as BC 28 and later runs it without a test runner codeunit; on BC 27 as `codeunit`. Use it for suites that set `RequiredTestIsolation = Function` or `Disabled`. |
 | `--test TEXT` (also `--filter`) | Case-insensitive substring. TEXT with a dot, such as `Codeunit50011.Foo`, is matched against the qualified name `Codeunit<ID>.<Method>`; TEXT without a dot against the method name. v2 matched the qualified name for both. A bare name that is also a part of the word `Codeunit` is not special. |
 | `--test-exact NAME` | New in v3 for the tools: the test whose method name or qualified name is exactly NAME (any case). Repeatable. Given with `--test`, it narrows: only the tests that both match are selected, as in v2. A name is the AL name as written, without quotes: `--test-exact "Codeunit50650.Space Step"`. |
 | `--exclude-test TEXT` | Removes the tests TEXT matches (the same matching as `--test`). Wins over every selecting option. Repeatable. Use whole qualified names to exclude exactly one test. |
@@ -202,6 +202,27 @@ Differences a client must adapt to:
    `notRun`, `total`, `cached`, `incremental` when only some objects were compiled again, `protocolVersion`, `wallSeconds`,
    `warnings` when there are some, `cancelled` when cancelled, and `coverage` / `perTestCoverage` when asked for (section 4a shapes). `selection` with `affectedOnly`,
    and `compilationErrors` when the apps do not compile (exit 3). `changedFiles`, `companyInitFailures`, `sourceScanFailures` are not sent.
+   `timings` (not in v2, al-runner issue 5856) says where the request spent its `wallSeconds`, in milliseconds to a
+   tenth: `setupMs` (the options, the apps' sources, the dependency apps, the test data), `compileMs` (finding the kept
+   compile, updating it or compiling again), `engineMs` (building the engine from the compiled program, or setting up
+   the one an earlier request kept), `baselineMs` (the install baseline: running the install code or reading it),
+   `testsMs` (the test codeunits, every entry), `coverageMs` (the coverage document) and `otherMs` (the rest: the report
+   and the output). `baselineSource` is `ran` (the install code ran), `cache` (read from the compile cache folder) or
+   `kept` (the baseline an earlier request over the same compile read), and is absent when no baseline was needed.
+   `engineKept: true` when the request ran on the engines an earlier request over the same compile kept. Without
+   `entries`, `resetMs` is the time the test threads took to set up their own copy of the install baseline (the
+   longest of them; 0 with one thread). With `entries`, each `entrySummary` has `timings` with that entry's `resetMs`
+   and `wallMs` (its wall time, the reset included). The fields are for reading only: a client must not depend on
+   their set or their values.
+   A server keeps, for its next request over the same compile, the dependency apps it read (read again when the app
+   files, the options or a file in a package folder change), the engines and the install baseline: a request that
+   reuses the compile costs the tests and little else. What a request starts from is the same as when nothing is
+   kept: the rows the install code left, none of an earlier request's writes.
+   What each test codeunit starts from (in every request and every entry; al-runner issue 5862): a new session over
+   the post-install database. Reset: table rows, the system id, row version and AutoIncrement counters,
+   IsolatedStorage, NumberSequence, SingleInstance codeunits (also those of dependency apps), event bindings, handlers,
+   and session settings such as WorkDate and GlobalLanguage. Not reset: files a `--files-dir` folder holds on disk,
+   and the state of the .NET helper processes, which the codeunits of one request share.
 5. A request that cannot run answers one `{"error": "<reason>"}` line instead of a summary with exit code 2 or 3:
    for example `{"error":"/x: no such file or folder"}`, ``{"error":"unknown field `cobertura` for runTests"}``,
    ``{"error":"`sourcePaths` needs at least one app folder"}``. A `test` or `excludeTests` that matches no test is not

@@ -71,7 +71,7 @@ struct Numeric {
     precision_after_std: bool,
 }
 
-const CODE_NAMES: [&str; 21] = [
+const CODE_NAMES: [&str; 22] = [
     "Standard Format",
     "Integer Thousand",
     "Integer",
@@ -93,6 +93,7 @@ const CODE_NAMES: [&str; 21] = [
     "Thousands",
     "Second dec",
     "AM/PM",
+    "Quarter",
 ];
 
 /// The codes of `template` spelled as this module knows them: a code name in any case, and blanks after the comma and before the
@@ -133,7 +134,11 @@ fn canonical_template(template: &str) -> Option<String> {
         let canon = match known {
             Some(c) => {
                 let arg = arg.map(|a| {
-                    if *c == "Filler Character" {
+                    // A blank is a filler character of its own: `<Filler Character, >` pads with blanks (types/lt-scalars/
+                    // ScT70052.al:84,94).
+                    if *c == "Filler Character" && a == " " {
+                        a
+                    } else if *c == "Filler Character" {
                         a.trim_start()
                     } else {
                         a.trim()
@@ -200,6 +205,31 @@ pub fn format_with_field_places(
         rest = &after[close + 1..];
     }
     pieces.push((false, rest));
+    // A Duration takes no date, time or number code: `<Integer Thousand>` and `<Hours24,2>:<Minutes,2>` are the invalid-format
+    // error (types/lt-duration-sum-typed/DurationSumTyped.al:86,95 `af74`; types/lt-datetime/Format.al:473,499 `af279`).
+    // Other codes on a Duration are not pinned.
+    if matches!(v, Value::Duration(_))
+        && pieces.iter().any(|(c, _)| *c)
+        && pieces
+            .iter()
+            .all(|(c, t)| !c || matches!(*t, "Integer Thousand" | "Hours24,2" | "Minutes,2"))
+    {
+        return Err(format!("{INVALID_FORMAT_MARK}{template}"));
+    }
+    // `<Integer,6><Filler Character,0>` on a Byte is the invalid-format error (types/lt-scalars/ScT70052.al:182,197).
+    if matches!(v, Value::Byte(_))
+        && pieces.iter().any(|(c, _)| *c)
+        && pieces
+            .iter()
+            .all(|(c, t)| !c || t.starts_with("Integer,") || *t == "Filler Character,0")
+    {
+        return Err(format!("{INVALID_FORMAT_MARK}{template}"));
+    }
+    if let Value::Text(t) = v {
+        if let Some(out) = text_template(t.as_str(), &pieces)? {
+            return Ok(crate::format::pad(out, length));
+        }
+    }
     // The undefined DateTime and Date format as the empty text, their separators too (types/lt-datetime/Format.al:
     // QR_DateTime_Format_StampStrings_Undefined `u1`-`u8`, QR_Date_Format_StampStrings `z1`-`z9`). Pinned for these codes only.
     let undefined_codes: &[&str] = match v {
@@ -223,6 +253,8 @@ pub fn format_with_field_places(
             "Month Text",
             "Weekday Text",
             "Week",
+            // FormatQuarterDuration.al:83,94 (`undefined_date`).
+            "Quarter",
         ],
         _ => &[],
     };
@@ -253,6 +285,17 @@ pub fn format_with_field_places(
             && pieces.get(i + 2).is_some_and(|(c, t)| *c && *t == "Filler Character,0")
     };
     for (i, &(is_code, text)) in pieces.iter().enumerate() {
+        // At the start of the string the filler characters `#` and `*` change nothing on a date or time: `<Filler Character,#><Day,4>`
+        // is `0005` on a Date, `<Filler Character,*><Hours12,4>` `   9` on a Time (types/lt-aj-probes/AjScalars.al:269-270,
+        // 292, 323). Other characters are not pinned.
+        if is_code
+            && temporal
+            && matches!(text, "Filler Character,#" | "Filler Character,*")
+            && i == 1
+            && pieces[0].1.is_empty()
+        {
+            continue;
+        }
         if is_code && temporal && text == "Filler Character,0" {
             let at_start = i == 1 && pieces[0].1.is_empty();
             let after_code = i >= 2 && pieces[i - 1].1.is_empty() && pieces[i - 2].0;
@@ -265,9 +308,19 @@ pub fn format_with_field_places(
             ));
         }
         if is_code && filler_after(i) {
-            let part = code(v, text, numeric.as_ref(), ctx).map_err(|e| format!("format string `{template}`: {e}"))?;
+            let part = code(v, text, numeric.as_ref(), ctx).map_err(|e| {
+                if e == INVALID_FORMAT_MARK {
+                    format!("{INVALID_FORMAT_MARK}{template}")
+                } else {
+                    format!("format string `{template}`: {e}")
+                }
+            })?;
             match (v, text) {
                 (Value::Time(_), "Hours24,2" | "Hours12,2") => out.push_str(&part.replace(' ', "0")),
+                // `<Day,4>` and `<Month,4>` of a Date or DateTime pad with zeros already (AjScalars.al:266,272,282,295).
+                (Value::Date(..) | Value::DateTime(_), t) if t.starts_with("Day,") || t.starts_with("Month,") => {
+                    out.push_str(&part)
+                }
                 // The other codes of a date or time pinned before a filler pad with zeros already.
                 (_, "Hours24,2" | "Minutes,2" | "Seconds,2" | "Day,2" | "Month,2" | "Year4" | "Year,2") => {
                     out.push_str(&part)
@@ -295,10 +348,14 @@ pub fn format_with_field_places(
             out.push_str(text);
         }
     }
-    // A result longer than the length is cut to it (P86FormatDecimal.al:Len_WithFormatString `l4`).
+    // A result longer than the length is cut to it (P86FormatDecimal.al:Len_WithFormatString `l4`; a Date:
+    // types/lt-datetime/Format.al:527,537 `date len 5 custom`).
     if length > 0
         && out.chars().count() > length as usize
-        && matches!(v, Value::Decimal(_) | Value::Integer(_) | Value::BigInteger(_))
+        && matches!(
+            v,
+            Value::Decimal(_) | Value::Integer(_) | Value::BigInteger(_) | Value::Date(..)
+        )
     {
         return Ok(out.chars().take(length as usize).collect());
     }
@@ -527,6 +584,10 @@ fn numeric_code(n: &Numeric, code: &str, v: &Value, ctx: &dyn FormatCtx) -> Resu
             None => grouped,
         });
     }
+    // `<Decimals>` on an Integer is the invalid-format error (types/lt-scalars/ScT70052.al:85,96 `af52`).
+    if code == "Decimals" && matches!(v, Value::Integer(_)) {
+        return Err(INVALID_FORMAT_MARK.to_string());
+    }
     if code == "Decimals" || code == "Decimals,0" {
         // Without a width: the decimals the value has (`5.5` shows `.5`, a whole number nothing).
         let frac = abs.fract().normalize();
@@ -538,6 +599,11 @@ fn numeric_code(n: &Numeric, code: &str, v: &Value, ctx: &dyn FormatCtx) -> Resu
         return Ok(frac.strip_prefix('0').map(str::to_string).unwrap_or_default());
     }
     if let Some(w) = width(code, "Decimals")? {
+        // `<Decimals,1>` of a value with decimals is one star (types/lt-scalars/ScT70051.al:105,115: 1234567.891 is
+        // `1234567*`); of a whole number it is not pinned.
+        if w == 1 && !abs.fract().is_zero() {
+            return Ok("*".into());
+        }
         if w < 2 {
             return refuse();
         }
@@ -666,6 +732,20 @@ fn code(v: &Value, code: &str, numeric: Option<&Numeric>, ctx: &dyn FormatCtx) -
             Err(_) => Err(format!("code `<{code}>`")),
         };
     }
+    // `<Text,5>` on an Enum shows its caption cut to 5 characters: `Two Words Caption` is `Two W` (types/lt-enum-to-text-fieldref/
+    // EnumToTextFieldRef.al:170,180). A caption shorter than the width is not pinned.
+    if let (Value::Enum(..), Some(w)) = (v, code.strip_prefix("Text,")) {
+        if let Ok(w) = w.parse::<usize>() {
+            let caption = format_value(v, 0, 0, ctx).map_err(fail)?;
+            if caption.chars().count() > w {
+                return Ok(caption.chars().take(w).collect());
+            }
+        }
+    }
+    // `<Text>` on a RecordId is an invalid format (types/lt-implicit-conversions/P79RecordId.al:405,417).
+    if code == "Text" && matches!(v, Value::Library(crate::library_kind::LibraryKind::RecordId, _)) {
+        return Err(INVALID_FORMAT_MARK.to_string());
+    }
     let (day_no, closing) = match v {
         Value::Date(n, c) if *n > 0 => (Some(*n), *c),
         Value::DateTime(t) if *t > 0 => (Some((t - 1).div_euclid(86_400_000) as i32 + 1), false),
@@ -721,6 +801,38 @@ fn code(v: &Value, code: &str, numeric: Option<&Numeric>, ctx: &dyn FormatCtx) -
             }
         }
     }
+    // Widths on dates and times (types/lt-aj-probes/AjScalars.al:225-327): `<Day,4>` and `<Month,4>` of a Date or DateTime pad
+    // with zeros (`0005`, `0003`; `<Day,3>` of a Date `005`: types/lt-datetime/Format.al:142,173); the clock codes of a DateTime pad
+    // with zeros (`<Hours24,5>` `00009`, `<Minutes,5>` `00007`, `<Hours12,4>` `0009`), those of a Time pad the hour with blanks and
+    // the minutes with zeros (`    9`, `00007`, `   9`). `<Hours24,5>` and `<Hours12,4>` on a Date and `<Day,4>` on a Time are the
+    // invalid-format error (`<Day,2>` on a Time too: the template `<Filler Character,0><Day,2><Month,4><Year4>` raises,
+    // AjScalars.al:302,317). Only these code, width and type triples are pinned; the others fall through to the arms below
+    // (width 2) or are refused there.
+    if let Some((base, w)) = code.split_once(',') {
+        let w = w.trim().parse::<usize>().ok();
+        match (v, base, w, date, clock) {
+            (Value::Date(..), "Hours24", Some(5), ..)
+            | (Value::Date(..), "Hours12", Some(4), ..)
+            | (Value::Time(_), "Day", Some(2 | 4), ..) => {
+                return Err(INVALID_FORMAT_MARK.to_string());
+            }
+            (Value::Date(..), "Day", Some(w @ (3 | 4)), Some((_, _, d)), _)
+            | (Value::DateTime(_), "Day", Some(w @ 4), Some((_, _, d)), _) => {
+                return Ok(format!("{d:0w$}"));
+            }
+            (Value::Date(..) | Value::DateTime(_), "Month", Some(w @ 4), Some((_, m, _)), _) => {
+                return Ok(format!("{m:0w$}"));
+            }
+            (Value::DateTime(_), "Hours24", Some(w @ 5), _, Some(ms)) => return Ok(format!("{:0w$}", ms / 3_600_000)),
+            (Value::DateTime(_), "Hours12", Some(w @ 4), _, Some(ms)) => return Ok(format!("{:0w$}", hour12(ms))),
+            (Value::DateTime(_) | Value::Time(_), "Minutes", Some(w @ 5), _, Some(ms)) => {
+                return Ok(format!("{:0w$}", ms / 60_000 % 60));
+            }
+            (Value::Time(_), "Hours24", Some(w @ 5), _, Some(ms)) => return Ok(format!("{:>w$}", ms / 3_600_000)),
+            (Value::Time(_), "Hours12", Some(w @ 4), _, Some(ms)) => return Ok(format!("{:>w$}", hour12(ms))),
+            _ => {}
+        }
+    }
     let part = match (code, date, clock) {
         ("Year4", Some((y, _, _)), _) => format!("{y:04}"),
         // A two-digit year below 10 would print as one digit or two: not measured.
@@ -738,14 +850,17 @@ fn code(v: &Value, code: &str, numeric: Option<&Numeric>, ctx: &dyn FormatCtx) -
         // A Time with an hour of 1 to 9 is padded with a space: 09:00 is ` 9` (misc/lt-probes-needed-2/PnBDateFormat.al:
         // PictureCodes_Numbers `hours24`). A DateTime keeps the zero (types/lt-datetime RoundTrip_AndFormatCodes,
         // codeunit 70120: `02:30:00`); midnight of a Time is not pinned and stays `00`.
-        ("Hours24,2", _, Some(ms)) if matches!(v, Value::Time(_)) && ms / 3_600_000 != 0 => {
-            format!("{:>2}", ms / 3_600_000)
-        }
+        // Midnight is ` 0` too (types/lt-variant-time-enum/VariantTextTimeEnumFilter.al:105,120).
+        ("Hours24,2", _, Some(ms)) if matches!(v, Value::Time(_)) => format!("{:>2}", ms / 3_600_000),
         ("Hours24,2", _, Some(ms)) => format!("{:02}", ms / 3_600_000),
         ("Hours24", _, Some(ms)) => format!("{}", ms / 3_600_000),
         // A minute below 10 without a width is not measured (Dates_CreateDateTimeRoundTrip shows 30).
         ("Minutes", _, Some(ms)) if ms / 60_000 % 60 >= 10 => format!("{}", ms / 60_000 % 60),
+        // On a Time a minute below 10 has no padding: `0`, `5`, `9` (VariantTextTimeEnumFilter.al:113-115,128-130).
+        ("Minutes", _, Some(ms)) if matches!(v, Value::Time(_)) => format!("{}", ms / 60_000 % 60),
         // The twelve-hour clock pads the hour with a space (:Format_PictureCodes).
+        // On a DateTime it pads with a zero: 13:45 is `01` (types/lt-datetime/Format.al:420,430).
+        ("Hours12,2", _, Some(ms)) if matches!(v, Value::DateTime(_)) => format!("{:02}", hour12(ms)),
         ("Hours12,2", _, Some(ms)) => format!("{:>2}", hour12(ms)),
         // `<Hours12>` is the hour without padding; midnight and noon are 12 (types/lt-datetime/Format.al:Time_Format_Custom).
         ("Hours12", _, Some(ms)) => format!("{}", hour12(ms)),
@@ -755,23 +870,42 @@ fn code(v: &Value, code: &str, numeric: Option<&Numeric>, ctx: &dyn FormatCtx) -
         // `<Thousands,3>` ` 78`, `<Second dec>` .078, `<Second dec,3>` ***.
         ("Seconds", _, Some(ms)) => format!("{}", ms / 1000 % 60),
         ("Thousands", _, Some(ms)) => format!("{}", ms % 1000),
+        // On a DateTime it pads with zeros: `078` (types/lt-datetime/Format.al:419,429).
+        ("Thousands,3", _, Some(ms)) if matches!(v, Value::DateTime(_)) => format!("{:03}", ms % 1000),
         ("Thousands,3", _, Some(ms)) => format!("{:>3}", ms % 1000),
         // On a DateTime with no milliseconds it is empty (types/lt-datetime/Format.al:QR_DateTime_Format_StampStrings_Afternoon
         // `a15`, `a16`); on a Time that is not pinned.
         ("Second dec", _, Some(ms)) if matches!(v, Value::DateTime(_)) && ms % 1000 == 0 => String::new(),
         ("Second dec", _, Some(ms)) => format!(".{:03}", ms % 1000),
-        // The ISO 8601 week of a Date: 2024-03-05 is `10` (QR_Date_Format_StampStrings `d9`). A week below 10 (padded or not)
-        // and the code on a DateTime are not pinned.
-        ("Week", Some(_), _) if matches!(v, Value::Date(..)) => {
-            let day = day_no.unwrap_or(1);
-            let thursday = day + (4 - ((day - 1).rem_euclid(7) + 1));
-            let (y, _, _) = civil_from_day(thursday);
-            let week = (thursday - crate::format::day_from_civil(y, 1, 1)) / 7 + 1;
-            if week < 10 {
-                return Err(format!("code `<Week>` for week {week} (not pinned)"));
+        // The ISO 8601 week of a Date, without padding: 2024-03-05 is `10` (QR_Date_Format_StampStrings `d9`), 2021-01-04 `1`,
+        // 2024-01-17 `3`, 2021-01-03 `53` and 2024-12-30 `1` (the ISO year is not shown: `<Week>.<Year4>` is `53.2021`, `1.2024`).
+        // `<Week,2>` pads with a zero: `01` (types/lt-format-week-code/FormatWeekCodeIso.al:21-123; types/lt-datetime/
+        // DateFuncs.al:427). The code on a DateTime and other widths are not pinned.
+        ("Week" | "Week,2", Some(_), _) if matches!(v, Value::Date(..)) => {
+            let week = iso_week(day_no.unwrap_or(1));
+            // The pinned weeks are 1, 3, 10, 19, 28, 40, 52 and 53; the ISO rule for the others is an assumption.
+            if !matches!(week, 1 | 3 | 10 | 19 | 28 | 40 | 52 | 53) {
+                crate::assumptions::assume(crate::assumptions::Assumption::FormatWeekCodeIso);
             }
-            week.to_string()
+            if code == "Week,2" {
+                format!("{week:02}")
+            } else {
+                week.to_string()
+            }
         }
+        // `<Weekday>` is the ISO day number, Monday 1 to Sunday 7: 2024-01-17 is `3` (types/lt-datetime/DateFuncs.al:415,425),
+        // 2021-01-03 `7` (FormatWeekCodeIso.al:121,128). On a DateTime it is not pinned.
+        ("Weekday", Some(_), _) if matches!(v, Value::Date(..)) => {
+            let weekday = (day_no.unwrap_or(1) - 1).rem_euclid(7) + 1;
+            // Wednesday 3 and Sunday 7 are pinned; the other days follow the same ISO numbering on an assumption.
+            if !matches!(weekday, 3 | 7) {
+                crate::assumptions::assume(crate::assumptions::Assumption::FormatWeekCodeIso);
+            }
+            format!("{weekday}")
+        }
+        // `<Quarter>` is 1 to 4, a closing date shows the quarter of its day, `<quarter>` is read too
+        // (types/lt-quarter-duration/FormatQuarterDuration.al:30-110). On a DateTime it is not pinned.
+        ("Quarter", Some((_, m, _)), _) if matches!(v, Value::Date(..)) => format!("{}", (m - 1) / 3 + 1),
         ("Second dec,3", _, Some(_)) => "***".to_string(),
         ("AM/PM", _, Some(ms)) => (if ms / 3_600_000 < 12 { "AM" } else { "PM" }).to_string(),
         // A name that is no code at all is an invalid format, as for a number (types/lt-datetime/Format.al:
@@ -779,22 +913,96 @@ fn code(v: &Value, code: &str, numeric: Option<&Numeric>, ctx: &dyn FormatCtx) -
         _ if matches!(v, Value::Time(_)) && !CODE_NAMES.contains(&code.split_once(',').map_or(code, |(n, _)| n)) => {
             return Err(INVALID_FORMAT_MARK.to_string());
         }
+        // On a Date and a DateTime too: `<Day Text>` and `<Foo>` (types/lt-datetime/Format.al:157-158,186,191 on a Date,
+        // :424,436 on a DateTime). A name the documentation lists as a code but this module does not build stays refused.
+        _ if matches!(v, Value::Date(..) | Value::DateTime(_)) && !is_documented_code(code) => {
+            return Err(INVALID_FORMAT_MARK.to_string());
+        }
         _ => return Err(format!("code `<{code}>` on {}", v.describe())),
     };
     Ok(part)
+}
+
+/// A Text formatted with the pinned forms of `<Text>`: `<Text>` alone is the text (text/lt-text-functions/
+/// TextFormatEvaluate.Codeunit.al:48,67, text/lt-label-textbuilder/TxCLabel.al:632,639); `<Text,N>` pads a shorter text with
+/// blanks to N, and a `<Filler Character,C>` right after it pads with C instead (types/lt-ax-text-format-dates/
+/// AxFillerBuilderAutoFormat.al:101-136: `ab` with `<Text,5>` is `ab   `, with `<Filler Char,0>` `ab000`, with `*` `ab***`).
+/// A text longer than N, and `<Text>` with literal text or other codes, are not pinned. `Ok(None)`: no `<Text>` code.
+fn text_template(t: &str, pieces: &[(bool, &str)]) -> Result<Option<String>, String> {
+    let codes: Vec<&str> = pieces.iter().filter(|(c, _)| *c).map(|(_, t)| *t).collect();
+    if !codes.iter().any(|c| *c == "Text" || c.starts_with("Text,")) {
+        return Ok(None);
+    }
+    let refuse = || {
+        Err(format!(
+            "format string: a `<Text>` code in this form on Text '{t}' (not pinned)"
+        ))
+    };
+    if pieces.iter().any(|(c, text)| !c && !text.is_empty()) {
+        return refuse();
+    }
+    let filler = match codes.as_slice() {
+        ["Text"] => return Ok(Some(t.to_string())),
+        [_] => ' ',
+        [_, f] => match f.strip_prefix("Filler Character,") {
+            Some(c) if c.chars().count() == 1 => c.chars().next().unwrap_or(' '),
+            _ => return refuse(),
+        },
+        _ => return refuse(),
+    };
+    let Some(width) = codes[0].strip_prefix("Text,").and_then(|w| w.parse::<usize>().ok()) else {
+        return refuse();
+    };
+    let len = t.chars().count();
+    if len > width {
+        return refuse();
+    }
+    let mut out = t.to_string();
+    out.extend(std::iter::repeat_n(filler, width - len));
+    Ok(Some(out))
+}
+
+/// Whether the name of `code` is one of the codes of the Format documentation (or this module), whatever the value type.
+fn is_documented_code(code: &str) -> bool {
+    let name = code.split_once(',').map_or(code, |(n, _)| n);
+    CODE_NAMES.contains(&name)
+        || matches!(
+            name,
+            "Week" | "Week Year" | "Week Year4" | "Weekday" | "Text" | "Comma" | "Day Of Year" | "Era" | "Second"
+        )
+}
+
+/// The ISO 8601 week number of the day `day` (day 1 is 0001-01-01, a Monday).
+fn iso_week(day: i32) -> i32 {
+    let thursday = day + (4 - ((day - 1).rem_euclid(7) + 1));
+    let (y, _, _) = civil_from_day(thursday);
+    (thursday - crate::format::day_from_civil(y, 1, 1)) / 7 + 1
 }
 
 /// The name `<Month Text>` or `<Weekday Text>` shows.
 fn code_name(base: &str, date: Option<(i32, u32, u32)>, day_no: Option<i32>, language: i32) -> Result<String, String> {
     // The month names follow `GlobalLanguage`: German is pinned (platform/lt-platform-members/PlTSession.al:
     // GlobalLanguage_SetAndRestore, `März`); another language than English and German is not.
-    if language != 1033 && !(language == 1031 && base == "Month Text") {
+    if language != 1033 && language != 1031 {
         return Err(format!("{base} in the language {language} (not pinned)"));
     }
+    let weekday = (day_no.unwrap_or(1) - 1).rem_euclid(7);
     Ok(match (base, date) {
         ("Month Text", Some((_, m, _))) if language == 1031 => MONTHS_DE[m as usize - 1].to_string(),
+        // German weekday names: Monday `Montag` and Thursday `Donnerstag` are pinned (types/lt-format-codes-textbuilder-pagerun-labels/
+        // P144DateTextWidth.al:165-180); the other days are not.
+        (_, Some(_)) if language == 1031 => match weekday {
+            0 => "Montag".to_string(),
+            3 => "Donnerstag".to_string(),
+            _ => {
+                return Err(format!(
+                    "{base} in the language {language} for weekday {} (not pinned)",
+                    weekday + 1
+                ));
+            }
+        },
         ("Month Text", Some((_, m, _))) => MONTHS[m as usize - 1].to_string(),
-        (_, Some(_)) => WEEKDAYS[((day_no.unwrap_or(1) - 1).rem_euclid(7)) as usize].to_string(),
+        (_, Some(_)) => WEEKDAYS[weekday as usize].to_string(),
         _ => String::new(),
     })
 }
@@ -901,9 +1109,20 @@ mod tests {
     fn other_codes_and_values_are_refused() {
         let day = Value::Date(day_from_civil(2024, 3, 7), false);
         for (v, f) in [
-            (day.clone(), "<Hours24,2>"),
-            (day.clone(), "<Day,3>"),
+            (day.clone(), "<Seconds,2>"),
+            (day.clone(), "<Day,5>"),
             (day.clone(), "<Year4"),
+            // Widths no corpus test pins (AjScalars.al:225-327 pins 3 and 4 for the day, 4 for the month, 5 and 4 for the hours).
+            (day.clone(), "<Hours24,2>"),
+            (day.clone(), "<Hours12,5>"),
+            (day.clone(), "<Month,3>"),
+            (day.clone(), "<Filler Character,x><Day,4>"),
+            (Value::DateTime(1), "<Day,3>"),
+            (Value::DateTime(1), "<Hours24,4>"),
+            (Value::DateTime(1), "<Minutes,4>"),
+            (Value::Time(1), "<Hours24,3>"),
+            (Value::Time(1), "<Hours12,5>"),
+            (Value::Time(1), "<Day,3>"),
             (Value::Integer(1), "<Standard Format,x>"),
         ] {
             assert!(matches!(fmt(v, f), Err(Signal::Unsupported(_))), "{f}");
@@ -974,7 +1193,8 @@ mod tests {
         );
         assert_eq!(
             text(fmt(Value::Time(1), "<Hours24,2>:<Minutes,2>:<Seconds,2>")),
-            "00:00:00"
+            // types/lt-variant-time-enum/VariantTextTimeEnumFilter.al:105,120: midnight of a Time is ` 0`.
+            " 0:00:00"
         );
     }
 
@@ -1047,5 +1267,163 @@ mod tests {
             fmt(dt, "<Hours12,2><Filler Character,0>"),
             Err(Signal::Unsupported(_))
         ));
+    }
+    // types/lt-format-week-code/FormatWeekCodeIso.al:21-123 and types/lt-datetime/DateFuncs.al:415-433 (`<Week>`, `<Weekday>`),
+    // types/lt-quarter-duration/FormatQuarterDuration.al:30-110 (`<Quarter>`).
+    #[test]
+    fn week_weekday_and_quarter_codes() {
+        let d = |y, m, dd| Value::Date(day_from_civil(y, m, dd), false);
+        assert_eq!(text(fmt(d(2021, 1, 4), "<Week>")), "1");
+        assert_eq!(text(fmt(d(2021, 1, 4), "<Week,2>")), "01");
+        assert_eq!(text(fmt(d(2020, 12, 31), "<Week,2>")), "53");
+        assert_eq!(text(fmt(d(2021, 1, 3), "<Week>.<Year4>")), "53.2021");
+        assert_eq!(text(fmt(d(2024, 12, 30), "<Week>.<Year4>")), "1.2024");
+        assert_eq!(text(fmt(d(2026, 1, 1), "<Week> <Day> <Month>")), "1 1 1");
+        assert_eq!(text(fmt(d(2021, 1, 3), "<Week>-<Weekday>")), "53-7");
+        assert_eq!(text(fmt(d(2024, 1, 17), "<Weekday>")), "3");
+        assert_eq!(text(fmt(d(2024, 1, 17), "<Week>")), "3");
+        // A week and a weekday no corpus test pins are flagged passes.
+        use crate::assumptions::{Assumption, take_hits};
+        take_hits();
+        assert_eq!(text(fmt(d(2022, 2, 14), "<Week>")), "7");
+        assert_eq!(take_hits(), vec![Assumption::FormatWeekCodeIso]);
+        assert_eq!(text(fmt(d(2022, 2, 14), "<Weekday>")), "1");
+        assert_eq!(take_hits(), vec![Assumption::FormatWeekCodeIso]);
+        assert_eq!(text(fmt(d(2022, 3, 7), "<Week,2>")), "10");
+        assert!(take_hits().is_empty());
+        assert_eq!(text(fmt(d(2026, 5, 15), "<Quarter>/<Year>")), "2/26");
+        assert_eq!(text(fmt(d(2026, 5, 15), "<quarter>")), "2");
+        assert_eq!(text(fmt(d(2026, 5, 15), "<Quarter><Quarter>")), "22");
+        assert_eq!(text(fmt(d(2026, 3, 31), "<Quarter>")), "1");
+        assert_eq!(text(fmt(Value::Date(0, false), "<Quarter>")), "");
+        assert_eq!(
+            text(fmt(Value::Date(day_from_civil(2026, 12, 31), true), "<Quarter>")),
+            "4"
+        );
+    }
+
+    // text/lt-text-functions/TextFormatEvaluate.Codeunit.al:48,67; text/lt-label-textbuilder/TxCLabel.al:632,639;
+    // types/lt-ax-text-format-dates/AxFillerBuilderAutoFormat.al:101-136.
+    #[test]
+    fn text_code_on_a_text() {
+        assert_eq!(text(fmt(t("a b"), "<Text>")), "a b");
+        assert_eq!(text(fmt(t("ab"), "<Text,5>")), "ab   ");
+        assert_eq!(text(fmt(t("ab"), "<Text,5><Filler Character,0>")), "ab000");
+        assert_eq!(text(fmt(t("ab"), "<Text,5><Filler Character,*>")), "ab***");
+        // Cutting a longer text is not pinned.
+        assert!(matches!(fmt(t("abcdefg"), "<Text,5>"), Err(Signal::Unsupported(_))));
+    }
+    // types/lt-datetime/Format.al:134-199 (`<Day,3>`, `<Day Text>`, `<Foo>`), :412-445 (`<Foo>` on a DateTime), :473,499 and
+    // types/lt-duration-sum-typed/DurationSumTyped.al:86,95 (codes on a Duration).
+    #[test]
+    fn day_width_three_and_invalid_codes_on_dates_and_durations() {
+        let d = Value::Date(day_from_civil(2024, 3, 5), false);
+        assert_eq!(text(fmt(d.clone(), "<Day,3>")), "005");
+        for bad in ["<Day Text>", "<Foo>"] {
+            assert!(
+                matches!(fmt(d.clone(), bad), Err(Signal::Error(ref e)) if e.code == "InvalidFormatString"),
+                "{bad}"
+            );
+        }
+        assert!(
+            matches!(fmt(Value::DateTime(1), "<Foo>"), Err(Signal::Error(ref e)) if e.code == "InvalidFormatString")
+        );
+        for bad in ["<Integer Thousand>", "<Hours24,2>:<Minutes,2>"] {
+            let r = fmt(Value::Duration(5_400_000), bad);
+            assert!(
+                matches!(r, Err(Signal::Error(ref e)) if e.code == "InvalidFormatString"),
+                "{bad}"
+            );
+        }
+    }
+    // types/lt-aj-probes/AjScalars.al:225-327 (Format_FillerCharacter_On*): widths and fillers on a Date, a DateTime and a Time.
+    #[test]
+    fn widths_and_fillers_on_dates_datetimes_and_times() {
+        let day = day_from_civil(2024, 3, 5);
+        let clock = ((9 * 60 + 7) * 60 + 2) * 1000 + 123;
+        let dt = Value::DateTime(i64::from(day - 1) * 86_400_000 + clock + 1);
+        let d = Value::Date(day, false);
+        let tm = Value::Time(clock + 1);
+        let invalid =
+            |r: Result<Value, Signal>| matches!(r, Err(Signal::Error(ref e)) if e.code == "InvalidFormatString");
+        for v in [dt.clone(), d.clone()] {
+            assert_eq!(text(fmt(v.clone(), "<Filler Character,0><Day,4>")), "0005");
+            assert_eq!(text(fmt(v.clone(), "<Day,4><Filler Character,0>")), "0005");
+            assert_eq!(
+                text(fmt(v.clone(), "<Filler Character,0><Day,2><Month,4><Year4>")),
+                "0500032024"
+            );
+            assert_eq!(text(fmt(v.clone(), "<Filler Character,#><Day,4>")), "0005");
+            assert_eq!(text(fmt(v.clone(), "<Day,4><Filler Character,0><Month,4>")), "00050003");
+        }
+        assert_eq!(
+            text(fmt(dt.clone(), "<Filler Character,0><Hours24,5><Minutes,5>")),
+            "0000900007"
+        );
+        assert_eq!(text(fmt(dt.clone(), "<Filler Character,*><Hours12,4>")), "0009");
+        assert!(invalid(fmt(d.clone(), "<Filler Character,0><Hours24,5><Minutes,5>")));
+        assert!(invalid(fmt(d.clone(), "<Filler Character,*><Hours12,4>")));
+        for f in [
+            "<Filler Character,0><Day,4>",
+            "<Day,4><Filler Character,0>",
+            "<Filler Character,#><Day,4>",
+        ] {
+            assert!(invalid(fmt(tm.clone(), f)), "{f}");
+        }
+        assert!(invalid(fmt(tm.clone(), "<Day,4><Filler Character,0><Month,4>")));
+        assert!(invalid(fmt(tm.clone(), "<Filler Character,0><Day,2><Month,4><Year4>")));
+        assert_eq!(
+            text(fmt(tm.clone(), "<Filler Character,0><Hours24,5><Minutes,5>")),
+            "    900007"
+        );
+        assert_eq!(text(fmt(tm.clone(), "<Filler Character,*><Hours12,4>")), "   9");
+    }
+    // types/lt-variant-time-enum/VariantTextTimeEnumFilter.al:101-135; types/lt-scalars/ScT70052.al:182,197.
+    #[test]
+    fn hours_and_minutes_of_a_time_and_codes_on_a_byte() {
+        let at = |h: i64, m: i64| Value::Time((h * 60 + m) * 60_000 + 1);
+        assert_eq!(text(fmt(at(0, 0), "<Hours24,2>")), " 0");
+        assert_eq!(text(fmt(at(12, 0), "<Minutes>")), "0");
+        assert_eq!(text(fmt(at(12, 5), "<Minutes>")), "5");
+        assert_eq!(text(fmt(at(12, 10), "<Minutes>")), "10");
+        let r = fmt(Value::Byte(152), "<Integer,6><Filler Character,0>");
+        assert!(
+            matches!(r, Err(Signal::Error(ref e)) if e.code == "InvalidFormatString"),
+            "{r:?}"
+        );
+    }
+    // P144DateTextWidth.al:165-180: German weekday names.
+    #[test]
+    fn german_weekday_names_that_are_pinned() {
+        use super::code_name;
+        let mon = day_from_civil(2027, 3, 15);
+        let tue = mon + 1;
+        assert_eq!(
+            code_name("Weekday Text", Some((2027, 3, 15)), Some(mon), 1031).unwrap(),
+            "Montag"
+        );
+        assert_eq!(
+            code_name("Weekday Text", Some((2027, 3, 18)), Some(mon + 3), 1031).unwrap(),
+            "Donnerstag"
+        );
+        assert!(code_name("Weekday Text", Some((2027, 3, 16)), Some(tue), 1031).is_err());
+    }
+    #[test]
+    fn decimals_of_width_one_on_a_value_with_decimals_is_a_star() {
+        // types/lt-scalars/ScT70051.al:105,115.
+        let d = Value::Decimal("1234567.891".parse().unwrap());
+        assert_eq!(text(fmt(d, "<Integer><Decimals,1>")), "1234567*");
+    }
+    #[test]
+    fn a_blank_filler_character_pads_with_blanks() {
+        // types/lt-scalars/ScT70052.al:83-84,93-94.
+        assert_eq!(
+            text(fmt(Value::Integer(1234567), "<Integer,10><Filler Character, >")),
+            "   1234567"
+        );
+        assert_eq!(
+            text(fmt(Value::Integer(1234567), "<Integer,10><Filler Character,0>")),
+            "0001234567"
+        );
     }
 }

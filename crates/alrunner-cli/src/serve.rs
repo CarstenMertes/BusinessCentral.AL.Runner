@@ -418,6 +418,7 @@ fn run_tests(base: &TestArgs, fields: &Map<String, Value>, ctx: &mut WarmCtx, fl
     flags.running.store(true, Ordering::SeqCst);
     ctx.report = None;
     ctx.used = None;
+    ctx.timings = None;
     let started = std::time::Instant::now();
     // A panic anywhere in a request ends the request, not the server; what is kept is dropped, as it may be inconsistent.
     let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run::test_with(&args, Some(ctx))));
@@ -445,6 +446,7 @@ fn run_tests(base: &TestArgs, fields: &Map<String, Value>, ctx: &mut WarmCtx, fl
             let code = if cancelled { 130 } else { code };
             let mut warnings = warnings;
             warnings.extend(report.warnings.iter().cloned());
+            let wall = started.elapsed();
             let mut summary = json!({
                 "type": "summary",
                 "exitCode": code,
@@ -452,8 +454,11 @@ fn run_tests(base: &TestArgs, fields: &Map<String, Value>, ctx: &mut WarmCtx, fl
                 "notRun": doc["notRun"], "total": doc["total"],
                 "cached": ctx.used == Some(al_testrun::runtime::WarmUse::Reused),
                 "protocolVersion": 2,
-                "wallSeconds": started.elapsed().as_secs_f64(),
+                "wallSeconds": wall.as_secs_f64(),
             });
+            if let Some(t) = &ctx.timings {
+                summary["timings"] = timings_json(t, wall);
+            }
             if ctx.used == Some(al_testrun::runtime::WarmUse::Updated) {
                 // Only the code of some routines changed: only those objects were compiled again.
                 summary["incremental"] = json!(true);
@@ -478,6 +483,9 @@ fn run_tests(base: &TestArgs, fields: &Map<String, Value>, ctx: &mut WarmCtx, fl
                             line[key] = v.clone();
                         }
                     }
+                    if let Some(pass) = ctx.timings.as_ref().and_then(|t| t.passes.get(k)) {
+                        line["timings"] = json!({"resetMs": ms(pass.reset), "wallMs": ms(pass.wall)});
+                    }
                     for w in c["warnings"].as_array().into_iter().flatten().filter_map(Value::as_str) {
                         let shown = id.as_str().map_or_else(|| id.to_string(), String::from);
                         warnings.push(format!("entry `{shown}`: {w}"));
@@ -499,6 +507,36 @@ fn run_tests(base: &TestArgs, fields: &Map<String, Value>, ctx: &mut WarmCtx, fl
             out(&summary);
         }
     }
+}
+
+/// Milliseconds, to a tenth.
+fn ms(d: std::time::Duration) -> f64 {
+    (d.as_secs_f64() * 10_000.0).round() / 10.0
+}
+
+/// The `timings` of a summary (al-runner issue 5856): where the request spent its wall time `wall`, by phase. `otherMs`
+/// is the rest (reading the request, the report, the output).
+fn timings_json(t: &run::RequestTimings, wall: std::time::Duration) -> Value {
+    let known = t.setup + t.compile + t.engine + t.baseline + t.tests + t.coverage;
+    let mut v = json!({
+        "setupMs": ms(t.setup),
+        "compileMs": ms(t.compile),
+        "engineMs": ms(t.engine),
+        "baselineMs": ms(t.baseline),
+        "testsMs": ms(t.tests),
+        "coverageMs": ms(t.coverage),
+        "otherMs": ms(wall.saturating_sub(known)),
+    });
+    if let Some(source) = t.baseline_source {
+        v["baselineSource"] = json!(source);
+    }
+    if t.engine_kept {
+        v["engineKept"] = json!(true);
+    }
+    if t.passes.len() == 1 {
+        v["resetMs"] = json!(ms(t.passes[0].reset));
+    }
+    v
 }
 
 /// The object keywords of AL: a `code` that starts with one (after white space and comments) is a whole object.

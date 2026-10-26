@@ -1857,34 +1857,38 @@ fn function_isolation_also_rolls_back_a_failed_test() {
     assert_eq!(o[1].1, Outcome::Pass, "{o:?}");
 }
 
-// Nothing pins what Disabled leaves behind, so every test of the codeunit is refused.
+// Under a runner's TestIsolation = Disabled the probe's T5 fails, as under Codeunit (corpus PR 735: the rows of runner
+// 61304 for "Isol Probe Fixture").
 #[test]
-fn disabled_isolation_is_refused_for_every_test() {
+fn disabled_isolation_keeps_the_database_between_tests() {
     let o = outcomes_isolated(PROBE, TestIsolation::Disabled);
-    assert_eq!(o.len(), 7);
-    assert!(
-        o.iter()
-            .all(|(_, x)| matches!(x, Outcome::NotRun(w) if w.contains("Disabled"))),
-        "{o:?}"
+    let passes: Vec<_> = o.iter().map(|(n, x)| (n.as_str(), *x == Outcome::Pass)).collect();
+    assert_eq!(
+        passes,
+        vec![
+            ("T1", true),
+            ("T2", true),
+            ("T3", true),
+            ("T4", true),
+            ("T5", false),
+            ("T6", true),
+            ("T7", true)
+        ]
     );
 }
 
-// What a Commit() inside a test does under Function isolation is not pinned: the test that
-// would depend on it is refused, and the next test still starts from the OnRun state.
+// A Commit() inside a test under a runner's TestIsolation = Function is rolled back with the test (corpus PR 735,
+// IsolProbeCommit.Codeunit.al C1-C3 under runner 61300).
 #[test]
-fn a_commit_inside_a_function_isolated_test_is_refused_and_still_rolled_back() {
+fn a_commit_inside_a_function_isolated_test_is_rolled_back() {
     let src = with_rows(
             "codeunit 60102 T { Subtype = Test;
                 [Test] procedure Commits() var R: Record S; begin R.K := 'A'; R.Insert(); Commit(); end;
                 [Test] procedure Next() var R: Record S; begin if R.Count() <> 0 then Error('rows left: %1', R.Count()); end; }",
         );
     let o = outcomes_isolated(&src, TestIsolation::Function);
-    assert!(
-        matches!(&o[0].1, Outcome::NotRun(w) if w.contains("Commit") && w.contains("Function")),
-        "{o:?}"
-    );
+    assert_eq!(o[0].1, Outcome::Pass, "{o:?}");
     assert_eq!(o[1].1, Outcome::Pass, "{o:?}");
-    // Under Codeunit isolation the same Commit is the pinned default behaviour.
     let o = outcomes_isolated(&src, TestIsolation::Codeunit);
     assert_eq!(o[0].1, Outcome::Pass, "{o:?}");
 }
@@ -2227,17 +2231,14 @@ codeunit 60161 T
 }"#;
 
 // A filter set after the last row and the Read that raises are pinned (errors/lt-ms-refusals-131/
-// P131QuerySetRangeAfterRead.al:154-170); only the Open after the last row rests on query-closed-after-last-row.
+// P131QuerySetRangeAfterRead.al:154-170), and so is the Open after the last row (query/lt-query-read-to-end/QueryReadToEnd.al:88-200):
+// neither test is flagged.
 #[test]
-fn only_an_open_after_the_last_row_is_flagged() {
+fn an_open_after_the_last_row_is_not_flagged() {
     let hits = assumptions_of(QUERY_AFTER_LAST_ROW);
     let of = |n: &str| hits.iter().find(|(t, _)| t == n).map(|(_, h)| h.clone());
     assert_eq!(of("FilterAfterTheEndThenRead"), None, "{hits:?}");
-    assert_eq!(
-        of("FilterAfterTheEndThenOpen"),
-        Some(vec!["query-closed-after-last-row"]),
-        "{hits:?}"
-    );
+    assert_eq!(of("FilterAfterTheEndThenOpen"), None, "{hits:?}");
 }
 
 // The lowering can mark a statement as resting on an assumption (`Lowerer::assume`, `Stmt::Assume`): the test is flagged only when the

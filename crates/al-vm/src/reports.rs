@@ -2230,14 +2230,10 @@ impl Session {
         'rows: while more {
             iterations += 1;
             // The CalcFields property: the listed FlowFields of the row, before its triggers. Pinned for one field of a
-            // top-level item (misc/lt-probes-needed-8/PnH3Link.al:CalcFields_Property_CalculatesTheFlowField); a nested
-            // item or a list of several fields is the same on an assumption.
+            // top-level item (misc/lt-probes-needed-8/PnH3Link.al:CalcFields_Property_CalculatesTheFlowField) and for two
+            // fields of a nested item a report extension adds (report/lt-aq/AqTests.al:184 CalcFields_ExtensionDataItem_Values);
+            // a listed field that is not a FlowField fails the run (AqTests.al:197 CalcFields_NormalField_Run).
             if !item.calc_fields.is_empty() {
-                if item.parent.is_some() || item.calc_fields.len() > 1 {
-                    al_builtins::assumptions::assume(
-                        al_builtins::assumptions::Assumption::ReportItemCalcFieldsNestedOrList,
-                    );
-                }
                 self.calc_fields(&rec, &item.calc_fields)?;
             }
             if run.dataset {

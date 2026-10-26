@@ -33,6 +33,9 @@ pub struct BackupProvider {
     identity: Option<String>,
     /// How the open went and what reads cost, for `--timings`.
     cost: Cost,
+    /// The company's sequences, read from the catalog when first asked: every session asks (al-runner issue 5856), and
+    /// the backup does not change while it is open.
+    sequences: std::sync::OnceLock<Vec<TestSequence>>,
 }
 
 #[derive(Default)]
@@ -210,6 +213,7 @@ impl BackupProvider {
             source: file_name,
             identity: None,
             cost: Cost::default(),
+            sequences: std::sync::OnceLock::new(),
         })
     }
 
@@ -379,10 +383,12 @@ impl TableProvider for BackupProvider {
     }
 
     fn sequences(&self) -> Vec<TestSequence> {
-        match self.src.sequences() {
-            Ok(all) => all.iter().filter_map(|s| sequence_of(s, &self.sql_company)).collect(),
-            Err(_) => Vec::new(),
-        }
+        self.sequences
+            .get_or_init(|| match self.src.sequences() {
+                Ok(all) => all.iter().filter_map(|s| sequence_of(s, &self.sql_company)).collect(),
+                Err(_) => Vec::new(),
+            })
+            .clone()
     }
 
     fn read(&self, req: &TableRequest) -> Result<Arc<TableRows>, TableError> {

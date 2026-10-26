@@ -305,7 +305,7 @@ al-deps        dependency apps: .alpackages, Microsoft artifact feed, cache, pac
 - `faultsite.rs` (57): Where a refusal or a failure was raised, for `al-test-cli --explain`. Entry: `FaultFrame` 14, `trace_faults` 23, `fault_site` 30, `note_fault` 40.
 - `filterpage.rs` (268): FilterPageBuilder. Entry: `filter_page_builder_op` 64.
 - `flowfields.rs` (623): FlowFields (`CalcFormula`), FlowFilters, `CalcFields`, `CalcSums` and `SetAutoCalcFields`.
-- `geturl.rs` (230): `GetUrl` for `ClientType::Web` with a company, an object, a record bookmark or filters (ADR-042). Entry: `Session::get_url`.
+- `geturl.rs` (230): `GetUrl` for `ClientType::Web`, Default, Windows, Phone, Tablet, Desktop, Background, Management and NAS with a company, an object, a record bookmark or filters (ADR-042). Entry: `Session::get_url`.
 - `globaltriggers.rs` (225): The events of the platform codeunit `Global Triggers` (2000000002, in the platform `System.app`). Entry: `global_setup` 63, `global_enabled` 142, `global_trigger` 157.
 - `hostvalues.rs` (259): Builtins that answer from the host (ADR-006). Entry: `datetime_of_unix_millis` 26, `Replaced` 142.
 - `impact.rs` (95): The per-test record for the impact index (`Session::enable_impact_trace`, `take_impact_trace`, `Touches`): events raised (also with no subscriber), tables used and written, pages and reports used. Noted in `dispatch::publish`, `records::table_event`, `records::record_op`, the page events, `pages::page_instance`, `reports::report_schema`.
@@ -356,6 +356,7 @@ al-deps        dependency apps: .alpackages, Microsoft artifact feed, cache, pac
 - `reports.rs` (1209): Report objects at run time: dataset walk, triggers, request page, `Report.SaveAs` and the dataset rows. Entry: `report_builtin` 80, `first_use` 314, `report_save_as` 936, `dataset_begin` 1109.
 - `sessionops.rs` (422): Builtins that act on session state. Entry: `Sequence` 11.
 - `sqlcount.rs` (530): The model behind `SqlStatementsExecuted` / `SqlRowsRead`: record methods logged after the first read, segments between two reads sized (`sized`: nine measured shapes right after a Commit, N = 1, 2, 5, 10, 20) or classified by sign against the pinned sequences (session/lt-bl-sql-counters/SqlCounters.al), a new epoch for anything else; `guard` refuses a builtin given a counter value. Entry: `SqlCounters::read`, `enter`, `leave`, `guard`.
+- `tasks.rs` (110): `TaskScheduler.CreateTask`, `TaskExists`, `CancelTask`, `SetTaskReady`: the tasks of the running transaction (a rollback drops them; a task whose creation was committed is refused). Entry: `Session::task_scheduler_op`, `Tasks`.
 - `testdata.rs` (420): Test data (ADR-020): `TestBacking` maps a provider's columns onto the compiled table's fields, rebuilds the values and builds the table once per thread. Entry: `TestBacking`, `convert`, `sql_name`.
 - `transactions.rs` (446): Transactions as AL code sees them. Entry: `TxModel` 15, `CommitBehavior` 27, `codeunit_run` 193.
 - `ui.rs` (347): Dialogs raised by the code under test (`Message`, `Confirm`, `StrMenu`) and the test handler functions that answer them. Entry: `UiKind` 18, `UiHandler` 66, `dispatch_ui` 158, `dispatch_ui_returning` 163.

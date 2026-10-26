@@ -310,6 +310,15 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
         // `'00000000-0000-0000-0000-000000000000'`; the system-id tests use the braced form).
         (Value::Text(s) | Value::Code(s), T::Guid) => match parse_guid(&s) {
             Some(g) => Value::Guid(g),
+            // The empty text and a text with a character that is no hex digit, brace or dash raise
+            // (platform/lt-platform-members/PlTGuid.al:190-203 Assignment_FromText: `nonsense` and ''). Other malformed
+            // texts are not pinned.
+            None if s.is_empty() || s.chars().any(|c| !(c.is_ascii_hexdigit() || "{}-".contains(c))) => {
+                return raise(
+                    "Invalid format of GUID string. The correct format of the GUID string is: CDEF7890-ABCD-0123-1234-567890ABCDEF where 0-9, A-F symbolizes hexadecimal digits.",
+                    "InvalidGuidFormat",
+                );
+            }
             None => return unsupported(format!("text `{s}` into a Guid (error text not pinned yet)")),
         },
         // An Option converts to an Enum by its ordinal, with or without `AssignmentCompatibility`, blank member
@@ -2204,7 +2213,10 @@ mod tests {
         assert!(
             matches!((&braced, &plain), (Value::Guid(a), Value::Guid(b)) if a == b && a[0] == 0x11 && a[15] == 0x55)
         );
-        assert!(matches!(g("not a guid"), Err(Signal::Unsupported(_))));
+        // platform/lt-platform-members/PlTGuid.al:190-203: a text with a character no guid has raises; a malformed text of
+        // guid characters is not pinned.
+        assert!(matches!(g("not a guid"), Err(Signal::Error(e)) if e.code == "InvalidGuidFormat"));
+        assert!(matches!(g("1234-ABCD"), Err(Signal::Unsupported(_))));
         assert!(matches!(
             convert(
                 Value::Code("11111111-1111-1111-1111-111111111111".into()),

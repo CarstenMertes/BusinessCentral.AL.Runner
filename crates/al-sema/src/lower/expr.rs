@@ -92,6 +92,11 @@ impl Lowerer<'_> {
         };
         let slot = crate::base_access::slot_of(&ast, items, name)
             .ok_or_else(|| format!("`{name}` has no slot in the {noun} it extends"))?;
+        if decl.type_ref().as_ref().and_then(textconst_languages).is_some() {
+            return Err(format!(
+                "`{name}`: a TextConst of the {noun} it extends with texts in several languages (not lowered)"
+            ));
+        }
         let label = decl.type_ref().as_ref().and_then(label_text);
         Ok((slot, ty, label))
     }
@@ -724,6 +729,12 @@ impl Lowerer<'_> {
                     }),
                     _ => Err("`this.<variable of the base>` in this extension (what BC raises is not pinned)".into()),
                 },
+                Some(Res::Local(name)) if self.local_textconst_languages.contains_key(&name) => {
+                    textconst_read(&self.local_textconst_languages[&name])
+                }
+                Some(Res::Global(name)) if self.global_textconst_languages.contains_key(&name) => {
+                    textconst_read(&self.global_textconst_languages[&name])
+                }
                 Some(Res::Local(name)) if self.local_labels.contains_key(&name) => {
                     let text = self.local_labels[&name].clone();
                     let plain = self.local_textconsts.contains(&name) || self.local_locked_labels.contains(&name);
@@ -985,4 +996,23 @@ pub(crate) fn is_string_literal(node: &SyntaxNode) -> bool {
             .children_with_tokens()
             .filter_map(|e| e.into_token())
             .any(|t| t.kind() == SyntaxKind::StringLit)
+}
+
+/// A read of a TextConst whose text depends on the language in force: `System.TextConstText#1` with its language codes and
+/// texts in declaration order, which picks the text when it runs (misc/lt-probe-requests-140/P140TextConstLang.al).
+fn textconst_read(texts: &[(String, String)]) -> L<ir::Expr> {
+    Ok(ir::Expr::Builtin {
+        id: super::call::builtin_id("System.TextConstText#1")?,
+        receiver: None,
+        args: texts
+            .iter()
+            .flat_map(|(lang, text)| {
+                [
+                    ir::Arg::Value(ir::Expr::Const(ir::Const::Text(lang.clone()))),
+                    ir::Arg::Value(ir::Expr::Const(ir::Const::Text(text.clone()))),
+                ]
+            })
+            .collect(),
+        ret_used: true,
+    })
 }

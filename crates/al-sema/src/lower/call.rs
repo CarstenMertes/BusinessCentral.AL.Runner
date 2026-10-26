@@ -370,8 +370,16 @@ impl Lowerer<'_> {
                     "System.EvaluateOptionField#1".to_string()
                 } else if id == "System.Evaluate#1"
                     && args.first().is_some_and(|a| {
+                        // An element of an Option array variable reads as the variable does: an unknown name answers false
+                        // and keeps the element (misc/lt-probes-needed-3/PnC14OptionArray.al:51-78,
+                        // OptionArray_Evaluate_And_Out_Of_Range).
+                        let var = if a.kind() == SyntaxKind::IndexExpr {
+                            a.children().next()
+                        } else {
+                            Some(a.clone())
+                        };
                         matches!(self.ty_of(a), Ty::Option(_))
-                            && matches!(self.res(a), Some(Res::Local(_) | Res::Global(_)))
+                            && var.is_some_and(|v| matches!(self.res(&v), Some(Res::Local(_) | Res::Global(_))))
                     })
                 {
                     "System.EvaluateVariableOption#1".to_string()

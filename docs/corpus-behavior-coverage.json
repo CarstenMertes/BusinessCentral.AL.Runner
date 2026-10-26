@@ -15892,7 +15892,7 @@
         "code": "DateInvalid",
         "file": "crates/al-builtins/src/datefns.rs",
         "generic": false,
-        "line": 277,
+        "line": 252,
         "pinned": true,
         "site": "errors/lt-ms-refusals-131/P131EvalScalars.al:376",
         "template": "The date is not valid."
@@ -15901,7 +15901,7 @@
         "code": "DateInvalid",
         "file": "crates/al-builtins/src/datefns.rs",
         "generic": false,
-        "line": 351,
+        "line": 279,
         "pinned": true,
         "site": "errors/lt-ms-refusals-131/P131EvalScalars.al:376",
         "template": "The date is not valid."
@@ -15910,7 +15910,7 @@
         "code": "DateInvalid",
         "file": "crates/al-builtins/src/datefns.rs",
         "generic": false,
-        "line": 370,
+        "line": 353,
         "pinned": true,
         "site": "errors/lt-ms-refusals-131/P131EvalScalars.al:376",
         "template": "The date is not valid."
@@ -15919,7 +15919,16 @@
         "code": "DateInvalid",
         "file": "crates/al-builtins/src/datefns.rs",
         "generic": false,
-        "line": 395,
+        "line": 372,
+        "pinned": true,
+        "site": "errors/lt-ms-refusals-131/P131EvalScalars.al:376",
+        "template": "The date is not valid."
+      },
+      {
+        "code": "DateInvalid",
+        "file": "crates/al-builtins/src/datefns.rs",
+        "generic": false,
+        "line": 397,
         "pinned": true,
         "site": "errors/lt-ms-refusals-131/P131EvalScalars.al:376",
         "template": "The date is not valid."
@@ -15928,7 +15937,7 @@
         "code": "Evaluate",
         "file": "crates/al-builtins/src/evaluate.rs",
         "generic": false,
-        "line": 1705,
+        "line": 1748,
         "pinned": true,
         "site": "codeunit/TestCrossAppDispatch.al:61",
         "template": "Evaluate"
@@ -15937,7 +15946,7 @@
         "code": "",
         "file": "crates/al-builtins/src/evaluate.rs",
         "generic": false,
-        "line": 1708,
+        "line": 1751,
         "pinned": true,
         "site": "codeunit/TestCrossAppDispatch.al:61",
         "template": "Evaluate"
@@ -15991,7 +16000,7 @@
         "code": "InvalidOperation",
         "file": "crates/al-builtins/src/json.rs",
         "generic": false,
-        "line": 2336,
+        "line": 2365,
         "pinned": true,
         "site": "json/JsonObjectBasics.al:377",
         "template": "The requested operation cannot be performed in this context."
@@ -16000,7 +16009,7 @@
         "code": "InvalidValue",
         "file": "crates/al-builtins/src/mathfns.rs",
         "generic": false,
-        "line": 85,
+        "line": 94,
         "pinned": true,
         "site": "misc/lt-probes-needed-2/PnBDateFormat.al:404",
         "template": "The supplied value is not valid."
@@ -16009,7 +16018,7 @@
         "code": "AL:Overflow",
         "file": "crates/al-builtins/src/mathfns.rs",
         "generic": false,
-        "line": 115,
+        "line": 124,
         "pinned": true,
         "site": "misc/lt-probes-needed-2/PnBErrorsCollections.al:585",
         "template": "Value was either too large or too small for a Decimal."
@@ -16063,7 +16072,7 @@
         "code": "InvalidOperation",
         "file": "crates/al-builtins/src/native.rs",
         "generic": false,
-        "line": 782,
+        "line": 784,
         "pinned": true,
         "site": "codeunit/TestInterfaceRuntimeContracts.al:85",
         "template": "Interface not initialized"
@@ -16072,7 +16081,7 @@
         "code": "AL:DivideByZero",
         "file": "crates/al-builtins/src/ops.rs",
         "generic": false,
-        "line": 536,
+        "line": 544,
         "pinned": true,
         "site": "errors/lt-az-error-texts/AzErrorTexts.al:533",
         "template": "Attempted to divide by zero."
@@ -16081,7 +16090,7 @@
         "code": "NotSupportedOperation",
         "file": "crates/al-builtins/src/ops.rs",
         "generic": false,
-        "line": 650,
+        "line": 658,
         "pinned": true,
         "site": "collections/lt-cs-odd-leads/CsCollections.al:220",
         "template": "The requested operation is not supported."
@@ -16090,7 +16099,7 @@
         "code": "AL:DivideByZero",
         "file": "crates/al-builtins/src/ops.rs",
         "generic": false,
-        "line": 781,
+        "line": 789,
         "pinned": true,
         "site": "errors/lt-az-error-texts/AzErrorTexts.al:533",
         "template": "Attempted to divide by zero."
@@ -16099,7 +16108,7 @@
         "code": "InvalidTime",
         "file": "crates/al-builtins/src/ops.rs",
         "generic": false,
-        "line": 965,
+        "line": 973,
         "pinned": true,
         "site": "misc/lt-probes-needed-6/PnF31TimeArithmetic.al:81",
         "template": "Adding to an undefined (0T) time."
@@ -16108,7 +16117,7 @@
         "code": "InvalidTime",
         "file": "crates/al-builtins/src/ops.rs",
         "generic": false,
-        "line": 1029,
+        "line": 1037,
         "pinned": true,
         "site": "misc/lt-probes-needed-6/PnF31TimeArithmetic.al:116",
         "template": "Subtracting from an undefined (0T) time."
@@ -16117,19 +16126,10 @@
         "code": "InvalidTime",
         "file": "crates/al-builtins/src/ops.rs",
         "generic": false,
-        "line": 1032,
+        "line": 1040,
         "pinned": true,
         "site": "misc/lt-probes-needed-6/PnF31TimeArithmetic.al:115",
         "template": "Subtracting an undefined (0T) time."
-      },
-      {
-        "code": "AL:Overflow",
-        "file": "crates/al-builtins/src/ops.rs",
-        "generic": false,
-        "line": 1057,
-        "pinned": true,
-        "site": "errors/lt-error-handling/ErTRuntimeErrors.al:97",
-        "template": "Arithmetic operation resulted in an overflow."
       },
       {
         "code": "AL:Overflow",
@@ -16141,10 +16141,19 @@
         "template": "Arithmetic operation resulted in an overflow."
       },
       {
+        "code": "AL:Overflow",
+        "file": "crates/al-builtins/src/ops.rs",
+        "generic": false,
+        "line": 1073,
+        "pinned": true,
+        "site": "errors/lt-error-handling/ErTRuntimeErrors.al:97",
+        "template": "Arithmetic operation resulted in an overflow."
+      },
+      {
         "code": "AL:DivideByZero",
         "file": "crates/al-builtins/src/ops.rs",
         "generic": false,
-        "line": 1089,
+        "line": 1110,
         "pinned": true,
         "site": "errors/lt-az-error-texts/AzErrorTexts.al:533",
         "template": "Attempted to divide by zero."
@@ -16153,7 +16162,7 @@
         "code": "AL:DivideByZero",
         "file": "crates/al-builtins/src/ops.rs",
         "generic": false,
-        "line": 1114,
+        "line": 1135,
         "pinned": true,
         "site": "errors/lt-az-error-texts/AzErrorTexts.al:533",
         "template": "Attempted to divide by zero."
@@ -16162,7 +16171,7 @@
         "code": "AL:Overflow",
         "file": "crates/al-builtins/src/ops.rs",
         "generic": false,
-        "line": 1168,
+        "line": 1189,
         "pinned": true,
         "site": "errors/lt-error-handling/ErTRuntimeErrors.al:97",
         "template": "Arithmetic operation resulted in an overflow."
@@ -16171,7 +16180,7 @@
         "code": "AL:Overflow",
         "file": "crates/al-builtins/src/ops.rs",
         "generic": false,
-        "line": 1173,
+        "line": 1194,
         "pinned": true,
         "site": "errors/lt-error-handling/ErTRuntimeErrors.al:97",
         "template": "Arithmetic operation resulted in an overflow."
@@ -16180,7 +16189,7 @@
         "code": "DateInvalid",
         "file": "crates/al-builtins/src/ops.rs",
         "generic": false,
-        "line": 1220,
+        "line": 1241,
         "pinned": true,
         "site": "errors/lt-ms-refusals-131/P131EvalScalars.al:376",
         "template": "The date is not valid."
@@ -16531,7 +16540,7 @@
         "code": "RenameArgument",
         "file": "crates/al-vm/src/records.rs",
         "generic": false,
-        "line": 4187,
+        "line": 4204,
         "pinned": true,
         "site": "recordref/lt-refs/RfTWrite.al:223",
         "template": "The number of field arguments does not match the primary key size."
@@ -16672,8 +16681,8 @@
         "template": "Invalid expression of type: table view.%%"
       }
     ],
-    "pinned": 88,
-    "sites": 90
+    "pinned": 89,
+    "sites": 91
   },
   "language": {
     "bc": "27-29",

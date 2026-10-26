@@ -24,6 +24,7 @@ impl Lowerer<'_> {
         self.locals.clear();
         self.local_labels.clear();
         self.local_textconsts.clear();
+        self.local_textconst_languages.clear();
         self.local_locked_labels.clear();
         self.local_var_attrs.clear();
         self.tys.clear();
@@ -119,6 +120,9 @@ impl Lowerer<'_> {
                 }
                 if is_textconst(v.type_ref().as_ref()) {
                     self.local_textconsts.insert(n.to_lowercase());
+                }
+                if let Some(texts) = v.type_ref().as_ref().and_then(textconst_languages) {
+                    self.local_textconst_languages.insert(n.to_lowercase(), texts);
                 }
                 if v.type_ref().as_ref().is_some_and(label_locked) {
                     self.local_locked_labels.insert(n.to_lowercase());

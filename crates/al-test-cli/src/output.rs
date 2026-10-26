@@ -181,14 +181,19 @@ mod tests {
     fn a_flagged_pass_is_still_a_pass_in_junit_and_lists_its_ids() {
         let marks = |c: &CaseId| {
             if c.name == "a" {
-                vec![Assumption::TextDigitsToInteger, Assumption::NextWholeDecimal]
+                vec![
+                    Assumption::TextDigitsToInteger,
+                    Assumption::CodeCoverageSnapshotWhileLogging,
+                ]
             } else {
                 Vec::new()
             }
         };
         let xml = junit_with(&oracle(), &outcome, &|_| 0.0, &marks, None);
         assert!(
-            xml.contains(r#"<property name="assumptions" value="text-digits-to-integer,next-whole-decimal" />"#),
+            xml.contains(
+                r#"<property name="assumptions" value="text-digits-to-integer,code-coverage-snapshot-while-logging" />"#
+            ),
             "{xml}"
         );
         // The same cases pass and fail as without the property.

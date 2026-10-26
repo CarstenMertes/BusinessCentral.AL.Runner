@@ -141,14 +141,17 @@ mod tests {
 
     #[test]
     fn rank_counts_flagged_passes_and_other_tests_and_orders_by_flagged() {
-        let a = [Assumption::TextDigitsToInteger, Assumption::NextWholeDecimal];
-        let b = [Assumption::NextWholeDecimal];
+        let a = [
+            Assumption::TextDigitsToInteger,
+            Assumption::CodeCoverageSnapshotWhileLogging,
+        ];
+        let b = [Assumption::CodeCoverageSnapshotWhileLogging];
         let c: [Assumption; 0] = [];
         let rows = rank([(true, &a[..]), (true, &b[..]), (false, &b[..]), (true, &c[..])]);
         assert_eq!(rows.len(), 2);
         assert_eq!(
             (rows[0].assumption, rows[0].flagged, rows[0].other),
-            (Assumption::NextWholeDecimal, 2, 1)
+            (Assumption::CodeCoverageSnapshotWhileLogging, 2, 1)
         );
         assert_eq!(
             (rows[1].assumption, rows[1].flagged, rows[1].other),
@@ -156,7 +159,7 @@ mod tests {
         );
         let text = render_top(&rows, 1);
         assert!(
-            text.contains("next-whole-decimal") && !text.contains("text-digits-to-integer"),
+            text.contains("code-coverage-snapshot-while-logging") && !text.contains("text-digits-to-integer"),
             "{text}"
         );
         assert!(text.contains("... 1 more"), "{text}");
@@ -166,8 +169,11 @@ mod tests {
     #[test]
     fn id_list_joins_the_ids() {
         assert_eq!(
-            id_list(&[Assumption::TextDigitsToInteger, Assumption::NextWholeDecimal]),
-            "text-digits-to-integer,next-whole-decimal"
+            id_list(&[
+                Assumption::TextDigitsToInteger,
+                Assumption::CodeCoverageSnapshotWhileLogging
+            ]),
+            "text-digits-to-integer,code-coverage-snapshot-while-logging"
         );
     }
 
@@ -187,7 +193,10 @@ mod tests {
             text.contains("text-digits-to-integer  (3 flagged passes, 1 other tests)"),
             "{text}"
         );
-        assert!(text.contains("next-whole-decimal  (not hit in the last run)"), "{text}");
+        assert!(
+            text.contains("code-coverage-snapshot-while-logging  (not hit in the last run)"),
+            "{text}"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

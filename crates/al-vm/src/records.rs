@@ -3611,11 +3611,21 @@ impl Session {
             RecordOp::Next => {
                 let steps = match args.first() {
                     Some(Value::Integer(n)) => *n,
-                    // A whole-number Decimal (`Calendar.Next(12 / CountFrequency)`); a fraction would round or
-                    // truncate, which is not pinned.
+                    // A whole-number Decimal steps like the Integer (`Calendar.Next(12 / CountFrequency)`); one with a fraction
+                    // raises and leaves the row (misc/lt-probes-needed-6/PnF11DateDecimalArithmetic.al:119-187,
+                    // Next_Decimal_Whole: 1, 2, -1, -2, 12 / 4, 0, 20 past the end; Next_Decimal_Fraction: 1.5, -1.5, 0.4, ...).
                     Some(Value::Decimal(d)) if d.fract().is_zero() && i32::try_from(d.trunc()).is_ok() => {
-                        al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::NextWholeDecimal);
                         i32::try_from(d.trunc()).unwrap_or(0)
+                    }
+                    Some(Value::Decimal(d)) if !d.fract().is_zero() => {
+                        return Err(Signal::Error(Box::new(AlError {
+                            message: format!(
+                                "Overflow under conversion of Microsoft.Dynamics.Nav.Runtime.Decimal18 value {d} to System.Int32."
+                            ),
+                            code: "ConversionCast".into(),
+                            call_stack: String::new(),
+                            ..Default::default()
+                        })));
                     }
                     None => 1,
                     other => return unsupported(format!("Next({})", other.describe())),
@@ -3845,12 +3855,19 @@ impl Session {
                         })));
                     }
                     // record/TestFilterTextBooleanFindContracts.al:130 (SetFilter_BooleanField_UnknownWord_Throws).
+                    // A leading blank stays in the quoted filter (misc/lt-system-functions/EvalLastError.al:501-539,
+                    // BT_Evaluate_Boolean_LeadingBlank `filter [ Da]`); a trailing one is not pinned.
                     Err(e) if e.starts_with(al_builtins::filter::INVALID_BOOLEAN) => {
                         let word = &e[al_builtins::filter::INVALID_BOOLEAN.len()..];
+                        if text.ends_with(char::is_whitespace) {
+                            return unsupported(
+                                "the error of a Boolean filter with a trailing blank (its quoted filter is not pinned)",
+                            );
+                        }
                         return Err(Signal::Error(Box::new(AlError {
                             message: format!(
                                 "The filter \"{}\" is not valid for the {} field on the {} table. The value \"{word}\" can't be evaluated into type Boolean.",
-                                text.trim(),
+                                text,
                                 self.field_caption(&t, pos),
                                 self.caption(&t)
                             ),

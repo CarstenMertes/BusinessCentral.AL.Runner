@@ -676,6 +676,40 @@ fn guid(text: &str) -> Result<Parsed, Signal> {
     Ok(Parsed::Value(Value::Guid(out)))
 }
 
+/// `Evaluate` into a Byte or a Char (types/lt-scalars/ScT70055.al:205-249, EvaluateByte_Char; misc/lt-system-functions/
+/// EvalLastError.al:342-343): one character is its code (`0` is 48, `x`, `A`); a number of two or more characters (`255`,
+/// `256`, `-1`, `65`, `70000`) and, for a Char, the empty text are rejected. Every other text is not pinned and is refused.
+fn byte_or_char(target: &Value, text: &str) -> Result<Parsed, Signal> {
+    let mut chars = text.chars();
+    if let (Some(ch), None) = (chars.next(), chars.next()) {
+        return match target {
+            Value::Byte(_) => match u8::try_from(u32::from(ch)) {
+                Ok(b) if ch.is_ascii() => Ok(Parsed::Value(Value::Byte(b))),
+                _ => unsupported(format!(
+                    "Evaluate of `{text}` into a Byte (only an ASCII character is pinned)"
+                )),
+            },
+            _ => match u16::try_from(u32::from(ch)) {
+                Ok(c) if ch.is_ascii() => Ok(Parsed::Value(Value::Char(c))),
+                _ => unsupported(format!(
+                    "Evaluate of `{text}` into a Char (only an ASCII character is pinned)"
+                )),
+            },
+        };
+    }
+    let digits = text.strip_prefix('-').unwrap_or(text);
+    if text.len() >= 2 && !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()) {
+        return Ok(Parsed::Rejected);
+    }
+    if text.is_empty() && matches!(target, Value::Char(_)) {
+        return Ok(Parsed::Rejected);
+    }
+    unsupported(format!(
+        "Evaluate of `{text}` into a {} (not pinned)",
+        target.describe()
+    ))
+}
+
 /// Number 0: the inverse of `Format(Date)` as the runtime formats it (`MM/DD/YY`,
 /// docs/probes-needed.md); a two-digit year below 50 is 20yy and from 50 on 19yy. Number 9: ISO `yyyy-MM-dd`.
 /// `today` is the host's current day, for the text `T`.
@@ -1528,6 +1562,7 @@ fn evaluate_with_max(
         Value::Duration(_) => duration(&text, number)?,
         Value::Boolean(_) => boolean(&text, number)?,
         Value::Guid(_) => guid(&text)?,
+        Value::Byte(_) | Value::Char(_) if number == 0 => byte_or_char(&a[0], &text)?,
         // Every number but 9 reads a Date as the default does (types/lt-datetime/Evaluate.al:Date_Other_Formats `fmt 1` to `fmt 8`,
         // `fmt 10`, `fmt -1`; errors/lt-ms-refusals-130/P130EvaluateDate.al:P130_EvaluateDate_EveryFormat_*).
         Value::Date(..) => date(
@@ -1687,6 +1722,14 @@ fn evaluate_with_max(
             let by_name = members.iter().position(|m| m.eq_ignore_ascii_case(t));
             match (t.parse::<usize>().ok().filter(|n| *n < members.len()), by_name) {
                 (Some(n), _) | (None, Some(n)) => Parsed::Value(Value::Option(n as i32, members.clone())),
+                // A platform option without an OptionCaption rejects a number past its members, as far as measured:
+                // TableConnectionType 5 to 10 (misc/W5TableConnections.al:117-136, TableConnectionType_Members), ExecutionMode
+                // 2 to 12 (misc/lt-probes-needed-3/PnC11SystemEnums.al:13-52, ExecutionMode_Members). Larger numbers are not pinned.
+                _ if crate::sysenum::rejected_number_past_members(members)
+                    .is_some_and(|last| t.parse::<usize>().is_ok_and(|n| (members.len()..=last).contains(&n))) =>
+                {
+                    Parsed::Rejected
+                }
                 // An OptionCaption may name it (fieldref/TestPrecompiledFieldOptionCaption.al:Evaluate_Caption_SelectsThatMember);
                 // the value does not carry the captions.
                 _ => {
@@ -1764,12 +1807,23 @@ fn evaluate_with_max(
                         .bytes()
                         .all(|b| b.is_ascii_digit() || matches!(b, b'-' | b'.' | b'/'))) =>
         {
-            crate::native::raise(
-                format!(
-                    "The format of the Date '{text}' does not match your device's date settings.\\\\Make sure that the day, month, and year are in the correct order and use the correct separator (such as - or /). Alternatively, you can always use the format 'yyyy-mm-dd'."
+            // In German (misc/lt-system-functions/EvalLastError.al:463-481, BT_Evaluate_DottedDate_Language1031). Another
+            // language is not pinned.
+            match c.language() {
+                1033 => crate::native::raise(
+                    format!(
+                        "The format of the Date '{text}' does not match your device's date settings.\\\\Make sure that the day, month, and year are in the correct order and use the correct separator (such as - or /). Alternatively, you can always use the format 'yyyy-mm-dd'."
+                    ),
+                    "Evaluate",
                 ),
-                "Evaluate",
-            )
+                1031 => crate::native::raise(
+                    format!(
+                        "Das Format Date \u{201e}{text}\u{201c} stimmt nicht mit den Datumseinstellungen Ihres Ger\u{e4}ts \u{fc}berein.\\\\Stellen Sie sicher, dass Tag, Monat und Jahr die richtige Reihenfolge aufweisen und das richtige Trennzeichen verwendet wird (z. b. - oder /). Alternativ k\u{f6}nnen Sie das Format \u{201e}jjjj-mm-tt\u{201c} verwenden."
+                    ),
+                    "Evaluate",
+                ),
+                n => unsupported(format!("the Evaluate error of a Date in the language {n} (not pinned)")),
+            }
         }
         // With format 9 (types/lt-datetime/Evaluate.al:640-661 `eval 3000000000 fmt 9`). With another format it is not pinned.
         Parsed::Rejected if matches!(a[0], Value::Duration(_)) && number == 9 => crate::native::raise(

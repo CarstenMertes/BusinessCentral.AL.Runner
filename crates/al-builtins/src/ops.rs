@@ -259,10 +259,18 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
                     Err(_) if matches!(v, Value::Decimal(_)) => return cast_error("Int64"),
                     Err(_) => return unsupported(format!("{d} overflows BigInteger")),
                 },
-                T::Byte => Value::Byte(
-                    u8::try_from(d.mantissa() / 10i128.pow(d.scale()))
-                        .or_else(|_| unsupported(format!("{d} overflows Byte")))?,
-                ),
+                // An Integer beyond a Byte raises (misc/lt-probes-needed-2/PnBErrorsCollections.al:560-562, 582-583,
+                // Arithmetic_ErrorTexts `byteOverflow`: 300). Other sources are not pinned.
+                T::Byte => match u8::try_from(d.mantissa() / 10i128.pow(d.scale())) {
+                    Ok(b) => Value::Byte(b),
+                    Err(_) if matches!(v, Value::Integer(_)) => {
+                        return raise(
+                            format!("Overflow under conversion of System.Int32 value {d} to System.Byte."),
+                            "ConversionCast",
+                        );
+                    }
+                    Err(_) => return unsupported(format!("{d} overflows Byte")),
+                },
                 T::Char => Value::Char(
                     u16::try_from(d.mantissa() / 10i128.pow(d.scale()))
                         .or_else(|_| unsupported(format!("{d} overflows Char")))?,
@@ -1046,9 +1054,9 @@ fn arith_general(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
             return Ok(V::Integer(a - b));
         }
         // A whole-number Decimal adds days like an Integer (`StartDate + Days` with `Days: Decimal` holding
-        // `(EndDate - StartDate + 1) div 2` in Base Application's Phys. Invt. Count.-Management). A fraction
-        // would round or truncate: not pinned, so it stays refused below. Pinned for a whole Decimal: corpus
-        // record/lt-record-conversion-assumptions/DateDecimalWhole.al:P98_DatePlusMinusWholeDecimal.
+        // `(EndDate - StartDate + 1) div 2` in Base Application's Phys. Invt. Count.-Management). Pinned for a whole Decimal:
+        // corpus record/lt-record-conversion-assumptions/DateDecimalWhole.al:P98_DatePlusMinusWholeDecimal. A fraction raises
+        // (the next arm).
         (V::Date(a, c), n) if matches!(op, Arith::Add | Arith::Sub) && whole_days(n).is_some() => {
             // The result stays within 0001-01-01 and 9999-12-31, an undefined date takes no days, and the sum of days is
             // computed in 32 bits (Arithmetic.al:Date_Arithmetic_Errors, Date_Plus_Minus_Integer `af39`, `af41`).
@@ -1068,6 +1076,19 @@ fn arith_general(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
                 return date_invalid();
             }
             return Ok(V::Date(sum, *c));
+        }
+        // A defined Date plus or minus a Decimal with a fraction raises; a subtraction names the negated amount
+        // (misc/lt-probes-needed-6/PnF11DateDecimalArithmetic.al:57-117, DatePlusDecimal: 2.5, 0.4, -0.5, 12 / 5 as `2.4`;
+        // DateMinusDecimal: D - 2.5 names `-2.5`, D - -2.5 names `2.5`). A Decimal before the Date and the undefined date are
+        // not pinned.
+        (V::Date(a, _), V::Decimal(d)) if matches!(op, Arith::Add | Arith::Sub) && *a > 0 && !d.fract().is_zero() => {
+            let d = if op == Arith::Sub { -*d } else { *d };
+            return raise(
+                format!(
+                    "Overflow under conversion of Microsoft.Dynamics.Nav.Runtime.Decimal18 value {d} to System.Int32."
+                ),
+                "ConversionCast",
+            );
         }
         _ => {}
     }
@@ -1467,6 +1488,11 @@ fn compare_general(l: &Value, r: &Value) -> Result<Ordering, Signal> {
     if let (Some(a), Some(b)) = (crate::native::text_of(l), crate::native::text_of(r)) {
         return Ok(a.cmp(&b));
     }
+    match (l, r) {
+        (V::Guid(a), V::Text(t) | V::Code(t)) => return Ok(a.cmp(&guid_of_text(t.as_str())?)),
+        (V::Text(t) | V::Code(t), V::Guid(b)) => return Ok(guid_of_text(t.as_str())?.cmp(b)),
+        _ => {}
+    }
     Ok(match (l, r) {
         (V::Boolean(a), V::Boolean(b)) => a.cmp(b),
         (V::Date(a, ca), V::Date(b, cb)) => (a, ca).cmp(&(b, cb)),
@@ -1539,6 +1565,29 @@ fn compare_general(l: &Value, r: &Value) -> Result<Ordering, Signal> {
         }
         _ => return unsupported(format!("comparison of {} and {r}", l.describe(), r = r.describe())),
     })
+}
+
+/// The Guid a text stands for when it is compared with a Guid, in either order (misc/lt-cx-odd-leads/CxScalars.al:203-230,
+/// Guid_ComparedWithText: the braced form, the form without braces and lower case digits compare as that Guid). A text that
+/// is no Guid raises InvalidGuidFormat: pinned for the empty text, `garbage` (:203-230) and `abc` (:233-267,
+/// Guid_ComparedWithLiterals), so it is raised for a text with fewer than 32 hex digits, which no form of a Guid has. The
+/// other forms (32 digits, parentheses, blanks around) are not pinned for a comparison and are refused.
+fn guid_of_text(t: &str) -> Result<[u8; 16], Signal> {
+    if t.bytes().filter(u8::is_ascii_hexdigit).count() < 32 {
+        return crate::native::raise(
+            "Invalid format of GUID string. The correct format of the GUID string is: CDEF7890-ABCD-0123-1234-567890ABCDEF where 0-9, A-F symbolizes hexadecimal digits.",
+            "InvalidGuidFormat",
+        );
+    }
+    let inner = t.strip_prefix('{').and_then(|i| i.strip_suffix('}')).unwrap_or(t);
+    if inner.len() == 36 {
+        if let Some(Value::Guid(g)) = crate::evaluate::read_text(&crate::value::RtType::Guid, inner) {
+            return Ok(g);
+        }
+    }
+    unsupported(format!(
+        "a Guid compared with the text `{t}` (only the braced and the plain 36 character forms are pinned)"
+    ))
 }
 
 /// Whether two primary keys are the same value for value.

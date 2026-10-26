@@ -183,6 +183,15 @@ impl Lowerer<'_> {
     /// does not model (no corpus test uses one; Base Application's chart pages pass theirs to a `var`
     /// parameter).
     pub(crate) fn control_add_in(&self, n: &SyntaxNode) -> Option<String> {
+        // Only a node whose text starts with `CurrPage.` can name one: look at its first token before the text of the whole
+        // node is built (this runs for every argument of every call).
+        let first = n
+            .descendants_with_tokens()
+            .filter_map(|e| e.into_token())
+            .find(|t| !matches!(t.kind(), SyntaxKind::Whitespace | SyntaxKind::Newline))?;
+        if first.text() != "CurrPage" {
+            return None;
+        }
         let text = n.text().to_string();
         let name = text
             .trim()

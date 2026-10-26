@@ -45,7 +45,9 @@ serde_json.workspace = true
 toml.workspace = true
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
-mimalloc = { version = "0.1", optional = true }
+# mimalloc 2, not 3 (the crate's default): with 3 the VM's text and record loops cost 1 to 4 % more instructions
+# (perf_vm) and the cold compile 1 % more; with 2 every budget is lower than with the system allocator.
+mimalloc = { version = "0.1", optional = true, features = ["v2"] }
 
 [dev-dependencies]
 tempfile = "3"

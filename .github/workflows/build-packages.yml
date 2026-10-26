@@ -58,20 +58,15 @@ jobs:
           - target: x86_64-unknown-linux-musl
             os: ubuntu-latest
             ext: tar.xz
-            # musl's allocator is slow, so this build links mimalloc (ADR-016).
-            features: --features mimalloc
           - target: aarch64-unknown-linux-musl
             os: ubuntu-24.04-arm
             ext: tar.xz
-            features: --features mimalloc
           - target: x86_64-pc-windows-msvc
             os: windows-latest
             ext: zip
-            features: ""
           - target: aarch64-apple-darwin
             os: macos-14
             ext: tar.xz
-            features: ""
     steps:
       - uses: actions/checkout@v4
         with:
@@ -84,6 +79,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: package-${{ matrix.target }}
+      # Every build links mimalloc (the default feature of alrunner-cli; musl's allocator is slow, ADR-016).
       - name: Install the musl C compiler (for mimalloc)
         if: endsWith(matrix.target, '-unknown-linux-musl')
         run: |
@@ -92,7 +88,7 @@ jobs:
           echo "CC_$(echo '${{ matrix.target }}' | tr '-' '_')=musl-gcc" >> "$GITHUB_ENV"
       - name: Build
         shell: bash
-        run: cargo build --release --locked -p alrunner-cli --target ${{ matrix.target }} ${{ matrix.features }}
+        run: cargo build --release --locked -p alrunner-cli --target ${{ matrix.target }}
       - name: Smoke test
         shell: bash
         run: |

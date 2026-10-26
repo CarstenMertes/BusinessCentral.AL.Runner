@@ -14,10 +14,6 @@ use std::process::ExitCode;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-#[cfg(all(feature = "mimalloc", not(target_family = "wasm")))]
-#[global_allocator]
-static ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
-
 /// The server base address of a corpus run (ADR-042, decided without owner review 2026-10-20).
 const CORPUS_SERVER_URL: &str = "http://bcserver:8080/BC";
 

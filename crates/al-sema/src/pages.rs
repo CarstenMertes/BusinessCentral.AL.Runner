@@ -517,31 +517,68 @@ pub fn expand(src: &str, symbols: &BTreeSet<String>) -> Option<String> {
 /// subtract them to give the author's lines).
 pub fn expand_ranges(src: &str, symbols: &BTreeSet<String>) -> Option<(String, Vec<(usize, usize)>)> {
     match expand_or_parse(src, symbols) {
-        Expansion::Expanded(text, ranges) => Some((text, ranges)),
+        Expansion::Expanded(text, ranges, _) => Some((text, ranges)),
         Expansion::Unchanged(_) => None,
     }
 }
 
 /// What [`expand_or_parse`] found.
 pub enum Expansion {
-    /// The text with the synthetic routines added, and the byte ranges of the added text (as [`expand_ranges`]).
-    Expanded(String, Vec<(usize, usize)>),
+    /// The text with the synthetic routines added, the byte ranges of the added text (as [`expand_ranges`]), and the
+    /// parse of that text.
+    Expanded(String, Vec<(usize, usize)>, al_syntax::Parse),
     /// Nothing to add: the parse of the text as it is. A parse is a function of the text and the symbols, so this is
     /// the tree a parse of the file gives, and the caller need not parse the file again.
     Unchanged(al_syntax::Parse),
 }
 
-/// [`expand_ranges`], keeping the parse when nothing is added: every file the workspace parses at load goes through
-/// here first, and most add nothing.
+/// [`expand_ranges`] with the parse of the result: every file the workspace parses at load goes through here first, and
+/// most add nothing. When routines are added, only they are parsed and put into the tree of the file
+/// ([`al_syntax::splice_routines`]); the text is parsed again only when that cannot be shown to give its tree.
 pub fn expand_or_parse(src: &str, symbols: &BTreeSet<String>) -> Expansion {
-    let parse = crate::workspace::with_tree_cache(|cache| al_syntax::parse_with_cache(src, symbols, cache));
-    match expansion(src, &parse) {
-        Some((text, ranges)) => Expansion::Expanded(text, ranges),
-        None => Expansion::Unchanged(parse),
+    use crate::workspace::with_tree_cache;
+    let parse = with_tree_cache(|cache| al_syntax::parse_with_cache(src, symbols, cache));
+    let Some(inserts) = expansion(src, &parse) else {
+        return Expansion::Unchanged(parse);
+    };
+    let mut text = src.to_string();
+    for (at, added) in inserts.iter().rev() {
+        text.insert_str(*at, added);
     }
+    // Each insert moves by the length of the ones before it.
+    let mut moved = 0;
+    let ranges = inserts
+        .iter()
+        .map(|(at, added)| {
+            let r = (at + moved, at + moved + added.len());
+            moved += added.len();
+            r
+        })
+        .collect();
+    let pieces: Vec<(usize, &str)> = inserts.iter().map(|(at, added)| (*at, added.as_str())).collect();
+    let spliced = with_tree_cache(|cache| al_syntax::splice_routines(src, &parse, &pieces, symbols, cache));
+    let full = || with_tree_cache(|cache| al_syntax::parse_with_cache(&text, symbols, cache));
+    let parse = match spliced {
+        Some(spliced) => {
+            // Debug builds (the test suites) check every splice against the parse it stands for.
+            #[cfg(debug_assertions)]
+            {
+                let whole = full();
+                assert!(
+                    spliced.green == whole.green && spliced.errors == whole.errors,
+                    "the spliced tree differs from the parse of the expanded text"
+                );
+            }
+            spliced
+        }
+        None => full(),
+    };
+    Expansion::Expanded(text, ranges, parse)
 }
 
-fn expansion(src: &str, parse: &al_syntax::Parse) -> Option<(String, Vec<(usize, usize)>)> {
+/// The text to add to `src` (whose parse is `parse`) as (offset in `src`, text), in offset order, or `None` when nothing
+/// is added.
+fn expansion(src: &str, parse: &al_syntax::Parse) -> Option<Vec<(usize, String)>> {
     let root = ast::SourceFile::cast(parse.syntax())?;
     let mut inserts: Vec<(usize, String)> = Vec::new();
     for obj in root.objects() {
@@ -653,21 +690,7 @@ fn expansion(src: &str, parse: &al_syntax::Parse) -> Option<(String, Vec<(usize,
         return None;
     }
     inserts.sort_by_key(|(at, _)| *at);
-    let mut out = src.to_string();
-    for (at, text) in inserts.iter().rev() {
-        out.insert_str(*at, text);
-    }
-    // Each insert moves by the length of the ones before it.
-    let mut added = 0;
-    let ranges = inserts
-        .iter()
-        .map(|(at, text)| {
-            let r = (at + added, at + added + text.len());
-            added += text.len();
-            r
-        })
-        .collect();
-    Some((out, ranges))
+    Some(inserts)
 }
 
 /// The `column` sections of a report or reportextension dataset, in source order.
@@ -1543,7 +1566,13 @@ mod tests {
         }
         let page = "table 50101 T { fields { field(1; K; Code[10]) { } } }\npage 50102 P { SourceTable = T; layout { area(Content) { field(K; Rec.K) { Visible = Flag; } } } var Flag: Boolean; }";
         match expand_or_parse(page, &symbols) {
-            Expansion::Expanded(text, ranges) => assert_eq!(Some((text, ranges)), expand_ranges(page, &symbols)),
+            Expansion::Expanded(text, ranges, parse) => {
+                // The routines were spliced into the first parse: the tree is the parse of the expanded text.
+                let again = al_syntax::parse(&text, &symbols);
+                assert_eq!(parse.green, again.green);
+                assert_eq!(parse.errors, again.errors);
+                assert_eq!(Some((text, ranges)), expand_ranges(page, &symbols));
+            }
             Expansion::Unchanged(_) => panic!("Visible = Flag is expanded"),
         }
     }

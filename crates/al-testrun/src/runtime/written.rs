@@ -269,6 +269,31 @@ pub(crate) fn unfinished_reach_facts(
     walk_reach(events, lowered, index, object, routine, true)
 }
 
+/// The facts of the routines `routines` themselves, without what they reach: for a set of routines that ran, which
+/// holds every routine the run called (`install::login_work_date`). What a routine's body names counts whether or not
+/// the run took that branch.
+pub(crate) fn routines_facts(
+    events: &al_vm::events::Registry,
+    lowered: &Lowered,
+    index: &ReachIndex,
+    routines: &[(usize, usize)],
+) -> ReachFacts {
+    let mut walk = Walk {
+        events,
+        lowered,
+        index,
+        out: ReachFacts::default(),
+        seen: BTreeSet::new(),
+        entered: BTreeSet::new(),
+        stack: Vec::new(),
+        global_triggers: false,
+    };
+    for &(o, r) in routines {
+        walk.routine(o, r);
+    }
+    walk.out
+}
+
 fn walk_reach(
     events: &al_vm::events::Registry,
     lowered: &Lowered,

@@ -29,6 +29,16 @@ pub struct Baseline {
     /// codeunit's OnRun added to (al-testrun run.rs, runner 130450) keeps the set of the baseline it started from. A
     /// company BC creates holds the install rows, not those. Not part of the bytes: such a baseline stays on its thread.
     pub install_rows: Option<std::collections::BTreeSet<u32>>,
+    /// Names what the baseline holds: baselines with the same origin hold the same data. Each baseline made gets a
+    /// number of its own; [`Baseline::with_origin`] gives a copy read from another's bytes that one's.
+    origin: u64,
+}
+
+static NEXT_ORIGIN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+/// An origin no other baseline of the process has.
+fn new_origin() -> u64 {
+    NEXT_ORIGIN.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
 /// The first bytes of a snapshot: what it is and which layout it has. A change of the layout changes the last digit.
@@ -189,6 +199,7 @@ impl Baseline {
             workspace_installs,
             company_built,
             install_rows: None,
+            origin: new_origin(),
         })
     }
 
@@ -201,6 +212,18 @@ impl Baseline {
                 .store
                 .with_backing(std::rc::Rc::new(crate::testdata::TestBacking::new(engine, td.clone())));
         }
+        self
+    }
+
+    /// The number that names what the baseline holds ([`Session::baseline_origin`]).
+    pub fn origin(&self) -> u64 {
+        self.origin
+    }
+
+    /// This baseline, read from the bytes of the baseline with origin `origin` ([`Baseline::to_bytes`]), as holding
+    /// what that one holds: the two share the origin.
+    pub fn with_origin(mut self, origin: u64) -> Baseline {
+        self.origin = origin;
         self
     }
 
@@ -239,6 +262,7 @@ impl Session {
             workspace_installs: None,
             company_built: false,
             install_rows: None,
+            origin: new_origin(),
         }
     }
 
@@ -285,6 +309,15 @@ impl Session {
         self.last_stamp = b.last_stamp.min(self.now_millis());
         self.baseline_rows = b.install_rows.clone().unwrap_or_else(|| b.nonempty_tables());
         self.company_built = b.company_built;
+        self.baseline_origin = Some((b.origin, self.store.change_counter()));
+    }
+
+    /// The origin of the baseline the session started from ([`Session::restore_baseline`]), while no table changed
+    /// since: the session's database then holds what that baseline holds (the rows of untouched tables come from the
+    /// store's backing, which [`al_data::memory::MemStore::backing_identity`] names). `None` otherwise.
+    pub fn baseline_origin(&self) -> Option<u64> {
+        let (origin, counter) = self.baseline_origin?;
+        self.store.tables_changed_since(counter).is_empty().then_some(origin)
     }
 }
 
@@ -331,6 +364,7 @@ mod tests {
             workspace_installs: Some(vec![([50000_u32, 50001].into_iter().collect(), "why".to_string())]),
             company_built: true,
             install_rows: None,
+            origin: new_origin(),
         }
     }
 

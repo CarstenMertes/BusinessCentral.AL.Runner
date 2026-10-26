@@ -262,7 +262,7 @@ pub(crate) fn run_codeunit_core(
         // Base Application's login code sets WorkDate when the session opens the company (`install::login_work_date`).
         // It runs before the workspace's own Company Triggers subscribers: the order of the two is not pinned
         // (docs/probes-needed.md, WorkDate row).
-        if let Err(why) = crate::install::login_work_date(lowered, &mut session) {
+        if let Err(why) = crate::install::login_work_date(engine, lowered, &mut session) {
             return all(Outcome::NotRun(why));
         }
         match crate::install::test_session_company_open(lowered, &mut session) {

@@ -219,7 +219,11 @@ pub struct TestData {
     /// One slot per table. A thread that finds the slot empty reads the table; one that arrives
     /// meanwhile waits for it, and reads of other tables go on in parallel.
     reads: Arc<Mutex<HashMap<String, Arc<OnceLock<Read>>>>>,
+    /// A number no other test data of the process has, shared by the clones: the same id means the same rows.
+    pub id: u64,
 }
+
+static NEXT_TEST_DATA_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
 impl std::fmt::Debug for TestData {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -233,6 +237,7 @@ impl TestData {
             provider,
             stats: Arc::new(LoadStats::default()),
             reads: Arc::default(),
+            id: NEXT_TEST_DATA_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         }
     }
 

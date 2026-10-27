@@ -123,6 +123,9 @@ pub struct Engine {
     pub(crate) object_facts: Vec<ir::ObjectFacts>,
     /// The same for each field of each table object, by field position.
     pub(crate) field_facts: Vec<Vec<ir::FieldFacts>>,
+    /// Per table object, the positions of the fields `RecordRef.FieldCount` and `FieldIndex` enumerate, in their order
+    /// (`refs.rs` `enumerable_fields`), worked out on first use: they depend on the program alone (al-runner issue 5911).
+    pub(crate) enumerable_fields: Vec<std::sync::OnceLock<Box<[usize]>>>,
     /// Names this engine among all those the process built: state shared between sessions of one
     /// engine is keyed by it.
     pub uid: u64,
@@ -337,6 +340,7 @@ impl Engine {
                     .collect()
             })
             .collect();
+        let enumerable_fields = (0..program.objects.len()).map(|_| Default::default()).collect();
         let mut unevaluable_init = std::collections::HashMap::new();
         for (i, o) in program.objects.iter().enumerate() {
             for (pos, f) in o.table.iter().flat_map(|t| t.fields.iter().enumerate()) {
@@ -386,6 +390,7 @@ impl Engine {
             table_facts,
             object_facts,
             field_facts,
+            enumerable_fields,
             uid: NEXT_ENGINE_UID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             delete_subscribed: Default::default(),
             profile_seeds: Default::default(),
@@ -433,6 +438,7 @@ impl Engine {
             profile_seeds: _,
             delete_subscribed: _,
             positions_by_object: _,
+            enumerable_fields: _,
             served_tables: _,
             derived: _,
             install_facts: _,

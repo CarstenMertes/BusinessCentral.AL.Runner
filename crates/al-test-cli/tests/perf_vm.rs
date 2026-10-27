@@ -1,9 +1,10 @@
-//! The VM speed budget (ADR-031): instructions per iteration of six small programs that run in the interpreter.
+//! The VM speed budget (ADR-031): instructions per iteration of seven small programs that run in the interpreter.
 //!
 //! The programs are the test codeunits of `tests/vm-bench` (our own AL code): an Integer loop, a Decimal loop, a procedure
-//! call, text builtins, math builtins and record operations. Each runs on one thread; the test counts the user-space
-//! instructions that thread executes while the tests of the codeunit run (`perf_event_open`), subtracts what an empty test
-//! codeunit costs (the session and the engine), and divides by the iterations. Instructions, not seconds: they do not move
+//! call, text builtins, math builtins, record operations and `RecordRef.FieldIndex` on a table with FlowFields. Each runs
+//! on one thread; the test counts the user-space instructions that thread executes while the tests of the codeunit run
+//! (`perf_event_open`), subtracts what an empty test codeunit costs (the session and the engine), and divides by the
+//! iterations. Instructions, not seconds: they do not move
 //! with the load of the machine, so the budget can be tight (10 % over the value of the day it was set) and still not flap.
 //!
 //! Where the kernel does not allow the counter (a virtual machine without a PMU, `perf_event_paranoid` above 2) the test
@@ -39,7 +40,8 @@ struct Bench {
 /// Limits: the measured value of the day plus 10 % (instructions), and three times the CPU time of this machine (fallback).
 /// Each fast path of ADR-031 that merges lowers them. CallLoop, TextLoop and BuiltinLoop were set on 2026-10-19 from 2295,
 /// 5342 and 5697 (spare value vectors for calls, the short path of a builtin whose operands are all values); the others
-/// are older and lower than their value plus 10 %.
+/// are older and lower than their value plus 10 %. FieldIndex was set on 2026-10-27 from 4331 (al-runner issue 5911: the
+/// order of a table's fields worked out once, not on every call; it was 38861 before).
 const BENCHES: &[Bench] = &[
     Bench {
         name: "IntLoop",
@@ -82,6 +84,13 @@ const BENCHES: &[Bench] = &[
         iterations: 15_000,
         limit_instructions: 16261,
         limit_cpu_ns: 9500,
+    },
+    Bench {
+        name: "FieldIndex",
+        codeunit: 70008,
+        iterations: 24_000,
+        limit_instructions: 4764,
+        limit_cpu_ns: 1000,
     },
 ];
 const EMPTY: u32 = 70001;

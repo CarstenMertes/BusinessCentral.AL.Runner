@@ -1495,12 +1495,16 @@ mod pool {
         let pool = std::sync::Arc::new(Pool::default());
         lock(&pool.state).target = 1;
         assert_eq!(pool.reserve(), 1, "one standby is starting");
-        // The first session waits for the standby that is starting (nothing deposits it in this test).
+        // The first session waits for the standby that is starting.
         let first = {
             let pool = pool.clone();
-            std::thread::spawn(move || pool.take(Duration::from_secs(2)).is_some())
+            std::thread::spawn(move || pool.take(Duration::from_secs(12)).is_some())
         };
-        std::thread::sleep(Duration::from_millis(100));
+        let until = std::time::Instant::now() + Duration::from_secs(10);
+        while lock(&pool.state).waiting != 1 {
+            assert!(std::time::Instant::now() < until, "the first session never waited");
+            std::thread::sleep(Duration::from_millis(1));
+        }
         // A second session must not wait for the same one.
         let began = std::time::Instant::now();
         assert!(pool.take(Duration::from_secs(2)).is_none());
@@ -1509,6 +1513,8 @@ mod pool {
             "the second session waited {:?}",
             began.elapsed()
         );
+        // The start fails: the first session stops waiting and starts its own.
+        pool.deposit(Err("test".into()));
         assert!(!first.join().unwrap(), "nothing was deposited");
     }
 }

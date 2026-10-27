@@ -992,7 +992,14 @@ impl Rec<'_> {
             },
             "Session" => match method {
                 "BindSubscription" | "UnbindSubscription" => self.out.state_writes |= BINDING,
-                "StartSession" | "SetDocumentServiceToken" => self.out.state_writes |= OTHER,
+                // Under Disabled isolation the session runs its codeunit to its end inside the call (al-vm bgsession.rs):
+                // what that can change is what a run of the codeunit can (a superset: its own session state is not the
+                // caller's). Elsewhere the call raises or is refused and changes nothing.
+                "StartSession" => match args.get(1) {
+                    Some(Arg::Value(Expr::Const(Const::Integer(n)))) => self.enter_by_id(ObjKind::Codeunit, *n),
+                    _ => self.unknown(|| format!("{name} with a codeunit id known only at run time")),
+                },
+                "SetDocumentServiceToken" => self.out.state_writes |= OTHER,
                 _ => {}
             },
             "SessionSettings" if method == "RequestSessionUpdate" => self.out.state_writes |= LANGUAGE,

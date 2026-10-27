@@ -354,6 +354,18 @@ pub trait Ctx: FormatCtx {
     fn hub_disabled(&self) -> bool {
         false
     }
+    /// `StartSession(var SessionId, CodeunitId [, Company [, var Record]])` under Disabled test isolation: runs the
+    /// codeunit's OnRun in a new session to its end and commits what it wrote; the new session's id.
+    fn start_background_session(
+        &mut self,
+        _codeunit: i32,
+        _company: Option<String>,
+        _record: Option<Value>,
+    ) -> Result<i32, Signal> {
+        Err(Signal::Unsupported(
+            "StartSession: a second session is not modelled in this context".into(),
+        ))
+    }
     /// `Error(ErrorInfo)` of a collectible error: inside a `[ErrorBehavior(Collect)]` scope the
     /// session keeps a copy and the call returns normally (`true`); outside one it is raised like
     /// any other error (`false`).
@@ -552,8 +564,8 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("TaskScheduler.CanCreateTask#1", |_, _, _| Ok(Value::Boolean(false))),
     // CreateTask, TaskExists, CancelTask and SetTaskReady keep the session's tasks: `Ctx::session_op` (al-vm tasks.rs).
     ("Session.StartSession#1", start_session),
-    ("Session.StartSession#2", start_session),
-    ("Session.StartSession#3", start_session),
+    ("Session.StartSession#2", start_session_timeout),
+    ("Session.StartSession#3", start_session_timeout),
     ("Text.CopyStr#1", copystr),
     ("Text.StrSubstNo#1", strsubstno),
     ("Text.UpperCase#1", uppercase),
@@ -2075,8 +2087,19 @@ fn variant_2_time(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) ->
 /// ALSession.ALStartSessionAsyncImpl. In a test run under TestIsolation = Codeunit it raises the
 /// refusal below, also for the overload with a record, and `SessionId` stays 0
 /// (session/TestStartSessionRecord.al:StartSession_FromATestCodeunit_IsRefusedUnderCodeunitIsolation).
+/// Under Disabled test isolation the session runs to its end inside the call (`Ctx::start_background_session`).
 /// Anywhere else a session would start, which this runtime does not do: refused.
-fn start_session(c: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
+fn start_session(c: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
+    start_session_of(c, args, false)
+}
+
+/// `StartSession` with a Timeout (the overloads `#2` and `#3`): as [`start_session`], but refused where a session would
+/// start, as no probe measures one with a Timeout.
+fn start_session_timeout(c: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
+    start_session_of(c, args, true)
+}
+
+fn start_session_of(c: &mut dyn Ctx, args: &mut [Value], timeout: bool) -> Result<Value, Signal> {
     if c.install_scope() {
         return Ok(if c.ret_used() {
             Value::Boolean(false)
@@ -2084,17 +2107,34 @@ fn start_session(c: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]) -> Res
             Value::Null
         });
     }
-    // Under Disabled isolation BC starts the session, it runs and its writes are seen: on the TestRunnerHub under
-    // RequiredTestIsolation = Disabled (codeunit/lt-qu-commit-isolation/RqIsolationModes.al:573-600, al-runner issue 5609)
-    // and under a test runner codeunit's TestIsolation = Disabled or none (corpus PR 735,
-    // tests/al-language-isolation-probe/src/SdIsolStartSession.Codeunit.al:20-22); a second session is not modelled.
-    // Under Function it fails as under Codeunit (RqIsolationModes.al:454-462; SdIsolStartSession.Codeunit.al:20-21).
+    // Under Disabled isolation BC starts the session, it ends and its committed writes are seen: on the TestRunnerHub under
+    // RequiredTestIsolation = Disabled (codeunit/lt-qu-commit-isolation/RqIsolationModes.al:101-128, :585-614 RQ_D03,
+    // RQ_D04 on BC 28 and later: start_ok, a positive id, session_ended, session_row) and under a test runner codeunit's
+    // TestIsolation = Disabled or none (tests/al-language-isolation-probe/src/SdIsolStartSession.Codeunit.al:22-30,
+    // :38-63). The session runs to its end inside the call (`Ctx::start_background_session`, which refuses what no probe
+    // measures). Under Function it fails as under Codeunit (RqIsolationModes.al:454-462; SdIsolStartSession.Codeunit.al:20-21).
     if c.in_test_run() && c.hub_disabled() {
-        return unsupported(
-            "StartSession in a test codeunit run under Disabled test isolation (--isolation disabled, or \
-             RequiredTestIsolation = Disabled with --isolation required): BC starts the session there, and a second \
-             session is not modelled",
-        );
+        // Only the overload without a Timeout is measured: SessionId, CodeunitId, [Company, [Record]].
+        if timeout {
+            return unsupported("StartSession with a Timeout under Disabled test isolation (not pinned)");
+        }
+        let Some(Value::Integer(codeunit)) = args.get(1).cloned() else {
+            return unsupported("StartSession with a codeunit id that is not an integer");
+        };
+        let company = match args.get(2) {
+            None => None,
+            Some(_) => Some(text_arg(args, 2)?.to_string()),
+        };
+        let record = args.get(3).cloned();
+        let session = c.start_background_session(codeunit, company, record)?;
+        if let Some(slot) = args.first_mut() {
+            *slot = Value::Integer(session);
+        }
+        return Ok(if c.ret_used() {
+            Value::Boolean(true)
+        } else {
+            Value::Null
+        });
     }
     if c.in_test_run() {
         return Err(Signal::Error(Box::new(AlError {

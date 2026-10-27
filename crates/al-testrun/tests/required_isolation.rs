@@ -291,7 +291,8 @@ codeunit 50662 "Later Reader"
 
 // StartSession in a test raises TestStartSessionNotAllowed under a runner's TestIsolation = Codeunit
 // (session/TestStartSessionRecord.al) and under RequiredTestIsolation = Function on the TestRunnerHub
-// (RqIsolationModes.al:454-462). Under Disabled BC starts the session (:573-600), which is not modelled: refused.
+// (RqIsolationModes.al:454-462). Under Disabled BC starts the session and it runs to its end (:585-614 RQ_D03, RQ_D04, BC 28
+// and later): the session's codeunit runs inside the call.
 const START_SESSION: &str = r#"
 codeunit 50640 "Started" { trigger OnRun() begin end; }
 codeunit 50641 "SF"
@@ -309,7 +310,7 @@ codeunit 50642 "SD"
 "#;
 
 #[test]
-fn start_session_under_the_hub_fails_under_function_and_is_refused_under_disabled() {
+fn start_session_under_the_hub_fails_under_function_and_runs_under_disabled() {
     let o = run(START_SESSION, true);
     assert_eq!(
         outcome(&o, "SF1"),
@@ -318,10 +319,7 @@ fn start_session_under_the_hub_fails_under_function_and_is_refused_under_disable
         ),
         "{o:?}"
     );
-    match outcome(&o, "SD1") {
-        Outcome::NotRun(why) => assert!(why.contains("StartSession"), "{why}"),
-        other => panic!("SD1: {other:?}"),
-    }
+    assert_eq!(outcome(&o, "SD1"), &Outcome::Pass, "{o:?}");
 }
 
 // RqIsolationModes.al:396-472 (RQ_F01-RQ_F04, hub, BC 28+): under RequiredTestIsolation = Function a codeunit with an OnRun

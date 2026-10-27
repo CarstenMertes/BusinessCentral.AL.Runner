@@ -172,6 +172,8 @@ pub struct Catalog {
     by_method: HashMap<(String, String), Vec<usize>>,
     /// Per signature (same index): its overload id (`Catalog::id`), built once; the checker asks for it per candidate.
     ids: Vec<String>,
+    /// Overload id as `ids` writes it -> signature index: the VM looks a builtin up by its id on every call.
+    id_index: HashMap<String, usize>,
     globals: HashMap<String, Vec<usize>>,
     /// The app runtime this catalog serves; `None` shows every overload (the newest).
     runtime: Option<Runtime>,
@@ -245,10 +247,12 @@ impl Catalog {
                 ids[i] = format!("{}.{}#{}", s.receiver, s.name, n + 1);
             }
         }
+        let id_index = ids.iter().enumerate().map(|(i, id)| (id.clone(), i)).collect();
         Catalog {
             signatures,
             by_method,
             ids,
+            id_index,
             globals,
             runtime,
             alc,
@@ -379,6 +383,10 @@ impl Catalog {
 
     /// The signature with overload id `id` (`Record.Insert#2`).
     pub fn by_id(&self, id: &str) -> Option<&Signature> {
+        // The id as the catalog writes it, without lowering the case of its parts (the common case: the IR holds these).
+        if let Some(&i) = self.id_index.get(id) {
+            return Some(&self.signatures[i]);
+        }
         let (qual, n) = id.rsplit_once('#')?;
         let (recv, name) = qual.rsplit_once('.')?;
         let n: usize = n.parse().ok()?;

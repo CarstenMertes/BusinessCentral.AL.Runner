@@ -15,6 +15,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 mod autoinc;
+mod bgsession;
 mod state;
 pub(crate) use state::*;
 mod baseline;
@@ -562,6 +563,10 @@ pub struct Session {
     company_build: bool,
     /// The code runs in a session without a client (`set_no_client`).
     no_client: bool,
+    /// The code runs in a session `StartSession` started (`bgsession.rs`).
+    pub(crate) background_session: bool,
+    /// How many sessions `StartSession` started in this session (`bgsession.rs`).
+    pub(crate) sessions_started: i32,
     /// An install routine runs in BC's install session, which has no client (`set_install_without_client`).
     install_without_client: bool,
     /// The session's data comes from a baseline in which the company data codeunit built the company to its end
@@ -896,6 +901,8 @@ impl Session {
             install_scope: false,
             company_build: false,
             no_client: false,
+            background_session: false,
+            sessions_started: 0,
             install_without_client: false,
             company_built: false,
             demo_written: Default::default(),
@@ -932,29 +939,7 @@ impl Session {
             part_open_running: false,
             dotnet: Default::default(),
             application_areas: String::new(),
-            tx: TxState {
-                tx_world: 0,
-                commit_behavior: Default::default(),
-                tx_phase: crate::transactions::TX_FRESH,
-                transaction_type: 0,
-                lock_timeout: true,
-                lock_timeout_duration: 10,
-                committed_row_version: 0,
-                rows_touched: Vec::new(),
-                locked_tables: Vec::new(),
-                rolled_back: false,
-                last_commit_wrote: false,
-                deferred_insert: None,
-                deferred_raised: 0,
-                immediate_errors: false,
-                try_depth: 0,
-                used_tries: Vec::new(),
-                xp_export_try_world: None,
-                inconsistent: Vec::new(),
-                lock_tx: false,
-                lock_unpinned: None,
-                read_uncommitted_read: false,
-            },
+            tx: TxState::fresh(),
             ui_state: UiState {
                 scope: None,
                 page_handler_depth: 0,

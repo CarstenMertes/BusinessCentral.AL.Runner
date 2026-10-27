@@ -63,6 +63,19 @@ impl Session {
 
     /// The builtins of this module, `None` for any other id.
     pub(crate) fn host_op(&mut self, id: al_ir::BuiltinId, args: &mut [Value]) -> Option<Result<Value, Signal>> {
+        // What a new session holds of these is not measured (bgsession.rs).
+        if self.background_session {
+            let what = match id {
+                ids::SYSTEM_WORKDATE_1 => Some("WorkDate"),
+                ids::SYSTEM_GLOBALLANGUAGE_1 => Some("GlobalLanguage"),
+                ids::SYSTEM_GUIALLOWED_1 => Some("GuiAllowed"),
+                ids::SESSION_CURRENTCLIENTTYPE_1 => Some("CurrentClientType"),
+                _ => None,
+            };
+            if let Some(what) = what {
+                return Some(self.refuse_in_background_session(what).map(|_| Value::Null));
+            }
+        }
         Some(match id {
             ids::SYSTEM_TODAY_1 => {
                 let day = self.today_day_number();

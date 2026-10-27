@@ -85,6 +85,58 @@ fn under_codeunit_isolation_t5_fails_with_bcs_message_and_every_method_ends_as_i
     assert!(matches!(t5, Outcome::Fail(_)), "{t5:?}");
 }
 
+/// StartSession under the runners' TestIsolation (SdIsolStartSession.Codeunit.al:22-30, measured on BC 27.5, 28.5 and
+/// 29.0): under Disabled (61304) and no property (61305) S1-S3 pass; under Function (61300) and Codeunit (61301) S2 and S3
+/// fail. Al-runner issue 5609.
+#[test]
+fn start_session_ends_as_measured_under_every_runner() {
+    let dir = root().join("corpus/tests/al-language-isolation-probe");
+    let app = runtime::load_app(&dir).unwrap();
+    let runners = [
+        ("function", 61300),
+        ("codeunit", 61301),
+        ("disabled", 61304),
+        ("none", 61305),
+    ];
+    let suites: Vec<SuiteRun> = runners
+        .iter()
+        .map(|(name, id)| SuiteRun {
+            name: (*name).into(),
+            app: Some(0),
+            runner: Some(*id),
+        })
+        .collect();
+    let rt = CorpusRuntime::run_suites(
+        vec![app],
+        vec![al_sema::AppKind::Workspace],
+        &[],
+        &Default::default(),
+        None,
+        Default::default(),
+        &suites,
+    );
+    let case = |name: &str| CaseId {
+        codeunit: 61318,
+        name: name.into(),
+    };
+    for (suite, _) in runners {
+        let starts = matches!(suite, "disabled" | "none");
+        assert_eq!(
+            rt.outcome_in(suite, &case("S1_RemovesTheSessionRow")),
+            Outcome::Pass,
+            "{suite}"
+        );
+        for t in ["S2_StartSessionInATest", "S3_NextTestSeesTheSessionRow"] {
+            let o = rt.outcome_in(suite, &case(t));
+            if starts {
+                assert_eq!(o, Outcome::Pass, "{suite} {t}");
+            } else {
+                assert!(matches!(o, Outcome::Fail(_)), "{suite} {t}: {o:?}");
+            }
+        }
+    }
+}
+
 /// The isolation probe app (pinned since corpus bump 72-78) under all four of its runners, against the JUnit files corpus
 /// writer SD measured on Windows containers. Local only, until the nightly measures runners 61304 and 61305:
 /// `AL_ISOLATION_PROBE_APP=<corpus-sd>/tests/al-language-isolation-probe AL_ISOLATION_PROBE_ORACLE=<dir of

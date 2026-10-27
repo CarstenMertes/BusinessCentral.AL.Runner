@@ -1947,6 +1947,39 @@ fn a_commit_runs_under_every_isolation() {
     }
 }
 
+/// Issue 5609: under `--isolation disabled` StartSession starts the session, it ends, and the test sees its committed row
+/// (tests/al-language-isolation-probe/src/SdIsolStartSession.Codeunit.al:22-30, runner 61304). Under `--isolation test` it
+/// fails with BC's text (:20-21, runner 61300).
+#[test]
+fn start_session_runs_under_isolation_disabled() {
+    let d = tempfile::tempdir().unwrap();
+    let dir = d.path().join("session");
+    write(
+        &dir,
+        "app.json",
+        &app_json("11111111-0000-0000-0000-000000005609", "Session", &[]),
+    );
+    write(
+        &dir,
+        "src/Tests.al",
+        "table 50680 \"Session Row\" { fields { field(1; K; Code[20]) { } } keys { key(PK; K) { Clustered = true; } } }\n\
+         codeunit 50681 \"Session Writer\" { trigger OnRun() var R: Record \"Session Row\"; begin R.K := 'SESSION'; R.Insert(); end; }\n\
+         codeunit 50682 \"Session Tests\"\n{\n    Subtype = Test;\n\n    [Test]\n    procedure Starts()\n    var\n        R: Record \"Session Row\";\n        Id: Integer;\n    begin\n\
+                 Session.StartSession(Id, Codeunit::\"Session Writer\");\n        if Session.IsSessionActive(Id) then Error('active');\n\
+                 if not R.Get('SESSION') then Error('no row');\n    end;\n}\n",
+    );
+    let a = dir.to_str().unwrap();
+    let o = alrunner(&["test", a, "--no-download", "--isolation", "disabled"]);
+    assert_eq!(code(&o), 0, "{}", text(&o));
+    let o = alrunner(&["test", a, "--no-download", "--isolation", "test"]);
+    assert_eq!(code(&o), 1, "{}", text(&o));
+    assert!(
+        text(&o).contains("Sessions can only be started in tests"),
+        "{}",
+        text(&o)
+    );
+}
+
 /// Issues 5607 and 5609 with RequiredTestIsolation on the test codeunit: `--isolation required` runs each test codeunit
 /// under its own RequiredTestIsolation, as BC's TestRunnerHub does on BC 28 and later (corpus
 /// codeunit/lt-qu-commit-isolation/QuCommitIsolation.al:10-16, 25-39).

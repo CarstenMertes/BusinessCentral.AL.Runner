@@ -68,7 +68,7 @@ Application tests do not run yet; see [Running Microsoft's tests](microsoft-test
 | Client UI | Handlers and the `TestPage` client | No pixels, no layout, no add-ins. |
 | Permissions | Everything is granted | A test that expects "access denied" fails here. |
 | Task scheduler | `CanCreateTask` is false. `CreateTask` returns an id and never runs the task. | A task never executes. |
-| `StartSession` | Starts nothing during an install; raises Business Central's error in a test run | No second session exists. |
+| `StartSession` | Starts nothing during an install; raises Business Central's error in a test run under `codeunit` or `test` isolation; under `disabled` (or `RequiredTestIsolation = Disabled` with `--isolation required`) runs the session's codeunit to its end inside the call and commits what it wrote | No session runs at the same time as the test. A start while the test holds an uncommitted write, an error in the session, a Timeout, another company, and reads of WorkDate, GlobalLanguage, GuiAllowed or CurrentClientType in the session are reported as not run. |
 | Isolated storage | One store per app | User scopes are refused. |
 | Table connections | Bookkeeping, and the `@@test@@` CRM connection | Any other connection string is refused. |
 

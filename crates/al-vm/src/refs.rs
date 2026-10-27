@@ -120,8 +120,14 @@ fn key_count(t: &TableDef) -> usize {
 }
 
 /// A table's fields a caller can enumerate (`FieldCount`, `FieldIndex`): in
-/// field-number order, system fields left out.
-fn enumerable_fields(s: &Session, t: &TableDef) -> Vec<usize> {
+/// field-number order, system fields left out. Worked out once per table: the order depends on the program alone, and
+/// working it out on every call cost a `FieldIndex` loop on a table with FlowFields 20 to 40 times BC's time (al-runner
+/// issue 5911).
+fn enumerable_fields<'a>(s: &'a Session, t: &TableDef) -> &'a [usize] {
+    s.engine.enumerable_fields[t.object as usize].get_or_init(|| enumerable_fields_of(s, t).into())
+}
+
+fn enumerable_fields_of(s: &Session, t: &TableDef) -> Vec<usize> {
     let mut v: Vec<usize> = (0..t.fields.len())
         .filter(|&i| t.fields[i].id < SYSTEM_FIELD_BASE && s.field_enabled(t, i) && !s.field_removed(t, i))
         .collect();

@@ -16080,6 +16080,9 @@
 88509 RQ_F11_NextCodeunitSees
 88510 RQ_D01_FirstTest
 88510 RQ_D02_SecondTest
+88510 RQ_D03_StartSession
+88510 RQ_D04_AfterStartSession
+88511 RQ_D11_NextCodeunitSees
 88604 RT_FillList_Lookup_ABC_OK
 88604 RT_FillList_OpenEdit_ACB_Moves
 88604 RT_FillWs_LookupRunModal_ACB_Moves

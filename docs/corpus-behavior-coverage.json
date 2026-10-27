@@ -16045,7 +16045,7 @@
         "code": "InvalidOperation",
         "file": "crates/al-builtins/src/native.rs",
         "generic": false,
-        "line": 844,
+        "line": 856,
         "pinned": true,
         "site": "codeunit/TestInterfaceRuntimeContracts.al:85",
         "template": "Interface not initialized"
@@ -16423,7 +16423,7 @@
         "code": "StackOverflow",
         "file": "crates/al-vm/src/lib.rs",
         "generic": false,
-        "line": 1676,
+        "line": 1661,
         "pinned": true,
         "site": "record/TestCalcFieldsTruncateUniqueContracts.al:179",
         "template": "There is insufficient memory to execute this function. This can be caused by recursive function calls. Contact your system administrator."

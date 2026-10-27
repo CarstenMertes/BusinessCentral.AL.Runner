@@ -205,6 +205,18 @@ codeunit 50120 T
         exit(Observed);
     end;
 
+    procedure PkManyRowsNextAfterFilter()
+    var Row: Record "Probe Row"; P: TestPage "Probe List 50102"; i: Integer;
+    begin
+        Row.DeleteAll();
+        for i := 1 to 30 do
+            AddRow(i, 'A', '');
+        P.OpenEdit();
+        Row.Get(25); P.GoToRecord(Row);
+        P.GroupFilter.SetValue('A');
+        P.Next();
+    end;
+
     procedure KeyFilterKeepsRow(): Text
     var P: TestPage "Probe List 50103"; Observed: Text;
     begin
@@ -294,4 +306,16 @@ fn a_validate_filter_refresh_in_another_key_reads_the_start_row_once_more() {
         "open=3:R3;R1;R4;R2;R3;R3;R3;C3; validate=4:R3;R4;R2;R4;R4;R4;C4; next=2:R2;R2;R2;C2; \
          cleared=2:R2;R2;R4;R1;R3;R2;R2;R2;C2; gotorecord=1:R3;R3;R3;C3;R1;R1;R1;C1;"
     );
+}
+
+// Not pinned: a refresh that read more rows than a window holds (the way back from row 25 of 30): the next move is refused.
+#[test]
+fn a_move_after_a_validate_filter_refresh_past_a_window_is_refused() {
+    let mut b = Built::from_source(&src());
+    match b.run_in("T", "PkManyRowsNextAfterFilter") {
+        Err(al_builtins::native::Signal::Unsupported(why)) => {
+            assert!(why.contains("more rows than the client holds"), "{why}")
+        }
+        other => panic!("expected a refusal, got {other:?}"),
+    }
 }

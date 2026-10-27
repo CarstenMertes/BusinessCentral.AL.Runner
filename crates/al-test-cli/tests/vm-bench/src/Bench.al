@@ -154,3 +154,64 @@ codeunit 70007 "Bench Record Loop"
         end;
     end;
 }
+
+// A table of 24 fields, 8 of them FlowFields placed between the others (al-runner issue 5911: FieldIndex cost grew with the
+// number of FlowFields). Never inserted into: the FlowFields are never calculated.
+table 70001 "Bench Flow Row"
+{
+    fields
+    {
+        field(1; "No."; Integer) { }
+        field(2; "Code 2"; Code[20]) { }
+        field(3; "Code 3"; Code[20]) { }
+        field(4; "Flow 4"; Integer) { FieldClass = FlowField; CalcFormula = count("Bench Flow Row" where("Code 3" = field("Code 3"))); Editable = false; }
+        field(5; "Code 5"; Code[20]) { }
+        field(6; "Flow 6"; Integer) { FieldClass = FlowField; CalcFormula = count("Bench Flow Row" where("Code 5" = field("Code 5"))); Editable = false; }
+        field(7; "Code 7"; Code[20]) { }
+        field(8; "Code 8"; Code[20]) { }
+        field(9; "Flow 9"; Integer) { FieldClass = FlowField; CalcFormula = count("Bench Flow Row" where("Code 8" = field("Code 8"))); Editable = false; }
+        field(10; "Code 10"; Code[20]) { }
+        field(11; "Code 11"; Code[20]) { }
+        field(12; "Flow 12"; Integer) { FieldClass = FlowField; CalcFormula = count("Bench Flow Row" where("Code 11" = field("Code 11"))); Editable = false; }
+        field(13; "Code 13"; Code[20]) { }
+        field(14; "Code 14"; Code[20]) { }
+        field(15; "Flow 15"; Integer) { FieldClass = FlowField; CalcFormula = count("Bench Flow Row" where("Code 14" = field("Code 14"))); Editable = false; }
+        field(16; "Code 16"; Code[20]) { }
+        field(17; "Code 17"; Code[20]) { }
+        field(18; "Flow 18"; Integer) { FieldClass = FlowField; CalcFormula = count("Bench Flow Row" where("Code 17" = field("Code 17"))); Editable = false; }
+        field(19; "Code 19"; Code[20]) { }
+        field(20; "Code 20"; Code[20]) { }
+        field(21; "Flow 21"; Integer) { FieldClass = FlowField; CalcFormula = count("Bench Flow Row" where("Code 20" = field("Code 20"))); Editable = false; }
+        field(22; "Code 22"; Code[20]) { }
+        field(23; "Flow 23"; Integer) { FieldClass = FlowField; CalcFormula = count("Bench Flow Row" where("Code 22" = field("Code 22"))); Editable = false; }
+        field(24; "Code 24"; Code[20]) { }
+    }
+
+    keys
+    {
+        key(PK; "No.") { Clustered = true; }
+    }
+}
+
+// 24000 iterations: 1000 passes over the 24 fields of a table with FlowFields, one RecordRef.FieldIndex each
+codeunit 70008 "Bench FieldIndex Loop"
+{
+    Subtype = Test;
+
+    [Test]
+    procedure FieldIndexLoop()
+    var
+        Rr: RecordRef;
+        Fr: FieldRef;
+        i: Integer;
+        f: Integer;
+        n: Integer;
+    begin
+        Rr.Open(Database::"Bench Flow Row");
+        for i := 1 to 1000 do
+            for f := 1 to 24 do begin
+                Fr := Rr.FieldIndex(f);
+                n += Fr.Number();
+            end;
+    end;
+}

@@ -210,6 +210,8 @@ struct PoolState {
     target: usize,
     /// The target the first session that starts a process of its own sets (`prewarm_on_first_use`).
     on_first_use: usize,
+    /// Sessions waiting in [`Pool::take`] for a standby that is starting.
+    waiting: usize,
     closed: bool,
 }
 
@@ -245,6 +247,10 @@ impl Pool {
     }
 
     /// A ready standby, or one that is starting (waited for at most `within`), or `None`.
+    /// A session waits only for a start no other session already waits for: with more sessions than starts in flight,
+    /// the others start their own process at once. Waiting in line made the starts run as many at a time as the
+    /// pool's target (two), and each codeunit then waited for the starts of the codeunits before it (al-runner issue
+    /// 5912: about 0.6 s per codeunit on 32 threads, 0.03 s on one).
     fn take(&self, within: Duration) -> Option<Standby> {
         let until = std::time::Instant::now() + within;
         let mut st = lock(&self.state);
@@ -253,10 +259,12 @@ impl Pool {
                 return Some(s);
             }
             let left = until.checked_duration_since(std::time::Instant::now())?;
-            if st.starting == 0 {
+            if st.starting <= st.waiting {
                 return None;
             }
+            st.waiting += 1;
             st = self.changed.wait_timeout(st, left).unwrap_or_else(|e| e.into_inner()).0;
+            st.waiting -= 1;
         }
     }
 
@@ -1472,5 +1480,41 @@ mod relative_paths {
         let p = find_sidecar(&cfg, Path::new("dotnet")).expect("the file exists");
         assert!(p.is_absolute(), "{}", p.display());
         assert_eq!(p, std::env::current_dir().unwrap().join("Cargo.toml"));
+    }
+}
+
+#[cfg(test)]
+mod pool {
+    use super::*;
+
+    /// al-runner issue 5912: with more sessions than standbys starting, a session that finds every start in flight
+    /// already waited for by another session starts its own process at once. It used to wait in line, so the starts
+    /// ran two at a time and each codeunit reported up to a second of waiting that one thread never sees.
+    #[test]
+    fn a_session_does_not_wait_for_a_standby_another_session_already_waits_for() {
+        let pool = std::sync::Arc::new(Pool::default());
+        lock(&pool.state).target = 1;
+        assert_eq!(pool.reserve(), 1, "one standby is starting");
+        // The first session waits for the standby that is starting.
+        let first = {
+            let pool = pool.clone();
+            std::thread::spawn(move || pool.take(Duration::from_secs(12)).is_some())
+        };
+        let until = std::time::Instant::now() + Duration::from_secs(10);
+        while lock(&pool.state).waiting != 1 {
+            assert!(std::time::Instant::now() < until, "the first session never waited");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        // A second session must not wait for the same one.
+        let began = std::time::Instant::now();
+        assert!(pool.take(Duration::from_secs(2)).is_none());
+        assert!(
+            began.elapsed() < Duration::from_millis(500),
+            "the second session waited {:?}",
+            began.elapsed()
+        );
+        // The start fails: the first session stops waiting and starts its own.
+        pool.deposit(Err("test".into()));
+        assert!(!first.join().unwrap(), "nothing was deposited");
     }
 }

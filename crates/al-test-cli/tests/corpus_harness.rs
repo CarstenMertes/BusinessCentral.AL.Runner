@@ -576,7 +576,10 @@ fn all_versions_runs_each_oracle_writes_per_version_files_and_compares() {
     // the Disabled codeunits leave is not known: RQ_D04, RQ_D11 and the 130450 codeunits after them (88512-88515) are not run.
     // Branch refuse-types makes it 18: 81959 BM_CalcFormula_IntegerFilterFromBigInteger now passes on BC 29 too (an Integer
     // parameter takes a BigInteger argument by value).
-    assert!(out.contains("runtime: 18 case(s) differ between versions"), "{out}");
+    // Branch issue-5607 makes it 15: StartSession under Disabled runs (al-runner issue 5609), so RQ_D03, RQ_D04 and RQ_D11
+    // pass on every version. 88512-88515 stay not run on BC 28 and 29: they have handlers, and whether BC runs them before
+    // or after the Disabled codeunit 88510 that wrote their table is not pinned.
+    assert!(out.contains("runtime: 15 case(s) differ between versions"), "{out}");
     assert!(out.contains("71500 Get_Uses_Primary_Key_Not_Current_Key: 27"), "{out}");
 }
 

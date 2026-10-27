@@ -345,6 +345,14 @@ impl al_builtins::native::Ctx for Session {
     fn hub_disabled(&self) -> bool {
         self.hub_disabled
     }
+    fn start_background_session(
+        &mut self,
+        codeunit: i32,
+        company: Option<String>,
+        record: Option<Value>,
+    ) -> Result<i32, Signal> {
+        Session::start_background_session(self, codeunit, company, record)
+    }
     fn enum_members(&self, id: u32) -> Option<Vec<(i32, String)>> {
         self.note_enum(id);
         Some(self.engine.program.objects[id as usize].enum_values.clone())

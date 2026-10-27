@@ -65,6 +65,35 @@ pub(crate) struct TxState {
     pub(crate) read_uncommitted_read: bool,
 }
 
+impl TxState {
+    /// The transaction state of a session that has just started: no transaction, nothing locked.
+    pub(crate) fn fresh() -> TxState {
+        TxState {
+            tx_world: 0,
+            commit_behavior: Default::default(),
+            tx_phase: crate::transactions::TX_FRESH,
+            transaction_type: 0,
+            lock_timeout: true,
+            lock_timeout_duration: 10,
+            committed_row_version: 0,
+            rows_touched: Vec::new(),
+            locked_tables: Vec::new(),
+            rolled_back: false,
+            last_commit_wrote: false,
+            deferred_insert: None,
+            deferred_raised: 0,
+            immediate_errors: false,
+            try_depth: 0,
+            used_tries: Vec::new(),
+            xp_export_try_world: None,
+            inconsistent: Vec::new(),
+            lock_tx: false,
+            lock_unpinned: None,
+            read_uncommitted_read: false,
+        }
+    }
+}
+
 /// Handler functions and notifications of the running test method.
 pub(crate) struct UiState {
     /// Handler functions bound to the running test method (None outside one).

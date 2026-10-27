@@ -229,20 +229,35 @@ fn under_a_disabled_runner_what_passed_or_was_committed_stays_for_the_later_test
     assert!(r1.3.is_empty(), "{r1:?}");
 }
 
-// SdIsolStartSession.Codeunit.al:38-63 (S2, S3): under the Disabled runner BC starts the session and its row is seen;
-// this runtime runs no second session, so the test is not run. Under Function it raises BC's text (S2 under 61300).
+// SdIsolStartSession.Codeunit.al:22-30 and :38-63 (S1-S3): under the Disabled runner (61304, and 61305 with no property)
+// BC starts the session, it ends within the test's wait, `Session.IsSessionActive` then answers false, and its committed row
+// is seen by the test and by the next one. Under Function the start raises BC's text (S2 under 61300).
 const START_SESSION: &str = r#"
 codeunit 50740 "Session Writer" { trigger OnRun() var R: Record "Row"; begin R.K := 'SESSION'; if R.Insert() then; end; }
-codeunit 50741 "Starter" { var Id: Integer; trigger OnRun() begin Session.StartSession(Id, Codeunit::"Session Writer"); end; }
+codeunit 50741 "Starter"
+{
+    var Id: Integer;
+    trigger OnRun() begin Session.StartSession(Id, Codeunit::"Session Writer"); end;
+    procedure GetSessionId(): Integer begin exit(Id); end;
+}
 codeunit 50742 "Start Session"
 {
     Subtype = Test;
-    [Test] procedure S2_StartSession() var Starter: Codeunit "Starter"; begin if not Starter.Run() then Error('%1', GetLastErrorText()); end;
+    var Rows: Codeunit "Rows";
+    [Test] procedure S2_StartSession()
+    var Starter: Codeunit "Starter";
+    begin
+        if not Starter.Run() then Error('%1', GetLastErrorText());
+        if Starter.GetSessionId() <= 0 then Error('session id %1', Starter.GetSessionId());
+        if Session.IsSessionActive(Starter.GetSessionId()) then Error('still active');
+        if not Rows.Has('SESSION') then Error('no row');
+    end;
+    [Test] procedure S3_NextTestSeesTheSessionRow() begin if not Rows.Has('SESSION') then Error('S3: no row'); end;
 }
 "#;
 
 #[test]
-fn start_session_fails_under_a_function_runner_and_is_refused_under_a_disabled_one() {
+fn start_session_fails_under_a_function_runner_and_runs_the_session_under_a_disabled_one() {
     let o = run(START_SESSION, TestIsolation::Function);
     assert_eq!(
         outcome(&o, "S2_StartSession"),
@@ -251,7 +266,49 @@ fn start_session_fails_under_a_function_runner_and_is_refused_under_a_disabled_o
         )
     );
     let o = run(START_SESSION, TestIsolation::Disabled);
-    assert!(not_run(outcome(&o, "S2_StartSession"), "StartSession"), "{o:?}");
+    assert_eq!(outcome(&o, "S2_StartSession"), &Outcome::Pass, "{o:?}");
+    assert_eq!(outcome(&o, "S3_NextTestSeesTheSessionRow"), &Outcome::Pass, "{o:?}");
+}
+
+// What no probe measures is refused: a start while the test holds an uncommitted write (whether the new session waits for
+// it, and what it sees), an error in the new session, and what a new session reads of the session state (here WorkDate).
+// A new session has its own SingleInstance codeunits and no manual subscriptions of the test (both are per session).
+const START_SESSION_HELPERS: &str = r#"
+codeunit 50740 "Session Writer" { trigger OnRun() var R: Record "Row"; begin R.K := 'SESSION'; if R.Insert() then; end; }
+codeunit 50750 "Failing Writer" { trigger OnRun() begin Error('session fails'); end; }
+codeunit 50751 "WorkDate Reader" { trigger OnRun() var D: Date; begin D := WorkDate(); end; }
+codeunit 50752 "Single" { SingleInstance = true; var N: Integer; procedure Bump(): Integer begin N += 1; exit(N); end; }
+codeunit 50753 "Single Writer"
+{
+    trigger OnRun() var S: Codeunit "Single"; R: Record "Row"; begin R.K := Format(S.Bump()); R.Insert(); end;
+}
+"#;
+
+/// One test codeunit `body` with the helpers, run on its own under the Disabled runner: the outcome of test `U`.
+fn start_unpinned(body: &str) -> Outcome {
+    let src = format!(
+        "{START_SESSION_HELPERS}\ncodeunit 50754 \"Start Unpinned\"\n{{\n    Subtype = Test;\n    var Rows: Codeunit \"Rows\";\n    [Test] procedure U() {body}\n}}\n"
+    );
+    outcome(&run(&src, TestIsolation::Disabled), "U").clone()
+}
+
+#[test]
+fn start_session_under_a_disabled_runner_refuses_what_no_probe_measures() {
+    let o = start_unpinned(
+        "var Id: Integer; begin Rows.Put('OPEN'); Session.StartSession(Id, Codeunit::\"Session Writer\"); end;",
+    );
+    assert!(not_run(&o, "uncommitted"), "{o:?}");
+    let o = start_unpinned("var Id: Integer; begin Session.StartSession(Id, Codeunit::\"Failing Writer\"); end;");
+    assert!(not_run(&o, "an error in the new session"), "{o:?}");
+    let o = start_unpinned("var Id: Integer; begin Session.StartSession(Id, Codeunit::\"WorkDate Reader\"); end;");
+    assert!(not_run(&o, "WorkDate"), "{o:?}");
+    // A new session has SingleInstance codeunits of its own: they are per session.
+    let o = start_unpinned(
+        "var S: Codeunit \"Single\"; Id: Integer; begin S.Bump(); S.Bump(); Session.StartSession(Id, Codeunit::\"Single Writer\"); \
+         if not Rows.Has('1') then Error('the session used the test session''s SingleInstance'); \
+         if S.Bump() <> 3 then Error('the test session''s SingleInstance changed'); end;",
+    );
+    assert_eq!(o, Outcome::Pass);
 }
 
 // SdIsolReqFunction.Codeunit.al / SdIsolReqDisabled.Codeunit.al:16-17 (Q1, Q2 and the readers): under a runner the

@@ -567,7 +567,8 @@ ISOLATION
                          too, and so are IsolatedStorage.Set and NumberSequence.Insert. `disabled`:
                          nothing is rolled back but a failed test's writes since its last Commit();
                          the test codeunits run one after the other in id order and each sees what
-                         the ones before it left. StartSession is reported as not run there.
+                         the ones before it left. StartSession runs the session's codeunit to its end
+                         inside the call and commits what it wrote.
                          Under `test` and `disabled` RequiredTestIsolation has no effect, as under
                          a test runner codeunit with that TestIsolation. `required`: each
                          test codeunit runs under its own RequiredTestIsolation, as Business

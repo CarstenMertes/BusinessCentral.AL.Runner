@@ -148,6 +148,9 @@ impl Session {
         };
         st.borrow_mut().refresh = false;
         let marked_only_before = !self.has_source(st) || self.page_rec(st).borrow().marked_only;
+        let lookup_fields_before =
+            (method == PageMethod::Lookup && self.has_source(st)).then(|| self.page_rec(st).borrow().fields.clone());
+        let mut lookup_answered_true = false;
         let result = if method == PageMethod::Lookup {
             // OnLookup(var Text): Boolean. The text it writes back replaces the field's value, and
             // the Boolean says whether the user picked anything (corpus
@@ -159,27 +162,30 @@ impl Session {
             let current = self.control_value(st, idx)?;
             let shown = self.control_text(st, idx, &current)?;
             self.call(object, routine, inst, vec![Value::Text(shown.into())])
-                .and_then(|(v, finals)| match (v, finals.first()) {
-                    (Value::Boolean(true), Some(Value::Text(t))) => {
-                        // Written back as the client would type it. The OnLookup of a page extension's modify block
-                        // leaves a Code field in the case it wrote (`Text := 'FromExt'` reads back FromExt), the page's
-                        // own trigger does not (FROMCTL) (lookups/W2Lookups.al:
-                        // ModifyBlockOnLookup_ReturnsTrue, BC 27.5 and 29.0).
-                        let r = self.control_set_value(st, idx, &mut [Value::Text(t.clone())]);
-                        let binding = page_of(&self.engine(), st).controls[idx].binding.clone();
-                        if let ir::Binding::Field(pos) = binding {
-                            let rec = self.page_rec(st);
-                            let is_code = matches!(rec.borrow().fields[pos], Value::Code(_));
-                            if is_code && owner.is_some() && r.is_ok() {
-                                rec.borrow_mut().fields[pos] = Value::Code(t.clone());
+                .and_then(|(v, finals)| {
+                    lookup_answered_true = matches!(v, Value::Boolean(true));
+                    match (v, finals.first()) {
+                        (Value::Boolean(true), Some(Value::Text(t))) => {
+                            // Written back as the client would type it. The OnLookup of a page extension's modify block
+                            // leaves a Code field in the case it wrote (`Text := 'FromExt'` reads back FromExt), the page's
+                            // own trigger does not (FROMCTL) (lookups/W2Lookups.al:
+                            // ModifyBlockOnLookup_ReturnsTrue, BC 27.5 and 29.0).
+                            let r = self.control_set_value(st, idx, &mut [Value::Text(t.clone())]);
+                            let binding = page_of(&self.engine(), st).controls[idx].binding.clone();
+                            if let ir::Binding::Field(pos) = binding {
+                                let rec = self.page_rec(st);
+                                let is_code = matches!(rec.borrow().fields[pos], Value::Code(_));
+                                if is_code && owner.is_some() && r.is_ok() {
+                                    rec.borrow_mut().fields[pos] = Value::Code(t.clone());
+                                }
                             }
+                            r
                         }
-                        r
+                        (Value::Boolean(true), other) => {
+                            unsupported(format!("an OnLookup trigger whose Text is {}", other.describe()))
+                        }
+                        _ => Ok(Value::Null),
                     }
-                    (Value::Boolean(true), other) => {
-                        unsupported(format!("an OnLookup trigger whose Text is {}", other.describe()))
-                    }
-                    _ => Ok(Value::Null),
                 })
         } else {
             let r = self.owner_routine(st, owner, routine).map(|_| Value::Null);
@@ -198,6 +204,23 @@ impl Session {
             st.borrow_mut().refresh = false;
         }
         let v = result?;
+        // An OnLookup that writes Rec itself and answers false leaves the row edited, so the close saves it, as the table
+        // field's OnLookup does in `field_lookup` (assumed: Tests-Monitor Sensitive Fields 139066 AddFieldUsingFieldLookup
+        // needs it on real BC; docs/probes-needed.md, control-onlookup-edit-saved-at-close). A Blob counts as changed only
+        // when a stream wrote it (a Blob compares unequal to its own copy). A stored row whose OnLookup put another row (another
+        // primary key) into Rec keeps the behavior from before: not marked, as an action that does so saves nothing.
+        if let Some(before) = lookup_fields_before.filter(|_| !lookup_answered_true) {
+            let rec = self.page_rec(st);
+            let changed = !Self::same_but_unwritten_blobs(&rec.borrow().fields, &before);
+            let other_row = !st.borrow().draft && {
+                let table = self.table(&rec)?;
+                !Self::same_key(&table.primary_key(&rec.borrow().fields), &table.primary_key(&before))
+            };
+            if changed && !other_row && !st.borrow().dirty {
+                al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::ControlOnLookupEditSavedAtClose);
+                st.borrow_mut().dirty = true;
+            }
+        }
         self.drilldown_marked_only_refresh(st, method, marked_only_before);
         // The client refreshes the page after an AssistEdit trigger: OnAfterGetRecord runs again
         // (pages/lt-page-runtime/P82Lookups.al:AssistEdit_Trigger, `OnAssistEdit;OnAfterGetRecord(L1)`). A DrillDown and a Lookup are not pinned to.

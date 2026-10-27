@@ -581,6 +581,12 @@ registry! {
             since: "2026-10-25",
         },
     },
+    ControlOnLookupEditSavedAtClose => {
+        id: "control-onlookup-edit-saved-at-close",
+        assumed: "TestField.Lookup on a control whose own OnLookup changes Rec and answers false leaves the row edited: the close that follows saves it (a new row is inserted through OnInsertRecord), as the table field's OnLookup already does (`field_lookup`). An OnLookup that changes no field leaves the row as it was (a Blob counts as changed only when a stream wrote it); one that put another stored row (another primary key) into Rec on a stored row is not marked, as before.",
+        tests: "Tests-Monitor Sensitive Fields 139066 Monitor Field Pages Test (AddFieldUsingFieldLookup, AddFieldUsingTableAndFieldLookup): page 1369 Monitored Fields Worksheet, control Field No, Rec.Validate in OnLookup, then Close and the row read back.",
+        probe: "A Worksheet and a Card over a table with OnInsertRecord and OnModifyRecord that log: New, then Lookup on a control whose OnLookup writes Rec and answers false, then Close; the same on an existing row; the same with an OnLookup that writes nothing. Log the triggers and read the rows back.",
+    },
 }
 
 thread_local! {
